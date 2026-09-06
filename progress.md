@@ -23,7 +23,7 @@ Every run must read this file first, inspect current NVIDEA state, choose the hi
 - **Research:** Nemotron planning -> Tavily evidence -> untrusted-content boundary -> Nemotron synthesis -> validated source IDs.
 - **Browser:** accessibility/DOM observation -> typed action -> browser hard-safety floor -> system capability policy -> exact approval -> Playwright driver execution -> fresh observation -> verification -> receipt.
 - **Skills / permissions:** capability registry, declared data/tool permissions, monotonic risk, exact-scope approvals, last-mile tool enforcement and append-only audit events.
-- **Jobs:** durable state/checkpoints, cancellation, retry/backoff, approval-paused states and explicit local-vs-Nebius execution selection.
+- **Jobs:** durable state/checkpoints, cancellation, retry/backoff, approval-paused states, ephemeral approval grants, and explicit local-vs-Nebius execution selection.
 - **Nebius execution:** cloud/serverless only where long-running background work benefits; private OS actions stay local.
 
 ## Hackathon product bar
@@ -51,9 +51,9 @@ Final <=3 minute demo should prove invocation anywhere on Windows, context aware
 - Safe browser-agent policy/execution foundation under `src/Nvidea.Core/Browser` plus a concrete Playwright .NET driver.
 - System-wide capability/permission/audit foundation under `src/Nvidea.Core/Capabilities`.
 - `CapabilityToolExecutor` re-checks permission/risk immediately before real tool execution and consumes exact single-use approval grants.
-- Durable resumable jobs foundation under `src/Nvidea.Core/Jobs`.
+- Durable resumable jobs foundation under `src/Nvidea.Core/Jobs` now includes an in-memory resumed-job approval handoff; `ApprovalGrant` values are never serialized into `AgentJobRecord` or checkpoints.
 - Credential-injected Nebius Serverless REST client contract for create/list/cancel using current official endpoints; no live success is fabricated.
-- Contract tests under `tests/Nvidea.Core.Tests` cover inference, memory, research, browser policy/execution, capability policy, scoped approval, last-mile tool execution, audit behavior, resumable jobs and Serverless REST request semantics.
+- Contract tests under `tests/Nvidea.Core.Tests` cover inference, memory, research, browser policy/execution, capability policy, scoped approval, last-mile tool execution, audit behavior, resumable jobs, ephemeral approval behavior and Serverless REST request semantics.
 - Root README + MIT LICENSE.
 - keyboard.wtf has only been inspected read-only; no repository other than NVIDEA has been mutated.
 
@@ -70,49 +70,53 @@ Final <=3 minute demo should prove invocation anywhere on Windows, context aware
 - Added Nebius Serverless REST client for documented create/list/cancel operations, strict HTTPS/host validation, bounded transient retries, project scoping and plaintext-secret environment rejection.
 
 ### 2026-09-07 — Concrete Playwright browser driver
-Completed:
-- Re-verified repository target before every mutation: only `UnknownGod2011/NVIDEA` was written.
-- Verified current Playwright .NET guidance before implementation. Playwright continues to recommend user-facing locators such as `GetByRole`, `GetByLabel`, `GetByText`, and explicit test IDs over brittle CSS/XPath chains. Current NuGet package checked during this run: `Microsoft.Playwright` 1.62.0 (published 2026-08-11).
-- Added `Microsoft.Playwright` 1.62.0 to `Nvidea.Core`.
-- Added `Browser/PlaywrightBrowserDriver.cs`, a real `IBrowserDriver` implementation backed by an injected Playwright `IPage`.
-- Observation path:
-  - bounded interactive-element enumeration (`MaxObservedElements`, default 250);
-  - bounded visible page text (`MaxObservationCharacters`, default 12k);
-  - role/name/label/placeholder-oriented metadata for agent observations;
-  - per-observation stable page references using a dedicated `data-nvidea-ref` attribute;
-  - password input values are never returned in observations;
-  - visible page text is explicitly flagged when common prompt-injection patterns are detected;
-  - observations reject non-HTTP(S) pages and optionally enforce an exact host allowlist.
-- Action path:
-  - supports bounded Navigate/Back/Refresh/Click/Type/Select/Upload/Download operations behind the existing browser action vocabulary;
-  - role-and-name, label, text, test-id and accessibility-reference locators are supported;
-  - CSS remains an explicit fallback only;
-  - XPath is deliberately disabled in the concrete driver to avoid brittle/opaque selectors;
-  - per-action timeouts and .NET cancellation are enforced;
-  - navigation is restricted to absolute HTTP(S) URLs and optional host allowlists.
-- Current Playwright ARIA enum spelling was checked against official docs and the initial `ComboBox` spelling was corrected to `AriaRole.Combobox` before closing this run.
+- Added `Microsoft.Playwright` 1.62.0 and `Browser/PlaywrightBrowserDriver.cs` backed by an injected `IPage`.
+- Added bounded DOM/ARIA observations, password-value redaction, untrusted-content flags, exact-host allowlists and stable local page references.
+- Added bounded Navigate/Back/Refresh/Click/Type/Select/Upload/Download-trigger operations, user-facing locator priority, CSS fallback and intentionally disabled XPath.
+- Kept browser authorization outside the driver: safety -> capability policy -> exact approval -> driver remains mandatory.
+- Source review fixed the Playwright `AriaRole.Combobox` spelling before commit.
+- Still unverified by compilation/browser launch because this runtime has no .NET SDK or Playwright browser binaries.
 
-Security/reliability notes:
-- This driver does **not** replace `BrowserSafetyPolicy`, `BrowserCapabilityGuard`, or `CapabilityToolExecutor`; callers must keep the existing safety -> capability -> exact approval chain in front of driver writes. The driver intentionally cannot grant itself authorization.
-- DOM/page content remains untrusted evidence. Assigning local `data-nvidea-ref` attributes only creates bounded local action references; page text cannot create capability approvals.
-- Password values are redacted from observations, but the existing browser safety policy remains responsible for blocking autonomous credential/OTP/payment/private-key entry altogether.
-- Host allowlists are exact-host in this first concrete driver. Explicit subdomain policy can be added later, but should not be silently inferred.
-- Downloads currently model the triggering click; durable download artifact tracking/verification still needs a dedicated download coordinator before claiming end-to-end verified downloads.
+### 2026-09-07 — Ephemeral resumed-job approval execution context
+Completed:
+- Re-verified before every write that the target repository was exactly `UnknownGod2011/NVIDEA`; no other repository was mutated.
+- Added `Jobs/EphemeralJobApprovalContext.cs`:
+  - `EphemeralJobApprovalStore` keeps grants only in process memory and removes them on `Take`;
+  - `JobExecutionContext` exposes only exact-scope `TakeApproval`, at most once per resumed execution step;
+  - cancellation/failure/revocation paths discard any leftover approval.
+- Extended `IAgentJobHandler` with a context-aware execution overload using a default interface implementation, preserving existing handler source compatibility while allowing consequential handlers to receive the ephemeral context.
+- Updated `ResumableJobOrchestrator`:
+  - exact scope is still checked against the paused persisted action;
+  - successful explicit resume creates a two-minute single-use grant using the shared `ScopedApprovalAuthorizer`;
+  - the persisted record is changed back to `Pending` with `ApprovalScope = null` before execution;
+  - the grant is stored only in `EphemeralJobApprovalStore` and transferred only to the next actual execution step;
+  - retry/cancel/failure paths revoke remaining grants;
+  - approval audit events preserve the exact approved scope without persisting the grant/token.
+- Tightened `ScopedApprovalAuthorizer`: exact-scope minting is internal-only, while normal external grant creation still requires an allowed `PermissionDecision` that requires approval. This reduces the API surface for forged grants.
+- Added `EphemeralJobApprovalTests.cs` covering:
+  - the next resumed step receives the exact grant;
+  - the grant remains single-use under `ScopedApprovalAuthorizer`;
+  - JSON job persistence contains no `GrantId`, `GrantedAt`, or `ExpiresAt` material and clears persisted `ApprovalScope` after resume;
+  - wrong-scope resume attempts throw and mint no ephemeral grant.
+
+Security / correctness reasoning:
+- A checkpoint/scope string remains descriptive state, never authorization.
+- A process restart intentionally destroys all resumed grants; this can inconvenience the user but is fail-closed and forces fresh approval rather than replaying stale consent.
+- The grant is removed from the ephemeral store when the resumed step begins. If the handler never uses it, it is lost rather than carried to a later step.
+- Exact-scope grant consumption by the capability executor remains single-use. A failed consequential call does not restore consent, preventing accidental duplicate sends/submissions on retry.
+- No grant identifiers/timestamps/tokens are written to job persistence or checkpoint payloads.
 
 Validation / evidence:
-- Current Playwright documentation and NuGet package metadata were checked live during this run rather than relying on stale API assumptions.
-- Source review caught and fixed an invalid Playwright enum spelling before the final commit.
-- This execution environment still has no `dotnet`, `csc`, or `msbuild`, so the Playwright code and existing tests could not be compiled/executed here. They MUST NOT be reported as green until a .NET-capable runner executes them.
-- Playwright browser binaries were not installed or launched in this runtime; no live browser success is fabricated.
+- Source-level review checked existing `ScopedApprovalAuthorizer`, `CapabilityToolExecutor`, job contracts/orchestrator, and current job tests before implementation.
+- New tests were added, but this runtime still does not provide `dotnet`, `csc`, or `msbuild`; they MUST NOT be claimed as passing until a .NET-capable runner executes them.
+- No CI workflow was added or triggered, avoiding unnecessary GitHub Actions usage.
 
 Unverified / risks:
-- Full solution compilation remains the largest immediate verification risk, especially because this run adds the first external runtime package.
-- The concrete driver is not yet wired through a real browser capability backend/end-to-end application composition root; a future handler must ensure every browser write passes `CapabilityToolExecutor` before `IBrowserDriver.ExecuteAsync`.
-- No end-to-end Playwright test currently launches Chromium against a deterministic local fixture.
-- Accessibility observations are DOM/ARIA-derived rather than using Playwright's newer AI-mode ARIA snapshot references. This was chosen to keep action references explicit and bounded; evaluate the native snapshot API later if it improves fidelity without weakening determinism.
-- Popup/new-tab ownership, file-download receipts, authenticated session lifecycle and browser-context teardown still need concrete handling.
-- Job approvals are still resumed by persisted scope string; a fresh ephemeral `ApprovalGrant` execution context still needs to be passed to the immediate resumed tool call without ever being serialized into checkpoints.
-- Audit storage is append-only at API level but not tamper-evident/encrypted; memory persistence is not yet OS-encrypted at rest.
+- Full solution compilation remains the immediate verification risk, including C# default-interface-method compatibility across the existing test project.
+- The new context is not yet used by a concrete browser job handler that routes a resumed browser action through `CapabilityToolExecutor` and then `PlaywrightBrowserDriver`.
+- No deterministic Chromium integration test exists yet.
+- Popup/new-tab ownership, durable download receipts and authenticated browser-context lifecycle remain incomplete.
+- Audit storage is append-only at API level but not tamper-evident/encrypted; persistent memory is not yet OS-encrypted at rest.
 
 Next highest-value task:
-- First add an **ephemeral resumed-job approval execution context** so a user approval creates a fresh single-use `ApprovalGrant` that exists only in memory and is supplied only to the immediate capability-secured tool call; never serialize the grant/token into `AgentJobRecord` or checkpoint payloads. Then wire a browser capability backend through `CapabilityToolExecutor` into `PlaywrightBrowserDriver`, add deterministic local-page Playwright integration tests when a .NET/browser-capable runner is available, and begin the Windows shell/composition-root integration.
+- Build the **concrete browser capability backend + browser job handler** so a planned browser action is transformed into a `CapabilityInvocation`, checked by `BrowserSafetyPolicy`/system capability policy, supplied the exact grant from `JobExecutionContext` only when required, executed through `CapabilityToolExecutor`, then applied by `PlaywrightBrowserDriver` with fresh observation verification. Add mocked end-to-end contract tests for read-only actions, approval-paused consequential actions, wrong/missing grant behavior, untrusted-page content and failed post-action verification. After that, begin the Windows composition root/shell integration and obtain a real .NET/Playwright compile-and-run signal as soon as tooling permits.

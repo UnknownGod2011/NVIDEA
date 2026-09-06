@@ -49,11 +49,13 @@ Final <=3 minute demo should prove invocation anywhere on Windows, context aware
 - Layered privacy-aware personal memory under `src/Nvidea.Core/Memory`.
 - Tavily provider + Nemotron research engine under `src/Nvidea.Core/Research`.
 - Safe browser-agent policy/execution foundation under `src/Nvidea.Core/Browser` plus a concrete Playwright .NET driver.
+- End-to-end browser capability execution now routes fresh observation -> browser safety -> capability policy -> exact single-use approval -> `CapabilityToolExecutor` -> browser driver -> fresh observation -> verification.
+- `BrowserActionJobHandler` now connects durable jobs to that browser execution path while keeping approval grants ephemeral and action IDs stable across resume.
 - System-wide capability/permission/audit foundation under `src/Nvidea.Core/Capabilities`.
 - `CapabilityToolExecutor` re-checks permission/risk immediately before real tool execution and consumes exact single-use approval grants.
-- Durable resumable jobs foundation under `src/Nvidea.Core/Jobs` now includes an in-memory resumed-job approval handoff; `ApprovalGrant` values are never serialized into `AgentJobRecord` or checkpoints.
+- Durable resumable jobs foundation under `src/Nvidea.Core/Jobs` includes an in-memory resumed-job approval handoff; `ApprovalGrant` values are never serialized into `AgentJobRecord` or checkpoints.
 - Credential-injected Nebius Serverless REST client contract for create/list/cancel using current official endpoints; no live success is fabricated.
-- Contract tests under `tests/Nvidea.Core.Tests` cover inference, memory, research, browser policy/execution, capability policy, scoped approval, last-mile tool execution, audit behavior, resumable jobs, ephemeral approval behavior and Serverless REST request semantics.
+- Contract tests under `tests/Nvidea.Core.Tests` cover inference, memory, research, browser policy/execution, capability policy, scoped approval, last-mile tool execution, audit behavior, resumable jobs, ephemeral approval behavior, end-to-end browser jobs and Serverless REST request semantics.
 - Root README + MIT LICENSE.
 - keyboard.wtf has only been inspected read-only; no repository other than NVIDEA has been mutated.
 
@@ -78,45 +80,59 @@ Final <=3 minute demo should prove invocation anywhere on Windows, context aware
 - Still unverified by compilation/browser launch because this runtime has no .NET SDK or Playwright browser binaries.
 
 ### 2026-09-07 — Ephemeral resumed-job approval execution context
+- Added `EphemeralJobApprovalStore` and `JobExecutionContext`; grants exist only in process memory, can be taken only for the exact scope, and are removed before the immediate consequential step.
+- Extended `IAgentJobHandler` with context-aware execution while keeping legacy handlers source-compatible.
+- Updated `ResumableJobOrchestrator` so explicit resume mints a two-minute exact single-use grant, clears persisted approval scope before execution, and revokes leftovers on failure/cancel.
+- Tightened `ScopedApprovalAuthorizer` so arbitrary capability consumers cannot mint exact-scope grants directly.
+- Added regression tests proving no grant identifiers/timestamps are serialized and wrong-scope resumes cannot mint or consume approval.
+
+### 2026-09-07 — End-to-end capability-secured browser jobs
 Completed:
-- Re-verified before every write that the target repository was exactly `UnknownGod2011/NVIDEA`; no other repository was mutated.
-- Added `Jobs/EphemeralJobApprovalContext.cs`:
-  - `EphemeralJobApprovalStore` keeps grants only in process memory and removes them on `Take`;
-  - `JobExecutionContext` exposes only exact-scope `TakeApproval`, at most once per resumed execution step;
-  - cancellation/failure/revocation paths discard any leftover approval.
-- Extended `IAgentJobHandler` with a context-aware execution overload using a default interface implementation, preserving existing handler source compatibility while allowing consequential handlers to receive the ephemeral context.
-- Updated `ResumableJobOrchestrator`:
-  - exact scope is still checked against the paused persisted action;
-  - successful explicit resume creates a two-minute single-use grant using the shared `ScopedApprovalAuthorizer`;
-  - the persisted record is changed back to `Pending` with `ApprovalScope = null` before execution;
-  - the grant is stored only in `EphemeralJobApprovalStore` and transferred only to the next actual execution step;
-  - retry/cancel/failure paths revoke remaining grants;
-  - approval audit events preserve the exact approved scope without persisting the grant/token.
-- Tightened `ScopedApprovalAuthorizer`: exact-scope minting is internal-only, while normal external grant creation still requires an allowed `PermissionDecision` that requires approval. This reduces the API surface for forged grants.
-- Added `EphemeralJobApprovalTests.cs` covering:
-  - the next resumed step receives the exact grant;
-  - the grant remains single-use under `ScopedApprovalAuthorizer`;
-  - JSON job persistence contains no `GrantId`, `GrantedAt`, or `ExpiresAt` material and clears persisted `ApprovalScope` after resume;
-  - wrong-scope resume attempts throw and mint no ephemeral grant.
+- Re-verified before every GitHub mutation that the target was exactly `UnknownGod2011/NVIDEA`; no other repository was written.
+- Added `Browser/BrowserCapabilityExecution.cs`:
+  - `BrowserCapabilityBackend` is the typed `ICapabilityToolBackend` bridge to `IBrowserDriver`;
+  - `BrowserCapabilityExecutionService` performs a fresh observation, applies `BrowserSafetyPolicy`, evaluates system capability policy, calls `CapabilityToolExecutor`, performs the concrete browser action only after last-mile authorization, observes again, and verifies the post-action state;
+  - blocked browser actions never reach the tool backend;
+  - capability policy can raise risk/approval requirements but cannot weaken the browser safety floor;
+  - untrusted-page provenance is propagated into capability/audit evaluation;
+  - an optional stable action id lets approval scope survive a durable pause/resume without making the id itself authorization.
+- During implementation, found and fixed a critical approval-scope mismatch: generating a new action id after resume would have invalidated the exact grant. Browser jobs now deliberately use the stable job id as their capability action id across pause/resume.
+- Added `Jobs/BrowserActionJobHandler.cs`:
+  - browser actions are persisted only as descriptive checkpoint payloads;
+  - the handler first executes through the capability boundary without approval to derive the exact scope;
+  - when paused, only the exact scope is persisted;
+  - after explicit resume, `JobExecutionContext.TakeApproval(scope)` retrieves the single ephemeral grant and supplies it only to the immediate capability call;
+  - if policy scope changes, the handler fails closed and asks for fresh approval rather than translating/reusing consent;
+  - executed-but-unverified actions become job failures/retries instead of being reported as successful.
+- Added `BrowserActionJobHandlerTests.cs` covering:
+  - read-only browser jobs completing without approval;
+  - consequential actions pausing before driver execution, resuming with exact ephemeral approval, and avoiding replay;
+  - wrong-scope approval rejection;
+  - credential/password typing blocked before the driver;
+  - failed post-action verification causing a retry state;
+  - prompt-injection-like page content being marked as untrusted and unable to bypass approval.
+- Source review also tightened nullable handling in the new tests because the test project treats warnings as errors.
 
 Security / correctness reasoning:
-- A checkpoint/scope string remains descriptive state, never authorization.
-- A process restart intentionally destroys all resumed grants; this can inconvenience the user but is fail-closed and forces fresh approval rather than replaying stale consent.
-- The grant is removed from the ephemeral store when the resumed step begins. If the handler never uses it, it is lost rather than carried to a later step.
-- Exact-scope grant consumption by the capability executor remains single-use. A failed consequential call does not restore consent, preventing accidental duplicate sends/submissions on retry.
-- No grant identifiers/timestamps/tokens are written to job persistence or checkpoint payloads.
+- Durable checkpoint data and stable action IDs are identifiers/descriptive state only; neither can authorize execution.
+- `CapabilityToolExecutor` still re-evaluates the invocation at the final execution boundary.
+- The grant is exact to capability + stable action id + permission set and remains single-use.
+- A webpage can influence observations but cannot mint permissions, create grants, lower risk, or bypass approval.
+- Credential-style autonomous typing remains blocked before concrete driver execution.
+- A side effect that executes but cannot be verified is not marked complete; consequential approval is not restored for an ambiguous retry.
 
 Validation / evidence:
-- Source-level review checked existing `ScopedApprovalAuthorizer`, `CapabilityToolExecutor`, job contracts/orchestrator, and current job tests before implementation.
-- New tests were added, but this runtime still does not provide `dotnet`, `csc`, or `msbuild`; they MUST NOT be claimed as passing until a .NET-capable runner executes them.
-- No CI workflow was added or triggered, avoiding unnecessary GitHub Actions usage.
+- Source-level review covered `BrowserSafetyPolicy`, browser contracts/executor, capability registry/policy, scoped approvals, job contracts/orchestrator, Playwright driver and warning-as-error test settings before/after implementation.
+- Runtime tool check again found no `dotnet`, `csc`, or `msbuild`; therefore the new code/tests MUST NOT be claimed as compiled or passing.
+- No GitHub Actions workflow was added or triggered, avoiding unnecessary Actions usage.
 
 Unverified / risks:
-- Full solution compilation remains the immediate verification risk, including C# default-interface-method compatibility across the existing test project.
-- The new context is not yet used by a concrete browser job handler that routes a resumed browser action through `CapabilityToolExecutor` and then `PlaywrightBrowserDriver`.
-- No deterministic Chromium integration test exists yet.
-- Popup/new-tab ownership, durable download receipts and authenticated browser-context lifecycle remain incomplete.
-- Audit storage is append-only at API level but not tamper-evident/encrypted; persistent memory is not yet OS-encrypted at rest.
+- Full .NET compilation is still the highest immediate technical risk.
+- The new browser job tests use a deterministic fake `IBrowserDriver`; a real Chromium/Playwright integration test still does not exist.
+- Browser action checkpoint payloads are currently plain JSON; general job-store-at-rest encryption is not yet implemented.
+- Popup/new-tab ownership, authenticated browser-context lifecycle, downloads as durable artifacts, and navigation race handling remain incomplete.
+- `BrowserCapabilityBackend` must only be exposed through the trusted composition root; direct construction by untrusted plugin code would bypass the intended outer policy architecture.
+- Audit storage remains append-only at the API level but not tamper-evident/encrypted.
 
 Next highest-value task:
-- Build the **concrete browser capability backend + browser job handler** so a planned browser action is transformed into a `CapabilityInvocation`, checked by `BrowserSafetyPolicy`/system capability policy, supplied the exact grant from `JobExecutionContext` only when required, executed through `CapabilityToolExecutor`, then applied by `PlaywrightBrowserDriver` with fresh observation verification. Add mocked end-to-end contract tests for read-only actions, approval-paused consequential actions, wrong/missing grant behavior, untrusted-page content and failed post-action verification. After that, begin the Windows composition root/shell integration and obtain a real .NET/Playwright compile-and-run signal as soon as tooling permits.
+- Build the **Windows composition root + minimal desktop shell integration** so the existing hotkey/context/orb patterns can invoke the real Nemotron/Nebius agent core, memory, research and browser-job stack through one trusted dependency graph. In parallel, add a deterministic Playwright Chromium integration harness that can run locally without secrets and obtain the first real `dotnet test` + browser execution signal as soon as a .NET-capable environment is available. Then harden authenticated browser session ownership, popup/download handling and encrypted local persistence.

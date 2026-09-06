@@ -84,14 +84,26 @@ public sealed class EphemeralJobApprovalTests
     }
 
     [Fact]
-    public void Execution_context_refuses_scope_substitution_and_consumes_exact_grant_once()
+    public async Task Wrong_scope_never_mints_an_ephemeral_grant()
     {
-        var grant = new ApprovalGrant(Guid.NewGuid(), "email.send:42", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddMinutes(1));
-        var context = new JobExecutionContextFactory().Create(Guid.NewGuid(), grant);
+        var store = new InMemoryStore();
+        var audit = new InMemoryAudit();
+        var ephemeral = new EphemeralJobApprovalStore();
+        var handler = new ApprovalAwareHandler("email.send:42");
+        var orchestrator = new ResumableJobOrchestrator(
+            store,
+            new ConservativeJobExecutionPolicy(),
+            audit,
+            new[] { handler },
+            new ScopedApprovalAuthorizer(),
+            ephemeral);
 
-        Assert.Null(context.TakeApproval("email.send:other"));
-        Assert.Same(grant, context.TakeApproval("email.send:42"));
-        Assert.Null(context.TakeApproval("email.send:42"));
+        var job = await orchestrator.CreateAsync(Definition());
+        await orchestrator.RunNextStepAsync(job.JobId);
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            orchestrator.ResumeAfterApprovalAsync(job.JobId, "email.send:other"));
+        Assert.Null(ephemeral.Take(job.JobId));
     }
 
     private static AgentJobDefinition Definition() =>
@@ -143,20 +155,5 @@ public sealed class EphemeralJobApprovalTests
         public Task AppendAsync(AuditEvent auditEvent, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task<IReadOnlyList<AuditEvent>> ReadAllAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<AuditEvent>>(Array.Empty<AuditEvent>());
-    }
-
-    private sealed class JobExecutionContextFactory
-    {
-        public JobExecutionContext Create(Guid jobId, ApprovalGrant grant)
-        {
-            var store = new EphemeralJobApprovalStore();
-            store.Put(jobId, grant);
-            return (JobExecutionContext)Activator.CreateInstance(
-                typeof(JobExecutionContext),
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic,
-                binder: null,
-                args: new object?[] { jobId, store.Take(jobId) },
-                culture: null)!;
-        }
     }
 }

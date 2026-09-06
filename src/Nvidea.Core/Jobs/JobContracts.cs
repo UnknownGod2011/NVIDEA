@@ -63,7 +63,19 @@ public interface IAgentJobStore
 public interface IAgentJobHandler
 {
     string JobType { get; }
+
     Task<JobStepResult> ExecuteStepAsync(AgentJobRecord job, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Context-aware execution hook. Existing handlers remain source-compatible via
+    /// the default implementation; consequential handlers should override this form
+    /// and take the exact ephemeral approval only at the immediate tool call.
+    /// </summary>
+    Task<JobStepResult> ExecuteStepAsync(
+        AgentJobRecord job,
+        JobExecutionContext executionContext,
+        CancellationToken cancellationToken = default) =>
+        ExecuteStepAsync(job, cancellationToken);
 }
 
 public interface IJobExecutionPolicy

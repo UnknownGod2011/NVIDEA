@@ -1,0 +1,58 @@
+<Window x:Class="Nvidea.Windows.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="NVIDEA" Height="560" Width="760" MinHeight="460" MinWidth="620"
+        WindowStartupLocation="CenterScreen">
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0">
+            <TextBlock Text="NVIDEA" FontSize="26" FontWeight="SemiBold"/>
+            <TextBlock Text="Ctrl+Shift+Space invokes from anywhere on Windows" Opacity="0.72" Margin="0,2,0,12"/>
+        </StackPanel>
+
+        <TextBox x:Name="PromptBox" Grid.Row="1" MinHeight="86" TextWrapping="Wrap"
+                 AcceptsReturn="True" VerticalScrollBarVisibility="Auto"
+                 ToolTip="Ask NVIDEA or prefix with research:"/>
+
+        <Grid Grid.Row="2" Margin="0,10,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <ComboBox x:Name="ModeBox" Width="110" SelectedIndex="0">
+                <ComboBoxItem Content="Auto"/>
+                <ComboBoxItem Content="Chat"/>
+                <ComboBoxItem Content="Research"/>
+            </ComboBox>
+            <CheckBox x:Name="ClipboardCheck" Grid.Column="1" Content="Allow clipboard context"
+                      VerticalAlignment="Center" Margin="14,0,0,0"/>
+            <TextBlock x:Name="ContextText" Grid.Column="2" VerticalAlignment="Center"
+                       Margin="14,0" TextTrimming="CharacterEllipsis" Opacity="0.65"/>
+            <Button x:Name="StopButton" Grid.Column="3" Content="Emergency stop" Padding="12,6"
+                    Click="StopButton_Click" IsEnabled="False" Margin="0,0,8,0"/>
+            <Button x:Name="InvokeButton" Grid.Column="4" Content="Run" Padding="20,6"
+                    Click="InvokeButton_Click" IsDefault="True"/>
+        </Grid>
+
+        <TextBox x:Name="OutputBox" Grid.Row="3" IsReadOnly="True" TextWrapping="Wrap"
+                 VerticalScrollBarVisibility="Auto" AcceptsReturn="True"/>
+
+        <DockPanel Grid.Row="4" Margin="0,10,0,0">
+            <TextBlock Text="Status:" FontWeight="SemiBold"/>
+            <TextBlock x:Name="StatusText" Text="Idle" Margin="6,0,0,0"/>
+            <TextBlock Text="Clipboard is never sent unless the checkbox is enabled." DockPanel.Dock="Right"
+                       Opacity="0.58"/>
+        </DockPanel>
+    </Grid>
+</Window>

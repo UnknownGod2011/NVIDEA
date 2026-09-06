@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
@@ -31,32 +32,28 @@ public sealed class ResearchEngine
 
     private const string PlanningSchema = """
         {
-          "name":"research_plan",
-          "strict":true,
-          "schema":{
-            "type":"object",
-            "properties":{
-              "queries":{
-                "type":"array",
-                "minItems":1,
-                "maxItems":6,
-                "items":{
-                  "type":"object",
-                  "properties":{
-                    "query":{"type":"string"},
-                    "topic":{"type":"string","enum":["general","news"]},
-                    "maxResults":{"type":"integer","minimum":1,"maximum":10},
-                    "startDate":{"type":["string","null"]},
-                    "endDate":{"type":["string","null"]}
-                  },
-                  "required":["query","topic","maxResults","startDate","endDate"],
-                  "additionalProperties":false
-                }
+          "type":"object",
+          "properties":{
+            "queries":{
+              "type":"array",
+              "minItems":1,
+              "maxItems":6,
+              "items":{
+                "type":"object",
+                "properties":{
+                  "query":{"type":"string"},
+                  "topic":{"type":"string","enum":["general","news"]},
+                  "maxResults":{"type":"integer","minimum":1,"maximum":10},
+                  "startDate":{"type":["string","null"]},
+                  "endDate":{"type":["string","null"]}
+                },
+                "required":["query","topic","maxResults","startDate","endDate"],
+                "additionalProperties":false
               }
-            },
-            "required":["queries"],
-            "additionalProperties":false
-          }
+            }
+          },
+          "required":["queries"],
+          "additionalProperties":false
         }
         """;
 
@@ -172,7 +169,7 @@ public sealed class ResearchEngine
     {
         if (string.IsNullOrWhiteSpace(value))
             return null;
-        return DateOnly.TryParseExact(value, "yyyy-MM-dd", out var parsed)
+        return DateOnly.TryParseExact(value, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed)
             ? parsed
             : throw new InvalidOperationException("Research plan contains an invalid date.");
     }

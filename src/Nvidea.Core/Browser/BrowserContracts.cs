@@ -40,7 +40,7 @@ public sealed record BrowserLocator(
     public static BrowserLocator Accessibility(string reference) =>
         new(BrowserLocatorKind.AccessibilityRef, reference);
 
-    public static BrowserLocator Role(string role, string name) =>
+    public static BrowserLocator ByRole(string role, string name) =>
         new(BrowserLocatorKind.RoleAndName, name, name, role);
 }
 

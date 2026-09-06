@@ -107,7 +107,7 @@ public sealed class BrowserActionJobHandlerTests
         var result = await fixture.Orchestrator.RunNextStepAsync(job.JobId);
 
         Assert.Equal(AgentJobState.RetryScheduled, result.State);
-        Assert.Contains("did not execute", result.LastError, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("did not execute", result.LastError ?? string.Empty, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, fixture.Driver.ExecutionCount);
     }
 
@@ -132,7 +132,7 @@ public sealed class BrowserActionJobHandlerTests
 
         Assert.Equal(AgentJobState.RetryScheduled, result.State);
         Assert.Equal(1, fixture.Driver.ExecutionCount);
-        Assert.Contains("verification failed", result.LastError, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("verification failed", result.LastError ?? string.Empty, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -156,6 +156,7 @@ public sealed class BrowserActionJobHandlerTests
         Assert.Equal(0, fixture.Driver.ExecutionCount);
         Assert.Contains(fixture.Audit.Events, x =>
             x.EventType == "tool.awaiting_approval"
+            && x.Metadata is not null
             && x.Metadata.TryGetValue("untrustedSourcePresent", out var present)
             && string.Equals(present, bool.TrueString, StringComparison.OrdinalIgnoreCase));
     }

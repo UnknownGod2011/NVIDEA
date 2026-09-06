@@ -11,7 +11,7 @@ public sealed class BrowserAgentTests
         var observation = Observation("https://example.com/login", "Login");
         var action = new BrowserAction(
             BrowserActionKind.Type,
-            BrowserLocator.Role("textbox", "Password"),
+            BrowserLocator.ByRole("textbox", "Password"),
             Value: "hunter2");
 
         var decision = policy.Evaluate(action, observation);
@@ -26,7 +26,7 @@ public sealed class BrowserAgentTests
         var policy = new BrowserSafetyPolicy();
         var action = new BrowserAction(
             BrowserActionKind.Click,
-            BrowserLocator.Role("button", "Submit application"));
+            BrowserLocator.ByRole("button", "Submit application"));
 
         var decision = policy.Evaluate(action, Observation("https://example.com/apply", "Apply"));
 
@@ -60,7 +60,7 @@ public sealed class BrowserAgentTests
 
         var receipt = await executor.ExecuteOneAsync(new BrowserAction(
             BrowserActionKind.Click,
-            BrowserLocator.Role("button", "Send")));
+            BrowserLocator.ByRole("button", "Send")));
 
         Assert.False(receipt.DriverReportedSuccess);
         Assert.False(receipt.Verified);
@@ -81,7 +81,7 @@ public sealed class BrowserAgentTests
 
         var receipt = await executor.ExecuteOneAsync(new BrowserAction(
             BrowserActionKind.Click,
-            BrowserLocator.Role("button", "Open dashboard"),
+            BrowserLocator.ByRole("button", "Open dashboard"),
             ExpectedState: "Welcome back"));
 
         Assert.True(receipt.DriverReportedSuccess);
@@ -104,7 +104,7 @@ public sealed class BrowserAgentTests
 
         var receipts = await executor.ExecutePlanAsync(new[]
         {
-            new BrowserAction(BrowserActionKind.Click, BrowserLocator.Role("button", "Open")),
+            new BrowserAction(BrowserActionKind.Click, BrowserLocator.ByRole("button", "Open")),
             new BrowserAction(BrowserActionKind.Refresh)
         });
 

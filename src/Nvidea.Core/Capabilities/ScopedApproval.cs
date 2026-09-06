@@ -18,11 +18,24 @@ public sealed class ScopedApprovalAuthorizer
         ArgumentNullException.ThrowIfNull(decision);
         if (!decision.Allowed || !decision.RequiresApproval || string.IsNullOrWhiteSpace(decision.ApprovalScope))
             throw new InvalidOperationException("Only allowed decisions requiring approval can receive a grant.");
+
+        return GrantExactScope(decision.ApprovalScope, lifetime);
+    }
+
+    /// <summary>
+    /// Creates a short-lived single-use grant after an explicit user approval path has
+    /// already verified the exact paused action scope. The returned grant is intended
+    /// for in-memory execution context only and must never be serialized into job state.
+    /// </summary>
+    public ApprovalGrant GrantExactScope(string approvalScope, TimeSpan lifetime)
+    {
+        if (string.IsNullOrWhiteSpace(approvalScope))
+            throw new ArgumentException("Approval scope is required.", nameof(approvalScope));
         if (lifetime <= TimeSpan.Zero || lifetime > TimeSpan.FromMinutes(15))
             throw new ArgumentOutOfRangeException(nameof(lifetime), "Approval lifetime must be greater than zero and no more than 15 minutes.");
 
         var now = DateTimeOffset.UtcNow;
-        var grant = new ApprovalGrant(Guid.NewGuid(), decision.ApprovalScope, now, now.Add(lifetime));
+        var grant = new ApprovalGrant(Guid.NewGuid(), approvalScope.Trim(), now, now.Add(lifetime));
         lock (_sync)
             _grants[grant.GrantId] = grant;
         return grant;

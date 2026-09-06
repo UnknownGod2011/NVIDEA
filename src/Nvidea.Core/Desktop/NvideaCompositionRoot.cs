@@ -20,16 +20,19 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         HttpClient? tavilyHttp,
         JsonFileMemoryStore memoryStore,
         PersonalMemoryService memory,
-        DesktopInvocationService desktop)
+        DesktopInvocationService desktop,
+        DesktopSessionController session)
     {
         _nebiusHttp = nebiusHttp;
         _tavilyHttp = tavilyHttp;
         _memoryStore = memoryStore;
         _memory = memory;
         Desktop = desktop;
+        Session = session;
     }
 
     public DesktopInvocationService Desktop { get; }
+    public DesktopSessionController Session { get; }
     public PersonalMemoryService Memory => _memory;
 
     public static async Task<NvideaCompositionRoot> CreateFromEnvironmentAsync(
@@ -58,11 +61,13 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         }
 
         var desktop = new DesktopInvocationService(inference, memory, research);
-        return new NvideaCompositionRoot(nebiusHttp, tavilyHttp, memoryStore, memory, desktop);
+        var session = new DesktopSessionController(desktop);
+        return new NvideaCompositionRoot(nebiusHttp, tavilyHttp, memoryStore, memory, desktop, session);
     }
 
     public async ValueTask DisposeAsync()
     {
+        Session.Dispose();
         _memory.Dispose();
         _memoryStore.Dispose();
         _tavilyHttp?.Dispose();

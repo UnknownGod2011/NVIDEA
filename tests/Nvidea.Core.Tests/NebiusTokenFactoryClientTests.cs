@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Nvidea.Core.Nebius;
 
 namespace Nvidea.Core.Tests;
@@ -21,9 +22,7 @@ public sealed class NebiusTokenFactoryClientTests
     [Fact]
     public void Router_uses_explicit_tier_overrides_without_guessing_model_ids()
     {
-        var options = TestOptions() withOverrides;
-
-        static NebiusOptions withOverrides => new()
+        var options = new NebiusOptions
         {
             ApiKey = "test-key",
             FastModel = "nvidia/verified-fast-model",
@@ -65,7 +64,7 @@ public sealed class NebiusTokenFactoryClientTests
 
         using var httpClient = new HttpClient(handler);
         var client = new NebiusTokenFactoryClient(httpClient, TestOptions());
-        var toolSchema = JsonSerializer.Deserialize<JsonObject>("""{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}""")!;
+        var toolSchema = JsonNode.Parse("""{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}""")!.AsObject();
 
         var completion = await client.CompleteAsync(new AgentRequest(
             [new ChatMessage("user", "Find what I remember about the hackathon")],

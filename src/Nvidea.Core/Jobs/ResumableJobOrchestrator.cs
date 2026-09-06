@@ -109,7 +109,8 @@ public sealed class ResumableJobOrchestrator
         await _store.SaveAsync(resumed, cancellationToken).ConfigureAwait(false);
         var grant = _approvalAuthorizer.GrantExactScope(approvalScope, TimeSpan.FromMinutes(2));
         _ephemeralApprovals.Put(jobId, grant);
-        await AuditAsync(resumed, "job.approved", true, true, "Exact paused action approved with ephemeral single-use execution grant.", cancellationToken).ConfigureAwait(false);
+        var auditableApproval = resumed with { ApprovalScope = approvalScope };
+        await AuditAsync(auditableApproval, "job.approved", true, true, "Exact paused action approved with ephemeral single-use execution grant.", cancellationToken).ConfigureAwait(false);
         return resumed;
     }
 

@@ -173,7 +173,9 @@ public sealed class NebiusServerlessJobClient : INebiusServerlessJobClient
                 lastTransient = ex;
                 await DelayAsync(attempt, cancellationToken).ConfigureAwait(false);
             }
-            catch (HttpRequestException ex) when (attempt < _options.MaxRetries)
+            catch (HttpRequestException ex) when (
+                attempt < _options.MaxRetries
+                && (ex.StatusCode is null || IsTransient(ex.StatusCode.Value)))
             {
                 lastTransient = ex;
                 await DelayAsync(attempt, cancellationToken).ConfigureAwait(false);

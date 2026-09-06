@@ -37,8 +37,9 @@ The <=3 minute demo should prove invocation anywhere on Windows, context awarene
 - System-wide capability/permission/approval/audit foundation under `Capabilities`.
 - Durable resumable jobs, ephemeral approval handoff and Nebius Serverless REST contract under `Jobs`.
 - End-to-end browser jobs route through fresh observation -> browser safety -> capability policy -> exact ephemeral approval -> concrete driver -> fresh observation -> verification.
-- New trusted desktop-facing composition layer under `Desktop` now gives the Windows shell one safe API for Nemotron, memory and optional Tavily research.
-- New desktop session controller exposes observable agent states and a real emergency-stop cancellation path suitable for orb/hotkey UX.
+- Trusted desktop-facing composition layer under `Desktop` gives Windows code one safe API for Nemotron, memory and optional Tavily research.
+- Desktop session controller exposes observable agent states and real emergency-stop cancellation.
+- Minimal WPF Windows host now exists at `src/Nvidea.Windows` with global `Ctrl+Shift+Space`, text invocation, foreground-app/window context, explicit clipboard disclosure, state/status binding and emergency stop.
 - Root README + MIT license.
 - No repository other than NVIDEA has been mutated.
 
@@ -62,53 +63,51 @@ The <=3 minute demo should prove invocation anywhere on Windows, context awarene
 - Added regression tests for blocked credentials, wrong-scope approval, approval replay prevention, prompt injection, post-action verification and failed/ambiguous side effects.
 
 ### 2026-09-07 — Trusted desktop invocation/composition layer
+- Added `DesktopInvocationService`, `NvideaCompositionRoot` and `DesktopSessionController`.
+- Desktop invocation accepts app/window/selection/clipboard context, marks external data untrusted, retrieves bounded relevant memory, routes current research through Tavily, and keeps raw provider credentials behind the composition root.
+- Clipboard contents are withheld by default and only disclosed when explicitly allowed per invocation.
+- Session controller serializes foreground invocations, emits orb-friendly states and propagates emergency stop through linked cancellation tokens.
+- Added desktop privacy, memory, research-failure and cancellation tests.
+
+### 2026-09-07 — Minimal Windows WPF host
 Completed:
-- Re-verified `UnknownGod2011/NVIDEA` before every GitHub mutation; no writes occurred anywhere else.
-- Added `Desktop/DesktopInvocation.cs` with `DesktopInvocationService`, the trusted high-level API intended for Windows shell code.
-- Desktop invocation now:
-  - accepts active application, window title, selected text and clipboard context;
-  - labels selected text, clipboard content and memory excerpts as untrusted data before sending them to Nemotron;
-  - withholds clipboard contents by default and only discloses them when the local shell explicitly sets `AllowClipboardContext`;
-  - retrieves only Public/Personal memory by default and passes bounded relevant memory to Nemotron as potentially stale/untrusted context;
-  - keeps automatic current-information requests on the Tavily/Nemotron research path when research is configured;
-  - fails closed if research is requested but Tavily is unavailable rather than silently falling back to unsupported model knowledge;
-  - applies conservative fast/standard/deep workload selection based on prompt/context size;
-  - never claims tool execution in its system policy unless a verified receipt exists.
-- Added `Desktop/NvideaCompositionRoot.cs`:
-  - provider credentials/raw clients remain owned by one trusted root rather than UI/plugin code;
-  - creates Nebius inference + local memory from environment/configuration;
-  - adds Tavily research only when `TAVILY_API_KEY` exists, allowing ordinary local desktop chat to remain usable without Tavily;
-  - defaults local state to `%LOCALAPPDATA%/NVIDEA` without committing secrets.
-- Added `Desktop/DesktopSessionController.cs`:
-  - one active invocation at a time;
-  - status states suitable for orb UI (`Idle`, `Thinking`, `Researching`, `WaitingForApproval`, `Acting`, `Completed`, `Cancelled`, `Failed`, etc.);
-  - real linked cancellation so emergency stop terminates the active provider call rather than merely changing UI state;
-  - status-change event for future WPF/WinUI binding.
-- Added `DesktopInvocationTests.cs` covering clipboard non-disclosure by default, explicit clipboard disclosure, relevant-memory injection as untrusted data and fail-closed research when Tavily is absent.
-- Added `DesktopSessionControllerTests.cs` covering emergency-stop cancellation and concurrent-invocation rejection.
+- Re-verified `UnknownGod2011/NVIDEA` immediately before every GitHub mutation; no writes occurred anywhere else.
+- Added `src/Nvidea.Windows/Nvidea.Windows.csproj` targeting `net8.0-windows` + WPF and referencing only `Nvidea.Core`.
+- Added application bootstrap that creates `NvideaCompositionRoot` from environment configuration and fails visibly if required Nebius configuration is absent.
+- Added `WindowsContextCapture` using bounded Win32 foreground-window/process metadata and optional clipboard capture.
+- Clipboard capture is opt-in and catches transient clipboard lock failures instead of failing the entire invocation.
+- Added a compact WPF host with:
+  - global `Ctrl+Shift+Space` registration via `RegisterHotKey`;
+  - foreground context capture before NVIDEA activates itself, preserving the invoking application/window;
+  - Auto/Chat/Research mode selection;
+  - explicit `Allow clipboard context` control;
+  - live session status binding;
+  - emergency-stop button wired to `DesktopSessionController.EmergencyStop()`;
+  - bounded error display rather than fake success states.
+- Hotkey registration failure degrades to manual Run-button invocation rather than preventing startup.
+- Clipboard disclosure is re-checked at execution time; a previous hotkey capture cannot cause clipboard contents to be sent after the user disables disclosure.
 
 Security / privacy review:
-- Clipboard disclosure is local-policy opt-in per invocation; presence can be acknowledged without sending contents.
-- Context strings are bounded before provider disclosure to control cost and reduce prompt-injection blast radius.
-- Selected text/memory/clipboard are explicitly data, never policy or authorization.
-- Composition root does not expose raw provider clients or API keys to shell code.
-- Emergency stop propagates through a linked `CancellationToken` to provider operations.
-- This layer intentionally does not expose browser-driver construction; browser tools remain behind their capability/approval boundary.
+- Provider keys remain behind `NvideaCompositionRoot`; the WPF host never receives raw inference/Tavily clients.
+- Clipboard is neither read nor sent by default.
+- Active window/process context is bounded and treated by the existing desktop service as untrusted data.
+- Global hotkey only summons/captures context; it does not directly execute consequential browser/OS actions.
+- Emergency stop cancels the active provider operation rather than only changing UI state.
+- No browser safety, permission, approval or audit floor was bypassed or weakened.
 
 Validation / evidence:
-- Source inspection covered existing inference, memory, Tavily and browser/job contracts before composing them.
-- Environment check found no `dotnet`, `msbuild` or `csc`; therefore new desktop code/tests are NOT claimed as compiled or passing.
-- No GitHub Actions workflow was added, triggered or rerun, avoiding unnecessary CI/storage usage.
+- Source review covered the new WPF project reference, bootstrap, Win32 P/Invoke signatures, clipboard failure handling, hotkey lifecycle, context timing and session integration.
+- This execution environment still does not expose a usable Windows/.NET build runtime, so `Nvidea.Windows` is NOT claimed as compiled or launched.
+- No GitHub Actions workflow was added, triggered or rerun, avoiding CI/storage spam.
 
 Unverified / risks:
-- Full .NET compilation remains the highest immediate technical risk across the repository.
-- The current composition root wires Nemotron, memory and research but does not yet instantiate the trusted Playwright/browser-job/capability graph; that remains deliberately isolated until a concrete Windows host owns browser lifetime/session boundaries.
-- No actual WPF/WinUI shell exists yet; current desktop layer is the production-facing core contract the shell should bind to.
-- Active-app/selected-text/clipboard capture providers and global hotkey implementation remain Windows-host work.
-- Voice/local transcription and orb rendering are not yet ported/adapted.
+- Full repository compilation remains the highest immediate technical risk.
+- Selected-text capture is not yet implemented in the Windows host; the core contract supports it, but the host currently supplies `null` rather than using unsafe clipboard-stealing tricks.
+- The WPF shell is functional/minimal rather than polished orb UX; voice/local transcription remains absent.
+- The trusted Windows composition root still does not instantiate browser lifetime/session ownership or permission-approval UI.
 - Memory/job/audit JSON persistence is not yet encrypted at rest.
 - Authenticated Playwright session ownership, popup/new-tab lifecycle and durable download handling remain incomplete.
 - A deterministic real Chromium integration harness still does not exist.
 
 ## Single Best Next Task
-Build a minimal **Windows desktop host project** that binds global-hotkey/text invocation + active-app/selected-text/clipboard capture + orb/status UI to `NvideaCompositionRoot.Session`, with emergency stop and explicit clipboard disclosure UI. Keep browser construction inside the trusted host and route browser work only through existing capability/job APIs. In the same run, add a credential-free deterministic Playwright local-page integration harness if the project can remain buildable without secrets. Then obtain the first real `dotnet test`/Chromium execution signal as soon as a .NET-capable environment is available.
+Add **safe selected-text capture + explicit approval UX + browser host composition**: use Windows accessibility/UI Automation for read-only selection retrieval where supported (without synthesizing Ctrl+C or mutating the clipboard), add a concrete approval dialog/view-model that can mint only the exact ephemeral grant requested by a paused capability/job, and instantiate Playwright/browser-job lifetime inside the trusted Windows host so a deterministic local browser scenario can demonstrate observe -> plan -> approval -> action -> verification. Pair this with the first credential-free Chromium integration harness and obtain real `dotnet test`/Windows launch evidence as soon as a .NET-capable environment is available.

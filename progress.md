@@ -1,11 +1,9 @@
 # NVIDEA Hackathon Progress
 
 ## Mission
-Build a competition-grade, open-source Personal AI edition inspired by keyboard.wtf for the Nebius x NVIDIA Global AI Hackathon. The project must preserve the strongest desktop-assistant ideas while materially upgrading the intelligence/runtime into an NVIDIA/Nebius-first agent system with durable memory, research, complex browser automation, skills, permissioning, verification, and long-running execution.
+Build a competition-grade, open-source Personal AI edition inspired by keyboard.wtf for the Nebius x NVIDIA Global AI Hackathon. Preserve the strongest Windows interaction ideas while materially upgrading the intelligence/runtime into an NVIDIA/Nebius-first agent system with durable memory, research, complex browser automation, skills, permissioning, verification, and long-running execution.
 
-Target track: Personal AI.
-Secondary prize target: Best Use of Tavily.
-Overall ambition: top-three / Grand Prize quality, judged as a complete product rather than a model wrapper.
+Target track: **Personal AI**. Secondary prize target: **Best Use of Tavily**. Overall ambition: top-three / Grand Prize quality as a complete product rather than a model wrapper.
 
 ## HARD REPOSITORY BOUNDARY
 - WRITE ONLY to `UnknownGod2011/NVIDEA`.
@@ -15,200 +13,143 @@ Overall ambition: top-three / Grand Prize quality, judged as a complete product 
 - Do not delete existing NVIDEA functionality merely to simplify implementation; migrate/refactor carefully and keep working paths unless a tested replacement exists.
 
 ## Required Work Loop
-Every automation run must:
-1. Read this file before doing anything else.
-2. Inspect the current NVIDEA repo state and recent changes.
-3. Choose the highest-value unfinished engineering task that improves the actual product and hackathon score.
-4. Research current official Nebius/NVIDIA/Tavily docs when an API/model/platform assumption could be stale.
-5. Implement real code/config/tests/docs in NVIDEA; do not spend a run only planning when a safe implementation is possible.
-6. Test/validate as far as available tooling permits; never claim unverified behavior works.
-7. Review the change for security, privacy, permissions, failure modes, Windows UX, and hackathon-rule fit.
-8. Update this file at the end with what changed, evidence/tests, unresolved risks, and the next best task.
-9. Continue on the next hourly run. Do not declare the project 'done' while meaningful quality, reliability, UX, testing, architecture, or demo improvements remain.
+Every run must:
+1. Read this file first.
+2. Inspect current NVIDEA state and recent changes.
+3. Choose the highest-value unfinished engineering task.
+4. Verify current official platform/model/API assumptions when they can be stale.
+5. Implement real code/config/tests/docs in NVIDEA; do not spend a run only planning when safe implementation is possible.
+6. Validate as far as available tooling permits; never claim unverified behavior works.
+7. Review correctness, privacy, permissions, prompt injection/tool trust, secrets, recovery/cancellation, UX, latency/cost and hackathon fit.
+8. Update this file with completed work, evidence, unverified items, risks, blockers and the single best next task.
+9. Continue improving on future runs while meaningful product/engineering work remains.
 
-## Baseline: keyboard.wtf strengths to reuse conceptually/code-wise where license/structure permits
-- Windows .NET desktop app with global hotkeys and voice orb.
-- Local Vosk/Whisper speech paths.
-- Jarvis mode with allow-listed tools and confirmation gates.
-- Active-app / selected-text / clipboard context.
-- App/file/folder resolution, local aliases, workflows, action history.
-- Browser tab controls and safe desktop actions.
-- Local encrypted secrets and privacy-conscious behavior.
-- Existing destination integrations and installer/release structure.
-
-## Baseline weaknesses that MUST be materially solved
+## Product gaps inherited from keyboard.wtf that NVIDEA must solve
 ### Memory
-Current keyboard.wtf memory is intentionally tiny/simple: explicit key/value entries, 20-entry cap, substring search, short prompt digest. Replace this with a layered personal-memory system rather than merely increasing the cap.
-
-Desired memory layers:
-- working/session memory
-- episodic interaction/action memory
-- semantic/profile/preferences memory
-- project/entity memory
-- reusable workflow/skill memory
-- retrieval with semantic relevance + recency + importance
-- provenance, timestamps, confidence, user edit/delete controls
-- privacy boundaries and retention controls
-- compaction/summarization to control context and cost
-- memory write policy that avoids saving junk or sensitive content unintentionally
+keyboard.wtf currently has bounded explicit key/value intent memory. NVIDEA must provide real working/session, episodic, semantic/profile, project/entity and skill/workflow memory with retrieval, provenance, sensitivity/retention, user controls and compaction.
 
 ### Research
-Add a proper research subsystem using Tavily where appropriate:
-- search -> source collection -> extraction -> synthesis -> citation/provenance
-- multi-query planning for non-trivial questions
-- stale-information detection
-- source quality ranking and deduplication
-- tool-result grounding and explicit uncertainty
-- resumable research tasks for long jobs
+Build Tavily-backed multi-query research with source collection/extraction, freshness, quality ranking, deduplication, citations/provenance, explicit uncertainty and resumable long tasks.
 
 ### Browser automation
-Current browser capability is mostly tab/navigation/search control and explicitly lacks full DOM reading/form automation. Build a real browser agent layer with safe, auditable execution.
-
-Desired capabilities:
-- browser session abstraction
-- DOM/accessibility-tree-first inspection rather than coordinate-only clicking
-- navigation, read, click, type, select, upload/download when permissioned
-- robust selector strategy and retries
-- page-state verification after actions
-- structured observations for the reasoning model
-- plan -> act -> observe -> verify loop
-- timeout/cancellation/recovery
-- authentication/session boundaries; never bypass login, CAPTCHA, OS/browser permissions, or site safeguards
-- explicit approval for high-impact actions (send, submit, purchase, delete, publish, financial/account changes)
-- audit log / screenshots or evidence references where appropriate
-- anti-prompt-injection/tool-output trust boundaries
+Build DOM/accessibility-first browser agency with navigation/read/click/type/select/upload/download where permissioned, robust locators, plan-act-observe-verify, state verification, retries/cancellation/recovery, authentication boundaries, prompt-injection defenses, audit evidence and confirmation gates for consequential actions.
 
 ## Target Architecture
 ### Desktop shell
-Keep a fast Windows-first interaction surface: hotkeys, voice/text, orb/status, local context, permission UX.
+Windows-first hotkeys, voice/text, orb/status, active-app/selected-text/clipboard context, permission UX, local speech where useful and emergency stop.
 
 ### Agent core
-- task planner/state machine
-- structured tool calling
-- iterative plan/act/observe/verify
-- interruption/cancel
-- retries and bounded autonomy
-- explicit completion criteria
-- human-in-the-loop approvals
+Task planner/state machine; structured tool calls; iterative plan -> act -> observe -> verify; bounded autonomy; cancellation; retries; explicit completion criteria; human approvals.
 
 ### NVIDIA/Nebius backend
-The hackathon runtime must genuinely depend on NVIDIA open models served through Nebius Token Factory and/or Nebius AI Cloud.
-- route lightweight intents/extraction to a fast Nemotron tier when available
-- route general tool reasoning to an appropriate Nemotron agent/reasoning model
-- route hard/long-context planning/coding/research to the strongest appropriate Nemotron model available in current Nebius docs
-- central provider abstraction, retries, timeout, rate-limit handling, structured-output validation, telemetry and cost/latency observations
-- avoid retaining Gemini/OpenAI/Claude as hidden primary reasoning paths in the hackathon edition; optional compatibility adapters may exist only if clearly non-default and not required for core judging flows
+NVIDIA open models through Nebius Token Factory / Nebius AI Cloud are the genuine core runtime. Use a provider abstraction, verified model IDs, structured output/tool calling, timeout/rate-limit handling and later telemetry/model routing. Gemini/OpenAI/Claude must not be hidden primary dependencies.
+
+### Memory
+Layered typed memory with privacy-aware writes, deterministic persistence, semantic/lexical retrieval, recency/importance weighting, provenance/confidence/sensitivity/retention and user deletion controls. Add compaction/summarization and a verified production embedding adapter later.
+
+### Skills / permissions
+Capability registry with name/version, tools, data permissions, risk class, confirmation requirements, inputs/outputs and evaluation fixtures. Least privilege; consequential send/submit/publish/delete/purchase/financial/account/security actions require approval.
 
 ### Nebius execution
-Use Nebius serverless/cloud components where they add real value, especially for long-running/background jobs. Keep local execution for OS-private actions that must remain on the user's machine.
-
-### Skills
-Build a capability/skill registry with declared:
-- name/version
-- tools required
-- data permissions
-- risk class
-- confirmation requirements
-- inputs/outputs
-- test/evaluation fixtures
-
-Candidate skills: research, browser task, email drafting, calendar preparation, coding/repo help, file summarization, workflow execution.
-
-### Security / personal AI contract
-- least privilege
-- local secrets encryption
-- no silent destructive actions
-- approval policy based on action risk
-- prompt-injection defenses for web/tool content
-- audit trail
-- clear local-vs-cloud data disclosure
-- emergency stop
-- no secret/API-key commits
+Use Nebius serverless/cloud execution where it adds real value to long-running/background work; keep OS-private actions on the user's machine.
 
 ## Hackathon product bar
-Every major feature should strengthen at least one judging dimension:
-- Technological implementation: real agent architecture and substantive Nebius/NVIDIA use.
-- Design: coherent end-to-end desktop experience, not a debug console.
-- Potential impact: a credible personal AI that saves real work across the computer.
-- Quality of idea: personal operating layer, not another chat wrapper.
-
-Demo should eventually prove, in <=3 minutes:
-1. natural invocation from anywhere on Windows;
-2. context understanding;
-3. durable memory influencing a later task;
-4. non-trivial Tavily-backed research with sources;
-5. multi-step browser task with visible plan/verification;
-6. permission gate before a consequential action;
-7. long-running/background task where Nebius infrastructure is meaningful;
-8. concise architecture view showing Nemotron/Nebius/Tavily as core dependencies.
+Every major feature should strengthen technological implementation, design, potential impact or quality/originality of idea. Final <=3 minute demo should prove: invocation anywhere on Windows, context awareness, durable memory affecting later behavior, Tavily research with sources, complex multi-step browser work with verification, approval before a consequential action, meaningful background Nebius execution, and a concise architecture view proving Nemotron/Nebius/Tavily are core.
 
 ## Engineering priorities
-1. Import/adapt only the useful keyboard.wtf foundation into NVIDEA without touching the source repo.
-2. Establish clean solution/package architecture and build/test baseline.
-3. Replace primary AI backend with Nebius Token Factory + NVIDIA Nemotron abstraction.
-4. Implement real layered memory + retrieval + tests.
-5. Implement research subsystem + Tavily + citations/provenance + tests.
-6. Implement browser agent/runtime with safe action/observation/verification loop.
-7. Implement skills, risk/permission engine, audit trail.
-8. Add background/resumable job execution and Nebius serverless integration where justified.
-9. Integrate all of the above into the desktop UX.
-10. Reliability: integration tests, mocks, fixtures, cancellation, retries, offline/error states.
-11. Security/privacy review and threat model.
-12. Packaging, onboarding, sample config, public demo environment.
-13. Hackathon README, architecture diagrams, setup, license, attribution, changes-since-Aug-26 documentation.
-14. Demo scenario, demo data, deterministic fallback, and final judging audit.
+1. Clean solution/package/build/test baseline.
+2. Nebius Token Factory + NVIDIA Nemotron core backend.
+3. Layered memory + retrieval + tests.
+4. Tavily research + citations/provenance + tests.
+5. Safe browser agent/runtime with observation/action/verification loop.
+6. Skills + permission/risk engine + audit trail.
+7. Resumable jobs + Nebius serverless where justified.
+8. Windows desktop UX integration using useful keyboard.wtf patterns read-only.
+9. Reliability/evals, cancellation/retries/offline/error states.
+10. Security/privacy threat model and hardening.
+11. Packaging/onboarding/demo environment.
+12. Hackathon README, architecture diagrams, setup, attribution, significant-changes documentation, demo scenario and final rubric audit.
 
 ## Current State
-- NVIDEA now contains a standalone .NET 8 core project at `src/Nvidea.Core`.
-- The first primary-runtime implementation is an NVIDIA/Nebius-first Token Factory client; no Gemini/OpenAI/Claude dependency is required by the core.
-- Current verified default model ID is `nvidia/nemotron-3-super-120b-a12b`, taken from current Nebius documentation. Optional fast/deep tier IDs are configuration-only until individually verified.
-- A contract-test project exists at `tests/Nvidea.Core.Tests`.
-- Root README and MIT LICENSE now exist, satisfying an important public hackathon-repository requirement early.
-- keyboard.wtf has only been inspected read-only; no mutation was performed there or in any repository other than NVIDEA.
+- Standalone .NET 8 core at `src/Nvidea.Core`.
+- NVIDIA/Nebius-first Token Factory inference client; no Gemini/OpenAI/Claude dependency required by core.
+- Verified default model ID: `nvidia/nemotron-3-super-120b-a12b`; fast/deep tier IDs remain configuration-only until individually verified.
+- Layered personal-memory foundation now exists under `src/Nvidea.Core/Memory`.
+- Contract tests exist under `tests/Nvidea.Core.Tests` for inference and memory behavior.
+- Root README + MIT LICENSE exist.
+- keyboard.wtf has only been inspected read-only; no mutation has been performed there or in any repository other than NVIDEA.
 
 ## Progress Log
 ### 2026-09-06 — Initialization
 - Established immutable repository-safety boundary.
-- Captured keyboard.wtf strengths and known gaps.
-- Defined target Personal AI architecture and hackathon judging bar.
-- Defined memory, research, browser-automation, skills, security, Nebius/NVIDIA and demo workstreams.
+- Captured keyboard.wtf strengths/gaps, Personal AI architecture and judging bar.
+- Defined memory, research, browser automation, skills, security, Nebius/NVIDIA and demo workstreams.
 
 ### 2026-09-06 — Nebius/Nemotron core foundation
 Completed:
-- Inspected current official Nebius Token Factory and NVIDIA Nemotron documentation before selecting API/model assumptions.
-- Verified Token Factory's OpenAI-compatible API surface, native tool/function support, structured JSON support, and exact documented Nemotron 3 Super model ID.
-- Added `src/Nvidea.Core/Nvidea.Core.csproj` targeting .NET 8 with nullable analysis and warnings-as-errors.
-- Added `src/Nvidea.Core/Nebius/NebiusTokenFactoryClient.cs` with:
-  - `IAgentInferenceClient` abstraction;
-  - request/message/tool/result records;
-  - verified Nemotron 3 Super default model;
-  - configurable workload routing for fast/standard/deep tiers without guessing undocumented IDs;
-  - OpenAI-compatible `chat/completions` transport;
-  - bearer authentication;
-  - structured function/tool definitions and tool-call parsing;
-  - optional JSON-schema response format;
-  - cancellation and bounded timeout;
-  - retry policy for timeout, HTTP 429 and 5xx responses;
-  - HTTPS + Nebius-host endpoint validation;
-  - API exceptions that do not place the API key in exception messages.
-- Added `tests/Nvidea.Core.Tests` with contract tests for routing fallback/overrides, bearer auth, request/tool shape, completion parsing, transient retry, non-retryable authentication failure, and unsafe endpoint rejection.
-- Performed a second manual review of the test source and fixed two issues before closing the run: invalid tier-override test syntax and the missing xUnit import.
-- Added README with architecture, configuration, build/test commands, safety contract and project relationship to keyboard.wtf.
-- Added MIT LICENSE.
+- Verified current Nebius Token Factory OpenAI-compatible API, tool/function support, structured JSON support and documented Nemotron 3 Super model ID using official sources.
+- Added `NebiusTokenFactoryClient` + `IAgentInferenceClient` with bearer auth, structured tools/tool-call parsing, optional JSON schema, cancellation/timeouts, bounded retries, HTTPS/Nebius endpoint validation and secret-safe errors.
+- Added conservative fast/standard/deep routing without guessing undocumented model IDs.
+- Added contract tests for request shape, routing, auth, tool calls, retries, failures and endpoint safety.
+- Added root README and MIT LICENSE.
 
-Validation/evidence:
-- Current Nebius documentation shows Token Factory as OpenAI-compatible and documents `nvidia/nemotron-3-super-120b-a12b` as the Nemotron 3 Super API model.
-- Core implementation intentionally uses only framework libraries (`HttpClient`, `System.Text.Json`) and therefore adds no third-party runtime dependency for inference.
-- Tests use an in-memory `HttpMessageHandler`, so they do not require or leak a real Nebius API key.
-- The automation execution environment does NOT contain `dotnet`, `csc`, `mcs`, or `msbuild`, so compilation/tests could not be executed in this run. Do not claim them green until a .NET-capable runner verifies them.
+Validation / known limitations:
+- Runtime uses framework libraries only for inference.
+- Contract tests need no real API key.
+- Execution environment did not provide `dotnet`, `csc`, `mcs` or `msbuild`; compile/test execution remains unverified until a .NET-capable environment runs them.
+- Structured-output behavior still needs real Token Factory integration testing.
+- `Retry-After`, usage/cost telemetry and verified fast/deep model IDs remain future hardening.
+
+### 2026-09-06 — Layered personal-memory foundation
+Completed:
+- Added `MemoryModels.cs` with typed layers: Working, Episodic, Semantic, Project and Skill.
+- Added typed provenance, confidence, importance, sensitivity (Public/Personal/Sensitive/Restricted), retention (Session/7d/30d/Indefinite), expiry and optional embedding metadata.
+- Added `IMemoryEmbeddingProvider`, `IMemoryStore` and `IMemoryWritePolicy` boundaries so storage/embedding backends are replaceable and testable without cloud credentials.
+- Added `DefaultMemoryWritePolicy`:
+  - rejects empty/oversized/invalid confidence/importance writes;
+  - refuses likely private keys, bearer tokens, JWTs and common credential assignments even if the caller asks to save them;
+  - requires explicit user approval for Sensitive/Restricted memories;
+  - requires explicit approval for indefinite retention.
+- Added `JsonFileMemoryStore` with async read/write, serialized enums, process-level write gate, atomic temp-file replacement and no plaintext secret-specific behavior in the memory layer.
+- Added `PersonalMemoryService` with:
+  - explicit initialization and expiry cleanup;
+  - update-in-place for matching layer + key rather than uncontrolled duplicates;
+  - session memory that remains in process and is deliberately excluded from persistence;
+  - 7-day, 30-day and indefinite retention behavior;
+  - default retrieval limited to Public + Personal sensitivity unless the caller explicitly expands scope;
+  - hybrid scoring: semantic similarity when embeddings exist, lexical relevance, recency, importance and confidence;
+  - deterministic lexical fallback when embeddings are unavailable;
+  - embedding failures degrade to lexical retrieval rather than breaking memory operations;
+  - strict relevance gate so recent/important but unrelated memories are not returned merely due to recency;
+  - tag/layer/sensitivity filters;
+  - deletion by id, deletion by layer, expiry purge and snapshots;
+  - access timestamps and immediate persistence of expiry cleanup.
+- Added memory tests covering:
+  - credential-like material rejected even with explicit approval;
+  - sensitive and indefinite retention approval requirements;
+  - session memory never persisted and disappears across service restart;
+  - semantic ranking with deterministic embeddings;
+  - sensitive memory excluded from default search and available only when explicitly scoped in;
+  - seven-day expiry/purge;
+  - matching layer/key update instead of duplicate creation;
+  - JSON store round-trip;
+  - no unrelated results in lexical-only mode;
+  - lexical fallback when embedding provider is unavailable.
+- Updated README to document the memory contract and current implemented status.
+
+Validation / evidence:
+- Performed manual source review after writing the subsystem and fixed a C# regex-literal syntax risk in the secret detector.
+- Performed a second retrieval review and fixed a logic flaw where recency/importance alone could make unrelated memory appear relevant without embeddings.
+- Attempted to clone the public repository into the local execution container for an additional static/toolchain check, but that container has no DNS/network route to GitHub. This does not affect the GitHub connector writes.
+- As in the previous run, no .NET SDK/compiler is available in the execution environment, so the new code/tests have NOT been compiled/executed here. Do not claim green tests until a .NET-capable runner verifies them.
 
 Unverified / risks:
-- Full compile status remains unverified because no .NET SDK/compiler is available in the current execution environment.
-- Structured JSON behavior should be exercised against a real Token Factory endpoint once credentials are available; provider-compatible APIs can differ on optional structured-output details.
-- Fast and Deep model IDs are deliberately unset rather than guessed. Verify exact Token Factory IDs before enabling model-specific routing.
-- Retry policy currently uses bounded exponential delay but does not yet honor `Retry-After`; add this before production hardening.
-- No usage-token/cost telemetry is parsed yet.
-- No desktop shell has yet been ported; this run intentionally established the provider boundary first so later memory/research/browser subsystems do not couple themselves to Gemini-era code.
+- Full compilation remains the highest immediate verification risk because the automation runtime lacks a .NET toolchain.
+- The current JSON persistence is intentionally a deterministic baseline, not yet OS-encrypted storage. Before desktop integration, sensitive persistent memory should use an encrypted-at-rest store or an encryption wrapper backed by Windows DPAPI/key protection.
+- Embeddings are an interface only. Do not guess a Nebius embedding model; verify a current supported production embedding endpoint/model before implementing the adapter.
+- Memory compaction/summarization, salience promotion/demotion, contradiction handling and user-facing memory-management UX are not yet implemented.
+- `SnapshotAsync` is a management/debug primitive and can expose all loaded sensitivity classes; UI callers must not use it as ambient prompt context. Normal `SearchAsync` defaults to Public + Personal only.
+- Embedding failures currently degrade silently to lexical retrieval; future telemetry should record degradation without exposing memory contents.
 
 Next highest-value task:
-- Implement the layered personal-memory core in `Nvidea.Core` independently of the UI: typed memory records/layers, provenance and sensitivity metadata, deterministic local persistence abstraction, retrieval scoring combining semantic relevance/recency/importance, explicit write policy, delete/retention behavior, and contract tests. Keep embedding generation behind an interface so the memory model is testable without cloud credentials and can later use a verified Nebius embedding model.
+- Implement the Tavily-backed research subsystem in `Nvidea.Core` with a provider abstraction and current official Tavily API verification: query planning contract, search/extract result models, URL canonicalization/deduplication, source quality/freshness metadata, provenance/citation objects, bounded retries/timeouts/cancellation, synthesis input that clearly marks web content as untrusted, and contract tests with mocked HTTP. Keep actual Nemotron synthesis behind the existing inference abstraction so research can later become a resumable long-running skill rather than a monolithic API call.

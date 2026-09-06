@@ -60,7 +60,7 @@ public sealed partial class DefaultMemoryWritePolicy : IMemoryWritePolicy
     [GeneratedRegex(@"\bBearer\s+[A-Za-z0-9._~+/-]{16,}={0,2}\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex BearerTokenRegex();
 
-    [GeneratedRegex(@"\b(?:api[_-]?key|secret|password|passwd|access[_-]?token|refresh[_-]?token)\s*[:=]\s*[\"']?[^\s\"']{8,}", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex("\\b(?:api[_-]?key|secret|password|passwd|access[_-]?token|refresh[_-]?token)\\s*[:=]\\s*[\\\"']?[^\\s\\\"']{8,}", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex CommonSecretAssignmentRegex();
 
     [GeneratedRegex(@"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b", RegexOptions.CultureInvariant)]

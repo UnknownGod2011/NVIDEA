@@ -159,10 +159,12 @@ Demo should eventually prove, in <=3 minutes:
 14. Demo scenario, demo data, deterministic fallback, and final judging audit.
 
 ## Current State
-- NVIDEA repository began empty.
-- This progress ledger is the first project artifact.
-- keyboard.wtf has been inspected read-only for product baseline.
-- No production implementation has yet been ported into NVIDEA.
+- NVIDEA now contains a standalone .NET 8 core project at `src/Nvidea.Core`.
+- The first primary-runtime implementation is an NVIDIA/Nebius-first Token Factory client; no Gemini/OpenAI/Claude dependency is required by the core.
+- Current verified default model ID is `nvidia/nemotron-3-super-120b-a12b`, taken from current Nebius documentation. Optional fast/deep tier IDs are configuration-only until individually verified.
+- A contract-test project exists at `tests/Nvidea.Core.Tests`.
+- Root README and MIT LICENSE now exist, satisfying an important public hackathon-repository requirement early.
+- keyboard.wtf has only been inspected read-only; no mutation was performed there or in any repository other than NVIDEA.
 
 ## Progress Log
 ### 2026-09-06 — Initialization
@@ -170,4 +172,43 @@ Demo should eventually prove, in <=3 minutes:
 - Captured keyboard.wtf strengths and known gaps.
 - Defined target Personal AI architecture and hackathon judging bar.
 - Defined memory, research, browser-automation, skills, security, Nebius/NVIDIA and demo workstreams.
-- Next highest-value task: inspect keyboard.wtf architecture read-only, create an explicit port/refactor map, then establish a buildable NVIDEA foundation with the smallest useful set of copied/adapted components and tests.
+
+### 2026-09-06 — Nebius/Nemotron core foundation
+Completed:
+- Inspected current official Nebius Token Factory and NVIDIA Nemotron documentation before selecting API/model assumptions.
+- Verified Token Factory's OpenAI-compatible API surface, native tool/function support, structured JSON support, and exact documented Nemotron 3 Super model ID.
+- Added `src/Nvidea.Core/Nvidea.Core.csproj` targeting .NET 8 with nullable analysis and warnings-as-errors.
+- Added `src/Nvidea.Core/Nebius/NebiusTokenFactoryClient.cs` with:
+  - `IAgentInferenceClient` abstraction;
+  - request/message/tool/result records;
+  - verified Nemotron 3 Super default model;
+  - configurable workload routing for fast/standard/deep tiers without guessing undocumented IDs;
+  - OpenAI-compatible `chat/completions` transport;
+  - bearer authentication;
+  - structured function/tool definitions and tool-call parsing;
+  - optional JSON-schema response format;
+  - cancellation and bounded timeout;
+  - retry policy for timeout, HTTP 429 and 5xx responses;
+  - HTTPS + Nebius-host endpoint validation;
+  - API exceptions that do not place the API key in exception messages.
+- Added `tests/Nvidea.Core.Tests` with contract tests for routing fallback/overrides, bearer auth, request/tool shape, completion parsing, transient retry, non-retryable authentication failure, and unsafe endpoint rejection.
+- Performed a second manual review of the test source and fixed two issues before closing the run: invalid tier-override test syntax and the missing xUnit import.
+- Added README with architecture, configuration, build/test commands, safety contract and project relationship to keyboard.wtf.
+- Added MIT LICENSE.
+
+Validation/evidence:
+- Current Nebius documentation shows Token Factory as OpenAI-compatible and documents `nvidia/nemotron-3-super-120b-a12b` as the Nemotron 3 Super API model.
+- Core implementation intentionally uses only framework libraries (`HttpClient`, `System.Text.Json`) and therefore adds no third-party runtime dependency for inference.
+- Tests use an in-memory `HttpMessageHandler`, so they do not require or leak a real Nebius API key.
+- The automation execution environment does NOT contain `dotnet`, `csc`, `mcs`, or `msbuild`, so compilation/tests could not be executed in this run. Do not claim them green until a .NET-capable runner verifies them.
+
+Unverified / risks:
+- Full compile status remains unverified because no .NET SDK/compiler is available in the current execution environment.
+- Structured JSON behavior should be exercised against a real Token Factory endpoint once credentials are available; provider-compatible APIs can differ on optional structured-output details.
+- Fast and Deep model IDs are deliberately unset rather than guessed. Verify exact Token Factory IDs before enabling model-specific routing.
+- Retry policy currently uses bounded exponential delay but does not yet honor `Retry-After`; add this before production hardening.
+- No usage-token/cost telemetry is parsed yet.
+- No desktop shell has yet been ported; this run intentionally established the provider boundary first so later memory/research/browser subsystems do not couple themselves to Gemini-era code.
+
+Next highest-value task:
+- Implement the layered personal-memory core in `Nvidea.Core` independently of the UI: typed memory records/layers, provenance and sensitivity metadata, deterministic local persistence abstraction, retrieval scoring combining semantic relevance/recency/importance, explicit write policy, delete/retention behavior, and contract tests. Keep embedding generation behind an interface so the memory model is testable without cloud credentials and can later use a verified Nebius embedding model.

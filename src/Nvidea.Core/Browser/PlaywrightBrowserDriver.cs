@@ -275,7 +275,7 @@ public sealed class PlaywrightBrowserDriver : IBrowserDriver
             "alert" => AriaRole.Alert,
             "button" => AriaRole.Button,
             "checkbox" => AriaRole.Checkbox,
-            "combobox" => AriaRole.ComboBox,
+            "combobox" => AriaRole.Combobox,
             "dialog" => AriaRole.Dialog,
             "heading" => AriaRole.Heading,
             "link" => AriaRole.Link,

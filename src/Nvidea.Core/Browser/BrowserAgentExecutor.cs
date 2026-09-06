@@ -6,17 +6,20 @@ public sealed class BrowserAgentExecutor
     private readonly BrowserSafetyPolicy _safety;
     private readonly IBrowserApprovalGate _approval;
     private readonly IBrowserActionVerifier _verifier;
+    private readonly IBrowserCapabilityGuard? _capabilityGuard;
 
     public BrowserAgentExecutor(
         IBrowserDriver driver,
         BrowserSafetyPolicy safety,
         IBrowserApprovalGate approval,
-        IBrowserActionVerifier verifier)
+        IBrowserActionVerifier verifier,
+        IBrowserCapabilityGuard? capabilityGuard = null)
     {
         _driver = driver ?? throw new ArgumentNullException(nameof(driver));
         _safety = safety ?? throw new ArgumentNullException(nameof(safety));
         _approval = approval ?? throw new ArgumentNullException(nameof(approval));
         _verifier = verifier ?? throw new ArgumentNullException(nameof(verifier));
+        _capabilityGuard = capabilityGuard;
     }
 
     public async Task<IReadOnlyList<BrowserActionReceipt>> ExecutePlanAsync(
@@ -36,7 +39,6 @@ public sealed class BrowserAgentExecutor
             cancellationToken.ThrowIfCancellationRequested();
             var receipt = await ExecuteOneAsync(action, cancellationToken).ConfigureAwait(false);
             receipts.Add(receipt);
-
             if (!receipt.DriverReportedSuccess || !receipt.Verified)
                 break;
         }
@@ -52,16 +54,18 @@ public sealed class BrowserAgentExecutor
         cancellationToken.ThrowIfCancellationRequested();
 
         var before = await _driver.ObserveAsync(cancellationToken).ConfigureAwait(false);
-        var decision = _safety.Evaluate(action, before);
         var started = DateTimeOffset.UtcNow;
         var actionId = Guid.NewGuid();
+        var decision = _safety.Evaluate(action, before);
+        if (_capabilityGuard is not null)
+            decision = _capabilityGuard.Evaluate(actionId, action, before, decision);
 
         if (!decision.Allowed)
         {
             return new BrowserActionReceipt(
                 actionId, action, decision, started, DateTimeOffset.UtcNow,
                 DriverReportedSuccess: false, Verified: false,
-                VerificationDetail: "Blocked by browser safety policy.",
+                VerificationDetail: "Blocked by browser/capability safety policy.",
                 before.Url, before.Url, decision.Reason);
         }
 

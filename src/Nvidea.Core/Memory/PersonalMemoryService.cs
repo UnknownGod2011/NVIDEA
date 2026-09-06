@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.RegularExpressions;
 
 namespace Nvidea.Core.Memory;
@@ -80,7 +79,7 @@ public sealed class PersonalMemoryService : IDisposable
 
             var record = new MemoryRecord
             {
-                Id = existing?.Id ?? Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture),
+                Id = existing?.Id ?? Guid.NewGuid().ToString("N"),
                 Layer = request.Layer,
                 Key = request.Key.Trim(),
                 Content = request.Content.Trim(),
@@ -124,7 +123,7 @@ public sealed class PersonalMemoryService : IDisposable
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            RemoveExpiredLocked(now);
+            var removedExpired = RemoveExpiredLocked(now);
             var allowedSensitivities = query.AllowedSensitivities ?? DefaultAllowedSensitivities;
             var requiredTags = NormalizeTags(query.RequiredTags);
 
@@ -133,7 +132,7 @@ public sealed class PersonalMemoryService : IDisposable
                 .Where(memory => allowedSensitivities.Contains(memory.Sensitivity))
                 .Where(memory => requiredTags.Count == 0 || requiredTags.All(tag => memory.Tags.Contains(tag, StringComparer.OrdinalIgnoreCase)))
                 .Select(memory => Score(memory, query.Text, queryEmbedding, now))
-                .Where(result => string.IsNullOrWhiteSpace(query.Text) || result.Score > 0.05)
+                .Where(result => IsRelevant(result, query.Text, queryEmbedding is not null))
                 .OrderByDescending(result => result.Score)
                 .ThenByDescending(result => result.Memory.UpdatedAt)
                 .Take(query.MaxResults)
@@ -144,11 +143,13 @@ public sealed class PersonalMemoryService : IDisposable
                 foreach (var result in results)
                     _memories[result.Memory.Id] = result.Memory with { LastAccessedAt = now };
 
-                await PersistLockedAsync(cancellationToken).ConfigureAwait(false);
                 results = results
                     .Select(result => result with { Memory = _memories[result.Memory.Id] })
                     .ToArray();
             }
+
+            if (removedExpired > 0 || results.Length > 0)
+                await PersistLockedAsync(cancellationToken).ConfigureAwait(false);
 
             return results;
         }
@@ -166,7 +167,10 @@ public sealed class PersonalMemoryService : IDisposable
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            RemoveExpiredLocked(now);
+            var removedExpired = RemoveExpiredLocked(now);
+            if (removedExpired > 0)
+                await PersistLockedAsync(cancellationToken).ConfigureAwait(false);
+
             return _memories.Values
                 .OrderBy(memory => memory.Layer)
                 .ThenByDescending(memory => memory.UpdatedAt)
@@ -289,7 +293,7 @@ public sealed class PersonalMemoryService : IDisposable
         var confidenceFactor = 0.7 + (0.3 * memory.Confidence);
 
         var score = queryEmbedding is not null && memory.Embedding is not null
-            ? (0.45 * semantic) + (0.20 * lexical) + (0.20 * recency) + (0.15 * memory.Importance)
+            ? (0.45 * Math.Max(0, semantic)) + (0.20 * lexical) + (0.20 * recency) + (0.15 * memory.Importance)
             : (0.50 * lexical) + (0.30 * recency) + (0.20 * memory.Importance);
 
         if (string.IsNullOrWhiteSpace(query))
@@ -297,6 +301,15 @@ public sealed class PersonalMemoryService : IDisposable
 
         score = Math.Clamp(score * confidenceFactor, 0, 1);
         return new MemorySearchResult(memory, score, semantic, lexical, recency, memory.Importance);
+    }
+
+    private static bool IsRelevant(MemorySearchResult result, string query, bool semanticAvailable)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+            return true;
+        if (result.LexicalScore > 0)
+            return true;
+        return semanticAvailable && result.SemanticScore >= 0.15;
     }
 
     private async Task<IReadOnlyList<float>?> TryEmbedAsync(string text, CancellationToken cancellationToken)

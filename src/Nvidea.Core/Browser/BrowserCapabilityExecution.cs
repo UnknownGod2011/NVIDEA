@@ -77,6 +77,7 @@ public sealed class BrowserCapabilityExecutionService
     public async Task<BrowserCapabilityExecutionResult> ExecuteAsync(
         BrowserAction action,
         ApprovalGrant? approval = null,
+        Guid? stableActionId = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(action);
@@ -84,7 +85,7 @@ public sealed class BrowserCapabilityExecutionService
 
         var before = await _driver.ObserveAsync(cancellationToken).ConfigureAwait(false);
         var startedAt = DateTimeOffset.UtcNow;
-        var actionId = Guid.NewGuid();
+        var actionId = stableActionId ?? Guid.NewGuid();
         var browserDecision = _browserSafety.Evaluate(action, before);
 
         if (!browserDecision.Allowed || browserDecision.Risk == BrowserRiskLevel.Blocked)
@@ -194,29 +195,6 @@ public sealed class BrowserCapabilityExecutionService
                     ex.Message),
                 RequiresApproval: false);
         }
-    }
-
-    public PermissionDecision Preflight(
-        Guid actionId,
-        BrowserAction action,
-        BrowserObservation observation)
-    {
-        ArgumentNullException.ThrowIfNull(action);
-        ArgumentNullException.ThrowIfNull(observation);
-
-        var browserDecision = _browserSafety.Evaluate(action, observation);
-        if (!browserDecision.Allowed || browserDecision.Risk == BrowserRiskLevel.Blocked)
-        {
-            return new PermissionDecision(
-                Allowed: false,
-                RequiresApproval: false,
-                CapabilityRiskLevel.Blocked,
-                PermissionsFor(action.Kind),
-                browserDecision.Reason,
-                ApprovalScope: string.Empty);
-        }
-
-        return _capabilityPolicy.Evaluate(BuildInvocation(actionId, action, observation, browserDecision));
     }
 
     private CapabilityInvocation BuildInvocation(

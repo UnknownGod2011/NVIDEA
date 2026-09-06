@@ -11,7 +11,7 @@ NVIDEA is the open-source hackathon edition of a Windows-first personal AI opera
 
 ## Current status
 
-The repository is being built in layers. The first production foundation is the NVIDIA/Nebius inference core in `src/Nvidea.Core`.
+The repository is being built in layers. `src/Nvidea.Core` now contains both the NVIDIA/Nebius inference foundation and the first privacy-aware personal-memory core.
 
 Implemented now:
 
@@ -23,9 +23,16 @@ Implemented now:
 - Per-request timeout and cancellation support.
 - Endpoint validation and secret-safe API errors.
 - Workload routing abstraction for fast/standard/deep tasks without inventing unverified model IDs.
-- Contract-focused tests using an in-memory HTTP handler; no real API key is required for those tests.
+- Typed personal-memory layers: working, episodic, semantic, project and skill memory.
+- Memory provenance, importance, confidence, sensitivity and retention metadata.
+- Hybrid retrieval combining semantic similarity (when an embedding provider is configured), lexical relevance, recency and importance.
+- Deterministic lexical fallback when embeddings are unavailable; unrelated recent memories are filtered rather than returned simply because they are recent.
+- Privacy-aware write policy: likely credentials/private keys/tokens are never persisted; sensitive and indefinite-retention memories require explicit approval.
+- Session memory is held in process and deliberately excluded from persistent storage.
+- Atomic JSON persistence, expiry cleanup, update-in-place by layer/key, deletion controls and embedding-provider abstraction.
+- Contract-focused tests using in-memory HTTP/memory stores and deterministic/failing embedding providers; no real cloud credentials are required.
 
-Still under active development: layered memory, Tavily research, browser automation, skills/permissions, desktop shell integration, resumable jobs, security hardening, packaging and the final hackathon demo.
+Still under active development: a verified production embedding adapter, memory compaction/summarization, Tavily research, browser automation, skills/permissions, desktop shell integration, resumable jobs, security hardening, packaging and the final hackathon demo.
 
 ## Why model routing is conservative
 
@@ -59,7 +66,21 @@ dotnet build .\src\Nvidea.Core\Nvidea.Core.csproj
 dotnet test .\tests\Nvidea.Core.Tests\Nvidea.Core.Tests.csproj
 ```
 
-The tests mock HTTP and verify request structure, model routing, bearer authentication, tool-call parsing, transient retry behavior, non-retryable auth failures and endpoint safety.
+The tests mock network/storage dependencies and cover request structure, model routing, bearer authentication, tool-call parsing, retry behavior, endpoint safety, memory privacy policy, session-only persistence, hybrid retrieval, embedding failure fallback, expiry, deduplicated updates and JSON round trips.
+
+## Personal memory contract
+
+Memory is a product/security boundary, not just a larger prompt buffer:
+
+- `Working`: current-session context; session retention is never persisted.
+- `Episodic`: interactions and completed actions with provenance.
+- `Semantic`: stable preferences/profile facts.
+- `Project`: durable project/entity context.
+- `Skill`: reusable workflow/skill knowledge.
+
+Search defaults to public/personal memories. Sensitive/restricted memories are excluded unless the caller explicitly expands the allowed sensitivity set. Credential-like material is denied by the write policy even if a caller requests indefinite retention.
+
+Embedding generation is intentionally behind `IMemoryEmbeddingProvider`. Until a production embedding model is verified for the Nebius stack, memory remains useful via deterministic lexical + recency + importance retrieval rather than coupling the core to an unverified model/API.
 
 ## Target architecture
 
@@ -102,7 +123,8 @@ NVIDEA is designed around least privilege:
 - browser content and tool output are untrusted input and must not silently redefine system policy;
 - CAPTCHA, login, browser/OS permission boundaries and site safeguards must never be bypassed;
 - every autonomous action should become auditable and cancellable;
-- cloud inference should receive only the data required for the current task.
+- cloud inference should receive only the data required for the current task;
+- credentials and authentication secrets must not be stored as personal memory.
 
 ## Relationship to keyboard.wtf
 

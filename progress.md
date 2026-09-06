@@ -24,37 +24,22 @@ Every run must:
 8. Update this file with completed work, evidence, unverified items, risks, blockers and the single best next task.
 9. Continue improving on future runs while meaningful product/engineering work remains.
 
-## Product gaps inherited from keyboard.wtf that NVIDEA must solve
-### Memory
-keyboard.wtf currently has bounded explicit key/value intent memory. NVIDEA must provide real working/session, episodic, semantic/profile, project/entity and skill/workflow memory with retrieval, provenance, sensitivity/retention, user controls and compaction.
-
-### Research
-Build Tavily-backed multi-query research with source collection/extraction, freshness, quality ranking, deduplication, citations/provenance, explicit uncertainty and resumable long tasks.
-
-### Browser automation
-Build DOM/accessibility-first browser agency with navigation/read/click/type/select/upload/download where permissioned, robust locators, plan-act-observe-verify, state verification, retries/cancellation/recovery, authentication boundaries, prompt-injection defenses, audit evidence and confirmation gates for consequential actions.
+## Product gaps inherited from keyboard.wtf
+- **Memory:** replace bounded key/value intent memory with layered working, episodic, semantic/profile, project/entity and skill/workflow memory, retrieval, provenance, sensitivity/retention and user controls.
+- **Research:** Tavily-backed multi-query research with freshness/quality, source provenance, citations, explicit uncertainty and resumable tasks.
+- **Browser automation:** DOM/accessibility-first plan-act-observe-verify agency with robust locators, recovery, permissions, prompt-injection defenses and audit evidence.
 
 ## Target Architecture
-### Desktop shell
-Windows-first hotkeys, voice/text, orb/status, active-app/selected-text/clipboard context, permission UX, local speech where useful and emergency stop.
-
-### Agent core
-Task planner/state machine; structured tool calls; iterative plan -> act -> observe -> verify; bounded autonomy; cancellation; retries; explicit completion criteria; human approvals.
-
-### NVIDIA/Nebius backend
-NVIDIA open models through Nebius Token Factory / Nebius AI Cloud are the genuine core runtime. Use a provider abstraction, verified model IDs, structured output/tool calling, timeout/rate-limit handling and later telemetry/model routing. Gemini/OpenAI/Claude must not be hidden primary dependencies.
-
-### Memory
-Layered typed memory with privacy-aware writes, deterministic persistence, semantic/lexical retrieval, recency/importance weighting, provenance/confidence/sensitivity/retention and user deletion controls. Add compaction/summarization and a verified production embedding adapter later.
-
-### Skills / permissions
-Capability registry with name/version, tools, data permissions, risk class, confirmation requirements, inputs/outputs and evaluation fixtures. Least privilege; consequential send/submit/publish/delete/purchase/financial/account/security actions require approval.
-
-### Nebius execution
-Use Nebius serverless/cloud execution where it adds real value to long-running/background work; keep OS-private actions on the user's machine.
+- **Desktop shell:** Windows hotkeys, voice/text, orb/status, active-app/selected-text/clipboard context, permission UX, local speech where useful and emergency stop.
+- **Agent core:** task planner/state machine, structured tool calls, bounded iterative execution, verification, cancellation/retries and approvals.
+- **NVIDIA/Nebius:** NVIDIA open models through Nebius Token Factory / AI Cloud as genuine core runtime; no hidden Gemini/OpenAI/Claude dependency.
+- **Memory:** layered typed memory with privacy-aware writes, semantic/lexical retrieval, recency/importance, provenance/confidence/sensitivity/retention and deletion controls.
+- **Research:** Nemotron planning -> Tavily evidence -> untrusted-content boundary -> Nemotron synthesis -> validated source IDs.
+- **Skills / permissions:** capability registry, declared data/tool permissions, risk class, confirmation policy and evaluation fixtures.
+- **Nebius execution:** cloud/serverless only where long-running background work benefits; private OS actions stay local.
 
 ## Hackathon product bar
-Every major feature should strengthen technological implementation, design, potential impact or quality/originality of idea. Final <=3 minute demo should prove: invocation anywhere on Windows, context awareness, durable memory affecting later behavior, Tavily research with sources, complex multi-step browser work with verification, approval before a consequential action, meaningful background Nebius execution, and a concise architecture view proving Nemotron/Nebius/Tavily are core.
+Final <=3 minute demo should prove: invocation anywhere on Windows, context awareness, durable memory affecting later behavior, Tavily research with sources, complex browser work with verification, approval before consequential actions, meaningful background Nebius execution, and a concise architecture view proving Nemotron/Nebius/Tavily are core.
 
 ## Engineering priorities
 1. Clean solution/package/build/test baseline.
@@ -72,84 +57,71 @@ Every major feature should strengthen technological implementation, design, pote
 
 ## Current State
 - Standalone .NET 8 core at `src/Nvidea.Core`.
-- NVIDIA/Nebius-first Token Factory inference client; no Gemini/OpenAI/Claude dependency required by core.
-- Verified default model ID: `nvidia/nemotron-3-super-120b-a12b`; fast/deep tier IDs remain configuration-only until individually verified.
-- Layered personal-memory foundation now exists under `src/Nvidea.Core/Memory`.
-- Contract tests exist under `tests/Nvidea.Core.Tests` for inference and memory behavior.
-- Root README + MIT LICENSE exist.
-- keyboard.wtf has only been inspected read-only; no mutation has been performed there or in any repository other than NVIDEA.
+- NVIDIA/Nebius-first Token Factory inference client with verified default `nvidia/nemotron-3-super-120b-a12b`.
+- Structured tools, structured output, cancellation/timeouts, bounded retries and endpoint validation.
+- Layered privacy-aware personal memory under `src/Nvidea.Core/Memory`.
+- Tavily research provider + Nemotron research engine under `src/Nvidea.Core/Research`.
+- Contract tests under `tests/Nvidea.Core.Tests` for inference, memory and research.
+- Root README + MIT LICENSE.
+- keyboard.wtf has only been inspected read-only; no repository other than NVIDEA has been mutated.
 
 ## Progress Log
 ### 2026-09-06 — Initialization
 - Established immutable repository-safety boundary.
-- Captured keyboard.wtf strengths/gaps, Personal AI architecture and judging bar.
-- Defined memory, research, browser automation, skills, security, Nebius/NVIDIA and demo workstreams.
+- Captured keyboard.wtf strengths/gaps, target architecture and judging bar.
 
 ### 2026-09-06 — Nebius/Nemotron core foundation
-Completed:
-- Verified current Nebius Token Factory OpenAI-compatible API, tool/function support, structured JSON support and documented Nemotron 3 Super model ID using official sources.
-- Added `NebiusTokenFactoryClient` + `IAgentInferenceClient` with bearer auth, structured tools/tool-call parsing, optional JSON schema, cancellation/timeouts, bounded retries, HTTPS/Nebius endpoint validation and secret-safe errors.
-- Added conservative fast/standard/deep routing without guessing undocumented model IDs.
+- Verified current Nebius Token Factory OpenAI-compatible API, structured output/tool support and documented Nemotron 3 Super model ID.
+- Added `NebiusTokenFactoryClient`, `IAgentInferenceClient`, conservative fast/standard/deep routing, bearer auth, structured tools/tool-call parsing, cancellation/timeouts, bounded retries and endpoint validation.
 - Added contract tests for request shape, routing, auth, tool calls, retries, failures and endpoint safety.
-- Added root README and MIT LICENSE.
-
-Validation / known limitations:
-- Runtime uses framework libraries only for inference.
-- Contract tests need no real API key.
-- Execution environment did not provide `dotnet`, `csc`, `mcs` or `msbuild`; compile/test execution remains unverified until a .NET-capable environment runs them.
-- Structured-output behavior still needs real Token Factory integration testing.
-- `Retry-After`, usage/cost telemetry and verified fast/deep model IDs remain future hardening.
 
 ### 2026-09-06 — Layered personal-memory foundation
+- Added Working/Episodic/Semantic/Project/Skill memory layers with provenance, confidence, importance, sensitivity, retention, expiry and optional embeddings.
+- Added replaceable embedding/store/write-policy boundaries.
+- Added secret-detection/write policy that rejects credential-like material and requires approval for sensitive or indefinite memory.
+- Added session-only memory, atomic JSON persistence, expiry cleanup, update-in-place, deletion and hybrid semantic/lexical/recency/importance retrieval.
+- Added tests for privacy policy, retention, expiry, sensitive retrieval, semantic ranking, lexical fallback, duplicate prevention and persistence.
+- Fixed a regex syntax risk and a retrieval relevance flaw during source review.
+
+### 2026-09-06 — Tavily research + provenance foundation
 Completed:
-- Added `MemoryModels.cs` with typed layers: Working, Episodic, Semantic, Project and Skill.
-- Added typed provenance, confidence, importance, sensitivity (Public/Personal/Sensitive/Restricted), retention (Session/7d/30d/Indefinite), expiry and optional embedding metadata.
-- Added `IMemoryEmbeddingProvider`, `IMemoryStore` and `IMemoryWritePolicy` boundaries so storage/embedding backends are replaceable and testable without cloud credentials.
-- Added `DefaultMemoryWritePolicy`:
-  - rejects empty/oversized/invalid confidence/importance writes;
-  - refuses likely private keys, bearer tokens, JWTs and common credential assignments even if the caller asks to save them;
-  - requires explicit user approval for Sensitive/Restricted memories;
-  - requires explicit approval for indefinite retention.
-- Added `JsonFileMemoryStore` with async read/write, serialized enums, process-level write gate, atomic temp-file replacement and no plaintext secret-specific behavior in the memory layer.
-- Added `PersonalMemoryService` with:
-  - explicit initialization and expiry cleanup;
-  - update-in-place for matching layer + key rather than uncontrolled duplicates;
-  - session memory that remains in process and is deliberately excluded from persistence;
-  - 7-day, 30-day and indefinite retention behavior;
-  - default retrieval limited to Public + Personal sensitivity unless the caller explicitly expands scope;
-  - hybrid scoring: semantic similarity when embeddings exist, lexical relevance, recency, importance and confidence;
-  - deterministic lexical fallback when embeddings are unavailable;
-  - embedding failures degrade to lexical retrieval rather than breaking memory operations;
-  - strict relevance gate so recent/important but unrelated memories are not returned merely due to recency;
-  - tag/layer/sensitivity filters;
-  - deletion by id, deletion by layer, expiry purge and snapshots;
-  - access timestamps and immediate persistence of expiry cleanup.
-- Added memory tests covering:
-  - credential-like material rejected even with explicit approval;
-  - sensitive and indefinite retention approval requirements;
-  - session memory never persisted and disappears across service restart;
-  - semantic ranking with deterministic embeddings;
-  - sensitive memory excluded from default search and available only when explicitly scoped in;
-  - seven-day expiry/purge;
-  - matching layer/key update instead of duplicate creation;
-  - JSON store round-trip;
-  - no unrelated results in lexical-only mode;
-  - lexical fallback when embedding provider is unavailable.
-- Updated README to document the memory contract and current implemented status.
+- Verified the current official Tavily Search contract directly from `docs.tavily.com`: `POST https://api.tavily.com/search`, bearer authentication, `general`/`news` topics, `advanced` search depth, date bounds, domain filters, result scores and optional usage-credit reporting.
+- Added `src/Nvidea.Core/Research/TavilyResearch.cs`:
+  - `IResearchProvider` abstraction and typed `ResearchQuery`, `ResearchSource`, `ResearchCitation`, `ResearchBatch` models;
+  - strict `https://api.tavily.com/` endpoint validation and environment-based API key loading;
+  - bounded batch size, query/result limits, request timeouts, cancellation and retries for timeout/429/5xx failures;
+  - official bearer-auth request shape with `include_answer=false`, `include_raw_content=false`, `include_usage=true` so NVIDEA owns synthesis/provenance rather than trusting opaque provider answers;
+  - canonical URL normalization that removes fragments, default ports and common tracking parameters and sorts remaining query parameters;
+  - deduplication across multiple research queries by canonical URL while preserving the stronger provider-scored result;
+  - source IDs, retrieval timestamps, provider scores, originating query and citation objects;
+  - explicit `BuildUntrustedEvidenceBlock` security boundary that labels web text as data and forbids treating embedded commands/tool requests/credential requests/policy changes as instructions.
+- Added `src/Nvidea.Core/Research/ResearchEngine.cs`:
+  - structured Nemotron query planning through existing `IAgentInferenceClient` + JSON schema;
+  - bounded 1-6 query plan validation, topic/date validation and conservative max-result bounds;
+  - Tavily execution through provider abstraction;
+  - synthesis through the existing Nemotron/Nebius inference abstraction rather than a second AI dependency;
+  - prompt-injection boundary carried into synthesis;
+  - required `[src:SOURCE_ID]` citation markers;
+  - machine validation of cited source IDs against collected evidence, explicit warnings for unknown or missing markers;
+  - no synthesis call when no evidence exists.
+- Added `TavilyResearchClientTests.cs` covering bearer auth/request shape, date/topic fields, canonical deduplication, rate-limit retry, untrusted-content marking and unsafe endpoint rejection.
+- Added `ResearchEngineTests.cs` covering plan->search->synthesis flow, verified citation selection, hallucinated source-ID warning, no-evidence short circuit and invalid date-range rejection.
+- Updated README with live configuration, research security/provenance contract and implemented status.
 
 Validation / evidence:
-- Performed manual source review after writing the subsystem and fixed a C# regex-literal syntax risk in the secret detector.
-- Performed a second retrieval review and fixed a logic flaw where recency/importance alone could make unrelated memory appear relevant without embeddings.
-- Attempted to clone the public repository into the local execution container for an additional static/toolchain check, but that container has no DNS/network route to GitHub. This does not affect the GitHub connector writes.
-- As in the previous run, no .NET SDK/compiler is available in the execution environment, so the new code/tests have NOT been compiled/executed here. Do not claim green tests until a .NET-capable runner verifies them.
+- Official Tavily Search documentation was checked on 2026-09-06 before implementation; no stale SDK assumptions were used.
+- Performed manual source review after implementation and fixed two issues before closing the run: the structured-output schema initially contained an extra wrapper even though `NebiusTokenFactoryClient` already supplies the JSON-schema wrapper, and strict `DateOnly` parsing was changed to the explicit invariant-culture overload.
+- Rechecked the execution container for `dotnet`, `csc` and `msbuild`; none are installed. Therefore the new code/tests remain source-reviewed but NOT compiled/executed in this automation environment. Do not describe the tests as green until a .NET-capable runner verifies them.
 
 Unverified / risks:
+- Real Tavily API integration still requires a live `TAVILY_API_KEY`; contract tests use mocked HTTP by design.
+- Real Nemotron structured query planning/synthesis requires a live Nebius key and should be exercised before demo freeze.
+- Tavily Search snippets currently provide the evidence body; Tavily Extract is not yet integrated for deeper page extraction.
+- `PublishedAt` exists in provenance models but current Search response handling does not populate it. Freshness scoring should use verified provider metadata/extraction rather than guessing dates from text.
+- Source quality currently retains Tavily relevance score but does not yet combine domain authority, source diversity, recency and corroboration.
+- Citation validation confirms IDs exist but does not yet entailment-check every sentence against the cited source.
 - Full compilation remains the highest immediate verification risk because the automation runtime lacks a .NET toolchain.
-- The current JSON persistence is intentionally a deterministic baseline, not yet OS-encrypted storage. Before desktop integration, sensitive persistent memory should use an encrypted-at-rest store or an encryption wrapper backed by Windows DPAPI/key protection.
-- Embeddings are an interface only. Do not guess a Nebius embedding model; verify a current supported production embedding endpoint/model before implementing the adapter.
-- Memory compaction/summarization, salience promotion/demotion, contradiction handling and user-facing memory-management UX are not yet implemented.
-- `SnapshotAsync` is a management/debug primitive and can expose all loaded sensitivity classes; UI callers must not use it as ambient prompt context. Normal `SearchAsync` defaults to Public + Personal only.
-- Embedding failures currently degrade silently to lexical retrieval; future telemetry should record degradation without exposing memory contents.
+- Memory persistent storage is still a JSON baseline rather than Windows DPAPI/encrypted-at-rest storage.
 
 Next highest-value task:
-- Implement the Tavily-backed research subsystem in `Nvidea.Core` with a provider abstraction and current official Tavily API verification: query planning contract, search/extract result models, URL canonicalization/deduplication, source quality/freshness metadata, provenance/citation objects, bounded retries/timeouts/cancellation, synthesis input that clearly marks web content as untrusted, and contract tests with mocked HTTP. Keep actual Nemotron synthesis behind the existing inference abstraction so research can later become a resumable long-running skill rather than a monolithic API call.
+- Build the safe browser-agent foundation under `Nvidea.Core`: browser observation/action contracts, locator hierarchy, risk classification, immutable action/audit records, plan-act-observe-verify state machine, cancellation/retry/recovery semantics, high-impact approval gates, prompt-injection/trusted-instruction boundary, and mocked browser-driver tests. Prefer a provider-neutral DOM/accessibility contract first so the Windows shell can later use Playwright/extension/CDP without coupling core policy to one transport. Do not implement CAPTCHA/login bypasses or unsafe generic execution.

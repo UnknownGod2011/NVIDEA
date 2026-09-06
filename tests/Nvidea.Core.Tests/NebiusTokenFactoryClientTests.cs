@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Nvidea.Core.Nebius;
+using Xunit;
 
 namespace Nvidea.Core.Tests;
 
@@ -124,8 +125,8 @@ public sealed class NebiusTokenFactoryClientTests
 
         Assert.Equal(HttpStatusCode.Unauthorized, error.StatusCode);
         Assert.Equal(1, calls);
-        Assert.DoesNotContain("test-key", error.Message, StringComparison.Ordinal);
-        Assert.DoesNotContain("test-key", error.ResponseExcerpt, StringComparison.Ordinal);
+        Assert.False(error.Message.Contains("test-key", StringComparison.Ordinal));
+        Assert.False(error.ResponseExcerpt.Contains("test-key", StringComparison.Ordinal));
     }
 
     [Fact]

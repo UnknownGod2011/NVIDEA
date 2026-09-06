@@ -11,7 +11,7 @@ NVIDEA is the open-source hackathon edition of a Windows-first personal AI opera
 
 ## Current status
 
-The repository is being built in layers. `src/Nvidea.Core` now contains both the NVIDIA/Nebius inference foundation and the first privacy-aware personal-memory core.
+The repository is being built in layers. `src/Nvidea.Core` now contains the NVIDIA/Nebius inference foundation, privacy-aware personal memory, and a Tavily-backed research core connected to Nemotron planning/synthesis.
 
 Implemented now:
 
@@ -30,9 +30,15 @@ Implemented now:
 - Privacy-aware write policy: likely credentials/private keys/tokens are never persisted; sensitive and indefinite-retention memories require explicit approval.
 - Session memory is held in process and deliberately excluded from persistent storage.
 - Atomic JSON persistence, expiry cleanup, update-in-place by layer/key, deletion controls and embedding-provider abstraction.
-- Contract-focused tests using in-memory HTTP/memory stores and deterministic/failing embedding providers; no real cloud credentials are required.
+- Tavily research provider with multi-query batching, `general`/`news` topic support, date bounds, domain filters, bounded retries/timeouts/cancellation and usage-credit tracking.
+- Canonical URL normalization and source deduplication that strips common tracking parameters and retains the stronger provider result.
+- Typed source provenance/citation objects instead of reducing research to a plain answer string.
+- An explicit untrusted-web-content envelope for prompt-injection resistance before evidence reaches Nemotron.
+- Nemotron-powered query planning through the existing Nebius structured-output path.
+- Nemotron research synthesis that requires `[src:SOURCE_ID]` markers and validates referenced IDs against the collected evidence set.
+- Contract-focused tests using in-memory HTTP/memory/inference/provider fakes; no real cloud credentials are required.
 
-Still under active development: a verified production embedding adapter, memory compaction/summarization, Tavily research, browser automation, skills/permissions, desktop shell integration, resumable jobs, security hardening, packaging and the final hackathon demo.
+Still under active development: Tavily Extract integration and richer freshness/authority scoring, a verified production embedding adapter, memory compaction/summarization, browser automation, skills/permissions, desktop shell integration, resumable jobs, security hardening, packaging and the final hackathon demo.
 
 ## Why model routing is conservative
 
@@ -40,10 +46,11 @@ Nebius currently documents Nemotron 3 Nano, Super and Ultra for different worklo
 
 ## Configuration
 
-Required environment variable:
+Required environment variables for live cloud use:
 
 ```powershell
 $env:NEBIUS_API_KEY = "your-token-factory-key"
+$env:TAVILY_API_KEY = "your-tavily-key"
 ```
 
 Optional overrides:
@@ -66,7 +73,7 @@ dotnet build .\src\Nvidea.Core\Nvidea.Core.csproj
 dotnet test .\tests\Nvidea.Core.Tests\Nvidea.Core.Tests.csproj
 ```
 
-The tests mock network/storage dependencies and cover request structure, model routing, bearer authentication, tool-call parsing, retry behavior, endpoint safety, memory privacy policy, session-only persistence, hybrid retrieval, embedding failure fallback, expiry, deduplicated updates and JSON round trips.
+The tests mock network/storage dependencies and cover request structure, model routing, bearer authentication, tool-call parsing, retry behavior, endpoint safety, memory privacy policy, session-only persistence, hybrid retrieval, embedding failure fallback, expiry, deduplicated updates, JSON round trips, Tavily request shape, canonical URL deduplication, rate-limit retries, prompt-injection boundaries, research planning and citation-ID validation.
 
 ## Personal memory contract
 
@@ -81,6 +88,19 @@ Memory is a product/security boundary, not just a larger prompt buffer:
 Search defaults to public/personal memories. Sensitive/restricted memories are excluded unless the caller explicitly expands the allowed sensitivity set. Credential-like material is denied by the write policy even if a caller requests indefinite retention.
 
 Embedding generation is intentionally behind `IMemoryEmbeddingProvider`. Until a production embedding model is verified for the Nebius stack, memory remains useful via deterministic lexical + recency + importance retrieval rather than coupling the core to an unverified model/API.
+
+## Research safety and provenance contract
+
+Research is implemented as a pipeline rather than a single opaque search call:
+
+1. Nemotron creates a bounded, structured query plan.
+2. `TavilyResearchClient` executes those searches with cancellation, retry and endpoint controls.
+3. Results are normalized and deduplicated by canonical URL while preserving source IDs and provider scores.
+4. Web text is wrapped as **untrusted evidence**, explicitly preventing source text from becoming agent instructions.
+5. Nemotron synthesizes only from the evidence and is instructed to emit exact `[src:SOURCE_ID]` markers.
+6. The engine resolves only markers that actually exist in collected evidence and surfaces unknown/missing markers as warnings.
+
+This makes provenance machine-checkable and creates a security boundary that the later autonomous browser/skill system can reuse.
 
 ## Target architecture
 

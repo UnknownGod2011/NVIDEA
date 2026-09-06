@@ -24,10 +24,10 @@ public sealed class ScopedApprovalAuthorizer
 
     /// <summary>
     /// Creates a short-lived single-use grant after an explicit user approval path has
-    /// already verified the exact paused action scope. The returned grant is intended
-    /// for in-memory execution context only and must never be serialized into job state.
+    /// already verified the exact paused action scope. Internal-only so arbitrary
+    /// capability consumers cannot mint their own approvals.
     /// </summary>
-    public ApprovalGrant GrantExactScope(string approvalScope, TimeSpan lifetime)
+    internal ApprovalGrant GrantExactScope(string approvalScope, TimeSpan lifetime)
     {
         if (string.IsNullOrWhiteSpace(approvalScope))
             throw new ArgumentException("Approval scope is required.", nameof(approvalScope));

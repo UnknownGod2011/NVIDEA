@@ -22,7 +22,7 @@ Every run must read this file first, inspect current NVIDEA state, choose the hi
 - **Memory:** layered typed working/episodic/semantic/project/skill memory with privacy-aware writes, semantic/lexical retrieval, recency/importance, provenance/confidence/sensitivity/retention and deletion controls.
 - **Research:** Nemotron planning -> Tavily evidence -> untrusted-content boundary -> Nemotron synthesis -> validated source IDs.
 - **Browser:** accessibility/DOM observation -> typed action -> browser hard-safety floor -> system capability policy -> exact approval -> driver execution -> fresh observation -> verification -> receipt.
-- **Skills / permissions:** capability registry, declared data/tool permissions, monotonic risk, exact-scope approvals, and append-only audit events.
+- **Skills / permissions:** capability registry, declared data/tool permissions, monotonic risk, exact-scope approvals, last-mile tool enforcement and append-only audit events.
 - **Jobs:** durable state/checkpoints, cancellation, retry/backoff, approval-paused states and explicit local-vs-Nebius execution selection.
 - **Nebius execution:** cloud/serverless only where long-running background work benefits; private OS actions stay local.
 
@@ -50,8 +50,10 @@ Final <=3 minute demo should prove invocation anywhere on Windows, context aware
 - Tavily provider + Nemotron research engine under `src/Nvidea.Core/Research`.
 - Provider-neutral safe browser-agent foundation under `src/Nvidea.Core/Browser`.
 - System-wide capability/permission/audit foundation under `src/Nvidea.Core/Capabilities`.
+- Last-mile `CapabilityToolExecutor` re-checks permission/risk immediately before real tool execution and consumes exact single-use approval grants.
 - Durable resumable jobs foundation under `src/Nvidea.Core/Jobs`.
-- Contract tests under `tests/Nvidea.Core.Tests` for inference, memory, research, browser policy/execution, capability policy, scoped approval, audit behavior and resumable jobs.
+- Credential-injected Nebius Serverless REST client contract for create/list/cancel using current official endpoints; no live success is fabricated.
+- Contract tests under `tests/Nvidea.Core.Tests` cover inference, memory, research, browser policy/execution, capability policy, scoped approval, last-mile tool execution, audit behavior, resumable jobs and Serverless REST request semantics.
 - Root README + MIT LICENSE.
 - keyboard.wtf has only been inspected read-only; no repository other than NVIDEA has been mutated.
 
@@ -69,7 +71,6 @@ Final <=3 minute demo should prove invocation anywhere on Windows, context aware
 - Added typed `IResearchProvider`, strict Tavily endpoint/auth handling, bounded multi-query search, retries/timeouts/cancellation, date/domain/topic support, usage reporting, URL deduplication, provenance/source IDs and an explicit untrusted-web-content boundary.
 - Added `ResearchEngine` with structured Nemotron planning, Tavily evidence collection, Nemotron synthesis, required `[src:SOURCE_ID]` markers and validation of cited IDs.
 - Added mocked contract tests for request shape, retries, prompt-injection boundaries, planning/synthesis and citation validation.
-- Remaining research gaps: Tavily Extract, richer authority/freshness/corroboration scoring, sentence-level entailment checking and live-key validation.
 
 ### 2026-09-06 — Safe browser-agent foundation
 - Added typed browser observations/actions/locators, accessibility-first contracts, untrusted-page evidence, browser hard-safety policy, deny-by-default approval fallback, bounded observe -> classify -> approve -> act -> observe -> verify execution, cancellation/recovery, conservative verification, and immutable action receipts.
@@ -82,41 +83,56 @@ Final <=3 minute demo should prove invocation anywhere on Windows, context aware
 - Added tests for permission escalation, risk downgrade resistance, exact-scope approval, untrusted-source injection, append-only audit, approval expiry/single-use and browser-policy composition.
 
 ### 2026-09-06 — Durable resumable jobs foundation
-Completed:
-- Added `Jobs/JobContracts.cs` with explicit `Pending`, `Running`, `WaitingForApproval`, `RetryScheduled`, `Completed`, `Failed`, and `Cancelled` states.
-- Added typed durable checkpoints, attempt counters, retry timestamps, exact approval scopes, execution-location metadata and job definitions carrying capability permissions/risk/privacy characteristics.
-- Added `ConservativeJobExecutionPolicy`:
-  - any job containing private OS data is forced to `Local` execution;
-  - only non-private work that actually benefits from background execution is eligible for `NebiusServerless`;
-  - ordinary non-private foreground work remains local rather than being pushed to cloud gratuitously.
-- Added atomic `JsonAgentJobStore` with one-record-per-job upsert semantics and temp-file replacement to avoid partial writes.
-- Added `ResumableJobOrchestrator`:
-  - creates and persists jobs before execution;
-  - runs one bounded step at a time so work can checkpoint/resume rather than disappear on process interruption;
-  - persists checkpoint payloads after each successful partial step;
-  - pauses on consequential actions with an exact approval scope and refuses mismatched approval;
-  - supports user cancellation and cancellation-token propagation;
-  - schedules exponential retry with a bounded delay and terminal failure after `MaxAttempts`;
-  - emits job lifecycle events through the existing append-only audit abstraction;
-  - preserves explicit local-vs-Nebius execution choice on the durable record.
-- Added tests for local routing of private data, Nebius routing of suitable background work, checkpointed multi-step completion, exact-scope approval resumption, retry exhaustion, and JSON checkpoint round-tripping.
+- Added explicit Pending/Running/WaitingForApproval/RetryScheduled/Completed/Failed/Cancelled states, durable checkpoints, bounded retries/backoff, exact approval scopes and local-vs-Nebius execution metadata.
+- `ConservativeJobExecutionPolicy` forces private OS data local and only routes non-private background/containerizable work to Nebius Serverless.
+- Added atomic JSON job persistence, cancellation, checkpoint/resume and lifecycle audit events.
+- Added tests for private/local routing, Nebius routing, checkpoint completion, exact approval resume, retry exhaustion and persistence.
 
-Current external-platform evidence:
-- Nebius Serverless AI jobs are currently documented as non-interactive containerized workloads that terminate/release resources on completion and are intended for AI/data-processing/batch workloads. This supports using them only for genuinely background/containerizable work rather than private desktop actions.
-- Serverless AI jobs/endpoints currently inherit Compute quotas/pricing, so execution policy should remain cost-aware instead of routing all work to cloud.
+### 2026-09-06 — Last-mile tool authorization + Nebius Serverless REST adapter
+Completed:
+- Added `Capabilities/CapabilityToolExecutor.cs`:
+  - evaluates `ICapabilityPermissionPolicy` immediately before every concrete tool call;
+  - persisted checkpoint/job state is never accepted as authorization;
+  - denied invocations never reach the backend;
+  - consequential/high-risk actions require an exact live `ApprovalGrant`;
+  - grants are single-use and consumed at execution attempt time;
+  - failed/ambiguous consequential calls deliberately do not restore approval, so retries require fresh consent rather than risking duplicate side effects;
+  - execution start/success/failure/cancellation and denial/approval-wait states are written to the shared audit trail.
+- Added `CapabilityToolExecutorTests` for no-approval blocking, grant replay prevention, checkpoint-not-authorization and undeclared-permission denial/audit.
+- Verified current official Nebius Serverless semantics before implementation:
+  - create: `POST https://api.nebius.cloud/ai/v1/jobs`;
+  - list: `GET https://api.nebius.cloud/ai/v1/jobs?parentId=<project_ID>`;
+  - cancel: `POST https://api.nebius.cloud/ai/v1/jobs/cancel` with `{ "id": "<job_ID>" }`;
+  - CLI equivalents remain `nebius ai job create/list/get/cancel`.
+- Added `Jobs/NebiusServerlessJobClient.cs`:
+  - bearer-auth REST client with strict HTTPS/host validation;
+  - typed create/list/cancel contract;
+  - project-scoped job creation and listing;
+  - cancellation and per-request timeout;
+  - bounded retry only for timeouts/network failures/429/5xx, not permanent 4xx client errors;
+  - successful non-empty responses must parse as JSON;
+  - likely secret-bearing environment variable names are rejected before network transmission, directing future secret use toward Nebius SecretStash/env-secret instead of plaintext job environment variables;
+  - response remains raw JSON intentionally so we do not invent unstable/undocumented operation/status schemas.
+- Added mocked Serverless contract tests for create endpoint/body/auth, project-scoped list, exact cancel body, plaintext-secret rejection, transient-vs-permanent retry behavior and endpoint pinning.
+- Source review found and fixed an initial bug that would have retried permanent 4xx `HttpRequestException`s.
+
+External-platform evidence:
+- Current Nebius docs describe Serverless Jobs as finite non-interactive container workloads suitable for batch/data-processing/AI work and show the REST create/list/cancel operations above.
+- Current docs also expose `nebius ai job get <id>` / lower-level job get, but this client intentionally avoids guessing a REST get/status response shape until we verify and model the response contract needed for durable remote-state mapping.
 
 Validation / evidence:
 - Repository target was re-verified as exactly `UnknownGod2011/NVIDEA` before every mutation.
-- Source review checked that job state is persisted before/after execution, approval scopes are exact string matches, retries are bounded, and private OS data cannot select the Nebius execution location through the default policy.
-- This environment still does not provide the .NET SDK/compiler used by the solution, so the new code/tests are source-reviewed but NOT compiled or executed here. Do not report them as green until a .NET-capable runner validates them.
+- Attempted local verification after the changes: this runtime still has no `dotnet` executable and cannot resolve `github.com` from the container, so a fresh local clone/build/test run could not be executed.
+- Therefore all newly added tests remain source-reviewed/mocked contract tests and MUST NOT be reported as green until a .NET-capable runner executes them.
 
 Unverified / risks:
-- `JobExecutionLocation.NebiusServerless` is currently an execution decision/contract, not a fake cloud implementation; a real Nebius Serverless adapter still needs to submit/query/cancel container jobs using current Nebius APIs/CLI/SDK and map remote state back to durable checkpoints.
-- The orchestrator emits lifecycle audit events but the actual job handler/tool invocation path still needs to evaluate `CapabilityPermissionPolicy` immediately before each tool operation, so a resumed job cannot rely solely on permission decisions made before suspension.
-- Approval resume currently verifies exact scope equality; desktop UX still needs to obtain the scope from a visible action preview and use `ScopedApprovalAuthorizer` for a single-use grant at actual tool-execution time.
-- Full solution compilation remains a major verification risk until a .NET-capable environment runs all tests.
-- Audit storage is append-only at API level but not yet tamper-evident/encrypted, and memory persistence is still not OS-encrypted at rest.
-- No concrete Playwright/CDP/browser-extension driver exists yet.
+- `CapabilityToolExecutor` is now the correct last-mile boundary, but every future concrete job/skill handler must be wired through it; merely having the type in the repository does not magically prevent a badly written handler from bypassing it.
+- Job approval UX still needs to create a visible exact-scope `ApprovalGrant` and supply it only to the immediate consequential tool call; approvals should remain ephemeral rather than durable checkpoint data.
+- Nebius Serverless create/list/cancel requests are contract-tested against documented semantics, but no live credentials were used and no remote job was launched.
+- Remote job state/result/checkpoint mapping is still missing; implement only after verifying the exact current status representation instead of guessing it.
+- Full solution compilation remains the largest verification risk.
+- Audit storage is append-only at API level but not tamper-evident/encrypted; memory persistence is not yet OS-encrypted at rest.
+- No concrete Playwright .NET/CDP/browser-extension driver exists yet.
 
 Next highest-value task:
-- Add the **real job execution boundary**: `ICapabilityToolExecutor`/handler wrapper that re-evaluates declared permissions and risk immediately before every tool call, consumes exact single-use approvals, writes audit events, and never trusts a resumed checkpoint as authorization. Then implement a concrete but credential-free **Nebius Serverless job adapter contract/client** from current official API/CLI semantics (with mocked contract tests, no fake successful cloud calls). After that, prioritize a Playwright .NET driver and Windows shell integration.
+- Implement a concrete **Playwright .NET browser driver** behind the existing provider-neutral browser contracts, using accessibility/user-facing locators, strict browser-context boundaries and no credential bypass. Route every write action through `CapabilityToolExecutor` and add mocked/fake-page tests where possible. In parallel, add an ephemeral job approval execution context so resumable handlers can receive a fresh single-use grant without ever persisting authorization into checkpoints. After that, start Windows shell integration.

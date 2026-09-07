@@ -1,0 +1,37 @@
+<Window x:Class="Nvidea.Windows.ApprovalDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="NVIDEA confirmation" Height="420" Width="620"
+        ResizeMode="NoResize" WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <Grid Margin="22">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <StackPanel Grid.Row="0">
+            <TextBlock Text="Confirm browser action" FontSize="22" FontWeight="SemiBold"/>
+            <TextBlock Text="The action is paused until you confirm it." Margin="0,5,0,16" Opacity="0.72"/>
+        </StackPanel>
+        <Border Grid.Row="1" BorderThickness="1" CornerRadius="6" Padding="12" Margin="0,0,0,12">
+            <StackPanel>
+                <TextBlock Text="Action" FontWeight="SemiBold"/>
+                <TextBlock x:Name="ActionText" TextWrapping="Wrap" Margin="0,3,0,10"/>
+                <TextBlock Text="Target" FontWeight="SemiBold"/>
+                <TextBlock x:Name="TargetText" TextWrapping="Wrap" Margin="0,3,0,0"/>
+            </StackPanel>
+        </Border>
+        <TextBlock Grid.Row="2" Text="Authorization scope" FontWeight="SemiBold" Margin="0,0,0,5"/>
+        <TextBox x:Name="ScopeText" Grid.Row="3" IsReadOnly="True" TextWrapping="Wrap"
+                 VerticalScrollBarVisibility="Auto" AcceptsReturn="True" Padding="8"/>
+        <DockPanel Grid.Row="4" Margin="0,16,0,0">
+            <TextBlock Text="Confirmation applies only to this displayed action." VerticalAlignment="Center" Opacity="0.64"/>
+            <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+                <Button Content="Cancel" Width="90" Margin="10,0,8,0" Click="Deny_Click" IsCancel="True"/>
+                <Button Content="Confirm" Width="110" Click="Approve_Click" IsDefault="True"/>
+            </StackPanel>
+        </DockPanel>
+    </Grid>
+</Window>

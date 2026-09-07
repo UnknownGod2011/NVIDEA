@@ -1,19 +1,23 @@
 using System.Text.Json;
+using Nvidea.Core.Security;
 
 namespace Nvidea.Core.Jobs;
 
 public sealed class JsonAgentJobStore : IAgentJobStore
 {
+    private const string ProtectionPurpose = "agent-jobs-v1";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private readonly string _path;
+    private readonly ILocalStateProtector? _protector;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
-    public JsonAgentJobStore(string path)
+    public JsonAgentJobStore(string path, ILocalStateProtector? protector = null)
     {
         if (string.IsNullOrWhiteSpace(path))
             throw new ArgumentException("Job store path is required.", nameof(path));
 
         _path = Path.GetFullPath(path);
+        _protector = protector;
     }
 
     public async Task<AgentJobRecord?> GetAsync(Guid jobId, CancellationToken cancellationToken = default)
@@ -70,13 +74,28 @@ public sealed class JsonAgentJobStore : IAgentJobStore
         if (!File.Exists(_path))
             return Array.Empty<AgentJobRecord>();
 
-        var json = await File.ReadAllTextAsync(_path, cancellationToken).ConfigureAwait(false);
-        var records = JsonSerializer.Deserialize<List<AgentJobRecord>>(json, JsonOptions) ?? new List<AgentJobRecord>();
+        var persisted = await File.ReadAllBytesAsync(_path, cancellationToken).ConfigureAwait(false);
+        LocalStatePayload payload;
+        if (_protector is not null)
+            payload = LocalStateEnvelope.Decode(persisted, _protector, ProtectionPurpose);
+        else if (LocalStateEnvelope.HasProtectedHeader(persisted))
+            throw new InvalidDataException("Job store is protected but no local-state protector was configured.");
+        else
+            payload = new LocalStatePayload(persisted, false);
+
+        List<AgentJobRecord> records;
+        try
+        {
+            records = JsonSerializer.Deserialize<List<AgentJobRecord>>(payload.Plaintext, JsonOptions) ?? new List<AgentJobRecord>();
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidDataException("Job store contains invalid data.", ex);
+        }
 
         // Durable schema migration runs under the store's existing exclusive gate before any
-        // caller can observe/resume a legacy browser action. It is a pure data transform:
-        // no browser, model, approval, capability, or external side effect is invoked here.
-        var changed = false;
+        // caller can observe/resume a legacy browser action. It is a pure data transform.
+        var changed = _protector is not null && !payload.WasProtected;
         for (var i = 0; i < records.Count; i++)
         {
             var migrated = BrowserActionCheckpointMigrationService.MigrateRecord(records[i]);
@@ -102,11 +121,13 @@ public sealed class JsonAgentJobStore : IAgentJobStore
         CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+        var plaintext = JsonSerializer.SerializeToUtf8Bytes(records, JsonOptions);
+        var persisted = _protector is null
+            ? plaintext
+            : LocalStateEnvelope.Encode(plaintext, _protector, ProtectionPurpose);
+
         var temp = _path + ".tmp";
-        await File.WriteAllTextAsync(
-            temp,
-            JsonSerializer.Serialize(records, JsonOptions),
-            cancellationToken).ConfigureAwait(false);
+        await File.WriteAllBytesAsync(temp, persisted, cancellationToken).ConfigureAwait(false);
         File.Move(temp, _path, true);
     }
 }

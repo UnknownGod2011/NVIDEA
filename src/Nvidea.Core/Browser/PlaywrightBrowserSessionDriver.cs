@@ -89,17 +89,6 @@ public sealed class PlaywrightBrowserSessionDriver : IBrowserDriver
         return _downloads.ListAsync(cancellationToken);
     }
 
-    public Task<BrowserDownloadExportReceipt> ExportDownloadAsync(
-        Guid downloadId,
-        string destinationDirectory,
-        bool userApproved,
-        CancellationToken cancellationToken = default)
-    {
-        if (_downloads is null)
-            throw new InvalidOperationException("Browser download quarantine is not configured.");
-        return _downloads.ExportAsync(downloadId, destinationDirectory, userApproved, cancellationToken);
-    }
-
     public async Task<BrowserSessionSnapshot> GetSessionSnapshotAsync(CancellationToken cancellationToken = default)
     {
         var active = await ResolveActivePageAsync(cancellationToken).ConfigureAwait(false);

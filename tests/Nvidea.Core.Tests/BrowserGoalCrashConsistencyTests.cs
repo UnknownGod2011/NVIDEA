@@ -40,8 +40,7 @@ public sealed class BrowserGoalCrashConsistencyTests
         }
         finally
         {
-            if (Directory.Exists(directory))
-                Directory.Delete(directory, recursive: true);
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
         }
     }
 
@@ -61,11 +60,9 @@ public sealed class BrowserGoalCrashConsistencyTests
             };
             await store.SaveAsync(session);
 
-            var verified = Verified(childId);
             var host = new CrashHost();
             host.Children[childId] = new BrowserJobOutcome(childId, AgentJobState.Pending, "created");
-            host.AdvanceResults[childId] = new BrowserJobOutcome(childId, AgentJobState.Completed, "verified", VerifiedStep: verified);
-
+            host.AdvanceResults[childId] = new BrowserJobOutcome(childId, AgentJobState.Completed, "verified", VerifiedStep: Verified(childId));
             var agent = new BrowserGoalAgent(
                 host,
                 new NemotronBrowserPlanner(new SequenceInferenceClient(CompleteDecision("Done."))),
@@ -81,8 +78,7 @@ public sealed class BrowserGoalCrashConsistencyTests
         }
         finally
         {
-            if (Directory.Exists(directory))
-                Directory.Delete(directory, recursive: true);
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
         }
     }
 
@@ -105,15 +101,8 @@ public sealed class BrowserGoalCrashConsistencyTests
             await store.SaveAsync(session);
 
             var host = new CrashHost();
-            host.Children[childId] = new BrowserJobOutcome(
-                childId,
-                AgentJobState.WaitingForApproval,
-                "approval required",
-                new BrowserApprovalPrompt(childId, scope, BrowserActionKind.Click, "Submit", "Submit", DateTimeOffset.UtcNow));
-            var agent = new BrowserGoalAgent(
-                host,
-                new NemotronBrowserPlanner(new ThrowingInferenceClient()),
-                store);
+            host.Children[childId] = Waiting(childId, scope);
+            var agent = new BrowserGoalAgent(host, new NemotronBrowserPlanner(new ThrowingInferenceClient()), store);
 
             var result = await agent.ResumeAsync(session.SessionId);
 
@@ -122,12 +111,50 @@ public sealed class BrowserGoalCrashConsistencyTests
             Assert.Equal(0, host.AdvanceCount);
             Assert.Equal(0, host.CreateCount);
             Assert.Equal(0, host.ApproveCount);
+            Assert.Equal(0, host.RearmCount);
             Assert.Equal(0, host.ObserveCount);
         }
         finally
         {
-            if (Directory.Exists(directory))
-                Directory.Delete(directory, recursive: true);
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ResumeAsync_ApprovalGrantLostBeforeExecution_RearmsWaitWithoutMintingApproval()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "nvidea-goal-lost-grant-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new JsonBrowserGoalSessionStore(Path.Combine(directory, "sessions.json"));
+            var childId = Guid.NewGuid();
+            const string scope = "capability:browser.agent:exact-submit";
+            var session = BrowserGoalSession.Create("Submit") with
+            {
+                ActionCount = 1,
+                PendingJobId = childId,
+                PendingExactScope = scope,
+                Status = BrowserGoalStatus.WaitingForApproval
+            };
+            await store.SaveAsync(session);
+
+            var host = new CrashHost();
+            host.Children[childId] = new BrowserJobOutcome(childId, AgentJobState.Pending, "approval grant was lost on restart");
+            var agent = new BrowserGoalAgent(host, new NemotronBrowserPlanner(new ThrowingInferenceClient()), store);
+
+            var result = await agent.ResumeAsync(session.SessionId);
+
+            Assert.Equal(BrowserGoalStatus.WaitingForApproval, result.Status);
+            Assert.Equal(1, host.RearmCount);
+            Assert.Equal(0, host.AdvanceCount);
+            Assert.Equal(0, host.ApproveCount);
+            Assert.Equal(0, host.ObserveCount);
+            Assert.Equal(AgentJobState.WaitingForApproval, host.Children[childId].State);
+            Assert.Equal(scope, host.Children[childId].Approval!.ExactScope);
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
         }
     }
 
@@ -148,11 +175,7 @@ public sealed class BrowserGoalCrashConsistencyTests
             await store.SaveAsync(session);
 
             var host = new CrashHost();
-            host.Children[childId] = new BrowserJobOutcome(
-                childId,
-                AgentJobState.Completed,
-                "verified",
-                VerifiedStep: Verified(childId));
+            host.Children[childId] = new BrowserJobOutcome(childId, AgentJobState.Completed, "verified", VerifiedStep: Verified(childId));
             var agent = new BrowserGoalAgent(
                 host,
                 new NemotronBrowserPlanner(new SequenceInferenceClient(CompleteDecision("Already done."))),
@@ -168,8 +191,41 @@ public sealed class BrowserGoalCrashConsistencyTests
         }
         finally
         {
-            if (Directory.Exists(directory))
-                Directory.Delete(directory, recursive: true);
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ResumeAsync_RunningChild_FailsClosedWithoutReplay()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "nvidea-goal-running-child-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new JsonBrowserGoalSessionStore(Path.Combine(directory, "sessions.json"));
+            var childId = Guid.NewGuid();
+            var session = BrowserGoalSession.Create("Submit") with
+            {
+                ActionCount = 1,
+                PendingJobId = childId,
+                Status = BrowserGoalStatus.Running
+            };
+            await store.SaveAsync(session);
+
+            var host = new CrashHost();
+            host.Children[childId] = new BrowserJobOutcome(childId, AgentJobState.Running, "ambiguous in-flight");
+            var agent = new BrowserGoalAgent(host, new NemotronBrowserPlanner(new ThrowingInferenceClient()), store);
+
+            var result = await agent.ResumeAsync(session.SessionId);
+
+            Assert.Equal(BrowserGoalStatus.Failed, result.Status);
+            Assert.Contains("ambiguous", result.Detail!, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(0, host.AdvanceCount);
+            Assert.Equal(0, host.CreateCount);
+            Assert.Equal(0, host.ObserveCount);
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
         }
     }
 
@@ -180,6 +236,12 @@ public sealed class BrowserGoalCrashConsistencyTests
         new Uri("https://example.com/after"),
         "state changed",
         DateTimeOffset.UtcNow);
+
+    private static BrowserJobOutcome Waiting(Guid jobId, string scope) => new(
+        jobId,
+        AgentJobState.WaitingForApproval,
+        "approval required",
+        new BrowserApprovalPrompt(jobId, scope, BrowserActionKind.Click, "Submit", "Submit", DateTimeOffset.UtcNow));
 
     private static string CompleteDecision(string reason) => $$"""
         {"decision":"complete","reason":"{{reason}}","action":null}
@@ -193,6 +255,7 @@ public sealed class BrowserGoalCrashConsistencyTests
         public int CreateCount { get; private set; }
         public int AdvanceCount { get; private set; }
         public int ApproveCount { get; private set; }
+        public int RearmCount { get; private set; }
 
         public Task<BrowserObservation> ObserveAsync(CancellationToken cancellationToken = default)
         {
@@ -222,9 +285,7 @@ public sealed class BrowserGoalCrashConsistencyTests
         {
             cancellationToken.ThrowIfCancellationRequested();
             AdvanceCount++;
-            var outcome = AdvanceResults.TryGetValue(jobId, out var configured)
-                ? configured
-                : Children[jobId];
+            var outcome = AdvanceResults.TryGetValue(jobId, out var configured) ? configured : Children[jobId];
             Children[jobId] = outcome;
             return Task.FromResult(outcome);
         }
@@ -233,6 +294,15 @@ public sealed class BrowserGoalCrashConsistencyTests
         {
             cancellationToken.ThrowIfCancellationRequested();
             return Task.FromResult(Children.TryGetValue(jobId, out var value) ? value : null);
+        }
+
+        public Task<BrowserJobOutcome> RearmApprovalAsync(Guid jobId, string exactScope, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            RearmCount++;
+            var waiting = Waiting(jobId, exactScope);
+            Children[jobId] = waiting;
+            return Task.FromResult(waiting);
         }
 
         public Task<BrowserJobOutcome> ApproveAndResumeAsync(Guid jobId, string exactScope, CancellationToken cancellationToken = default)
@@ -271,6 +341,6 @@ public sealed class BrowserGoalCrashConsistencyTests
     private sealed class ThrowingInferenceClient : IAgentInferenceClient
     {
         public Task<AgentCompletion> CompleteAsync(AgentRequest request, CancellationToken cancellationToken = default) =>
-            throw new InvalidOperationException("Nemotron must not run while approval remains paused.");
+            throw new InvalidOperationException("Nemotron must not run during crash recovery boundaries in this test.");
     }
 }

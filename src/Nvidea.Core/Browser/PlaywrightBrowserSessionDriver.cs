@@ -45,11 +45,12 @@ public sealed class PlaywrightBrowserSessionDriver : IBrowserDriver
         var page = await ResolveActivePageAsync(cancellationToken).ConfigureAwait(false);
         await CreatePageDriver(page).ExecuteAsync(action, cancellationToken).ConfigureAwait(false);
 
-        // A click can synchronously create a popup/new tab. Resolve again before returning so the
-        // next verifier observation is attached to the intended permitted page rather than the
-        // opener. This does not execute any action in the newly-created page.
-        if (action.Kind == BrowserActionKind.Click)
-            await ResolveActivePageAsync(cancellationToken).ConfigureAwait(false);
+        // A click can synchronously create a popup/new tab whose Page event fires while its URL is
+        // still about:blank. Give only already-created candidate pages a short bounded window to
+        // commit navigation so a permitted popup can become the verifier's next active page. This
+        // never waits for or discovers unrelated future pages and never interacts with the popup.
+        if (action.Kind == BrowserActionKind.Click && !_newPages.IsEmpty)
+            await ResolvePostClickPageAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<BrowserSessionSnapshot> GetSessionSnapshotAsync(CancellationToken cancellationToken = default)
@@ -71,6 +72,28 @@ public sealed class PlaywrightBrowserSessionDriver : IBrowserDriver
         {
             _gate.Release();
         }
+    }
+
+    private async Task ResolvePostClickPageAsync(CancellationToken cancellationToken)
+    {
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromMilliseconds(
+            Math.Min(1_000, Math.Max(250, _options.ActionTimeoutMilliseconds)));
+
+        do
+        {
+            await ResolveActivePageAsync(cancellationToken).ConfigureAwait(false);
+            if (_newPages.IsEmpty)
+                return;
+
+            var delay = deadline - DateTimeOffset.UtcNow;
+            if (delay <= TimeSpan.Zero)
+                return;
+
+            await Task.Delay(
+                delay < TimeSpan.FromMilliseconds(50) ? delay : TimeSpan.FromMilliseconds(50),
+                cancellationToken).ConfigureAwait(false);
+        }
+        while (DateTimeOffset.UtcNow < deadline);
     }
 
     private async Task<IPage> ResolveActivePageAsync(CancellationToken cancellationToken)

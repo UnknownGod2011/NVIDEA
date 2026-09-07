@@ -1,9 +1,9 @@
 # NVIDEA Hackathon Progress
 
 ## Mission
-Build a competition-grade, open-source Personal AI operating layer for Windows for the Nebius x NVIDIA Global AI Hackathon. Preserve the strongest interaction concepts from keyboard.wtf while replacing the intelligence/runtime with an NVIDIA/Nebius-first architecture that materially improves memory, research, browser automation, long-running work, safety, verification and personal-AI UX.
+Build a competition-grade, open-source Personal AI operating layer for Windows for the Nebius x NVIDIA Global AI Hackathon. Preserve the strongest interaction ideas from keyboard.wtf while making NVIDEA independently stronger in NVIDIA/Nebius-first reasoning, memory, research, browser automation, long-running work, verification, privacy and safety.
 
-Target track: **Personal AI**. Secondary target: **Best Use of Tavily**. Overall ambition: top-three / Grand Prize quality as a complete product rather than a model wrapper.
+Target: **Personal AI**. Secondary target: **Best Use of Tavily**. Ambition: top-three / Grand Prize quality as a complete product rather than a model wrapper.
 
 ## Hard Repository Boundary
 - WRITE ONLY to `UnknownGod2011/NVIDEA`.
@@ -14,7 +14,7 @@ Target track: **Personal AI**. Secondary target: **Best Use of Tavily**. Overall
 
 ## Target Architecture
 - **Desktop shell:** Windows global hotkeys, voice/text invocation, orb/status, active-app/selected-text/clipboard context, local speech where useful, permission UX and emergency stop.
-- **Agent core:** Nemotron/Nebius reasoning, structured tools, bounded execution, verification, retries/cancellation and approvals.
+- **Agent core:** Nemotron through Nebius Token Factory, structured tools/output, bounded execution, verification, retries/cancellation and approvals.
 - **Memory:** typed working/episodic/semantic/project/skill memory with privacy-aware writes, hybrid retrieval, provenance/confidence/sensitivity/retention and deletion controls.
 - **Research:** Nemotron planning -> Tavily evidence -> untrusted-content boundary -> Nemotron synthesis -> validated citations.
 - **Browser:** DOM/accessibility observation -> Nemotron one-step plan -> typed action + typed postconditions -> hard-safety floor -> capability policy -> exact approval -> Playwright -> fresh observation -> deterministic verification -> repeat under strict budgets.
@@ -26,24 +26,25 @@ Target track: **Personal AI**. Secondary target: **Best Use of Tavily**. Overall
 The <=3 minute demo should prove invocation anywhere on Windows, context awareness, durable memory changing later behavior, Tavily research with sources, complex browser work with visible verification, approval before consequential actions, meaningful Nebius background work, and an architecture view proving Nemotron/Nebius/Tavily are core.
 
 ## Current State
-- Standalone .NET 8 core at `src/Nvidea.Core` plus WPF host at `src/Nvidea.Windows`.
+- .NET 8 core at `src/Nvidea.Core` plus WPF host at `src/Nvidea.Windows`.
 - Nebius Token Factory inference client with Nemotron default, structured output/tools, conservative routing, retries, timeout/cancellation and endpoint validation.
 - Layered privacy-aware personal memory under `Memory`.
 - Tavily provider + Nemotron research engine under `Research`.
 - Concrete Playwright .NET browser driver, hard safety policy, capability execution boundary and deterministic verifier under `Browser`.
 - Capability registry, least-privilege permission policy, exact single-use approval authorizer and append-only audit under `Capabilities`.
 - Durable resumable jobs, ephemeral approval handoff and Nebius Serverless REST contract under `Jobs`.
-- `BrowserHostRuntime` owns isolated local Playwright + safety + capability + audit + child-job orchestration and exposes only bounded observations/high-level outcomes.
-- `NemotronBrowserPlanner` turns fresh untrusted observations into validated one-step decisions using typed postconditions rather than free-text `expected_state`.
-- `BrowserGoalAgent` runs the bounded observe -> plan -> job -> verify loop, halts at approval boundaries, and independently rejects legacy/unverifiable autonomous action contracts before child reservation.
+- `BrowserHostRuntime` owns local Playwright + safety + capability + audit + child-job orchestration and exposes only bounded observations/high-level outcomes.
+- `NemotronBrowserPlanner` turns fresh untrusted observations into validated one-step decisions using typed postconditions.
+- `BrowserGoalAgent` runs a bounded observe -> plan -> durable child -> verify loop, halts at approval boundaries, and independently rejects legacy/unverifiable autonomous action contracts before child reservation.
 - Browser goal sessions persist separately from approval state with privacy-minimized verified history and action/planner/context/wall-clock budgets.
-- Parent/child browser orchestration persists a reserved child ID before creation/execution and reconciles that exact durable child after restart.
-- Durable `Running` child jobs are never automatically replayed. Evidence-only reconciliation may complete them only when deterministic fresh evidence proves success; otherwise human resolution is required.
+- Parent/child browser orchestration persists a reserved child ID before creation/execution and reconciles that exact child after restart.
+- Durable `Running` child jobs are never blindly replayed. Fresh deterministic evidence may reconcile them; otherwise human resolution is required.
 - WPF host has global `Ctrl+Shift+Space`, foreground app/window context, read-only selected-text capture, opt-in clipboard disclosure, confirmation UX, live status, emergency stop and interrupted-work evidence inspection.
-- Typed browser postconditions support exact URL, title/text presence, element existence/value, checked state and enabled state; the same evaluator is shared by normal execution and crash reconciliation.
-- Durable browser action checkpoints now carry verification-contract version 2 at the top level. `JsonAgentJobStore` rewrites safe unversioned records under its exclusive lock before exposing them and quarantines ambiguous legacy mutations without execution.
-- `BrowserActionJobHandler` accepts only current versioned typed-verification checkpoints.
-- Opt-in localhost Chromium integration harness covers both the approval boundary and deterministic Nemotron planner -> durable child -> Playwright -> typed verifier path.
+- Typed browser postconditions support exact URL, title/text presence, element existence/value, checked state and enabled state; normal execution and crash reconciliation share the evaluator.
+- Durable browser-action checkpoints carry verification contract v2. Safe legacy records are migrated; ambiguous legacy mutations are quarantined without execution.
+- `BrowserActionJobHandler` accepts only current typed-verification checkpoints.
+- Opt-in localhost Chromium integration harness covers approval boundaries and deterministic Nemotron planner -> durable child -> Playwright -> typed verifier behavior.
+- Live Nebius strict-schema contract probe now exists under `tools/Nvidea.NebiusContractProbe`.
 - Root README + MIT license.
 - No repository other than NVIDEA has been mutated.
 
@@ -69,50 +70,48 @@ The <=3 minute demo should prove invocation anywhere on Windows, context awarene
 - Added deterministic no-model ambiguous-side-effect reconciliation; uploads/downloads are never auto-reconciled from DOM evidence.
 - Added Windows **Inspect evidence** UX with no retry-anyway affordance.
 
-### 2026-09-07 — Typed verification and Nemotron migration
-- Added typed browser postconditions capped at eight predicates and shared deterministic evaluation.
+### 2026-09-07 — Typed browser verification
+- Added typed postconditions capped at eight predicates and shared deterministic evaluation.
 - Replaced autonomous planner `expected_state` with bounded `postconditions[]` and local shape validation.
-- Added real-Chromium typed planner contract harness proving planner -> durable child -> approval -> Playwright -> fresh observation -> verifier -> durable history.
-- Added conservative `BrowserLegacyActionMigration`: typed/redundant legacy records can be normalized; exact navigation can become `UrlEquals(destination)`; arbitrary free-text mutations require human review.
+- Added Chromium contract harness covering deterministic planner -> durable child -> approval -> Playwright -> fresh observation -> verifier -> durable history.
+- Added conservative legacy-action migration; arbitrary free-text mutations require human review.
 - Added an independent `BrowserGoalAgent` guard rejecting legacy or unverifiable autonomous actions before durable child reservation.
+- Added verification contract v2 to durable browser checkpoints; safe unversioned records migrate under the job-store lock and ambiguous legacy mutations are quarantined with executable payload removed.
 
-### 2026-09-07 — Durable browser verification contract v2
+### 2026-09-07 — Live Nebius strict-schema probe
 Completed:
-- Added `BrowserActionCheckpointCodec` with explicit `verificationContractVersion = 2` persisted at the top level of the existing `BrowserAction` JSON shape. Keeping the marker top-level preserves existing descriptive recovery/approval readers while making execution schema explicit.
-- Verification contract v2 rejects any non-empty legacy `ExpectedState`; state-changing browser actions must carry typed postconditions.
-- Added `BrowserActionCheckpointMigrationService` plus a pure `MigrateRecord` transform. It never invokes Playwright, Nemotron, approval, capability execution, or any external side effect.
-- Safe legacy records are rewritten deterministically: existing typed actions receive the v2 marker; legacy navigation may derive exact `UrlEquals(destination)`; redundant free text is removed when typed predicates already exist.
-- Ambiguous legacy click/type/select/etc. records are quarantined as `Failed`, approval scope is cleared, retry timing is cleared, and the original action payload is replaced by a sanitized quarantine record so it cannot later be replayed accidentally.
-- `JsonAgentJobStore` now performs the migration under its existing exclusive gate before returning persisted records. Any changed records are atomically rewritten through the existing temp-file + move path.
-- `BrowserActionJobHandler` now deserializes only current v2 checkpoints at the execution boundary; an unversioned action cannot silently reach browser execution.
-- Migrated the handler test scenarios themselves away from `ExpectedState` to typed postconditions.
-- Added `BrowserActionCheckpointMigrationTests` covering top-level v2 shape, deterministic navigation migration, ambiguous mutation quarantine/payload removal, migration idempotency, and rejection of unversioned typed writes by the execution codec.
+- Added `tools/Nvidea.NebiusContractProbe/Nvidea.NebiusContractProbe.csproj` as a minimal .NET 8 executable that references the production core rather than duplicating API/schema logic.
+- Added `Program.cs` that constructs the real `NebiusTokenFactoryClient` and real `NemotronBrowserPlanner`, feeds a synthetic non-user browser observation, and asks the planner to return `Complete` through the production strict `json_schema` response contract.
+- The probe never creates Playwright, `BrowserHostRuntime`, a browser job, a capability request, or an approval grant. It cannot execute browser actions.
+- The probe exits non-zero when Token Factory rejects the request/schema or local structured-output parsing/validation fails. On provider HTTP failure it prints status only and intentionally suppresses the response body.
+- Added `docs/nebius-contract-probe.md` with one-command usage, scope, safety properties, expected output and explicit non-guarantees.
+- Fresh official Nebius material checked on 2026-09-07 still describes Token Factory as OpenAI-compatible with native structured JSON output/function calling and lists Nemotron 3 Super 120B as an agentic reasoning model.
 
 Validation / evidence:
-- Reviewed the repository delta from `a090be372d731f09b5a4d4d7882f93251db1e166` through the migration work: changes are limited to the checkpoint migration/codec, browser job handler, JSON job store, and focused tests.
-- Re-probed the execution environment on 2026-09-07: `dotnet`, `msbuild`, and `csc` are still unavailable, so **no compile/test/Chromium success is claimed**.
-- Direct GitHub cloning also remains unavailable in the execution container because `github.com` DNS resolution fails; repository work is persisted through the authenticated GitHub connector instead.
+- Repository head before this run was `2b56dad27d350eb0c9c482f86ad9e4f42997af01`.
+- New probe files were persisted through GitHub commits `b390d9ab9f1d7246ed45103215929894791bc74a`, `38b6acd099553d009f0bf46f6d2efe45a8f29a30`, and `7d17c04021daa0d843b21048bb870c772f589844` before this progress update.
+- Source review confirms the probe reuses the application's environment/options, HTTPS endpoint validation, model routing, retry/timeout behavior and exact planner schema.
+- This execution environment still does not expose `dotnet`, `msbuild`, or `csc`, so **no compile, live Token Factory, unit-test or Chromium success is claimed**.
 - No GitHub Actions workflow was created or rerun merely to manufacture a green signal.
 
 Security / privacy review:
-- Version migration treats legacy free text as data, never as authority, and never asks a model to reinterpret it.
-- Quarantine clears persisted approval scope and removes the original ambiguous action payload from the durable checkpoint.
-- Load-time migration occurs before callers can retrieve/resume a legacy record from `JsonAgentJobStore`, reducing upgrade-time replay risk.
-- The version marker itself is descriptive metadata and grants no authority.
-- Existing exact single-use approval, capability policy, safety floor, cancellation and audit boundaries remain unchanged.
-- No credentials, approval grants, bearer tokens, page bodies, CAPTCHA/login bypasses, or new cloud disclosures were introduced.
+- No credentials are committed. `NEBIUS_API_KEY` is consumed by the existing environment loader and never printed by the probe.
+- The live probe transmits only a fixed synthetic goal/observation, not clipboard, page, memory, user or browser-session data.
+- Provider HTTP response bodies are suppressed in probe output to avoid persisting echoed request/provider details in CI/demo logs.
+- Browser execution, approval, capability, audit mutation and Playwright are outside the probe's object graph.
+- Existing prompt-injection boundaries, exact single-use approvals, safety floor and capability enforcement are unchanged.
 
 ## Current Unverified / Risks
 - **Highest risk remains compilation/runtime validation:** source review is not a substitute for `dotnet build`, `dotnet test` and a real Playwright Chromium launch.
-- Matching Playwright Chromium binaries have not been installed/launched in this environment, and WPF has not been compiled/launched on Windows here.
-- The strict planner postcondition schema still needs a live Nebius Token Factory / Nemotron exercise; OpenAI-compatible backends can differ in strict-schema subsets.
-- `JsonAgentJobStore` now owns browser checkpoint schema migration because it must transform records before exposure. This is safe but creates some persistence-to-browser coupling; if job types expand substantially, migrate to a generic registered job-schema migration pipeline.
-- The recovery card discovers sessions already marked failed/ambiguous; a process dying while the parent still says `Running` may require goal resume before the child is classified.
-- `JsonAgentJobStore` and `JsonBrowserGoalSessionStore` are individually atomic files, not a cross-file transaction; reserved-child-ID ordering remains the cross-file safety mechanism.
+- The new strict-schema probe itself has not been compiled or run against live Token Factory in this environment because .NET and a Nebius API key are unavailable here.
+- Matching Playwright Chromium binaries have not been installed/launched here, and WPF has not been compiled/launched on Windows here.
+- `JsonAgentJobStore` now owns browser checkpoint schema migration; if job types grow substantially, migrate toward a generic registered job-schema migration pipeline.
+- Recovery discovery still depends on goal-state reconciliation when a process dies before the parent classifies an ambiguous child.
+- Goal sessions and child jobs are separate atomic files rather than one cross-file transaction; reserved-child-ID ordering remains the safety mechanism.
 - Goal-session JSON, child jobs, audit JSONL and memory JSON are not encrypted at rest yet.
 - Authenticated persistent browser-profile ownership, popup/new-tab tracking and durable download lifecycle remain incomplete.
 - Local voice/transcription is absent.
 - Tavily Extract/richer source authority/freshness work and a verified production embedding adapter remain opportunities.
 
 ## Single Best Next Task
-First obtain a real **.NET 8 build + unit-test + localhost Chromium integration signal** if a capable runtime becomes available and fix all compile/runtime defects immediately. If compilation remains unavailable, add a one-command **live Nebius Token Factory strict-schema contract probe** that exercises the production `NemotronBrowserPlanner` schema against the currently configured Nemotron model without executing browser actions, records only sanitized contract diagnostics, and fails clearly when the backend rejects the structured schema. After that, prioritize encrypted local state and authenticated browser-profile ownership.
+First obtain a real **.NET 8 build + unit-test + localhost Chromium integration signal** and run `tools/Nvidea.NebiusContractProbe` against a configured Nebius Token Factory key; fix any compiler, strict-schema or model-output incompatibility immediately. If that runtime/key remains unavailable, implement **encrypted local state at rest with a Windows DPAPI-backed key boundary and migration tests**, starting with the highest-sensitivity durable stores (memory and browser/job state) without making cloud execution depend on local secrets.

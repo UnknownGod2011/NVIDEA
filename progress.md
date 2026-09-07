@@ -21,6 +21,7 @@ Target: **Personal AI**. Secondary target: **Best Use of Tavily**. Ambition: top
 - **Skills / permissions:** capability registry, least privilege, monotonic risk, single-use approvals and append-only audit.
 - **Jobs:** durable checkpoints, retries, cancellation, approval-paused states, ephemeral grants and local-vs-Nebius execution policy.
 - **Cloud:** Nebius Serverless only for suitable long-running/background workloads; private OS actions stay local.
+- **Local security:** high-sensitivity durable Windows state protected with a CurrentUser DPAPI boundary, versioned envelopes, purpose binding, fail-closed decryption and plaintext migration.
 
 ## Hackathon Demo Bar
 The <=3 minute demo should prove invocation anywhere on Windows, context awareness, durable memory changing later behavior, Tavily research with sources, complex browser work with visible verification, approval before consequential actions, meaningful Nebius background work, and an architecture view proving Nemotron/Nebius/Tavily are core.
@@ -44,7 +45,8 @@ The <=3 minute demo should prove invocation anywhere on Windows, context awarene
 - Durable browser-action checkpoints carry verification contract v2. Safe legacy records are migrated; ambiguous legacy mutations are quarantined without execution.
 - `BrowserActionJobHandler` accepts only current typed-verification checkpoints.
 - Opt-in localhost Chromium integration harness covers approval boundaries and deterministic Nemotron planner -> durable child -> Playwright -> typed verifier behavior.
-- Live Nebius strict-schema contract probe now exists under `tools/Nvidea.NebiusContractProbe`.
+- Live Nebius strict-schema contract probe exists under `tools/Nvidea.NebiusContractProbe`.
+- **New:** memory, durable jobs and browser-goal sessions use a versioned local-state protection envelope; on Windows the default protector is CurrentUser DPAPI. Legacy plaintext is re-written into the protected format after successful parsing while holding the store lock.
 - Root README + MIT license.
 - No repository other than NVIDEA has been mutated.
 
@@ -57,61 +59,61 @@ The <=3 minute demo should prove invocation anywhere on Windows, context awarene
 - Added provider-neutral browser contracts, hard-safety policy, bounded observe-act-observe-verify execution and receipts.
 - Added capability registry, least privilege, exact single-use approvals, append-only audit, durable jobs and Nebius Serverless execution contracts.
 
-### 2026-09-07 — Concrete browser, desktop and multi-step agent
+### 2026-09-07 — Browser, desktop and crash-safe agent
 - Added Playwright driver with bounded DOM/ARIA observations, password redaction, host allowlists, user-facing locators, bounded actions and XPath disabled.
-- Added ephemeral approval handoff, last-mile browser capability enforcement, durable browser child jobs and `BrowserHostRuntime`.
-- Added trusted desktop composition root, WPF global hotkey/context capture/clipboard disclosure, cancellation and emergency stop.
-- Added `NemotronBrowserPlanner`, bounded `BrowserGoalAgent`, privacy-minimized durable goal sessions and action/planner/context/wall-clock budgets.
+- Added ephemeral approval handoff, last-mile browser capability enforcement, durable child jobs, trusted desktop composition root and WPF shell.
+- Added `NemotronBrowserPlanner`, bounded `BrowserGoalAgent`, privacy-minimized durable goal sessions and strict execution budgets.
+- Split child creation from advancement; persisted exact child IDs before side effects; added restart reconciliation without blind replay.
+- Added deterministic evidence-only reconciliation for ambiguous `Running` children; uploads/downloads remain non-auto-reconcilable.
+- Added Windows **Inspect evidence** recovery UX with no retry-anyway affordance.
 
-### 2026-09-07 — Crash consistency and evidence-only recovery
-- Added caller-supplied child IDs, idempotent creation and structural permission comparison.
-- Split child creation from execution so the parent persists exact child identity before any browser side effect.
-- Recovery handles missing/created/approval-paused/completed/lost-grant/ambiguous-running child states without blind replay.
-- Added deterministic no-model ambiguous-side-effect reconciliation; uploads/downloads are never auto-reconciled from DOM evidence.
-- Added Windows **Inspect evidence** UX with no retry-anyway affordance.
-
-### 2026-09-07 — Typed browser verification
-- Added typed postconditions capped at eight predicates and shared deterministic evaluation.
-- Replaced autonomous planner `expected_state` with bounded `postconditions[]` and local shape validation.
-- Added Chromium contract harness covering deterministic planner -> durable child -> approval -> Playwright -> fresh observation -> verifier -> durable history.
-- Added conservative legacy-action migration; arbitrary free-text mutations require human review.
-- Added an independent `BrowserGoalAgent` guard rejecting legacy or unverifiable autonomous actions before durable child reservation.
-- Added verification contract v2 to durable browser checkpoints; safe unversioned records migrate under the job-store lock and ambiguous legacy mutations are quarantined with executable payload removed.
+### 2026-09-07 — Typed browser verification and durable migration
+- Added bounded typed postconditions and one deterministic evaluator shared by normal execution and crash reconciliation.
+- Replaced autonomous planner `expected_state` with typed `postconditions[]` and local shape validation.
+- Added Chromium contract harness for planner -> durable child -> approval -> Playwright -> observation -> verifier -> durable history.
+- Added conservative legacy-action migration and an independent `BrowserGoalAgent` guard rejecting legacy/unverifiable autonomous writes before child reservation.
+- Added verification contract v2 to durable browser checkpoints; safe records migrate under the job-store lock and ambiguous legacy mutations are quarantined with executable payload removed.
 
 ### 2026-09-07 — Live Nebius strict-schema probe
+- Added `tools/Nvidea.NebiusContractProbe`, reusing the production `NebiusTokenFactoryClient` and `NemotronBrowserPlanner` against a fixed synthetic observation.
+- Probe cannot create Playwright, browser actions, capability requests or approval grants; provider error bodies are suppressed.
+- Added `docs/nebius-contract-probe.md` with execution procedure and non-guarantees.
+
+### 2026-09-07 — DPAPI-backed encrypted local state
 Completed:
-- Added `tools/Nvidea.NebiusContractProbe/Nvidea.NebiusContractProbe.csproj` as a minimal .NET 8 executable that references the production core rather than duplicating API/schema logic.
-- Added `Program.cs` that constructs the real `NebiusTokenFactoryClient` and real `NemotronBrowserPlanner`, feeds a synthetic non-user browser observation, and asks the planner to return `Complete` through the production strict `json_schema` response contract.
-- The probe never creates Playwright, `BrowserHostRuntime`, a browser job, a capability request, or an approval grant. It cannot execute browser actions.
-- The probe exits non-zero when Token Factory rejects the request/schema or local structured-output parsing/validation fails. On provider HTTP failure it prints status only and intentionally suppresses the response body.
-- Added `docs/nebius-contract-probe.md` with one-command usage, scope, safety properties, expected output and explicit non-guarantees.
-- Fresh official Nebius material checked on 2026-09-07 still describes Token Factory as OpenAI-compatible with native structured JSON output/function calling and lists Nemotron 3 Super 120B as an agentic reasoning model.
+- Added `src/Nvidea.Core/Security/LocalStateProtection.cs` with `ILocalStateProtector`, a versioned `NVIDEA-STATE-V1` envelope and `WindowsDpapiLocalStateProtector`.
+- Windows DPAPI is invoked directly through `CryptProtectData` / `CryptUnprotectData` with `CRYPTPROTECT_UI_FORBIDDEN`, default CurrentUser semantics and purpose-derived optional entropy. No reusable encryption key is committed or stored beside application state.
+- Corrected native-memory ownership during review: DPAPI-produced data/output-description buffers are released with `LocalFree`; only application-allocated input/entropy buffers use `Marshal.FreeHGlobal`.
+- `JsonFileMemoryStore`, `JsonAgentJobStore` and `JsonBrowserGoalSessionStore` now protect persisted bytes on Windows by default. Existing callers do not need a second configuration path.
+- Each store has an independent purpose (`personal-memory-v1`, `agent-jobs-v1`, `browser-goal-sessions-v1`) so protected payloads cannot be silently transplanted across store types.
+- Legacy plaintext remains readable for migration. A store first parses the plaintext under its existing exclusive gate and only after successful parsing rewrites it atomically into the protected envelope. Invalid legacy data is not encrypted and legitimized.
+- Stores fail closed when they encounter a protected envelope without an available protector or when protected data cannot be decrypted.
+- Added `LocalStateProtectionTests` covering envelope round-trip/purpose binding, memory content not appearing in persisted text, protected memory round-trip, plaintext migration for memory/jobs/browser-goal stores, and non-Windows DPAPI fail-closed behavior.
 
 Validation / evidence:
-- Repository head before this run was `2b56dad27d350eb0c9c482f86ad9e4f42997af01`.
-- New probe files were persisted through GitHub commits `b390d9ab9f1d7246ed45103215929894791bc74a`, `38b6acd099553d009f0bf46f6d2efe45a8f29a30`, and `7d17c04021daa0d843b21048bb870c772f589844` before this progress update.
-- Source review confirms the probe reuses the application's environment/options, HTTPS endpoint validation, model routing, retry/timeout behavior and exact planner schema.
-- This execution environment still does not expose `dotnet`, `msbuild`, or `csc`, so **no compile, live Token Factory, unit-test or Chromium success is claimed**.
+- Repository head before this run: `1f76d6ebc798c64d5843dd85c520bb930195699b`.
+- Implementation commits before this progress update: `4fd59c5ffcaa5321c129823d3d986ca3a24743de`, `dbd4a000d8dbf165ec6a59a234259ce7bc06d871`, `b5506f0673cc2f5b3fb454a702ac7e092611931f`, `2ef3789211fefa572ad66d54d22668644dd842a6`, `7a729903fdb7fa4e0561cf9ed8c143e5728fa75b`, `ca23c98c9c5936da7610efc2d43311e95008fea3`, `9e0b8cebc667191ce5f27eea4ac9b9be7649c973`, `a93ac7490a251cd2a523aa6164155513c552e702`, `3f8064936e7b1e5a0144f1462aeba59d628f3bae`.
+- Current Microsoft DPAPI documentation was checked on 2026-09-07. It confirms default same-user/same-machine semantics, matching optional entropy on unprotect, and `LocalFree` ownership for DPAPI output buffers.
+- The execution container still exposes no `dotnet`, `msbuild` or `csc`; the toolchain probe returned no executable. Therefore **no compile or unit-test success is claimed**.
 - No GitHub Actions workflow was created or rerun merely to manufacture a green signal.
 
 Security / privacy review:
-- No credentials are committed. `NEBIUS_API_KEY` is consumed by the existing environment loader and never printed by the probe.
-- The live probe transmits only a fixed synthetic goal/observation, not clipboard, page, memory, user or browser-session data.
-- Provider HTTP response bodies are suppressed in probe output to avoid persisting echoed request/provider details in CI/demo logs.
-- Browser execution, approval, capability, audit mutation and Playwright are outside the probe's object graph.
-- Existing prompt-injection boundaries, exact single-use approvals, safety floor and capability enforcement are unchanged.
+- State encryption is local-only and does not make Nebius/cloud jobs depend on a local secret/key file.
+- DPAPI protection is deliberately scoped to the logged-in Windows user rather than `LOCAL_MACHINE` so another local account is not granted decrypt authority.
+- Purpose binding is additional entropy/domain separation, not a secret and not advertised as one.
+- Plaintext migration occurs only after successful deserialization and under each store's existing lock; writes retain temp-file replacement behavior.
+- The envelope is versioned so future formats can be distinguished explicitly.
+- No approval grants, provider API keys, browser credentials or tokens were added to durable state.
 
 ## Current Unverified / Risks
-- **Highest risk remains compilation/runtime validation:** source review is not a substitute for `dotnet build`, `dotnet test` and a real Playwright Chromium launch.
-- The new strict-schema probe itself has not been compiled or run against live Token Factory in this environment because .NET and a Nebius API key are unavailable here.
-- Matching Playwright Chromium binaries have not been installed/launched here, and WPF has not been compiled/launched on Windows here.
-- `JsonAgentJobStore` now owns browser checkpoint schema migration; if job types grow substantially, migrate toward a generic registered job-schema migration pipeline.
-- Recovery discovery still depends on goal-state reconciliation when a process dies before the parent classifies an ambiguous child.
-- Goal sessions and child jobs are separate atomic files rather than one cross-file transaction; reserved-child-ID ordering remains the safety mechanism.
-- Goal-session JSON, child jobs, audit JSONL and memory JSON are not encrypted at rest yet.
-- Authenticated persistent browser-profile ownership, popup/new-tab tracking and durable download lifecycle remain incomplete.
+- **Highest risk remains compilation/runtime validation:** source review is not a substitute for `dotnet build`, `dotnet test`, a Windows WPF launch and a real Playwright Chromium launch.
+- The live strict-schema probe still has not been compiled or run against Token Factory here because .NET and a Nebius API key are unavailable.
+- DPAPI P/Invoke and protected-store tests have not executed on a real Windows runner in this environment; the implementation follows current Microsoft ownership/scope documentation but still needs executable verification.
+- `audit.jsonl` remains plaintext at rest. It is append-only and privacy-minimized but should receive a separate encrypted/authenticated append format or protected segment design rather than being forced into the whole-file store abstraction.
+- Browser-profile ownership/authenticated persistent sessions, popup/new-tab tracking and durable download lifecycle remain incomplete.
 - Local voice/transcription is absent.
 - Tavily Extract/richer source authority/freshness work and a verified production embedding adapter remain opportunities.
+- Cross-file browser parent/child state is still separate atomic files; reserved-child ordering remains the crash-safety mechanism.
 
 ## Single Best Next Task
-First obtain a real **.NET 8 build + unit-test + localhost Chromium integration signal** and run `tools/Nvidea.NebiusContractProbe` against a configured Nebius Token Factory key; fix any compiler, strict-schema or model-output incompatibility immediately. If that runtime/key remains unavailable, implement **encrypted local state at rest with a Windows DPAPI-backed key boundary and migration tests**, starting with the highest-sensitivity durable stores (memory and browser/job state) without making cloud execution depend on local secrets.
+First obtain a real **.NET 8 build + unit-test + localhost Chromium integration + Windows DPAPI round-trip signal**, and run `tools/Nvidea.NebiusContractProbe` against a configured Nebius Token Factory key; fix compiler/runtime/schema incompatibilities immediately. If executable validation remains unavailable, implement **encrypted append-only audit storage** with tamper-evident chaining and migration/rotation semantics, then extend at-rest protection to any authenticated browser-profile metadata without persisting browser credentials outside the browser's own protected profile boundary.

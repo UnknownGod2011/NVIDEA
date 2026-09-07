@@ -43,7 +43,10 @@ The <=3 minute demo should prove invocation anywhere on Windows, context awarene
 - Production browser orchestration uses `SegmentedAuditTrail`.
 - Production browser runtime uses an NVIDEA-owned persistent Chromium profile and session-aware popup/new-tab tracking.
 - Browser downloads are captured into an NVIDEA-owned durable quarantine before a `Download` action may return successfully; quarantine metadata is DPAPI-protected by default on Windows.
-- `BrowserDownloadHandoffService` now provides an exact-scope, single-use approval and audit boundary for releasing a quarantined artifact to a user-selected destination. Production driver/UI migration to this service is still pending; the low-level quarantine boolean remains only as a trusted primitive for now.
+- `BrowserDownloadHandoffService` provides exact-scope, single-use approval and audit for releasing quarantined artifacts.
+- **Production runtime now composes that handoff service directly.** The handoff capability is registered in the same capability registry, uses the same `ScopedApprovalAuthorizer` and segmented audit trail, and the persistent browser session exposes the exact quarantine instance used by Playwright capture.
+- `BrowserHostRuntime` now exposes trusted-UI APIs to list quarantined downloads, prepare an exact handoff plan, and approve/export only when the UI echoes the exact scope shown to the human. It mints a 2-minute single-use `ApprovalGrant` only after that equality check; `BrowserDownloadHandoffService` consumes it before the copy.
+- The old `PlaywrightBrowserSessionDriver.ExportDownloadAsync(..., bool userApproved)` escape hatch has been removed. The driver can list/capture downloads but cannot release them.
 - Root README + MIT license.
 - No repository other than NVIDEA has been mutated.
 
@@ -69,42 +72,53 @@ The <=3 minute demo should prove invocation anywhere on Windows, context awarene
 - Representative commits: `86ce7ccfdfd09ad27fdb129c6220fe4deff02633`, `588fdee148fca3c98c5ed90ac758aa899e689f69`, `58374c4126288b5bfffd62e343667f7d1ce746e9`, `2bd59d1aa21e2a246a36e2ea65e834d5db279ca0`.
 
 ### 2026-09-08 — Exact-scope download handoff approval boundary
+- Added `BrowserDownloadHandoffService` and regression tests.
+- Scope binds download id + canonical destination fingerprint to `FilesWrite`; policy requires high-risk exact approval.
+- Re-derives the plan immediately before export, consumes a short-lived single-use grant before side effects, and audits waiting/scope-changed/start/success/cancel/failure without persisting the raw destination path.
+- Representative commits: `74b1c00ea306a825486a32d55be26dfca8bbf3fd`, `ec2eca992d867d27193e527fb9667b77f817de71`.
+
+### 2026-09-08 — Production download handoff wiring
 Completed:
-- Added `src/Nvidea.Core/Browser/BrowserDownloadHandoffService.cs`.
-- `PrepareAsync` re-reads the durable quarantine record, requires a Ready/Exported state and an already-existing destination directory, then produces a high-risk consequential `FilesWrite` capability invocation.
-- Approval scope binds the exact download id to a SHA-256 fingerprint of the canonical destination path via the stable action id. A grant prepared for one folder cannot authorize another folder.
-- `ExportAsync` reconstructs the plan immediately before execution and fails closed if the download/destination/action/scope differs from what the confirmation surface prepared.
-- The existing `ScopedApprovalAuthorizer.TryAuthorize` is used immediately before export, so grants are expiring and single-use. A failed/cancelled/ambiguous export does not restore the consumed grant; retry requires fresh human approval.
-- Handoff audit events cover awaiting approval, scope change, started, succeeded, cancelled and failed. Audit metadata stores download id + destination fingerprint rather than a full potentially-sensitive destination path.
-- The service deliberately delegates bytes/hash/path/no-overwrite/atomic-copy verification back to `BrowserDownloadQuarantine`; it does not duplicate the storage integrity layer.
-- Added `tests/Nvidea.Core.Tests/BrowserDownloadHandoffServiceTests.cs` covering approval-required export, single-use enforcement, cross-destination scope mismatch, prepared-plan mutation rejection and failed-export grant consumption.
+- `src/Nvidea.Core/Browser/PersistentBrowserContextFactory.cs`
+  - `PersistentBrowserContextSession` now returns the exact `BrowserDownloadQuarantine` instance used by the Playwright session, so production authorization and capture operate on one durable store rather than parallel instances.
+  - Commit: `6bbd177297126a237017cbea2435455472ec5870`.
+- `src/Nvidea.Core/Browser/PlaywrightBrowserSessionDriver.cs`
+  - removed `ExportDownloadAsync(Guid, string, bool, ...)`; the browser driver no longer has any boolean-based release API.
+  - capture and read-only listing remain intact.
+  - Commit: `e7dfbaac046d6fbd9f51cd3c8f1f6e3b1993b12c`.
+- `src/Nvidea.Core/Desktop/BrowserHostRuntime.cs`
+  - registered `browser.download.handoff` as a distinct high-risk, confirmation-required `FilesWrite` capability. This fixes a real production composition bug: without the descriptor, `BrowserDownloadHandoffService.PrepareAsync` would fail capability lookup if wired into the runtime.
+  - composes `BrowserDownloadHandoffService` with the same capability policy, `ScopedApprovalAuthorizer`, quarantine and `SegmentedAuditTrail` used by the production browser host.
+  - added `ListDownloadsAsync`, `PrepareDownloadHandoffAsync`, and `ApproveAndExportDownloadAsync` as the trusted runtime boundary.
+  - approval requires an exact scope echo matching the prepared plan. Only then does the runtime mint a 2-minute grant from `ScopedApprovalAuthorizer`; the handoff service re-prepares the plan and consumes the grant before export.
+  - Commit: `bcca57e7c4577ac7bf118329fe3fd9ac4d2e20ab`.
 
 Validation / evidence:
-- Scoped handoff implementation commit: `74b1c00ea306a825486a32d55be26dfca8bbf3fd`.
-- Scoped handoff regression tests commit: `ec2eca992d867d27193e527fb9667b77f817de71`.
-- Repository identity was explicitly re-verified as `UnknownGod2011/NVIDEA` before every mutation in this run.
-- Source-level review used the current `ScopedApprovalAuthorizer`, `CapabilityPermissionPolicy`, `IAuditTrail`, quarantine and Playwright session code rather than inventing a parallel authorization design.
-- Executable validation remains unavailable in this tool environment; no compile/test success is claimed and no GitHub Actions workflow was triggered merely to manufacture a green signal.
+- Repository identity was explicitly re-verified as exactly `UnknownGod2011/NVIDEA` before every mutation.
+- Re-fetched the modified runtime after commit and confirmed the handoff descriptor, shared policy/authorizer/audit composition and trusted runtime APIs are present.
+- Git tree at `bcca57e7c4577ac7bf118329fe3fd9ac4d2e20ab` confirms only NVIDEA files changed and shows the expected new blobs for `PersistentBrowserContextFactory.cs`, `PlaywrightBrowserSessionDriver.cs`, and `BrowserHostRuntime.cs`.
+- Searched the repository for `ExportDownloadAsync`; no default-branch result remains.
+- The execution environment was checked again for `dotnet`, `msbuild`, `csc`, and `mcs`; none is available. No compile/test/Chromium/DPAPI success is claimed and no GitHub Actions run was triggered merely to create a green signal.
 
 Security / privacy review:
-- A boolean cannot serve as transferable proof of approval; the new service requires an ephemeral grant registered inside `ScopedApprovalAuthorizer` and scoped to the exact capability/action/permission tuple.
-- Destination paths can themselves contain personal information; durable audit records therefore contain a SHA-256 destination fingerprint rather than the raw path.
-- The untrusted source passed to capability policy is reduced to the source host rather than the full potentially-sensitive download URL.
-- Scope is reconstructed immediately before export, mitigating caller mutation of a prepared confirmation object.
-- Approval is intentionally consumed before the consequential filesystem copy. If the outcome is ambiguous, retrying cannot duplicate the side effect without fresh user confirmation.
-- Remaining gap: `BrowserDownloadQuarantine.ExportAsync(..., userApproved: true)` is still a public low-level primitive and `PlaywrightBrowserSessionDriver.ExportDownloadAsync` still exposes the boolean path. The new service is the intended authoritative production boundary, but those production callers must be migrated before the boolean can safely be internalized/removed.
+- Browser code that observes/clicks/downloads no longer possesses a direct boolean release method; release authority is concentrated in the runtime handoff boundary.
+- The exact quarantine instance is shared between capture and handoff, avoiding state desynchronization or a second unverified download store.
+- Handoff remains least-privilege `FilesWrite`, high-risk, consequential and human-confirmed.
+- Destination paths are shown only to the trusted UI/runtime plan; the durable audit stores only a fingerprint.
+- Grant material remains ephemeral and short-lived. A scope mismatch fails before minting the grant; handoff revalidation can still reject mutation after approval preparation.
+- The low-level `BrowserDownloadQuarantine.ExportAsync(..., bool userApproved)` primitive remains public for now because existing unit tests directly exercise it and executable validation is unavailable. It is no longer reachable from `PlaywrightBrowserSessionDriver` or `BrowserHostRuntime`. Make it `internal` only after compiling the test assembly boundary or adding an explicit test-only friend assembly.
 
 ## Current Unverified / Risks
 - **Highest risk remains executable validation:** source review is not a substitute for `dotnet build`, `dotnet test`, Windows WPF launch and a real Playwright Chromium launch.
-- Persistent Chromium, browser download capture, new handoff service/tests and DPAPI-protected stores have not compiled/executed in this environment.
+- Persistent Chromium, browser download capture, runtime handoff wiring and DPAPI-protected stores have not compiled/executed in this environment.
 - Live Token Factory strict-schema probe remains unexecuted because .NET and a Nebius API key are unavailable here.
+- The trusted WPF download list/destination confirmation UI is still absent; the runtime APIs now exist for it.
+- `BrowserDownloadQuarantine.ExportAsync(..., bool userApproved)` remains public at the low-level storage layer although production driver/runtime callers no longer expose it.
 - Persistent Chromium profile contents and quarantined payload bytes are local but not application-encrypted by NVIDEA; OS/user-profile protections remain their confidentiality boundary.
-- Production download export still needs migration from the legacy trusted boolean to `BrowserDownloadHandoffService`, followed by making the low-level boolean method non-public or removing it.
-- A minimal Windows list/confirmation UI for Ready quarantined downloads is still absent.
 - Unsolicited/background page downloads can be quarantined; cleanup/retention policy remains future work.
 - Segmentation bounds active audit files by event count, but lifetime archive retention and byte-size quotas remain absent.
 - Local voice/transcription is absent.
 - Tavily Extract/richer source authority/freshness work and a verified production embedding adapter remain opportunities.
 
 ## Single Best Next Task
-First obtain a real .NET 8 build/test/Chromium/Windows signal and immediately fix compile/runtime issues. If executable validation remains unavailable, wire `BrowserDownloadHandoffService` into the production persistent-browser/runtime boundary, replace `PlaywrightBrowserSessionDriver.ExportDownloadAsync(..., bool userApproved)` with prepare/approve/export APIs using `ApprovalGrant`, then make the quarantine's boolean export primitive internal. Surface a minimal trusted WPF Ready-download list + explicit destination confirmation that creates a short-lived exact-scope grant only after the human approves. Preserve the rule that the agent may quarantine autonomously but can never release a file outside NVIDEA state without fresh explicit approval.
+First obtain a real .NET 8 build/test/Chromium/Windows signal and immediately fix compile/runtime issues. If executable validation remains unavailable, build the minimal trusted WPF Ready-download list and destination-picker confirmation flow on top of `BrowserHostRuntime.ListDownloadsAsync` / `PrepareDownloadHandoffAsync` / `ApproveAndExportDownloadAsync`. The UI must display filename, source host, size/hash and exact destination, require a fresh explicit click, and never expose or persist `ApprovalGrant`. After that, make the quarantine boolean export primitive internal (with an explicit test-only friend assembly if needed) so no public API can release a file using a bare boolean.

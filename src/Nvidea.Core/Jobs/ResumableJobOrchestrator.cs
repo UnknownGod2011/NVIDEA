@@ -87,6 +87,9 @@ public sealed class ResumableJobOrchestrator
         var job = await GetRequiredAsync(jobId, cancellationToken).ConfigureAwait(false);
         if (job.State is AgentJobState.Completed or AgentJobState.Failed or AgentJobState.Cancelled) return job;
         if (job.State == AgentJobState.WaitingForApproval) return job;
+        // A durable Running record may be the residue of a process crash after a side effect began.
+        // Replaying it automatically could duplicate a consequential action, so recovery is fail-closed.
+        if (job.State == AgentJobState.Running) return job;
         if (job.State == AgentJobState.RetryScheduled && job.NextAttemptAt is { } next && next > DateTimeOffset.UtcNow) return job;
 
         var running = job with { State = AgentJobState.Running, Attempt = job.Attempt + 1, LastError = null, NextAttemptAt = null, UpdatedAt = DateTimeOffset.UtcNow };
@@ -148,6 +151,41 @@ public sealed class ResumableJobOrchestrator
         var auditableApproval = resumed with { ApprovalScope = approvalScope };
         await AuditAsync(auditableApproval, "job.approved", true, true, "Exact paused action approved with ephemeral single-use execution grant.", cancellationToken).ConfigureAwait(false);
         return resumed;
+    }
+
+    /// <summary>
+    /// Restores a non-authorizing approval wait after a restart lost an ephemeral grant before
+    /// execution began. This may only re-arm a Pending job; Running is intentionally ambiguous.
+    /// </summary>
+    public async Task<AgentJobRecord> RearmApprovalAsync(
+        Guid jobId,
+        string approvalScope,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(approvalScope))
+            throw new ArgumentException("Approval scope is required.", nameof(approvalScope));
+
+        var job = await GetRequiredAsync(jobId, cancellationToken).ConfigureAwait(false);
+        if (job.State == AgentJobState.WaitingForApproval)
+        {
+            if (!string.Equals(job.ApprovalScope, approvalScope, StringComparison.Ordinal))
+                throw new UnauthorizedAccessException("Persisted approval scope does not match the paused job.");
+            return job;
+        }
+        if (job.State != AgentJobState.Pending)
+            throw new InvalidOperationException("Only a pending job can safely be re-armed for approval after restart.");
+
+        _ephemeralApprovals.Revoke(jobId);
+        var waiting = job with
+        {
+            State = AgentJobState.WaitingForApproval,
+            ApprovalScope = approvalScope,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+        await _store.SaveAsync(waiting, cancellationToken).ConfigureAwait(false);
+        await AuditAsync(waiting, "job.approval_rearmed", true, false,
+            "Approval wait restored after restart; no execution grant was created.", cancellationToken).ConfigureAwait(false);
+        return waiting;
     }
 
     public async Task<AgentJobRecord> CancelAsync(Guid jobId, CancellationToken cancellationToken = default)

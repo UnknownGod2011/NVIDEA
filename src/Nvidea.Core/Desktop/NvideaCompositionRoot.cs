@@ -124,6 +124,18 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     }
 
     /// <summary>
+    /// Returns the durable, descriptive browser-goal sessions that the local desktop may surface
+    /// for restart/recovery UX. The records contain no approval grants, credentials or typed
+    /// browser values and reading them does not initialize Playwright or confer execution authority.
+    /// </summary>
+    public async Task<IReadOnlyList<BrowserGoalSession>> ListBrowserGoalSessionsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return await CreateBrowserGoalStore().ListAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Creates the explicit crash-recovery service for side-effect-ambiguous browser children.
     /// The service shares the same durable parent store and trusted local browser host as the goal
     /// agent. It can only inspect fresh evidence and mark an already-achieved state complete; it

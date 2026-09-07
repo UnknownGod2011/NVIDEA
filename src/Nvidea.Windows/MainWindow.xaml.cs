@@ -141,7 +141,8 @@ public partial class MainWindow : Window
     {
         var app = string.IsNullOrWhiteSpace(context.ActiveApplication) ? "unknown app" : context.ActiveApplication;
         var title = string.IsNullOrWhiteSpace(context.WindowTitle) ? string.Empty : $" · {context.WindowTitle}";
-        ContextText.Text = $"Context: {app}{title}";
+        var selection = string.IsNullOrWhiteSpace(context.SelectedText) ? string.Empty : " · selection captured";
+        ContextText.Text = $"Context: {app}{title}{selection}";
     }
 
     [DllImport("user32.dll", SetLastError = true)]

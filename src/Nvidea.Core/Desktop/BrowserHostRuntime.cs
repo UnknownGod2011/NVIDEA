@@ -164,6 +164,16 @@ public sealed class BrowserHostRuntime : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Returns a fresh, bounded observation from the owned browser session. This is read-only
+    /// evidence for trusted planning; it does not grant any capability or bypass action policy.
+    /// </summary>
+    public Task<BrowserObservation> ObserveAsync(CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        return _driver.ObserveAsync(cancellationToken);
+    }
+
     public async Task<BrowserJobOutcome> StartActionAsync(
         BrowserAction action,
         CancellationToken cancellationToken = default)

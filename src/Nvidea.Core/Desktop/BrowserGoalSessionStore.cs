@@ -6,6 +6,7 @@ namespace Nvidea.Core.Desktop;
 public interface IBrowserGoalSessionStore
 {
     Task<BrowserGoalSession?> GetAsync(Guid sessionId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<BrowserGoalSession>> ListAsync(CancellationToken cancellationToken = default);
     Task SaveAsync(BrowserGoalSession session, CancellationToken cancellationToken = default);
 }
 
@@ -42,6 +43,20 @@ public sealed class JsonBrowserGoalSessionStore : IBrowserGoalSessionStore
         {
             var records = await LoadUnlockedAsync(cancellationToken).ConfigureAwait(false);
             return records.FirstOrDefault(x => x.SessionId == sessionId)?.ToSession();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task<IReadOnlyList<BrowserGoalSession>> ListAsync(CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var records = await LoadUnlockedAsync(cancellationToken).ConfigureAwait(false);
+            return records.Select(static record => record.ToSession()).ToArray();
         }
         finally
         {

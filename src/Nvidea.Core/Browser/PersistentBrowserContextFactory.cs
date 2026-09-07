@@ -6,7 +6,8 @@ namespace Nvidea.Core.Browser;
 /// Creates a Chromium persistent context rooted exclusively in the NVIDEA-owned browser profile.
 /// Existing tabs are never adopted on startup: browser-managed authenticated/profile state such as
 /// cookies and local storage may persist, but every runtime begins on a fresh explicitly-permitted
-/// page so stale tabs cannot silently become agent-visible context.
+/// page so stale tabs cannot silently become agent-visible context. Browser downloads are accepted
+/// only into an NVIDEA-owned quarantine and require a separate explicit export handoff.
 /// </summary>
 public static class PersistentBrowserContextFactory
 {
@@ -27,6 +28,7 @@ public static class PersistentBrowserContextFactory
 
         var profileDirectory = BrowserProfileOwnership.PrepareOwnedProfile(stateDirectory);
         BrowserProfileOwnership.ValidateOwnedProfile(stateDirectory, profileDirectory);
+        var downloads = new BrowserDownloadQuarantine(stateDirectory);
 
         IBrowserContext? context = null;
         try
@@ -54,7 +56,7 @@ public static class PersistentBrowserContextFactory
                 Timeout = driverOptions.ActionTimeoutMilliseconds
             }).WaitAsync(cancellationToken).ConfigureAwait(false);
 
-            var driver = new PlaywrightBrowserSessionDriver(context, page, driverOptions);
+            var driver = new PlaywrightBrowserSessionDriver(context, page, driverOptions, downloads);
             return new PersistentBrowserContextSession(profileDirectory, context, driver);
         }
         catch

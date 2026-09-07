@@ -28,7 +28,20 @@ public sealed class ResumableJobOrchestrator
         _ephemeralApprovals = ephemeralApprovals ?? new EphemeralJobApprovalStore();
     }
 
-    public async Task<AgentJobRecord> CreateAsync(AgentJobDefinition definition, CancellationToken cancellationToken = default)
+    public Task<AgentJobRecord> CreateAsync(
+        AgentJobDefinition definition,
+        CancellationToken cancellationToken = default) =>
+        CreateAsync(definition, initialCheckpoint: null, cancellationToken);
+
+    /// <summary>
+    /// Creates a job and its first checkpoint in one durable save. This prevents a
+    /// crash window where a persisted job exists without the descriptive action it
+    /// needs to resume. Checkpoints remain data only and never carry authorization.
+    /// </summary>
+    public async Task<AgentJobRecord> CreateAsync(
+        AgentJobDefinition definition,
+        AgentJobCheckpoint? initialCheckpoint,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(definition);
         if (string.IsNullOrWhiteSpace(definition.JobType) || string.IsNullOrWhiteSpace(definition.CapabilityId))
@@ -37,10 +50,12 @@ public sealed class ResumableJobOrchestrator
             throw new ArgumentOutOfRangeException(nameof(definition), "MaxAttempts must be between 1 and 10.");
         if (!_handlers.ContainsKey(definition.JobType))
             throw new InvalidOperationException($"No handler is registered for job type '{definition.JobType}'.");
+        if (initialCheckpoint is not null && string.IsNullOrWhiteSpace(initialCheckpoint.Step))
+            throw new ArgumentException("Initial checkpoints require a non-empty step.", nameof(initialCheckpoint));
 
         var now = DateTimeOffset.UtcNow;
         var record = new AgentJobRecord(Guid.NewGuid(), definition, AgentJobState.Pending,
-            _executionPolicy.Choose(definition), 0, null, null, null, now, now);
+            _executionPolicy.Choose(definition), 0, initialCheckpoint, null, null, now, now);
         await _store.SaveAsync(record, cancellationToken).ConfigureAwait(false);
         await AuditAsync(record, "job.created", true, false, "Job created.", cancellationToken).ConfigureAwait(false);
         return record;

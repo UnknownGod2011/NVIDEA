@@ -7,29 +7,38 @@ namespace Nvidea.Core.Browser;
 /// Session-aware browser driver that keeps the agent on newly-created permitted pages in a
 /// Playwright context. Popups/new tabs are adopted only after their URL satisfies the same
 /// HTTP(S)/host boundary as normal navigation. Cross-boundary popups are closed without being
-/// observed or interacted with by the agent.
+/// observed or interacted with by the agent. Browser downloads are captured into the configured
+/// NVIDEA quarantine before a Download action is allowed to return successfully.
 /// </summary>
 public sealed class PlaywrightBrowserSessionDriver : IBrowserDriver
 {
     private readonly IBrowserContext _context;
     private readonly PlaywrightBrowserDriverOptions _options;
+    private readonly BrowserDownloadQuarantine? _downloads;
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly SemaphoreSlim _actionGate = new(1, 1);
     private readonly ConcurrentQueue<IPage> _newPages = new();
+    private readonly ConcurrentQueue<PendingDownloadCapture> _downloadCaptures = new();
+    private long _downloadSequence;
     private IPage _activePage;
 
     public PlaywrightBrowserSessionDriver(
         IBrowserContext context,
         IPage initialPage,
-        PlaywrightBrowserDriverOptions? options = null)
+        PlaywrightBrowserDriverOptions? options = null,
+        BrowserDownloadQuarantine? downloads = null)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
         _activePage = initialPage ?? throw new ArgumentNullException(nameof(initialPage));
         _options = options ?? new PlaywrightBrowserDriverOptions();
+        _downloads = downloads;
 
         if (!_context.Pages.Any(page => ReferenceEquals(page, initialPage)))
             throw new ArgumentException("Initial page must belong to the supplied browser context.", nameof(initialPage));
 
         ValidatePermittedPage(initialPage);
+        foreach (var page in _context.Pages)
+            SubscribeToPage(page);
         _context.Page += OnPageCreated;
     }
 
@@ -42,15 +51,53 @@ public sealed class PlaywrightBrowserSessionDriver : IBrowserDriver
     public async Task ExecuteAsync(BrowserAction action, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(action);
-        var page = await ResolveActivePageAsync(cancellationToken).ConfigureAwait(false);
-        await CreatePageDriver(page).ExecuteAsync(action, cancellationToken).ConfigureAwait(false);
+        await _actionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (action.Kind == BrowserActionKind.Download && _downloads is null)
+                throw new InvalidOperationException("Browser downloads require an NVIDEA quarantine boundary.");
 
-        // A click can synchronously create a popup/new tab whose Page event fires while its URL is
-        // still about:blank. Give only already-created candidate pages a short bounded window to
-        // commit navigation so a permitted popup can become the verifier's next active page. This
-        // never waits for or discovers unrelated future pages and never interacts with the popup.
-        if (action.Kind == BrowserActionKind.Click && !_newPages.IsEmpty)
-            await ResolvePostClickPageAsync(cancellationToken).ConfigureAwait(false);
+            var page = await ResolveActivePageAsync(cancellationToken).ConfigureAwait(false);
+            var downloadBaseline = Interlocked.Read(ref _downloadSequence);
+            await CreatePageDriver(page).ExecuteAsync(action, cancellationToken).ConfigureAwait(false);
+
+            if (action.Kind == BrowserActionKind.Download)
+            {
+                // Playwright emits Page.Download when a transfer starts, while SaveAsAsync waits for
+                // the bytes to finish. Do not report the browser action as complete until a capture
+                // initiated by this active page after the click has reached durable quarantine.
+                await AwaitDownloadCaptureAsync(page, downloadBaseline, cancellationToken).ConfigureAwait(false);
+            }
+
+            // A click can synchronously create a popup/new tab whose Page event fires while its URL is
+            // still about:blank. Give only already-created candidate pages a short bounded window to
+            // commit navigation so a permitted popup can become the verifier's next active page. This
+            // never waits for or discovers unrelated future pages and never interacts with the popup.
+            if (action.Kind == BrowserActionKind.Click && !_newPages.IsEmpty)
+                await ResolvePostClickPageAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _actionGate.Release();
+        }
+    }
+
+    public Task<IReadOnlyList<BrowserDownloadRecord>> ListDownloadsAsync(CancellationToken cancellationToken = default)
+    {
+        if (_downloads is null)
+            return Task.FromResult<IReadOnlyList<BrowserDownloadRecord>>(Array.Empty<BrowserDownloadRecord>());
+        return _downloads.ListAsync(cancellationToken);
+    }
+
+    public Task<BrowserDownloadExportReceipt> ExportDownloadAsync(
+        Guid downloadId,
+        string destinationDirectory,
+        bool userApproved,
+        CancellationToken cancellationToken = default)
+    {
+        if (_downloads is null)
+            throw new InvalidOperationException("Browser download quarantine is not configured.");
+        return _downloads.ExportAsync(downloadId, destinationDirectory, userApproved, cancellationToken);
     }
 
     public async Task<BrowserSessionSnapshot> GetSessionSnapshotAsync(CancellationToken cancellationToken = default)
@@ -72,6 +119,40 @@ public sealed class PlaywrightBrowserSessionDriver : IBrowserDriver
         {
             _gate.Release();
         }
+    }
+
+    private async Task AwaitDownloadCaptureAsync(IPage sourcePage, long baseline, CancellationToken cancellationToken)
+    {
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromMilliseconds(
+            Math.Min(120_000, Math.Max(1_000, _options.ActionTimeoutMilliseconds)));
+
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var pendingCount = _downloadCaptures.Count;
+            for (var i = 0; i < pendingCount && _downloadCaptures.TryDequeue(out var capture); i++)
+            {
+                if (capture.Sequence <= baseline)
+                    continue;
+                if (!ReferenceEquals(capture.Page, sourcePage))
+                {
+                    // The capture itself continues into quarantine, but it cannot prove this action.
+                    continue;
+                }
+
+                await capture.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            var remaining = deadline - DateTimeOffset.UtcNow;
+            if (remaining <= TimeSpan.Zero)
+                break;
+            await Task.Delay(
+                remaining < TimeSpan.FromMilliseconds(50) ? remaining : TimeSpan.FromMilliseconds(50),
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        throw new TimeoutException("Download action did not produce a verified quarantined payload within the browser action timeout.");
     }
 
     private async Task ResolvePostClickPageAsync(CancellationToken cancellationToken)
@@ -148,8 +229,42 @@ public sealed class PlaywrightBrowserSessionDriver : IBrowserDriver
 
     private void OnPageCreated(object? sender, IPage page)
     {
+        SubscribeToPage(page);
         if (!ReferenceEquals(page, _activePage))
             _newPages.Enqueue(page);
+    }
+
+    private void SubscribeToPage(IPage page) => page.Download += OnDownload;
+
+    private void OnDownload(object? sender, IDownload download)
+    {
+        if (_downloads is null)
+            return;
+
+        var sequence = Interlocked.Increment(ref _downloadSequence);
+        var page = download.Page;
+        var capture = CaptureDownloadAsync(download);
+        _downloadCaptures.Enqueue(new PendingDownloadCapture(sequence, page, capture));
+    }
+
+    private async Task<BrowserDownloadRecord> CaptureDownloadAsync(IDownload download)
+    {
+        if (_downloads is null)
+            throw new InvalidOperationException("Browser download quarantine is not configured.");
+        if (!TryParseWebUri(download.Page.Url, out var sourceUri) || !IsPermitted(download.Page.Url))
+            throw new InvalidOperationException("Download source page is outside the permitted web boundary.");
+
+        return await _downloads.CaptureAsync(
+            sourceUri,
+            download.SuggestedFilename,
+            async (path, cancellationToken) =>
+            {
+                await download.SaveAsAsync(path).WaitAsync(cancellationToken).ConfigureAwait(false);
+                var failure = await download.FailureAsync().WaitAsync(cancellationToken).ConfigureAwait(false);
+                if (!string.IsNullOrWhiteSpace(failure))
+                    throw new InvalidDataException("Playwright reported that the browser download failed before quarantine completion.");
+            },
+            CancellationToken.None).ConfigureAwait(false);
     }
 
     private PlaywrightBrowserDriver CreatePageDriver(IPage page) => new(page, _options);
@@ -187,6 +302,8 @@ public sealed class PlaywrightBrowserSessionDriver : IBrowserDriver
         try { await page.CloseAsync(new PageCloseOptions { RunBeforeUnload = false }).ConfigureAwait(false); }
         catch { }
     }
+
+    private sealed record PendingDownloadCapture(long Sequence, IPage Page, Task<BrowserDownloadRecord> Task);
 }
 
 public sealed record BrowserSessionSnapshot(IReadOnlyList<BrowserSessionPage> Pages)

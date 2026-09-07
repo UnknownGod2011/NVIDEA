@@ -17,7 +17,7 @@ public sealed class JsonAgentJobStore : IAgentJobStore
             throw new ArgumentException("Job store path is required.", nameof(path));
 
         _path = Path.GetFullPath(path);
-        _protector = protector;
+        _protector = protector ?? (OperatingSystem.IsWindows() ? new WindowsDpapiLocalStateProtector() : null);
     }
 
     public async Task<AgentJobRecord?> GetAsync(Guid jobId, CancellationToken cancellationToken = default)
@@ -93,8 +93,6 @@ public sealed class JsonAgentJobStore : IAgentJobStore
             throw new InvalidDataException("Job store contains invalid data.", ex);
         }
 
-        // Durable schema migration runs under the store's existing exclusive gate before any
-        // caller can observe/resume a legacy browser action. It is a pure data transform.
         var changed = _protector is not null && !payload.WasProtected;
         for (var i = 0; i < records.Count; i++)
         {

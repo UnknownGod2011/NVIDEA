@@ -18,6 +18,8 @@ public partial class MainWindow : Window
     private HwndSource? _source;
     private DesktopContext? _pendingContext;
     private BrowserHostRuntime? _browserHost;
+    private BrowserAmbiguousRecoveryService? _browserRecovery;
+    private BrowserGoalSession? _recoveryCandidate;
     private CancellationTokenSource? _browserActionCts;
     private bool _running;
     private bool _browserRunning;
@@ -27,8 +29,14 @@ public partial class MainWindow : Window
         _root = root ?? throw new ArgumentNullException(nameof(root));
         InitializeComponent();
         SourceInitialized += OnSourceInitialized;
+        Loaded += OnLoaded;
         Closed += OnClosed;
         _root.Session.StatusChanged += Session_StatusChanged;
+    }
+
+    private async void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        await RefreshRecoveryCandidateAsync();
     }
 
     private void OnSourceInitialized(object? sender, EventArgs e)
@@ -172,6 +180,105 @@ public partial class MainWindow : Window
             _browserActionCts?.Dispose();
             _browserActionCts = null;
             SetBrowserRunning(false);
+            await RefreshRecoveryCandidateAsync();
+        }
+    }
+
+    private async void RecoveryButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_running || _browserRunning || _recoveryCandidate is null)
+            return;
+
+        _browserActionCts?.Dispose();
+        _browserActionCts = new CancellationTokenSource();
+        var cancellationToken = _browserActionCts.Token;
+        SetBrowserRunning(true);
+        StatusText.Text = "Recovery — inspecting fresh browser evidence only";
+        OutputBox.Text = string.Empty;
+
+        try
+        {
+            _browserRecovery ??= await _root.CreateBrowserAmbiguousRecoveryServiceAsync(cancellationToken);
+            var (_, recovery) = await _browserRecovery.RecoverAsync(_recoveryCandidate.SessionId, cancellationToken);
+
+            switch (recovery.Status)
+            {
+                case BrowserAmbiguousRecoveryStatus.Reconciled:
+                    var evidenceUrl = recovery.Evidence?.Url.AbsoluteUri;
+                    OutputBox.Text = string.IsNullOrWhiteSpace(evidenceUrl)
+                        ? $"Recovered without replay.\n\n{recovery.Detail}"
+                        : $"Recovered without replay.\n\n{recovery.Detail}\n\nFresh evidence: {evidenceUrl}";
+                    StatusText.Text = "Recovery — reconciled automatically from fresh evidence";
+                    break;
+
+                case BrowserAmbiguousRecoveryStatus.NeedsHumanResolution:
+                    OutputBox.Text = $"Human resolution required. NVIDEA did not retry the interrupted action.\n\n{recovery.Detail}";
+                    StatusText.Text = "Recovery — human resolution required; no automatic retry";
+                    break;
+
+                default:
+                    OutputBox.Text = $"This interrupted job is not currently side-effect ambiguous. No action was replayed.\n\n{recovery.Detail}";
+                    StatusText.Text = "Recovery — no ambiguous action to reconcile";
+                    break;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            OutputBox.Text = "Recovery inspection stopped. No interrupted action was retried.";
+            StatusText.Text = "Recovery — cancelled safely";
+        }
+        catch (Exception ex)
+        {
+            OutputBox.Text = $"Recovery inspection could not complete. The interrupted action was not retried.\n\n{ex.Message}";
+            StatusText.Text = "Recovery — failed safely; human resolution required";
+        }
+        finally
+        {
+            _browserActionCts?.Dispose();
+            _browserActionCts = null;
+            SetBrowserRunning(false);
+            await RefreshRecoveryCandidateAsync();
+        }
+    }
+
+    private async Task RefreshRecoveryCandidateAsync()
+    {
+        try
+        {
+            var sessions = await _root.ListBrowserGoalSessionsAsync();
+            _recoveryCandidate = sessions
+                .Where(static session =>
+                    session.PendingJobId is not null
+                    && session.Status == BrowserGoalStatus.Failed
+                    && session.Detail?.Contains("ambiguous", StringComparison.OrdinalIgnoreCase) == true)
+                .OrderByDescending(static session => session.UpdatedAt)
+                .FirstOrDefault();
+
+            if (_recoveryCandidate is null)
+            {
+                RecoveryPanel.Visibility = Visibility.Collapsed;
+                RecoverySummaryText.Text = string.Empty;
+                return;
+            }
+
+            var goal = _recoveryCandidate.Goal;
+            if (goal.Length > 180)
+                goal = goal[..177] + "...";
+
+            RecoverySummaryText.Text = $"{goal}\nSession {_recoveryCandidate.SessionId:N} · interrupted child {_recoveryCandidate.PendingJobId:N}";
+            RecoveryPanel.Visibility = Visibility.Visible;
+        }
+        catch (Exception ex)
+        {
+            // Recovery discovery is read-only and must never prevent the rest of the desktop shell
+            // from starting. Surface the local store problem without initializing/executing browser work.
+            _recoveryCandidate = null;
+            RecoveryPanel.Visibility = Visibility.Collapsed;
+            StatusText.Text = $"Recovery state unavailable — {ex.Message}";
+        }
+        finally
+        {
+            UpdateBusyControls();
         }
     }
 
@@ -222,6 +329,7 @@ public partial class MainWindow : Window
         PromptBox.IsEnabled = !busy;
         ModeBox.IsEnabled = !busy;
         ClipboardCheck.IsEnabled = !busy;
+        RecoveryButton.IsEnabled = !busy && _recoveryCandidate is not null;
         StopButton.IsEnabled = busy;
     }
 

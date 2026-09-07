@@ -11,6 +11,18 @@ public sealed record BrowserActionCheckpointMigrationReport(
     int Migrated,
     int Quarantined);
 
+public enum BrowserActionCheckpointRecordMigrationStatus
+{
+    Ignored,
+    AlreadyCurrent,
+    Migrated,
+    Quarantined
+}
+
+public sealed record BrowserActionCheckpointRecordMigration(
+    BrowserActionCheckpointRecordMigrationStatus Status,
+    AgentJobRecord Record);
+
 /// <summary>
 /// Versioned serializer for durable browser-action checkpoints. Version 2 is the first
 /// contract that requires typed postconditions for state-changing autonomous actions and
@@ -146,68 +158,93 @@ public sealed class BrowserActionCheckpointMigrationService
         foreach (var job in jobs)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (!string.Equals(job.Definition.JobType, BrowserActionJobHandler.Type, StringComparison.Ordinal)
-                || !string.Equals(job.Checkpoint?.Step, BrowserActionJobHandler.CheckpointStep, StringComparison.Ordinal)
-                || string.IsNullOrWhiteSpace(job.Checkpoint.Payload))
+            var result = MigrateRecord(job);
+            switch (result.Status)
             {
-                continue;
+                case BrowserActionCheckpointRecordMigrationStatus.Ignored:
+                    continue;
+                case BrowserActionCheckpointRecordMigrationStatus.AlreadyCurrent:
+                    examined++;
+                    current++;
+                    continue;
+                case BrowserActionCheckpointRecordMigrationStatus.Migrated:
+                    examined++;
+                    migrated++;
+                    break;
+                case BrowserActionCheckpointRecordMigrationStatus.Quarantined:
+                    examined++;
+                    quarantined++;
+                    break;
             }
 
-            examined++;
-            if (BrowserActionCheckpointCodec.IsCurrent(job.Checkpoint.Payload))
-            {
-                current++;
-                continue;
-            }
-
-            BrowserAction legacyAction;
-            try
-            {
-                legacyAction = BrowserActionCheckpointCodec.DeserializeLegacyUnversioned(job.Checkpoint.Payload);
-            }
-            catch (InvalidOperationException ex)
-            {
-                await QuarantineAsync(job, "Legacy browser checkpoint could not be parsed: " + ex.Message, cancellationToken)
-                    .ConfigureAwait(false);
-                quarantined++;
-                continue;
-            }
-
-            var result = BrowserLegacyActionMigration.Migrate(legacyAction);
-            if (result.Status == BrowserLegacyMigrationStatus.RequiresHumanReview || result.Action is null)
-            {
-                await QuarantineAsync(job, result.Reason, cancellationToken).ConfigureAwait(false);
-                quarantined++;
-                continue;
-            }
-
-            try
-            {
-                var payload = BrowserActionCheckpointCodec.SerializeCurrent(result.Action);
-                var now = DateTimeOffset.UtcNow;
-                var rewritten = job with
-                {
-                    Checkpoint = new AgentJobCheckpoint(BrowserActionJobHandler.CheckpointStep, payload, now),
-                    UpdatedAt = now
-                };
-                await _store.SaveAsync(rewritten, cancellationToken).ConfigureAwait(false);
-                migrated++;
-            }
-            catch (InvalidOperationException ex)
-            {
-                await QuarantineAsync(job, "Legacy browser checkpoint cannot satisfy verification contract v2: " + ex.Message, cancellationToken)
-                    .ConfigureAwait(false);
-                quarantined++;
-            }
+            await _store.SaveAsync(result.Record, cancellationToken).ConfigureAwait(false);
         }
 
         return new BrowserActionCheckpointMigrationReport(examined, current, migrated, quarantined);
     }
 
-    private async Task QuarantineAsync(
-        AgentJobRecord job,
-        string reason,
-        CancellationToken cancellationToken)
+    /// <summary>
+    /// Pure record transform used by durable stores before exposing legacy browser jobs to callers.
+    /// It never executes browser code, creates approval, or invokes a model.
+    /// </summary>
+    public static BrowserActionCheckpointRecordMigration MigrateRecord(AgentJobRecord job)
+    {
+        ArgumentNullException.ThrowIfNull(job);
+
+        if (!string.Equals(job.Definition.JobType, BrowserActionJobHandler.Type, StringComparison.Ordinal)
+            || !string.Equals(job.Checkpoint?.Step, BrowserActionJobHandler.CheckpointStep, StringComparison.Ordinal)
+            || string.IsNullOrWhiteSpace(job.Checkpoint.Payload))
+        {
+            return new BrowserActionCheckpointRecordMigration(
+                BrowserActionCheckpointRecordMigrationStatus.Ignored,
+                job);
+        }
+
+        if (BrowserActionCheckpointCodec.IsCurrent(job.Checkpoint.Payload))
+        {
+            return new BrowserActionCheckpointRecordMigration(
+                BrowserActionCheckpointRecordMigrationStatus.AlreadyCurrent,
+                job);
+        }
+
+        BrowserAction legacyAction;
+        try
+        {
+            legacyAction = BrowserActionCheckpointCodec.DeserializeLegacyUnversioned(job.Checkpoint.Payload);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Quarantine(job, "Legacy browser checkpoint could not be parsed: " + ex.Message);
+        }
+
+        var result = BrowserLegacyActionMigration.Migrate(legacyAction);
+        if (result.Status == BrowserLegacyMigrationStatus.RequiresHumanReview || result.Action is null)
+            return Quarantine(job, result.Reason);
+
+        try
+        {
+            var now = DateTimeOffset.UtcNow;
+            var rewritten = job with
+            {
+                Checkpoint = new AgentJobCheckpoint(
+                    BrowserActionJobHandler.CheckpointStep,
+                    BrowserActionCheckpointCodec.SerializeCurrent(result.Action),
+                    now),
+                UpdatedAt = now
+            };
+            return new BrowserActionCheckpointRecordMigration(
+                BrowserActionCheckpointRecordMigrationStatus.Migrated,
+                rewritten);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Quarantine(
+                job,
+                "Legacy browser checkpoint cannot satisfy verification contract v2: " + ex.Message);
+        }
+    }
+
+    private static BrowserActionCheckpointRecordMigration Quarantine(AgentJobRecord job, string reason)
     {
         var now = DateTimeOffset.UtcNow;
         var sanitized = JsonSerializer.Serialize(new
@@ -225,6 +262,8 @@ public sealed class BrowserActionCheckpointMigrationService
             UpdatedAt = now,
             NextAttemptAt = null
         };
-        await _store.SaveAsync(blocked, cancellationToken).ConfigureAwait(false);
+        return new BrowserActionCheckpointRecordMigration(
+            BrowserActionCheckpointRecordMigrationStatus.Quarantined,
+            blocked);
     }
 }

@@ -43,6 +43,10 @@ internal static class WindowsContextCapture
             }
         }
 
+        // UI Automation is read-only here: no synthetic Ctrl+C and no clipboard mutation.
+        // Capture while the invoking application still owns focus so the selection belongs to it.
+        var selectedText = WindowsSelectionCapture.TryCapture();
+
         string? clipboard = null;
         if (includeClipboard)
         {
@@ -59,7 +63,7 @@ internal static class WindowsContextCapture
 
         return new DesktopContext(
             ActiveApplication: application,
-            SelectedText: null,
+            SelectedText: selectedText,
             ClipboardText: clipboard,
             WindowTitle: title);
     }

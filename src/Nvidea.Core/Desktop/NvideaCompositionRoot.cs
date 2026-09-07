@@ -119,8 +119,22 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         var browser = await GetBrowserAsync(cancellationToken).ConfigureAwait(false);
-        var goalStore = new JsonBrowserGoalSessionStore(Path.Combine(_stateDirectory, "browser", "goal-sessions.json"));
+        var goalStore = CreateBrowserGoalStore();
         return new BrowserGoalAgent(browser, new NemotronBrowserPlanner(_inference), goalStore);
+    }
+
+    /// <summary>
+    /// Creates the explicit crash-recovery service for side-effect-ambiguous browser children.
+    /// The service shares the same durable parent store and trusted local browser host as the goal
+    /// agent. It can only inspect fresh evidence and mark an already-achieved state complete; it
+    /// never replays the interrupted action or manufactures approval.
+    /// </summary>
+    public async Task<BrowserAmbiguousRecoveryService> CreateBrowserAmbiguousRecoveryServiceAsync(
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        var browser = await GetBrowserAsync(cancellationToken).ConfigureAwait(false);
+        return new BrowserAmbiguousRecoveryService(browser, CreateBrowserGoalStore());
     }
 
     public async ValueTask DisposeAsync()
@@ -148,6 +162,9 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         _nebiusHttp.Dispose();
         _browserGate.Dispose();
     }
+
+    private JsonBrowserGoalSessionStore CreateBrowserGoalStore() =>
+        new(Path.Combine(_stateDirectory, "browser", "goal-sessions.json"));
 
     private static BrowserHostOptions BrowserOptionsFromEnvironment()
     {

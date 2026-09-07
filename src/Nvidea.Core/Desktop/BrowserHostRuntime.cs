@@ -48,25 +48,24 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
     };
 
     private readonly IPlaywright _playwright;
-    private readonly Microsoft.Playwright.IBrowser _browser;
     private readonly IBrowserContext _context;
     private readonly IBrowserDriver _driver;
+    private readonly PlaywrightBrowserSessionDriver _sessionDriver;
     private readonly IAgentJobStore _jobStore;
     private readonly ResumableJobOrchestrator _jobs;
     private bool _disposed;
 
     private BrowserHostRuntime(
         IPlaywright playwright,
-        Microsoft.Playwright.IBrowser browser,
         IBrowserContext context,
-        IBrowserDriver driver,
+        PlaywrightBrowserSessionDriver driver,
         IAgentJobStore jobStore,
         ResumableJobOrchestrator jobs)
     {
         _playwright = playwright;
-        _browser = browser;
         _context = context;
         _driver = driver;
+        _sessionDriver = driver;
         _jobStore = jobStore;
         _jobs = jobs;
     }
@@ -85,32 +84,26 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
         Directory.CreateDirectory(fullStateDirectory);
 
         IPlaywright? playwright = null;
-        Microsoft.Playwright.IBrowser? browser = null;
         IBrowserContext? context = null;
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
             playwright = await Playwright.CreateAsync().WaitAsync(cancellationToken).ConfigureAwait(false);
-            browser = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
-            {
-                Headless = effective.Headless
-            }).WaitAsync(cancellationToken).ConfigureAwait(false);
-            context = await browser.NewContextAsync(new BrowserNewContextOptions
-            {
-                AcceptDownloads = true
-            }).WaitAsync(cancellationToken).ConfigureAwait(false);
-            var page = await context.NewPageAsync().WaitAsync(cancellationToken).ConfigureAwait(false);
-            await page.GotoAsync(effective.StartUri.AbsoluteUri, new PageGotoOptions
-            {
-                WaitUntil = WaitUntilState.DOMContentLoaded,
-                Timeout = 15_000
-            }).WaitAsync(cancellationToken).ConfigureAwait(false);
 
-            var driver = new PlaywrightBrowserDriver(page, new PlaywrightBrowserDriverOptions(
+            var driverOptions = new PlaywrightBrowserDriverOptions(
                 effective.AllowedHosts,
                 MaxObservationCharacters: 12_000,
                 MaxObservedElements: 250,
-                ActionTimeoutMilliseconds: 15_000));
+                ActionTimeoutMilliseconds: 15_000);
+            var session = await PersistentBrowserContextFactory.LaunchAsync(
+                playwright,
+                fullStateDirectory,
+                effective.StartUri,
+                driverOptions,
+                effective.Headless,
+                cancellationToken).ConfigureAwait(false);
+            context = session.Context;
+            var driver = session.Driver;
 
             var registry = new CapabilityRegistry(new[]
             {
@@ -152,14 +145,12 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
                 approvals,
                 ephemeralApprovals);
 
-            return new BrowserHostRuntime(playwright, browser, context, driver, store, orchestrator);
+            return new BrowserHostRuntime(playwright, context, driver, store, orchestrator);
         }
         catch
         {
             if (context is not null)
                 await SafeCloseAsync(context).ConfigureAwait(false);
-            if (browser is not null)
-                await SafeCloseAsync(browser).ConfigureAwait(false);
             playwright?.Dispose();
             throw;
         }
@@ -173,6 +164,16 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
     {
         ThrowIfDisposed();
         return _driver.ObserveAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Returns privacy-minimized page/session diagnostics. It intentionally exposes no cookies,
+    /// local storage, authorization headers or other browser credential material.
+    /// </summary>
+    public Task<BrowserSessionSnapshot> GetSessionSnapshotAsync(CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        return _sessionDriver.GetSessionSnapshotAsync(cancellationToken);
     }
 
     /// <summary>
@@ -307,7 +308,7 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
                 jobId,
                 proof.Detail,
                 new BrowserJobOutcome(jobId, AgentJobState.Running,
-                    "Browser action remains side-effect ambiguous and was not replayed."),
+                    "Browser action remains side-effect ambiguous and was not replayed automatically."),
                 evidence);
         }
 
@@ -355,8 +356,11 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
         if (_disposed)
             return;
         _disposed = true;
+
+        // A persistent context owns its browser process. Closing the context is the supported
+        // shutdown boundary; unlike the previous ephemeral composition there is no separate
+        // IBrowser instance to close afterward.
         await SafeCloseAsync(_context).ConfigureAwait(false);
-        await SafeCloseAsync(_browser).ConfigureAwait(false);
         _playwright.Dispose();
     }
 
@@ -470,12 +474,6 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
     private static async Task SafeCloseAsync(IBrowserContext context)
     {
         try { await context.CloseAsync().ConfigureAwait(false); }
-        catch { }
-    }
-
-    private static async Task SafeCloseAsync(Microsoft.Playwright.IBrowser browser)
-    {
-        try { await browser.CloseAsync().ConfigureAwait(false); }
         catch { }
     }
 

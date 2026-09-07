@@ -38,7 +38,7 @@ public sealed record BrowserJobOutcome(
 /// capability, approval, audit and resumable-job layers into a desktop-safe API.
 /// Browser writes never execute directly from UI code.
 /// </summary>
-public sealed class BrowserHostRuntime : IAsyncDisposable
+public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousRecoveryHost
 {
     public const string BrowserCapabilityId = "browser.agent";
 
@@ -271,6 +271,71 @@ public sealed class BrowserHostRuntime : IAsyncDisposable
         return Describe(rearmed, TryReadAction(rearmed));
     }
 
+    /// <summary>
+    /// Attempts to reconcile a job left durably Running by a process crash. This method is strictly
+    /// read/verify/mark-complete: it never invokes the browser action. Only deterministic current
+    /// URL or expected-state evidence can convert the ambiguous child into Completed.
+    /// </summary>
+    public async Task<BrowserAmbiguousRecoveryResult> TryReconcileAmbiguousAsync(
+        Guid jobId,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (jobId == Guid.Empty)
+            throw new ArgumentException("Job id is required.", nameof(jobId));
+
+        var job = await _jobStore.GetAsync(jobId, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException($"Browser child job '{jobId}' was not found.");
+        var action = TryReadAction(job)
+            ?? throw new InvalidOperationException("Ambiguous browser job is missing its descriptive action checkpoint.");
+
+        if (job.State != AgentJobState.Running)
+        {
+            return new BrowserAmbiguousRecoveryResult(
+                BrowserAmbiguousRecoveryStatus.NotAmbiguous,
+                jobId,
+                $"Child job is {job.State}; ambiguous-running reconciliation is not applicable.",
+                Describe(job, action));
+        }
+
+        var evidence = await _driver.ObserveAsync(cancellationToken).ConfigureAwait(false);
+        var proof = BrowserAmbiguousStateReconciler.TryVerify(action, evidence);
+        if (!proof.Verified)
+        {
+            return new BrowserAmbiguousRecoveryResult(
+                BrowserAmbiguousRecoveryStatus.NeedsHumanResolution,
+                jobId,
+                proof.Detail,
+                new BrowserJobOutcome(jobId, AgentJobState.Running,
+                    "Browser action remains side-effect ambiguous and was not replayed."),
+                evidence);
+        }
+
+        var checkpoint = new AgentJobCheckpoint(
+            "browser.action.verified",
+            JsonSerializer.Serialize(new VerifiedBrowserActionCheckpoint(
+                action.Kind.ToString(),
+                jobId,
+                evidence.Url,
+                evidence.Url,
+                proof.Detail,
+                DateTimeOffset.UtcNow), JsonOptions),
+            DateTimeOffset.UtcNow);
+        var reconciled = await _jobs
+            .CompleteAmbiguousRunningAsync(jobId, checkpoint, proof.Detail, cancellationToken)
+            .ConfigureAwait(false);
+        var outcome = Describe(reconciled, action);
+        if (outcome.VerifiedStep is null)
+            throw new InvalidOperationException("Reconciled browser job did not produce a verified-step checkpoint.");
+
+        return new BrowserAmbiguousRecoveryResult(
+            BrowserAmbiguousRecoveryStatus.Reconciled,
+            jobId,
+            proof.Detail,
+            outcome,
+            evidence);
+    }
+
     public async Task<BrowserJobOutcome> CancelAsync(Guid jobId, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
@@ -320,7 +385,7 @@ public sealed class BrowserHostRuntime : IAsyncDisposable
         var message = job.State switch
         {
             AgentJobState.WaitingForApproval => "Browser action is paused and has not executed. Explicit one-time approval is required.",
-            AgentJobState.Completed => "Browser action executed and its post-action state was verified.",
+            AgentJobState.Completed => "Browser action executed or was crash-reconciled and its intended post-action state was verified.",
             AgentJobState.Cancelled => "Browser action was cancelled.",
             AgentJobState.Failed => $"Browser action failed: {job.LastError}",
             AgentJobState.RetryScheduled => $"Browser action failed safely and is eligible for retry: {job.LastError}",

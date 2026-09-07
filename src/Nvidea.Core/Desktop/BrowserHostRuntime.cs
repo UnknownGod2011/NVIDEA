@@ -49,6 +49,7 @@ public sealed class BrowserHostRuntime : IAsyncDisposable
     private readonly IPlaywright _playwright;
     private readonly Microsoft.Playwright.IBrowser _browser;
     private readonly IBrowserContext _context;
+    private readonly IBrowserDriver _driver;
     private readonly IAgentJobStore _jobStore;
     private readonly ResumableJobOrchestrator _jobs;
     private bool _disposed;
@@ -57,12 +58,14 @@ public sealed class BrowserHostRuntime : IAsyncDisposable
         IPlaywright playwright,
         Microsoft.Playwright.IBrowser browser,
         IBrowserContext context,
+        IBrowserDriver driver,
         IAgentJobStore jobStore,
         ResumableJobOrchestrator jobs)
     {
         _playwright = playwright;
         _browser = browser;
         _context = context;
+        _driver = driver;
         _jobStore = jobStore;
         _jobs = jobs;
     }
@@ -148,7 +151,7 @@ public sealed class BrowserHostRuntime : IAsyncDisposable
                 approvals,
                 ephemeralApprovals);
 
-            return new BrowserHostRuntime(playwright, browser, context, store, orchestrator);
+            return new BrowserHostRuntime(playwright, browser, context, driver, store, orchestrator);
         }
         catch
         {
@@ -169,11 +172,12 @@ public sealed class BrowserHostRuntime : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(action);
 
         var permissions = BrowserCapabilityExecutionService.PermissionsFor(action.Kind);
+        var observation = await _driver.ObserveAsync(cancellationToken).ConfigureAwait(false);
         var definition = new AgentJobDefinition(
             BrowserActionJobHandler.Type,
             BrowserCapabilityId,
             permissions,
-            ToCapabilityRisk(new BrowserSafetyPolicy().Evaluate(action, await CurrentObservationAsync(cancellationToken).ConfigureAwait(false)).Risk),
+            ToCapabilityRisk(new BrowserSafetyPolicy().Evaluate(action, observation).Risk),
             ContainsPrivateOsData: true,
             BenefitsFromBackgroundExecution: false,
             MaxAttempts: 2);
@@ -224,22 +228,6 @@ public sealed class BrowserHostRuntime : IAsyncDisposable
         await SafeCloseAsync(_context).ConfigureAwait(false);
         await SafeCloseAsync(_browser).ConfigureAwait(false);
         _playwright.Dispose();
-    }
-
-    private async Task<BrowserObservation> CurrentObservationAsync(CancellationToken cancellationToken)
-    {
-        // The action handler takes another fresh observation immediately before the
-        // last-mile tool boundary. This early read exists only to conservatively seed
-        // durable job risk metadata; it is never authorization.
-        var jobs = await _jobStore.ListAsync(cancellationToken).ConfigureAwait(false);
-        _ = jobs.Count; // force cancellation-aware store access before starting work.
-
-        // We intentionally do not expose the concrete driver publicly. Recover the
-        // current page through the owned context and create a bounded observer.
-        var page = _context.Pages.LastOrDefault()
-            ?? throw new InvalidOperationException("The browser context has no active page.");
-        var driver = new PlaywrightBrowserDriver(page);
-        return await driver.ObserveAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static BrowserJobOutcome Describe(AgentJobRecord job, BrowserAction? action)

@@ -1,7 +1,9 @@
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
+using Nvidea.Core.Browser;
 using Nvidea.Core.Desktop;
+using Nvidea.Core.Jobs;
 
 namespace Nvidea.Windows;
 
@@ -15,7 +17,10 @@ public partial class MainWindow : Window
     private readonly NvideaCompositionRoot _root;
     private HwndSource? _source;
     private DesktopContext? _pendingContext;
+    private BrowserHostRuntime? _browserHost;
+    private CancellationTokenSource? _browserActionCts;
     private bool _running;
+    private bool _browserRunning;
 
     public MainWindow(NvideaCompositionRoot root)
     {
@@ -38,6 +43,8 @@ public partial class MainWindow : Window
 
     private void OnClosed(object? sender, EventArgs e)
     {
+        _browserActionCts?.Cancel();
+        _browserActionCts?.Dispose();
         _root.Session.StatusChanged -= Session_StatusChanged;
         var handle = new WindowInteropHelper(this).Handle;
         if (handle != IntPtr.Zero)
@@ -63,7 +70,7 @@ public partial class MainWindow : Window
 
     private async void InvokeButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_running || string.IsNullOrWhiteSpace(PromptBox.Text))
+        if (_running || _browserRunning || string.IsNullOrWhiteSpace(PromptBox.Text))
             return;
 
         var allowClipboard = ClipboardCheck.IsChecked == true;
@@ -84,7 +91,7 @@ public partial class MainWindow : Window
             ResolveMode(),
             allowClipboard);
 
-        SetRunning(true);
+        SetDesktopRunning(true);
         OutputBox.Text = string.Empty;
         try
         {
@@ -101,17 +108,84 @@ public partial class MainWindow : Window
         }
         finally
         {
-            SetRunning(false);
+            SetDesktopRunning(false);
+        }
+    }
+
+    private async void BrowserButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_running || _browserRunning)
+            return;
+
+        if (!Uri.TryCreate(BrowserUrlBox.Text.Trim(), UriKind.Absolute, out var destination)
+            || destination.Scheme is not ("http" or "https"))
+        {
+            OutputBox.Text = "Browser target must be an absolute HTTP(S) URL.";
+            return;
+        }
+
+        _browserActionCts?.Dispose();
+        _browserActionCts = new CancellationTokenSource();
+        var cancellationToken = _browserActionCts.Token;
+        SetBrowserRunning(true);
+        OutputBox.Text = string.Empty;
+        StatusText.Text = "Browser — starting isolated local session";
+
+        try
+        {
+            _browserHost ??= await _root.GetBrowserAsync(cancellationToken);
+            var action = new BrowserAction(
+                BrowserActionKind.Navigate,
+                Destination: destination,
+                Rationale: $"Navigate the user-visible NVIDEA browser to {destination.IdnHost}.");
+
+            var outcome = await _browserHost.StartActionAsync(action, cancellationToken);
+            if (outcome.State == AgentJobState.WaitingForApproval && outcome.Approval is not null)
+            {
+                StatusText.Text = "WaitingForApproval — browser action is paused";
+                var dialog = new ApprovalDialog(outcome.Approval) { Owner = this };
+                var confirmed = dialog.ShowDialog() == true;
+
+                outcome = confirmed
+                    ? await _browserHost.ApproveAndResumeAsync(
+                        outcome.JobId,
+                        outcome.Approval.ExactScope,
+                        cancellationToken)
+                    : await _browserHost.CancelAsync(outcome.JobId, CancellationToken.None);
+            }
+
+            OutputBox.Text = outcome.Message;
+            StatusText.Text = $"Browser — {outcome.State}";
+        }
+        catch (OperationCanceledException)
+        {
+            OutputBox.Text = "Browser action stopped.";
+            StatusText.Text = "Cancelled";
+        }
+        catch (Exception ex)
+        {
+            OutputBox.Text = $"Browser action could not complete.\n\n{ex.Message}\n\nIf Playwright Chromium is not installed, install the browser binaries for Microsoft.Playwright 1.62.0 and retry.";
+            StatusText.Text = "Browser — failed safely";
+        }
+        finally
+        {
+            _browserActionCts?.Dispose();
+            _browserActionCts = null;
+            SetBrowserRunning(false);
         }
     }
 
     private void StopButton_Click(object sender, RoutedEventArgs e)
     {
+        _browserActionCts?.Cancel();
         _ = _root.Session.EmergencyStop();
     }
 
     private void Session_StatusChanged(object? sender, DesktopAgentStatus status)
     {
+        if (_browserRunning)
+            return;
+
         Dispatcher.InvokeAsync(() =>
         {
             StatusText.Text = string.IsNullOrWhiteSpace(status.Detail)
@@ -127,14 +201,28 @@ public partial class MainWindow : Window
         _ => DesktopInvocationMode.Auto
     };
 
-    private void SetRunning(bool running)
+    private void SetDesktopRunning(bool running)
     {
         _running = running;
-        InvokeButton.IsEnabled = !running;
-        PromptBox.IsEnabled = !running;
-        ModeBox.IsEnabled = !running;
-        ClipboardCheck.IsEnabled = !running;
-        StopButton.IsEnabled = running;
+        UpdateBusyControls();
+    }
+
+    private void SetBrowserRunning(bool running)
+    {
+        _browserRunning = running;
+        UpdateBusyControls();
+    }
+
+    private void UpdateBusyControls()
+    {
+        var busy = _running || _browserRunning;
+        InvokeButton.IsEnabled = !busy;
+        BrowserButton.IsEnabled = !busy;
+        BrowserUrlBox.IsEnabled = !busy;
+        PromptBox.IsEnabled = !busy;
+        ModeBox.IsEnabled = !busy;
+        ClipboardCheck.IsEnabled = !busy;
+        StopButton.IsEnabled = busy;
     }
 
     private void UpdateContextLabel(DesktopContext context)

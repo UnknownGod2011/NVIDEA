@@ -59,10 +59,12 @@ public sealed class JsonLinesAuditTrail : IAuditTrail
             if (state.Events.Any(x => x.EventId == auditEvent.EventId))
                 throw new InvalidOperationException($"Audit event '{auditEvent.EventId}' already exists; audit records are append-only.");
 
-            var previousHash = state.LastHash;
-            var line = CreateLine(auditEvent, state.Events.Count + 1L, previousHash);
-            var serialized = JsonSerializer.Serialize(line, JsonOptions);
-            await File.AppendAllTextAsync(_path, serialized + Environment.NewLine, Encoding.UTF8, cancellationToken).ConfigureAwait(false);
+            var line = CreateLine(auditEvent, state.Events.Count + 1L, state.LastHash);
+            await File.AppendAllTextAsync(
+                _path,
+                JsonSerializer.Serialize(line, JsonOptions) + Environment.NewLine,
+                Encoding.UTF8,
+                cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -75,8 +77,7 @@ public sealed class JsonLinesAuditTrail : IAuditTrail
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var state = await LoadAndMigrateAsync(cancellationToken).ConfigureAwait(false);
-            return state.Events;
+            return (await LoadAndMigrateAsync(cancellationToken).ConfigureAwait(false)).Events;
         }
         finally
         {
@@ -98,8 +99,9 @@ public sealed class JsonLinesAuditTrail : IAuditTrail
             return ParseCurrentFormat(meaningful);
 
         var legacy = ParseLegacyEvents(meaningful);
-        await RewriteAsCurrentFormatAsync(legacy, cancellationToken).ConfigureAwait(false);
-        var lastHash = legacy.Count == 0 ? string.Empty : BuildLines(legacy)[^1].Hash;
+        var migratedLines = BuildLines(legacy);
+        await RewriteAsCurrentFormatAsync(migratedLines, cancellationToken).ConfigureAwait(false);
+        var lastHash = migratedLines.Count == 0 ? string.Empty : migratedLines[^1].Hash;
         return new AuditState(legacy, lastHash);
     }
 
@@ -124,13 +126,11 @@ public sealed class JsonLinesAuditTrail : IAuditTrail
 
             if (line.Version != CurrentFormatVersion || line.Sequence != expectedSequence)
                 throw new InvalidDataException("Audit trail version/sequence integrity check failed.");
-            if (!CryptographicOperations.FixedTimeEquals(
-                    Encoding.ASCII.GetBytes(line.PreviousHash ?? string.Empty),
-                    Encoding.ASCII.GetBytes(previousHash)))
+            if (!FixedTimeTextEquals(line.PreviousHash ?? string.Empty, previousHash))
                 throw new InvalidDataException("Audit trail hash-chain predecessor check failed.");
 
             var expectedHash = ComputeHash(line.Version, line.Sequence, previousHash, line.Protected, line.Payload);
-            if (!FixedTimeHexEquals(expectedHash, line.Hash))
+            if (!FixedTimeTextEquals(expectedHash, line.Hash))
                 throw new InvalidDataException("Audit trail hash-chain integrity check failed.");
 
             var auditEvent = DecodeEvent(line);
@@ -168,9 +168,8 @@ public sealed class JsonLinesAuditTrail : IAuditTrail
         return result;
     }
 
-    private async Task RewriteAsCurrentFormatAsync(IReadOnlyList<AuditEvent> events, CancellationToken cancellationToken)
+    private async Task RewriteAsCurrentFormatAsync(IReadOnlyList<AuditLine> lines, CancellationToken cancellationToken)
     {
-        var lines = BuildLines(events);
         var tempPath = _path + ".migrate-" + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
@@ -216,11 +215,16 @@ public sealed class JsonLinesAuditTrail : IAuditTrail
             CryptographicOperations.ZeroMemory(plaintext);
         }
 
-        var payload = Convert.ToBase64String(payloadBytes);
-        if (isProtected)
+        try
+        {
+            var payload = Convert.ToBase64String(payloadBytes);
+            var hash = ComputeHash(CurrentFormatVersion, sequence, previousHash, isProtected, payload);
+            return new AuditLine(CurrentFormatVersion, sequence, previousHash, isProtected, payload, hash);
+        }
+        finally
+        {
             CryptographicOperations.ZeroMemory(payloadBytes);
-        var hash = ComputeHash(CurrentFormatVersion, sequence, previousHash, isProtected, payload);
-        return new AuditLine(CurrentFormatVersion, sequence, previousHash, isProtected, payload, hash);
+        }
     }
 
     private AuditEvent DecodeEvent(AuditLine line)
@@ -239,7 +243,11 @@ public sealed class JsonLinesAuditTrail : IAuditTrail
         if (line.Protected)
         {
             if (_protector is null)
+            {
+                CryptographicOperations.ZeroMemory(persisted);
                 throw new InvalidDataException("Audit trail is protected but no local-state protector is available in this runtime.");
+            }
+
             try
             {
                 plaintext = _protector.Unprotect(persisted, ProtectionPurpose);
@@ -296,7 +304,7 @@ public sealed class JsonLinesAuditTrail : IAuditTrail
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
     }
 
-    private static bool FixedTimeHexEquals(string expected, string actual)
+    private static bool FixedTimeTextEquals(string expected, string actual)
     {
         if (expected.Length != actual.Length)
             return false;

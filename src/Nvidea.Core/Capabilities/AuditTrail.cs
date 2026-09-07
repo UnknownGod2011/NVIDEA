@@ -25,16 +25,22 @@ public interface IAuditTrail
 }
 
 /// <summary>
-/// Append-only audit trail with per-record local protection and a deterministic hash chain.
-/// On Windows, CurrentUser DPAPI is used by default. Existing plaintext JSONL files are
-/// migrated only after every legacy event has parsed successfully.
+/// Append-only audit trail with per-record local protection, a deterministic hash chain and,
+/// when a local-state protector is available, an independently protected tail seal. The seal
+/// uses a write-ahead pending state so crashes between sealing and append can be recovered without
+/// silently accepting final-record truncation.
 /// </summary>
 public sealed class JsonLinesAuditTrail : IAuditTrail
 {
     private const int CurrentFormatVersion = 1;
+    private const int TailSealVersion = 1;
     private const string ProtectionPurpose = "audit-event-v1";
+    private const string TailSealPurpose = "audit-tail-seal-v1";
+    private const string CommittedSealState = "committed";
+    private const string PendingSealState = "pending";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly string _path;
+    private readonly string _sealPath;
     private readonly ILocalStateProtector? _protector;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
@@ -44,6 +50,7 @@ public sealed class JsonLinesAuditTrail : IAuditTrail
             throw new ArgumentException("Audit path is required.", nameof(path));
 
         _path = Path.GetFullPath(path);
+        _sealPath = _path + ".seal";
         _protector = protector ?? (OperatingSystem.IsWindows() ? new WindowsDpapiLocalStateProtector() : null);
     }
 
@@ -60,11 +67,37 @@ public sealed class JsonLinesAuditTrail : IAuditTrail
                 throw new InvalidOperationException($"Audit event '{auditEvent.EventId}' already exists; audit records are append-only.");
 
             var line = CreateLine(auditEvent, state.Events.Count + 1L, state.LastHash);
+            if (_protector is not null)
+            {
+                await WriteSealAsync(
+                    new AuditTailSeal(
+                        TailSealVersion,
+                        PendingSealState,
+                        state.Events.Count,
+                        state.LastHash,
+                        line.Sequence,
+                        line.Hash),
+                    cancellationToken).ConfigureAwait(false);
+            }
+
             await File.AppendAllTextAsync(
                 _path,
                 JsonSerializer.Serialize(line, JsonOptions) + Environment.NewLine,
                 Encoding.UTF8,
                 cancellationToken).ConfigureAwait(false);
+
+            if (_protector is not null)
+            {
+                await WriteSealAsync(
+                    new AuditTailSeal(
+                        TailSealVersion,
+                        CommittedSealState,
+                        line.Sequence,
+                        line.Hash,
+                        null,
+                        null),
+                    cancellationToken).ConfigureAwait(false);
+            }
         }
         finally
         {
@@ -87,22 +120,37 @@ public sealed class JsonLinesAuditTrail : IAuditTrail
 
     private async Task<AuditState> LoadAndMigrateAsync(CancellationToken cancellationToken)
     {
+        AuditState state;
         if (!File.Exists(_path))
-            return new AuditState(Array.Empty<AuditEvent>(), string.Empty);
+        {
+            state = new AuditState(Array.Empty<AuditEvent>(), string.Empty);
+        }
+        else
+        {
+            var lines = await File.ReadAllLinesAsync(_path, cancellationToken).ConfigureAwait(false);
+            var meaningful = lines.Where(static x => !string.IsNullOrWhiteSpace(x)).ToArray();
+            if (meaningful.Length == 0)
+            {
+                state = new AuditState(Array.Empty<AuditEvent>(), string.Empty);
+            }
+            else if (LooksLikeCurrentFormat(meaningful[0]))
+            {
+                state = ParseCurrentFormat(meaningful);
+            }
+            else
+            {
+                var legacy = ParseLegacyEvents(meaningful);
+                var migratedLines = BuildLines(legacy);
+                await RewriteAsCurrentFormatAsync(migratedLines, cancellationToken).ConfigureAwait(false);
+                var lastHash = migratedLines.Count == 0 ? string.Empty : migratedLines[^1].Hash;
+                state = new AuditState(legacy, lastHash);
+            }
+        }
 
-        var lines = await File.ReadAllLinesAsync(_path, cancellationToken).ConfigureAwait(false);
-        var meaningful = lines.Where(static x => !string.IsNullOrWhiteSpace(x)).ToArray();
-        if (meaningful.Length == 0)
-            return new AuditState(Array.Empty<AuditEvent>(), string.Empty);
+        if (_protector is not null)
+            await VerifyOrRecoverTailSealAsync(state, cancellationToken).ConfigureAwait(false);
 
-        if (LooksLikeCurrentFormat(meaningful[0]))
-            return ParseCurrentFormat(meaningful);
-
-        var legacy = ParseLegacyEvents(meaningful);
-        var migratedLines = BuildLines(legacy);
-        await RewriteAsCurrentFormatAsync(migratedLines, cancellationToken).ConfigureAwait(false);
-        var lastHash = migratedLines.Count == 0 ? string.Empty : migratedLines[^1].Hash;
-        return new AuditState(legacy, lastHash);
+        return state;
     }
 
     private AuditState ParseCurrentFormat(IReadOnlyList<string> lines)
@@ -166,6 +214,157 @@ public sealed class JsonLinesAuditTrail : IAuditTrail
         }
 
         return result;
+    }
+
+    private async Task VerifyOrRecoverTailSealAsync(AuditState state, CancellationToken cancellationToken)
+    {
+        if (!File.Exists(_sealPath))
+        {
+            await WriteSealAsync(
+                new AuditTailSeal(
+                    TailSealVersion,
+                    CommittedSealState,
+                    state.Events.Count,
+                    state.LastHash,
+                    null,
+                    null),
+                cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        var seal = await ReadSealAsync(cancellationToken).ConfigureAwait(false);
+        ValidateSealShape(seal);
+
+        if (seal.State == CommittedSealState)
+        {
+            if (state.Events.Count != seal.CommittedSequence || !FixedTimeTextEquals(state.LastHash, seal.CommittedHash))
+                throw new InvalidDataException("Audit tail seal does not match the audit chain; final-record truncation or replacement may have occurred.");
+            return;
+        }
+
+        var matchesCommitted = state.Events.Count == seal.CommittedSequence
+            && FixedTimeTextEquals(state.LastHash, seal.CommittedHash);
+        var matchesPending = seal.PendingSequence.HasValue
+            && state.Events.Count == seal.PendingSequence.Value
+            && FixedTimeTextEquals(state.LastHash, seal.PendingHash!);
+
+        if (matchesPending)
+        {
+            await WriteSealAsync(
+                new AuditTailSeal(
+                    TailSealVersion,
+                    CommittedSealState,
+                    seal.PendingSequence!.Value,
+                    seal.PendingHash!,
+                    null,
+                    null),
+                cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (matchesCommitted)
+        {
+            await WriteSealAsync(
+                new AuditTailSeal(
+                    TailSealVersion,
+                    CommittedSealState,
+                    seal.CommittedSequence,
+                    seal.CommittedHash,
+                    null,
+                    null),
+                cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        throw new InvalidDataException("Audit tail seal is pending but matches neither the pre-append nor post-append chain state.");
+    }
+
+    private async Task<AuditTailSeal> ReadSealAsync(CancellationToken cancellationToken)
+    {
+        var persisted = await File.ReadAllBytesAsync(_sealPath, cancellationToken).ConfigureAwait(false);
+        LocalStatePayload decoded;
+        try
+        {
+            decoded = LocalStateEnvelope.Decode(persisted, _protector!, TailSealPurpose);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(persisted);
+        }
+
+        if (!decoded.WasProtected)
+        {
+            CryptographicOperations.ZeroMemory(decoded.Plaintext);
+            throw new InvalidDataException("Audit tail seal exists without the required protected local-state envelope.");
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<AuditTailSeal>(decoded.Plaintext, JsonOptions)
+                ?? throw new InvalidDataException("Audit tail seal was empty after deserialization.");
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidDataException("Audit tail seal contains malformed JSON.", ex);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(decoded.Plaintext);
+        }
+    }
+
+    private async Task WriteSealAsync(AuditTailSeal seal, CancellationToken cancellationToken)
+    {
+        ValidateSealShape(seal);
+        var plaintext = JsonSerializer.SerializeToUtf8Bytes(seal, JsonOptions);
+        byte[] encoded;
+        try
+        {
+            encoded = LocalStateEnvelope.Encode(plaintext, _protector!, TailSealPurpose);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(plaintext);
+        }
+
+        var tempPath = _sealPath + ".write-" + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            await File.WriteAllBytesAsync(tempPath, encoded, cancellationToken).ConfigureAwait(false);
+            File.Move(tempPath, _sealPath, overwrite: true);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(encoded);
+            if (File.Exists(tempPath))
+                File.Delete(tempPath);
+        }
+    }
+
+    private static void ValidateSealShape(AuditTailSeal seal)
+    {
+        if (seal.Version != TailSealVersion)
+            throw new InvalidDataException("Unsupported audit tail-seal version.");
+        if (seal.CommittedSequence < 0)
+            throw new InvalidDataException("Audit tail seal contains a negative committed sequence.");
+        if (seal.CommittedSequence == 0 && !string.IsNullOrEmpty(seal.CommittedHash))
+            throw new InvalidDataException("Empty audit tail seal must use an empty committed hash.");
+        if (seal.CommittedSequence > 0 && !IsSha256Hex(seal.CommittedHash))
+            throw new InvalidDataException("Audit tail seal contains an invalid committed hash.");
+
+        if (seal.State == CommittedSealState)
+        {
+            if (seal.PendingSequence is not null || seal.PendingHash is not null)
+                throw new InvalidDataException("Committed audit tail seal cannot contain pending state.");
+            return;
+        }
+
+        if (seal.State != PendingSealState)
+            throw new InvalidDataException("Audit tail seal contains an unsupported state.");
+        if (seal.PendingSequence != seal.CommittedSequence + 1)
+            throw new InvalidDataException("Pending audit tail seal must describe exactly one append after the committed tail.");
+        if (!IsSha256Hex(seal.PendingHash))
+            throw new InvalidDataException("Pending audit tail seal contains an invalid pending hash.");
     }
 
     private async Task RewriteAsCurrentFormatAsync(IReadOnlyList<AuditLine> lines, CancellationToken cancellationToken)
@@ -311,6 +510,18 @@ public sealed class JsonLinesAuditTrail : IAuditTrail
         return CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(expected), Encoding.ASCII.GetBytes(actual));
     }
 
+    private static bool IsSha256Hex(string? value)
+    {
+        if (value is null || value.Length != 64)
+            return false;
+        foreach (var character in value)
+        {
+            if (!Uri.IsHexDigit(character))
+                return false;
+        }
+        return true;
+    }
+
     private static void ValidateEvent(AuditEvent auditEvent)
     {
         ArgumentNullException.ThrowIfNull(auditEvent);
@@ -329,4 +540,12 @@ public sealed class JsonLinesAuditTrail : IAuditTrail
         string Hash);
 
     private sealed record AuditState(IReadOnlyList<AuditEvent> Events, string LastHash);
+
+    private sealed record AuditTailSeal(
+        int Version,
+        string State,
+        long CommittedSequence,
+        string CommittedHash,
+        long? PendingSequence,
+        string? PendingHash);
 }

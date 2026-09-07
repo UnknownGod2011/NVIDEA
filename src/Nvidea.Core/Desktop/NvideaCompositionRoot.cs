@@ -1,3 +1,4 @@
+using Nvidea.Core.Browser;
 using Nvidea.Core.Memory;
 using Nvidea.Core.Nebius;
 using Nvidea.Core.Research;
@@ -14,6 +15,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
 {
     private readonly HttpClient _nebiusHttp;
     private readonly HttpClient? _tavilyHttp;
+    private readonly IAgentInferenceClient _inference;
     private readonly JsonFileMemoryStore _memoryStore;
     private readonly PersonalMemoryService _memory;
     private readonly string _stateDirectory;
@@ -24,6 +26,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     private NvideaCompositionRoot(
         HttpClient nebiusHttp,
         HttpClient? tavilyHttp,
+        IAgentInferenceClient inference,
         JsonFileMemoryStore memoryStore,
         PersonalMemoryService memory,
         DesktopInvocationService desktop,
@@ -32,6 +35,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     {
         _nebiusHttp = nebiusHttp;
         _tavilyHttp = tavilyHttp;
+        _inference = inference;
         _memoryStore = memoryStore;
         _memory = memory;
         _stateDirectory = stateDirectory;
@@ -70,7 +74,15 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
 
         var desktop = new DesktopInvocationService(inference, memory, research);
         var session = new DesktopSessionController(desktop);
-        return new NvideaCompositionRoot(nebiusHttp, tavilyHttp, memoryStore, memory, desktop, session, dataDirectory);
+        return new NvideaCompositionRoot(
+            nebiusHttp,
+            tavilyHttp,
+            inference,
+            memoryStore,
+            memory,
+            desktop,
+            session,
+            dataDirectory);
     }
 
     public async Task<BrowserHostRuntime> GetBrowserAsync(CancellationToken cancellationToken = default)
@@ -96,6 +108,18 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         {
             _browserGate.Release();
         }
+    }
+
+    /// <summary>
+    /// Creates the trusted Nemotron-driven browser goal loop over the same local browser host.
+    /// The returned agent can propose multi-step work, but every concrete action still traverses
+    /// browser safety, capability enforcement, exact approval where required and verification.
+    /// </summary>
+    public async Task<BrowserGoalAgent> CreateBrowserGoalAgentAsync(CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        var browser = await GetBrowserAsync(cancellationToken).ConfigureAwait(false);
+        return new BrowserGoalAgent(browser, new NemotronBrowserPlanner(_inference));
     }
 
     public async ValueTask DisposeAsync()

@@ -140,7 +140,7 @@ public sealed class JsonBrowserGoalSessionStore : IBrowserGoalSessionStore
             Detail,
             PendingJobId,
             PendingExactScope,
-            PendingAction: null,
+            null,
             StartedAt,
             UpdatedAt,
             PlannerTurnCount,

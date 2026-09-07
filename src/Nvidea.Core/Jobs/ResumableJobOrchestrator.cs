@@ -31,18 +31,27 @@ public sealed class ResumableJobOrchestrator
     public Task<AgentJobRecord> CreateAsync(
         AgentJobDefinition definition,
         CancellationToken cancellationToken = default) =>
-        CreateAsync(definition, initialCheckpoint: null, cancellationToken);
+        CreateAsync(Guid.NewGuid(), definition, initialCheckpoint: null, cancellationToken);
 
-    /// <summary>
-    /// Creates a job and its first checkpoint in one durable save. This prevents a
-    /// crash window where a persisted job exists without the descriptive action it
-    /// needs to resume. Checkpoints remain data only and never carry authorization.
-    /// </summary>
-    public async Task<AgentJobRecord> CreateAsync(
+    public Task<AgentJobRecord> CreateAsync(
         AgentJobDefinition definition,
         AgentJobCheckpoint? initialCheckpoint,
+        CancellationToken cancellationToken = default) =>
+        CreateAsync(Guid.NewGuid(), definition, initialCheckpoint, cancellationToken);
+
+    /// <summary>
+    /// Creates a job using a caller-supplied durable identity. This is intentionally idempotent
+    /// for an already-existing equivalent job so a parent workflow can persist the child id before
+    /// child creation/execution and safely reconcile after process failure.
+    /// </summary>
+    public async Task<AgentJobRecord> CreateAsync(
+        Guid jobId,
+        AgentJobDefinition definition,
+        AgentJobCheckpoint? initialCheckpoint = null,
         CancellationToken cancellationToken = default)
     {
+        if (jobId == Guid.Empty)
+            throw new ArgumentException("Job id is required.", nameof(jobId));
         ArgumentNullException.ThrowIfNull(definition);
         if (string.IsNullOrWhiteSpace(definition.JobType) || string.IsNullOrWhiteSpace(definition.CapabilityId))
             throw new ArgumentException("Job type and capability id are required.", nameof(definition));
@@ -53,8 +62,20 @@ public sealed class ResumableJobOrchestrator
         if (initialCheckpoint is not null && string.IsNullOrWhiteSpace(initialCheckpoint.Step))
             throw new ArgumentException("Initial checkpoints require a non-empty step.", nameof(initialCheckpoint));
 
+        var existing = await _store.GetAsync(jobId, cancellationToken).ConfigureAwait(false);
+        if (existing is not null)
+        {
+            if (!Equals(existing.Definition, definition)
+                || !CheckpointEquivalent(existing.Checkpoint, initialCheckpoint))
+            {
+                throw new InvalidOperationException($"Job '{jobId}' already exists with a different definition or checkpoint.");
+            }
+
+            return existing;
+        }
+
         var now = DateTimeOffset.UtcNow;
-        var record = new AgentJobRecord(Guid.NewGuid(), definition, AgentJobState.Pending,
+        var record = new AgentJobRecord(jobId, definition, AgentJobState.Pending,
             _executionPolicy.Choose(definition), 0, initialCheckpoint, null, null, now, now);
         await _store.SaveAsync(record, cancellationToken).ConfigureAwait(false);
         await AuditAsync(record, "job.created", true, false, "Job created.", cancellationToken).ConfigureAwait(false);
@@ -146,6 +167,14 @@ public sealed class ResumableJobOrchestrator
     private Task AuditAsync(AgentJobRecord job, string eventType, bool allowed, bool approved, string summary, CancellationToken cancellationToken) =>
         _auditTrail.AppendAsync(new AuditEvent(Guid.NewGuid(), DateTimeOffset.UtcNow, job.Definition.CapabilityId, job.JobId.ToString("N"), eventType, job.Definition.Risk, allowed, approved, job.ApprovalScope ?? string.Empty, summary,
             new Dictionary<string, string> { ["jobType"] = job.Definition.JobType, ["state"] = job.State.ToString(), ["executionLocation"] = job.ExecutionLocation.ToString(), ["attempt"] = job.Attempt.ToString() }), cancellationToken);
+
+    private static bool CheckpointEquivalent(AgentJobCheckpoint? left, AgentJobCheckpoint? right)
+    {
+        if (ReferenceEquals(left, right)) return true;
+        if (left is null || right is null) return false;
+        return string.Equals(left.Step, right.Step, StringComparison.Ordinal)
+            && string.Equals(left.Payload, right.Payload, StringComparison.Ordinal);
+    }
 
     private static TimeSpan RetryDelay(int attempt) => TimeSpan.FromSeconds(Math.Min(60, Math.Pow(2, Math.Clamp(attempt, 1, 6))));
 }

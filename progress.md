@@ -20,7 +20,7 @@ Every run must read this file first, inspect current NVIDEA state, choose the hi
 - **Agent core:** Nemotron/Nebius reasoning, structured tools, bounded execution, verification, retries/cancellation and approvals.
 - **Memory:** typed working/episodic/semantic/project/skill memory with privacy-aware writes, hybrid retrieval, provenance/confidence/sensitivity/retention and deletion controls.
 - **Research:** Nemotron planning -> Tavily evidence -> untrusted-content boundary -> Nemotron synthesis -> validated citations.
-- **Browser:** DOM/accessibility observation -> Nemotron one-step plan -> typed action -> hard-safety floor -> capability policy -> exact approval -> Playwright -> fresh observation -> verification -> repeat under strict budgets.
+- **Browser:** DOM/accessibility observation -> Nemotron one-step plan -> typed action + typed postconditions -> hard-safety floor -> capability policy -> exact approval -> Playwright -> fresh observation -> deterministic verification -> repeat under strict budgets.
 - **Skills / permissions:** capability registry, least privilege, monotonic risk, single-use approvals and append-only audit.
 - **Jobs:** durable checkpoints, retries, cancellation, approval-paused states, ephemeral grants and local-vs-Nebius execution policy.
 - **Cloud:** Nebius Serverless only for suitable long-running/background workloads; private OS actions stay local.
@@ -33,18 +33,18 @@ The <=3 minute demo should prove invocation anywhere on Windows, context awarene
 - Nebius Token Factory inference client with Nemotron default, structured output/tools, conservative routing, retries, timeout/cancellation and endpoint validation.
 - Layered privacy-aware personal memory under `Memory`.
 - Tavily provider + Nemotron research engine under `Research`.
-- Concrete Playwright .NET browser driver, hard safety policy, verifier and capability execution boundary under `Browser`.
+- Concrete Playwright .NET browser driver, hard safety policy, capability execution boundary and deterministic verifier under `Browser`.
 - Capability registry, least-privilege permission policy, exact single-use approval authorizer and append-only audit under `Capabilities`.
 - Durable resumable jobs, ephemeral approval handoff and Nebius Serverless REST contract under `Jobs`.
 - `BrowserHostRuntime` owns isolated local Playwright + safety + capability + audit + child-job orchestration and exposes only bounded observations/high-level outcomes.
 - `NemotronBrowserPlanner` turns a fresh untrusted observation into one validated step/complete/stop decision. `BrowserGoalAgent` runs the bounded observe -> plan -> job -> verify loop and halts at approval boundaries.
 - Browser goal sessions persist separately from approval state, with privacy-minimized verified history, action/planner/context/wall-clock budgets, and no persisted raw typed browser values.
 - Parent/child browser orchestration persists a reserved child ID before child creation/execution and reconciles that exact durable child on restart instead of blindly re-planning or replaying it.
-- Durable `Running` child jobs are never automatically replayed. Evidence-only reconciliation may mark them complete only when fresh URL/DOM state deterministically proves the intended end state; otherwise they stop for human resolution.
+- Durable `Running` child jobs are never automatically replayed. Evidence-only reconciliation may mark them complete only when deterministic fresh evidence proves the intended end state; otherwise they stop for human resolution.
 - Lost ephemeral approval after restart is restored only as a non-authorizing approval wait; explicit approval is required again.
-- WPF host has global `Ctrl+Shift+Space`, foreground app/window context, read-only UI Automation selected-text capture, opt-in clipboard disclosure, browser confirmation UX, live status and emergency stop.
-- WPF now also surfaces interrupted ambiguous browser work and exposes an **Inspect evidence** recovery flow that never offers an automatic retry.
+- WPF host has global `Ctrl+Shift+Space`, foreground app/window context, read-only UI Automation selected-text capture, opt-in clipboard disclosure, browser confirmation UX, live status, emergency stop and evidence-only interrupted-work recovery UX.
 - Opt-in localhost real-Chromium integration harness exists for the trusted browser approval path.
+- Typed browser postconditions now exist for exact URL, title/text presence, element existence/value, checked state and enabled state. The same evaluator is used by normal post-action verification and ambiguous crash reconciliation.
 - Root README + MIT license.
 - No repository other than NVIDEA has been mutated.
 
@@ -52,7 +52,7 @@ The <=3 minute demo should prove invocation anywhere on Windows, context awarene
 
 ### 2026-09-06 — Core foundations
 - Added Nebius/Nemotron inference abstraction and Token Factory client with structured tools/output, retries, timeout/cancellation, endpoint validation and conservative model routing.
-- Added typed layered personal memory with provenance, confidence, importance, sensitivity, retention, secret detection, privacy-aware writes and hybrid semantic/lexical/recency retrieval.
+- Added typed layered personal memory with provenance, confidence, importance, sensitivity, retention, secret detection, privacy-aware writes and hybrid retrieval.
 - Added Tavily research planning/search/deduplication/provenance plus Nemotron synthesis with explicit untrusted-web boundaries and validated source IDs.
 - Added provider-neutral browser contracts, hard-safety policy, bounded observe-act-observe-verify execution and receipts.
 - Added capability registry, declared permissions, monotonic risk, exact single-use approvals and append-only audit.
@@ -67,54 +67,46 @@ The <=3 minute demo should prove invocation anywhere on Windows, context awarene
 - Added `NemotronBrowserPlanner`, strict action schema validation, bounded `BrowserGoalAgent`, observation-enriched risk classification and durable multi-step goal sessions.
 - Added privacy-minimized verified browser history and planner/action/context/wall-clock budgets.
 
-### 2026-09-07 — Crash-consistent parent/child browser execution
-- Added caller-supplied durable job IDs with equivalent-definition/checkpoint idempotency checks and structural permission-set comparison.
-- Split browser child creation from execution so parent session can persist the exact child identity before anything executes.
-- Recovery handles missing child, created-but-not-run child, approval-paused child, child completed before parent update, lost ephemeral approval and durable `Running` ambiguity.
-- Durable `Running` jobs fail closed rather than replaying because execution may have crossed an external side-effect boundary before the process died.
-- Added crash-window regression tests and non-authorizing approval re-arm audit flow.
+### 2026-09-07 — Crash consistency and evidence-only recovery
+- Added caller-supplied durable child IDs with idempotency checks and structural permission comparison.
+- Split browser child creation from execution so the parent persists the exact child identity before anything can execute.
+- Recovery handles missing child, created-but-not-run child, approval-paused child, completion before parent update, lost ephemeral approval and durable `Running` ambiguity.
+- Durable `Running` jobs fail closed rather than replaying because execution may already have crossed an external side-effect boundary.
+- Added deterministic no-model ambiguous-side-effect reconciliation using fresh browser evidence; uploads/downloads are never auto-reconciled from DOM evidence.
+- Added `BrowserAmbiguousRecoveryService`, audited completion of proven ambiguous jobs and Windows **Inspect evidence** UX with no retry/execute-anyway affordance.
 
-### 2026-09-07 — Evidence-based ambiguous side-effect reconciliation
-- Added deterministic no-model reconciliation for durable `Running` browser jobs after crash.
-- Read-only steps can recover from a fresh observation; navigation requires exact normalized destination URL; click/type/select/back/refresh require explicit expected-state evidence; upload/download never auto-reconcile from DOM evidence.
-- Added `BrowserHostRuntime.TryReconcileAmbiguousAsync`, audited `CompleteAmbiguousRunningAsync`, `BrowserAmbiguousRecoveryService` and `IBrowserAmbiguousRecoveryHost`.
-- Positive evidence restores the parent without replay; inconclusive evidence preserves the exact pending child and requires human resolution.
-- Added tests for exact navigation proof, expected-state proof, file-transfer refusal, successful parent restoration without replay and inconclusive evidence preservation.
-
-### 2026-09-07 — Windows evidence-only recovery UX
+### 2026-09-07 — Typed browser postcondition verification
 Completed:
-- Re-verified the repository before every mutation as exactly `UnknownGod2011/NVIDEA`; no other repository was written.
-- Added `NvideaCompositionRoot.ListBrowserGoalSessionsAsync`. It exposes only the already privacy-minimized durable session records to local desktop UX and does **not** initialize Playwright or confer execution authority.
-- Added a collapsed-by-default WPF recovery card for the newest failed ambiguous goal with a pending child. It shows a bounded goal summary and descriptive session/child identifiers.
-- Added **Inspect evidence** instead of any retry button. The copy explicitly tells the user that NVIDEA will never auto-retry an ambiguous side effect.
-- Wired `BrowserAmbiguousRecoveryService` into `MainWindow` lazily. Recovery initializes the trusted browser only when the user asks to inspect evidence.
-- Positive reconciliation displays `reconciled automatically from fresh evidence` and, when available, the fresh evidence URL.
-- Inconclusive recovery displays `human resolution required; no automatic retry` and preserves the existing fail-closed core behavior.
-- Cancellation/error handling explicitly states that the interrupted action was not retried.
-- Startup recovery discovery is read-only and isolated: malformed/unavailable recovery state cannot prevent normal chat/research/memory startup.
-- Busy/emergency-stop UX now includes recovery inspection; the same cancellation token can stop the observation/reconciliation operation.
+- Re-verified every GitHub write target as exactly `UnknownGod2011/NVIDEA`; no other repository was written.
+- Added `BrowserPostconditionKind`, `BrowserPostcondition` and `BrowserPostconditionEvaluator`.
+- Supported deterministic predicates: exact normalized HTTP(S) URL, title contains, visible-text contains, element exists, exact element value, checked state and enabled state.
+- Added a maximum of 8 predicates per action to keep verification bounded.
+- Added typed `Postconditions` to `BrowserAction` as an optional trailing field so previously compiled/source call sites remain source-compatible.
+- `ConservativeBrowserVerifier` now prefers typed postconditions and requires **all** declared predicates to pass. Navigate still receives an exact-URL assertion when no explicit typed predicate exists.
+- `BrowserAmbiguousStateReconciler` now uses the identical typed evaluator, preventing ordinary verification and post-crash recovery from drifting into different semantics.
+- Upload/download actions still cannot be automatically crash-reconciled even if a DOM predicate appears to match, because external side effects cannot be proven reliably from page state alone.
+- Kept the old `ExpectedState` substring path only for backwards compatibility with already-durable jobs; new planner output still needs migration to typed predicates.
+- Added `BrowserPostconditionTests` covering all-of semantics, refusal of partial matches, shared crash-recovery semantics, exact-not-substring element values and upload refusal.
 
 Validation / evidence:
-- GitHub compare from prior head `e9d1ba524ce9058f1db7baae4eb9ff12c8db7f65` to implementation head `8a137fcdb1924a9f15896bdf342409cf6fa22cd2` shows exactly three implementation files changed: `NvideaCompositionRoot.cs`, `MainWindow.xaml`, and `MainWindow.xaml.cs`.
-- Source review confirms the new WPF path calls `BrowserAmbiguousRecoveryService.RecoverAsync` only; the recovery core remains evidence-only and contains no browser execution, model inference or approval-minting call.
-- Recovery discovery reads `goal-sessions.json` through the existing privacy-minimized store and does not create the Playwright host.
-- No GitHub Actions workflow was created or rerun merely to obtain a signal.
-- This execution environment still does not provide a usable `dotnet`, `msbuild` or `csc`; **no compile/test/Windows-launch success is claimed**.
+- Source-level consistency review completed across `BrowserContracts`, `BrowserPostconditionEvaluator`, `ConservativeBrowserVerifier` and `BrowserAmbiguousStateReconciler`.
+- No GitHub Actions workflow was created or rerun merely to obtain a green signal.
+- This execution environment still does not expose a usable `dotnet`, `msbuild` or `csc`; **no compile/test/Windows/Chromium success is claimed**.
 
 Security / privacy review:
-- The WPF surface cannot convert persisted descriptive scope into authorization.
-- There is deliberately no `Retry`, `Execute anyway`, grant creation, or approval reconstruction control in the recovery card.
-- Fresh browser evidence is only displayed after the trusted recovery service returns it.
-- Goal text shown in recovery UX is bounded; raw typed browser values were never persisted by the session store.
-- Browser recovery remains local; no extra cloud disclosure was introduced.
-- No CAPTCHA/login/site/OS safeguard bypass was introduced.
+- Typed predicates consume only the already-bounded fresh browser observation; they do not add cloud disclosure or execution authority.
+- Element-value equality is exact, avoiding a dangerous substring success condition for stateful fields.
+- CSS/TestId locators intentionally cannot be inferred from the sanitized observation for element-state postconditions; unsupported evidence fails closed rather than guessing.
+- All predicates must match; one successful predicate cannot hide another failed condition.
+- No approval/grant behavior changed, and no CAPTCHA/login/site/OS safeguard bypass was introduced.
 
 ## Current Unverified / Risks
 - **Highest risk remains compilation/runtime validation:** source review is not a substitute for `dotnet build`, `dotnet test` and a real Playwright Chromium launch.
 - Matching Playwright Chromium binaries have not been installed/launched in this execution environment.
-- WPF has not been compiled/launched on Windows here, including the new recovery card.
-- The recovery card currently discovers sessions already marked failed/ambiguous. A process that dies while the parent still says `Running` may require the goal-resume path to classify the child as ambiguous before the card appears; a future recovery inbox should detect durable child state without initializing Playwright.
-- `ExpectedState` remains planner-supplied free text. Typed postcondition predicates are needed for stronger ordinary verification and crash reconciliation.
+- WPF has not been compiled/launched on Windows here.
+- `NemotronBrowserPlanner` still emits the legacy free-text `expected_state` field; the typed predicate model is implemented in execution/recovery but planner structured output must be migrated before typed predicates become the normal autonomous path.
+- Existing persisted jobs with legacy `ExpectedState` still use the old permissive substring compatibility branch; this should eventually be retired after a persistence migration window.
+- The recovery card currently discovers sessions already marked failed/ambiguous. A process that dies while the parent still says `Running` may require goal resume to classify the child first.
 - `JsonAgentJobStore` and `JsonBrowserGoalSessionStore` are individually atomic files, not a cross-file transaction; the reserved-child-ID protocol remains the safety mechanism across that boundary.
 - Nemotron strict JSON schema still needs live Token Factory exercise; OpenAI-compatible backends can differ in strict-schema subsets.
 - Goal-session JSON, child jobs, audit JSONL and memory JSON are not encrypted at rest yet.
@@ -123,4 +115,4 @@ Security / privacy review:
 - Tavily Extract/richer source authority/freshness work and a verified production embedding adapter remain opportunities.
 
 ## Single Best Next Task
-Obtain the first real **.NET 8 build + unit test + localhost Chromium integration signal** and fix every compile/runtime defect immediately. If the execution environment still cannot provide .NET, replace free-text `ExpectedState` with **typed browser postcondition predicates** (URL, title/text, element existence/value/state) and use the same predicates in normal post-action verification plus ambiguous crash reconciliation. This will materially reduce false-positive verification and make the agent’s safety story stronger for judges.
+First obtain a real **.NET 8 build + unit-test + localhost Chromium integration signal** if a capable runtime becomes available and fix all compile/runtime defects immediately. If it remains unavailable, migrate `NemotronBrowserPlanner` from free-text `expected_state` to a bounded structured `postconditions` array, validate each predicate against the fresh observation/action shape, and reject model output that requests unverifiable predicates. Then add planner contract tests proving malformed/overbroad postconditions fail closed.

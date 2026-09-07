@@ -57,7 +57,7 @@ public static class PersistentBrowserContextFactory
             }).WaitAsync(cancellationToken).ConfigureAwait(false);
 
             var driver = new PlaywrightBrowserSessionDriver(context, page, driverOptions, downloads);
-            return new PersistentBrowserContextSession(profileDirectory, context, driver);
+            return new PersistentBrowserContextSession(profileDirectory, context, driver, downloads);
         }
         catch
         {
@@ -83,4 +83,5 @@ public static class PersistentBrowserContextFactory
 public sealed record PersistentBrowserContextSession(
     string ProfileDirectory,
     IBrowserContext Context,
-    PlaywrightBrowserSessionDriver Driver);
+    PlaywrightBrowserSessionDriver Driver,
+    BrowserDownloadQuarantine Downloads);

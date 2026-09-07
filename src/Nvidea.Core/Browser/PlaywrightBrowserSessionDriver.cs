@@ -1,18 +1,20 @@
+using System.Collections.Concurrent;
 using Microsoft.Playwright;
 
 namespace Nvidea.Core.Browser;
 
 /// <summary>
-/// Session-aware browser driver that keeps the agent on the newest permitted page in a Playwright
-/// context. Popups/new tabs are adopted only after their URL satisfies the same HTTP(S)/host
-/// boundary as normal navigation. Cross-boundary popups are closed without being observed or
-/// interacted with by the agent.
+/// Session-aware browser driver that keeps the agent on newly-created permitted pages in a
+/// Playwright context. Popups/new tabs are adopted only after their URL satisfies the same
+/// HTTP(S)/host boundary as normal navigation. Cross-boundary popups are closed without being
+/// observed or interacted with by the agent.
 /// </summary>
 public sealed class PlaywrightBrowserSessionDriver : IBrowserDriver
 {
     private readonly IBrowserContext _context;
     private readonly PlaywrightBrowserDriverOptions _options;
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly ConcurrentQueue<IPage> _newPages = new();
     private IPage _activePage;
 
     public PlaywrightBrowserSessionDriver(
@@ -28,6 +30,7 @@ public sealed class PlaywrightBrowserSessionDriver : IBrowserDriver
             throw new ArgumentException("Initial page must belong to the supplied browser context.", nameof(initialPage));
 
         ValidatePermittedPage(initialPage);
+        _context.Page += OnPageCreated;
     }
 
     public async Task<BrowserObservation> ObserveAsync(CancellationToken cancellationToken = default)
@@ -76,28 +79,38 @@ public sealed class PlaywrightBrowserSessionDriver : IBrowserDriver
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var pages = _context.Pages.Where(page => !page.IsClosed).ToArray();
-            if (pages.Length == 0)
+            if (!_context.Pages.Any(page => !page.IsClosed))
                 throw new InvalidOperationException("Browser context has no open pages.");
 
-            // Playwright exposes context pages in creation order. Prefer the newest permitted page
-            // so target=_blank/window.open flows naturally become the next observed page.
-            for (var index = pages.Length - 1; index >= 0; index--)
+            // BrowserContext.Page is emitted for newly-created tabs/popups. Consume only the pages
+            // observed through that event rather than assuming BrowserContext.Pages has any
+            // documented creation-order semantics.
+            var pendingCount = _newPages.Count;
+            for (var i = 0; i < pendingCount && _newPages.TryDequeue(out var candidate); i++)
             {
-                var candidate = pages[index];
+                if (candidate.IsClosed)
+                    continue;
+
                 if (IsPermitted(candidate.Url))
                 {
                     _activePage = candidate;
-                    break;
+                    continue;
                 }
 
                 if (TryParseWebUri(candidate.Url, out _))
+                {
                     await SafeCloseAsync(candidate).ConfigureAwait(false);
+                    continue;
+                }
+
+                // A freshly-created page may still be about:blank when the event fires. Keep it
+                // pending until a subsequent browser boundary call can classify its final URL.
+                _newPages.Enqueue(candidate);
             }
 
             if (_activePage.IsClosed || !IsPermitted(_activePage.Url))
             {
-                var fallback = _context.Pages.LastOrDefault(page => !page.IsClosed && IsPermitted(page.Url));
+                var fallback = _context.Pages.FirstOrDefault(page => !page.IsClosed && IsPermitted(page.Url));
                 _activePage = fallback
                     ?? throw new InvalidOperationException("No open browser page remains inside the permitted host boundary.");
             }
@@ -108,6 +121,12 @@ public sealed class PlaywrightBrowserSessionDriver : IBrowserDriver
         {
             _gate.Release();
         }
+    }
+
+    private void OnPageCreated(object? sender, IPage page)
+    {
+        if (!ReferenceEquals(page, _activePage))
+            _newPages.Enqueue(page);
     }
 
     private PlaywrightBrowserDriver CreatePageDriver(IPage page) => new(page, _options);

@@ -1,0 +1,331 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Microsoft.Playwright;
+using Nvidea.Core.Browser;
+using Nvidea.Core.Capabilities;
+using Nvidea.Core.Jobs;
+
+namespace Nvidea.Core.Desktop;
+
+public sealed record BrowserHostOptions(
+    Uri StartUri,
+    IReadOnlySet<string>? AllowedHosts = null,
+    bool Headless = false)
+{
+    public static BrowserHostOptions Default { get; } = new(new Uri("https://example.com"));
+}
+
+public sealed record BrowserApprovalPrompt(
+    Guid JobId,
+    string ExactScope,
+    BrowserActionKind ActionKind,
+    string Summary,
+    string Target,
+    DateTimeOffset RequestedAt);
+
+public sealed record BrowserJobOutcome(
+    Guid JobId,
+    AgentJobState State,
+    string Message,
+    BrowserApprovalPrompt? Approval = null)
+{
+    public bool IsTerminal => State is AgentJobState.Completed or AgentJobState.Failed or AgentJobState.Cancelled;
+}
+
+/// <summary>
+/// Owns one local Playwright browser session and composes the existing safety,
+/// capability, approval, audit and resumable-job layers into a desktop-safe API.
+/// Browser writes never execute directly from UI code.
+/// </summary>
+public sealed class BrowserHostRuntime : IAsyncDisposable
+{
+    public const string BrowserCapabilityId = "browser.agent";
+
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        Converters = { new JsonStringEnumConverter() }
+    };
+
+    private readonly IPlaywright _playwright;
+    private readonly Microsoft.Playwright.IBrowser _browser;
+    private readonly IBrowserContext _context;
+    private readonly IAgentJobStore _jobStore;
+    private readonly ResumableJobOrchestrator _jobs;
+    private bool _disposed;
+
+    private BrowserHostRuntime(
+        IPlaywright playwright,
+        Microsoft.Playwright.IBrowser browser,
+        IBrowserContext context,
+        IAgentJobStore jobStore,
+        ResumableJobOrchestrator jobs)
+    {
+        _playwright = playwright;
+        _browser = browser;
+        _context = context;
+        _jobStore = jobStore;
+        _jobs = jobs;
+    }
+
+    public static async Task<BrowserHostRuntime> CreateAsync(
+        string stateDirectory,
+        BrowserHostOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(stateDirectory))
+            throw new ArgumentException("State directory is required.", nameof(stateDirectory));
+
+        var effective = options ?? BrowserHostOptions.Default;
+        ValidateOptions(effective);
+        var fullStateDirectory = Path.GetFullPath(stateDirectory);
+        Directory.CreateDirectory(fullStateDirectory);
+
+        IPlaywright? playwright = null;
+        Microsoft.Playwright.IBrowser? browser = null;
+        IBrowserContext? context = null;
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            playwright = await Playwright.CreateAsync().WaitAsync(cancellationToken).ConfigureAwait(false);
+            browser = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
+            {
+                Headless = effective.Headless
+            }).WaitAsync(cancellationToken).ConfigureAwait(false);
+            context = await browser.NewContextAsync(new BrowserNewContextOptions
+            {
+                AcceptDownloads = true
+            }).WaitAsync(cancellationToken).ConfigureAwait(false);
+            var page = await context.NewPageAsync().WaitAsync(cancellationToken).ConfigureAwait(false);
+            await page.GotoAsync(effective.StartUri.AbsoluteUri, new PageGotoOptions
+            {
+                WaitUntil = WaitUntilState.DOMContentLoaded,
+                Timeout = 15_000
+            }).WaitAsync(cancellationToken).ConfigureAwait(false);
+
+            var driver = new PlaywrightBrowserDriver(page, new PlaywrightBrowserDriverOptions(
+                effective.AllowedHosts,
+                MaxObservationCharacters: 12_000,
+                MaxObservedElements: 250,
+                ActionTimeoutMilliseconds: 15_000));
+
+            var registry = new CapabilityRegistry(new[]
+            {
+                new CapabilityDescriptor(
+                    BrowserCapabilityId,
+                    "1.0.0",
+                    "Browser agent",
+                    new HashSet<DataPermission>
+                    {
+                        DataPermission.BrowserRead,
+                        DataPermission.BrowserWrite,
+                        DataPermission.FilesRead,
+                        DataPermission.FilesWrite
+                    },
+                    CapabilityRiskLevel.Medium,
+                    RequiresConfirmation: false,
+                    "Bounded local browser automation with exact approvals for consequential writes.")
+            });
+            var capabilityPolicy = new CapabilityPermissionPolicy(registry);
+            var approvals = new ScopedApprovalAuthorizer();
+            var ephemeralApprovals = new EphemeralJobApprovalStore();
+            var audit = new JsonLinesAuditTrail(Path.Combine(fullStateDirectory, "audit.jsonl"));
+            var backend = new BrowserCapabilityBackend(driver);
+            var toolExecutor = new CapabilityToolExecutor(capabilityPolicy, approvals, audit, backend);
+            var execution = new BrowserCapabilityExecutionService(
+                BrowserCapabilityId,
+                driver,
+                new BrowserSafetyPolicy(),
+                capabilityPolicy,
+                toolExecutor,
+                new ConservativeBrowserVerifier());
+            var handler = new BrowserActionJobHandler(execution);
+            var store = new JsonAgentJobStore(Path.Combine(fullStateDirectory, "jobs.json"));
+            var orchestrator = new ResumableJobOrchestrator(
+                store,
+                new ConservativeJobExecutionPolicy(),
+                audit,
+                new[] { handler },
+                approvals,
+                ephemeralApprovals);
+
+            return new BrowserHostRuntime(playwright, browser, context, store, orchestrator);
+        }
+        catch
+        {
+            if (context is not null)
+                await SafeCloseAsync(context).ConfigureAwait(false);
+            if (browser is not null)
+                await SafeCloseAsync(browser).ConfigureAwait(false);
+            playwright?.Dispose();
+            throw;
+        }
+    }
+
+    public async Task<BrowserJobOutcome> StartActionAsync(
+        BrowserAction action,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(action);
+
+        var permissions = BrowserCapabilityExecutionService.PermissionsFor(action.Kind);
+        var definition = new AgentJobDefinition(
+            BrowserActionJobHandler.Type,
+            BrowserCapabilityId,
+            permissions,
+            ToCapabilityRisk(new BrowserSafetyPolicy().Evaluate(action, await CurrentObservationAsync(cancellationToken).ConfigureAwait(false)).Risk),
+            ContainsPrivateOsData: true,
+            BenefitsFromBackgroundExecution: false,
+            MaxAttempts: 2);
+
+        var created = await _jobs.CreateAsync(
+            definition,
+            BrowserActionJobHandler.CreateCheckpoint(action),
+            cancellationToken).ConfigureAwait(false);
+        var advanced = await _jobs.RunNextStepAsync(created.JobId, cancellationToken).ConfigureAwait(false);
+        return Describe(advanced, action);
+    }
+
+    public async Task<BrowserJobOutcome> ApproveAndResumeAsync(
+        Guid jobId,
+        string exactScope,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (jobId == Guid.Empty)
+            throw new ArgumentException("Job id is required.", nameof(jobId));
+        if (string.IsNullOrWhiteSpace(exactScope))
+            throw new ArgumentException("Exact approval scope is required.", nameof(exactScope));
+
+        await _jobs.ResumeAfterApprovalAsync(jobId, exactScope, cancellationToken).ConfigureAwait(false);
+        var advanced = await _jobs.RunNextStepAsync(jobId, cancellationToken).ConfigureAwait(false);
+        return Describe(advanced, TryReadAction(advanced));
+    }
+
+    public async Task<BrowserJobOutcome> CancelAsync(Guid jobId, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        var cancelled = await _jobs.CancelAsync(jobId, cancellationToken).ConfigureAwait(false);
+        return Describe(cancelled, TryReadAction(cancelled));
+    }
+
+    public async Task<BrowserJobOutcome?> GetAsync(Guid jobId, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        var job = await _jobStore.GetAsync(jobId, cancellationToken).ConfigureAwait(false);
+        return job is null ? null : Describe(job, TryReadAction(job));
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_disposed)
+            return;
+        _disposed = true;
+        await SafeCloseAsync(_context).ConfigureAwait(false);
+        await SafeCloseAsync(_browser).ConfigureAwait(false);
+        _playwright.Dispose();
+    }
+
+    private async Task<BrowserObservation> CurrentObservationAsync(CancellationToken cancellationToken)
+    {
+        // The action handler takes another fresh observation immediately before the
+        // last-mile tool boundary. This early read exists only to conservatively seed
+        // durable job risk metadata; it is never authorization.
+        var jobs = await _jobStore.ListAsync(cancellationToken).ConfigureAwait(false);
+        _ = jobs.Count; // force cancellation-aware store access before starting work.
+
+        // We intentionally do not expose the concrete driver publicly. Recover the
+        // current page through the owned context and create a bounded observer.
+        var page = _context.Pages.LastOrDefault()
+            ?? throw new InvalidOperationException("The browser context has no active page.");
+        var driver = new PlaywrightBrowserDriver(page);
+        return await driver.ObserveAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static BrowserJobOutcome Describe(AgentJobRecord job, BrowserAction? action)
+    {
+        BrowserApprovalPrompt? prompt = null;
+        if (job.State == AgentJobState.WaitingForApproval && !string.IsNullOrWhiteSpace(job.ApprovalScope))
+        {
+            var target = action?.Destination?.AbsoluteUri
+                ?? action?.Locator?.Name
+                ?? action?.Locator?.Value
+                ?? "current browser context";
+            var summary = action?.Rationale;
+            if (string.IsNullOrWhiteSpace(summary))
+                summary = $"{action?.Kind.ToString() ?? "Browser"} action on {target}";
+
+            prompt = new BrowserApprovalPrompt(
+                job.JobId,
+                job.ApprovalScope,
+                action?.Kind ?? BrowserActionKind.Click,
+                summary,
+                target,
+                job.UpdatedAt);
+        }
+
+        var message = job.State switch
+        {
+            AgentJobState.WaitingForApproval => "Browser action is paused and has not executed. Explicit one-time approval is required.",
+            AgentJobState.Completed => "Browser action executed and its post-action state was verified.",
+            AgentJobState.Cancelled => "Browser action was cancelled.",
+            AgentJobState.Failed => $"Browser action failed: {job.LastError}",
+            AgentJobState.RetryScheduled => $"Browser action failed safely and is eligible for retry: {job.LastError}",
+            _ => "Browser action is pending."
+        };
+
+        return new BrowserJobOutcome(job.JobId, job.State, message, prompt);
+    }
+
+    private static BrowserAction? TryReadAction(AgentJobRecord job)
+    {
+        if (job.Checkpoint is null || string.IsNullOrWhiteSpace(job.Checkpoint.Payload))
+            return null;
+        if (!job.Checkpoint.Step.StartsWith("browser.action", StringComparison.Ordinal))
+            return null;
+
+        try
+        {
+            return JsonSerializer.Deserialize<BrowserAction>(job.Checkpoint.Payload, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static CapabilityRiskLevel ToCapabilityRisk(BrowserRiskLevel risk) => risk switch
+    {
+        BrowserRiskLevel.Low => CapabilityRiskLevel.Low,
+        BrowserRiskLevel.Medium => CapabilityRiskLevel.Medium,
+        BrowserRiskLevel.High => CapabilityRiskLevel.High,
+        _ => CapabilityRiskLevel.Blocked
+    };
+
+    private static void ValidateOptions(BrowserHostOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        if (!options.StartUri.IsAbsoluteUri || options.StartUri.Scheme is not ("http" or "https"))
+            throw new ArgumentException("Browser start URI must be absolute HTTP(S).", nameof(options));
+        if (options.AllowedHosts is { Count: > 0 }
+            && !options.AllowedHosts.Contains(options.StartUri.IdnHost, StringComparer.OrdinalIgnoreCase))
+            throw new ArgumentException("Browser start host must be included in the explicit host allowlist.", nameof(options));
+    }
+
+    private static async Task SafeCloseAsync(IBrowserContext context)
+    {
+        try { await context.CloseAsync().ConfigureAwait(false); }
+        catch { }
+    }
+
+    private static async Task SafeCloseAsync(Microsoft.Playwright.IBrowser browser)
+    {
+        try { await browser.CloseAsync().ConfigureAwait(false); }
+        catch { }
+    }
+
+    private void ThrowIfDisposed()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+    }
+}

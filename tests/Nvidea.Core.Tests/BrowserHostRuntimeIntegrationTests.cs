@@ -4,6 +4,7 @@ using System.Text;
 using Nvidea.Core.Browser;
 using Nvidea.Core.Desktop;
 using Nvidea.Core.Jobs;
+using Nvidea.Core.Nebius;
 using Xunit;
 
 namespace Nvidea.Core.Tests;
@@ -34,8 +35,13 @@ public sealed class BrowserHostRuntimeIntegrationTests
             var action = new BrowserAction(
                 BrowserActionKind.Click,
                 BrowserLocator.ByRole("button", "Submit demo mutation"),
-                ExpectedState: "approved mutation complete",
-                Rationale: "Submit the controlled demo mutation after explicit user approval.");
+                Rationale: "Submit the controlled demo mutation after explicit user approval.",
+                Postconditions: new[]
+                {
+                    new BrowserPostcondition(
+                        BrowserPostconditionKind.VisibleTextContains,
+                        Expected: "approved mutation complete")
+                });
 
             var paused = await runtime.StartActionAsync(action);
 
@@ -45,6 +51,8 @@ public sealed class BrowserHostRuntimeIntegrationTests
             Assert.Equal(0, site.MutationCount);
 
             var persistedWhilePaused = await File.ReadAllTextAsync(Path.Combine(stateDirectory, "jobs.json"));
+            Assert.Contains("postconditions", persistedWhilePaused, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("approved mutation complete", persistedWhilePaused, StringComparison.Ordinal);
             Assert.DoesNotContain("grant", persistedWhilePaused.ToLowerInvariant());
             Assert.DoesNotContain("token", persistedWhilePaused.ToLowerInvariant());
 
@@ -52,6 +60,8 @@ public sealed class BrowserHostRuntimeIntegrationTests
 
             Assert.Equal(AgentJobState.Completed, completed.State);
             Assert.Equal(1, site.MutationCount);
+            Assert.NotNull(completed.VerifiedStep);
+            Assert.Contains("typed browser postcondition", completed.VerifiedStep!.VerificationDetail ?? string.Empty, StringComparison.OrdinalIgnoreCase);
 
             await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 runtime.ApproveAndResumeAsync(paused.JobId, paused.Approval.ExactScope));
@@ -61,6 +71,113 @@ public sealed class BrowserHostRuntimeIntegrationTests
             var persistedAfterCompletion = await File.ReadAllTextAsync(Path.Combine(stateDirectory, "jobs.json"));
             Assert.DoesNotContain("grant", persistedAfterCompletion.ToLowerInvariant());
             Assert.DoesNotContain("token", persistedAfterCompletion.ToLowerInvariant());
+        }
+        finally
+        {
+            TryDeleteDirectory(stateDirectory);
+        }
+    }
+
+    [BrowserIntegrationFact]
+    public async Task NemotronPlanner_TypedPostconditions_SurviveDurableGoalAndRealChromiumVerification()
+    {
+        await using var site = await LocalBrowserTestSite.StartAsync();
+        var stateDirectory = Path.Combine(Path.GetTempPath(), "nvidea-browser-planner-it", Guid.NewGuid().ToString("N"));
+
+        try
+        {
+            await using var runtime = await BrowserHostRuntime.CreateAsync(
+                stateDirectory,
+                new BrowserHostOptions(
+                    site.StartUri,
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase) { site.StartUri.IdnHost },
+                    Headless: true));
+
+            var inference = new SequenceInferenceClient(
+                """
+                {
+                  "decision": "act",
+                  "reason": "Submit the controlled form and verify the resulting page state.",
+                  "action": {
+                    "kind": "click",
+                    "locator_kind": "role_and_name",
+                    "locator_value": "Submit demo mutation",
+                    "locator_name": "Submit demo mutation",
+                    "locator_role": "button",
+                    "value": null,
+                    "destination": null,
+                    "postconditions": [
+                      {
+                        "kind": "visible_text_contains",
+                        "expected": "approved mutation complete",
+                        "locator_kind": null,
+                        "locator_value": null,
+                        "locator_name": null,
+                        "locator_role": null,
+                        "expected_boolean": null
+                      }
+                    ],
+                    "rationale": "This is the requested controlled submission."
+                  }
+                }
+                """,
+                """
+                {
+                  "decision": "complete",
+                  "reason": "The controlled mutation is verified complete.",
+                  "action": null
+                }
+                """);
+
+            var planner = new NemotronBrowserPlanner(inference);
+            var sessionStorePath = Path.Combine(stateDirectory, "goal-sessions.json");
+            var sessionStore = new JsonBrowserGoalSessionStore(sessionStorePath);
+            var agent = new BrowserGoalAgent(runtime, planner, sessionStore);
+            var session = BrowserGoalSession.Create("Submit the controlled demo mutation", maxActions: 3);
+
+            var paused = await agent.RunUntilPauseAsync(session);
+
+            Assert.Equal(BrowserGoalStatus.WaitingForApproval, paused.Status);
+            Assert.Equal(0, site.MutationCount);
+            Assert.NotNull(paused.PendingJobId);
+            Assert.NotNull(paused.PendingAction);
+            Assert.Null(paused.PendingAction!.ExpectedState);
+            Assert.Single(paused.PendingAction.Postconditions!);
+            Assert.Equal(
+                BrowserPostconditionKind.VisibleTextContains,
+                paused.PendingAction.Postconditions![0].Kind);
+            Assert.False(string.IsNullOrWhiteSpace(paused.PendingExactScope));
+
+            var durableChildJson = await File.ReadAllTextAsync(Path.Combine(stateDirectory, "jobs.json"));
+            Assert.Contains("postconditions", durableChildJson, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("approved mutation complete", durableChildJson, StringComparison.Ordinal);
+            Assert.DoesNotContain("grant", durableChildJson.ToLowerInvariant());
+            Assert.DoesNotContain("bearer", durableChildJson.ToLowerInvariant());
+
+            var completed = await agent.ApproveAndContinueAsync(paused, paused.PendingExactScope!);
+
+            Assert.Equal(BrowserGoalStatus.Completed, completed.Status);
+            Assert.Equal(1, site.MutationCount);
+            Assert.Equal(2, completed.PlannerTurnCount);
+            Assert.Single(completed.VerifiedSteps!);
+            Assert.Contains(
+                "typed browser postcondition",
+                completed.VerifiedSteps![0].VerificationDetail ?? string.Empty,
+                StringComparison.OrdinalIgnoreCase);
+
+            var restored = await sessionStore.GetAsync(completed.SessionId);
+            Assert.NotNull(restored);
+            Assert.Equal(BrowserGoalStatus.Completed, restored!.Status);
+            Assert.Null(restored.PendingAction);
+            Assert.Single(restored.VerifiedSteps!);
+            Assert.Equal(completed.VerifiedSteps![0].JobId, restored.VerifiedSteps![0].JobId);
+
+            Assert.Equal(2, inference.RequestCount);
+            Assert.All(inference.ResponseSchemas, schema =>
+            {
+                Assert.Contains("postconditions", schema, StringComparison.Ordinal);
+                Assert.DoesNotContain("expected_state", schema, StringComparison.Ordinal);
+            });
         }
         finally
         {
@@ -78,6 +195,30 @@ public sealed class BrowserHostRuntimeIntegrationTests
         catch
         {
             // Test cleanup is best-effort and must not hide the security assertion result.
+        }
+    }
+
+    private sealed class SequenceInferenceClient(params string[] responses) : IAgentInferenceClient
+    {
+        private readonly Queue<string> _responses = new(responses);
+        private readonly List<string> _responseSchemas = new();
+
+        public int RequestCount { get; private set; }
+        public IReadOnlyList<string> ResponseSchemas => _responseSchemas;
+
+        public Task<AgentCompletion> CompleteAsync(AgentRequest request, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_responses.Count == 0)
+                throw new InvalidOperationException("The deterministic planner fixture has no response remaining.");
+
+            RequestCount++;
+            _responseSchemas.Add(request.ResponseJsonSchema ?? string.Empty);
+            return Task.FromResult(new AgentCompletion(
+                _responses.Dequeue(),
+                Array.Empty<ToolCall>(),
+                "nemotron-browser-integration-fixture",
+                "stop"));
         }
     }
 

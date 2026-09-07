@@ -47,8 +47,8 @@ The <=3 minute demo should prove invocation anywhere on Windows, context awarene
 - Opt-in localhost Chromium integration harness covers approval boundaries and deterministic Nemotron planner -> durable child -> Playwright -> typed verifier behavior.
 - Live Nebius strict-schema contract probe exists under `tools/Nvidea.NebiusContractProbe`.
 - Memory, durable jobs and browser-goal sessions use versioned protected local-state envelopes; on Windows the default protector is CurrentUser DPAPI.
-- Local capability audit records use per-event protection on Windows plus a versioned append-only hash chain.
-- **New:** the audit trail now also maintains an independently purpose-bound protected tail seal with a write-ahead pending state. Final-record truncation is detectable after the seal exists, while crashes before/after the append are deterministically recoverable.
+- Local capability audit records use per-event protection on Windows plus a versioned append-only hash chain and crash-safe protected tail seals.
+- **New:** production browser orchestration now uses `SegmentedAuditTrail`: active audit segments rotate after 1,000 events by default, immutable prior segments are pinned by protected cross-segment SHA-256 anchors, and rollover has a recoverable pending state rather than rewriting previous records.
 - Root README + MIT license.
 - No repository other than NVIDEA has been mutated.
 
@@ -96,37 +96,49 @@ The <=3 minute demo should prove invocation anywhere on Windows, context awarene
 - Tests cover protected round-trip, payload tampering, interior deletion, migration, malformed legacy input and duplicate IDs.
 
 ### 2026-09-07 — Protected crash-safe audit tail seal
-Completed:
 - Added an independent protected sidecar at `audit.jsonl.seal`, encoded through the existing versioned local-state envelope with dedicated purpose `audit-tail-seal-v1`.
-- The committed seal stores the exact audit sequence and tail SHA-256 chain hash. Once a seal exists, deleting the final record no longer leaves a valid-looking shortened chain: chain state must match the independently protected committed anchor.
-- Append now uses a write-ahead two-state protocol: first persist a protected `pending` seal containing both the previously committed tail and the exact next sequence/hash, then append the already-built audit line, then atomically replace the sidecar with a `committed` seal for the new tail.
-- Recovery is deterministic under the audit gate. If a pending seal exists and the file matches the pre-append tail, NVIDEA restores the old committed seal. If the file matches the exact post-append tail, NVIDEA finalizes that pending tail. Any other combination fails closed.
-- Seal writes use temporary files plus replacement and the seal schema validates version, non-negative sequence, SHA-256 hash shape, state, and the invariant that a pending append is exactly one sequence after the committed tail.
-- A missing seal is bootstrapped only after the existing audit file has already passed legacy/current-format parsing and hash-chain validation. This protects future truncation but cannot retroactively prove that an installation was not truncated before its first seal was created.
-- Added regression fixtures for final-record deletion detection, pending-after-append recovery, pending-before-append recovery, seal creation during plaintext migration, invalid-legacy non-sealing, and duplicate-event preservation of both audit and seal bytes.
+- The committed seal stores the exact audit sequence and tail SHA-256 chain hash. Once a seal exists, deleting the final record no longer leaves a valid-looking shortened chain.
+- Append uses a write-ahead two-state protocol: protected `pending` seal -> append exact audit line -> protected `committed` seal.
+- Recovery accepts only the exact pre-append or exact post-append chain state; anything else fails closed.
+- A missing seal is bootstrapped only after the existing audit file passes parsing/hash-chain validation.
+- Regression fixtures cover final-record deletion, pending-before/after-append recovery, legacy migration and duplicate preservation.
+
+### 2026-09-07 — Bounded crash-safe audit segmentation
+Completed:
+- Added `src/Nvidea.Core/Capabilities/SegmentedAuditTrail.cs` as an `IAuditTrail` wrapper around the existing protected/hash-chained/tail-sealed `JsonLinesAuditTrail` rather than replacing the tested per-segment security primitive.
+- The active segment is capped at 1,000 audit events by default. Segment 1 remains the existing `audit.jsonl`, preserving compatibility; later active segments use deterministic `audit.jsonl.segment-00000N.jsonl` names.
+- Added a versioned `audit.jsonl.segments` manifest. On Windows it is protected through the existing CurrentUser DPAPI envelope with a distinct `audit-segment-manifest-v1` purpose.
+- Every archived segment is pinned in that protected manifest by event count, SHA-256 of the exact segment bytes and SHA-256 of its protected tail-seal bytes. Missing/replaced/mutated archived data therefore fails closed before history is returned.
+- Rollover is write-ahead and crash-safe: first persist a protected `pending` manifest that freezes the old active segment and names exactly the next index, then append the triggering event to the new independently sealed segment, then commit the manifest. If the new segment never appeared, recovery restores the previous committed manifest; if a non-empty valid new segment exists, recovery finalizes it without replaying any capability action.
+- Global duplicate `AuditEvent.EventId` detection now spans archived plus active segments rather than resetting at a segment boundary.
+- Existing single-file installations migrate conservatively: the base audit file is fully validated through `JsonLinesAuditTrail` before the first segment manifest is created; there is no destructive rename/rewrite during adoption.
+- `BrowserHostRuntime` now constructs `SegmentedAuditTrail`, so both capability execution and resumable-job orchestration use segmented storage in the actual desktop/browser runtime.
+- Added `SegmentedAuditTrailTests` covering bounded rotation/history order, archived-segment mutation detection through the protected cross-segment anchor, pending-before-new-segment recovery, pending-after-new-segment finalization without replay, and duplicate IDs across segments.
 
 Validation / evidence:
-- Implementation commit: `cc0c729df1c3df6b2fdc0964d4460fb89111e9b5`.
-- Tail-seal regression-test commit: `babd1ad7d4fede118eff35ad04a3ed90f6e5f160`.
-- The execution container was probed for `dotnet`, `msbuild` and `csc`; none is available. Therefore **no compile, unit-test, WPF, Chromium or Windows-DPAPI execution success is claimed**.
-- Source review confirms the new tail seal is purpose-separated from protected audit-event payloads and does not persist approval grants, provider keys, browser credentials or raw user content outside the already-protected audit event.
-- No GitHub Actions workflow was created or rerun merely to manufacture a green signal.
+- Rotation implementation commit: `dd377dff6aa598503313e2286bab83ce4d1a8a80`.
+- Segmentation regression-test commit: `9c0a544b4b3580e617f0568410bfd2af6e55235e`.
+- Production BrowserHost integration commit: `979bf29fec8f7d90e5544db94221fdee145494a6`; its GitHub commit diff was re-read and confirms the host change is exactly `JsonLinesAuditTrail` -> `SegmentedAuditTrail` at the audit composition point.
+- The execution container was probed again for `dotnet`, `msbuild`, `csc` and `mcs`; none is available. Therefore **no compilation or test execution success is claimed**.
+- No workflow run exists for the integration commit, and no GitHub Actions workflow was created or rerun merely to manufacture a green signal.
 
 Security / privacy review:
-- The tail anchor materially improves accidental/tamper evidence for final-record truncation and replacement while preserving O(1) append behavior.
-- The write-ahead pending state avoids treating an expected crash window as corruption and does not authorize replay of any capability action; it only reconciles audit persistence state.
-- The seal still does **not** defend against an attacker already executing as the same Windows user with enough authority to invoke DPAPI and rewrite both the chain and seal coherently. This remains an explicitly bounded local-threat assumption.
-- Segment rotation/archival is not yet implemented, so audit growth is currently unbounded.
+- Segment archives retain the existing event encryption, intra-segment hash chain and protected tail seal; rotation adds an independently purpose-bound protected cross-segment manifest rather than weakening those controls.
+- The pending rollover state only reconciles storage. It never reconstructs approval grants, executes a browser action, or retries an interrupted capability operation.
+- Archive anchors hash exact data/seal bytes, so DPAPI nondeterminism cannot silently change an archived segment after it is frozen.
+- As with the prior DPAPI design, this does not defend against an attacker already executing as the same Windows user with enough authority to invoke DPAPI and coherently rewrite all protected state.
+- Segmentation bounds each active file by **event count**, not by byte size, and archived history is retained indefinitely. Total lifetime disk usage is therefore still unbounded until an explicit retention/compaction policy is designed; that limitation is intentional rather than silently deleting audit history.
+- On non-Windows runtimes without an injected protector, the segment manifest is plaintext and therefore does not provide the Windows tamper-resistance property. Production Windows composition gets the DPAPI protector by default.
 
 ## Current Unverified / Risks
 - **Highest risk remains compilation/runtime validation:** source review is not a substitute for `dotnet build`, `dotnet test`, a Windows WPF launch and a real Playwright Chromium launch.
 - The live strict-schema probe still has not been compiled or run against Token Factory here because .NET and a Nebius API key are unavailable.
-- DPAPI P/Invoke, protected stores, protected audit events and the new protected tail-seal path have not executed on a real Windows runner in this environment.
-- Audit segment rotation/archival semantics are not implemented; current growth is unbounded and segment-boundary integrity has not been designed yet.
+- DPAPI P/Invoke, protected stores, protected audit events/tail seals and protected segment manifests have not executed on a real Windows runner in this environment.
+- Segmentation bounds active files by event count, but total archive retention and byte-size quotas are not yet implemented; deleting old audit history automatically would require an explicit user-visible retention policy and compacted integrity anchor rather than silent pruning.
 - Browser-profile ownership/authenticated persistent sessions, popup/new-tab tracking and durable download lifecycle remain incomplete.
 - Local voice/transcription is absent.
 - Tavily Extract/richer source authority/freshness work and a verified production embedding adapter remain opportunities.
 - Cross-file browser parent/child state is still separate atomic files; reserved-child ordering remains the crash-safety mechanism.
 
 ## Single Best Next Task
-First obtain a real **.NET 8 build + unit-test + localhost Chromium integration + Windows DPAPI round-trip signal**, and run `tools/Nvidea.NebiusContractProbe` against a configured Nebius Token Factory key; fix compiler/runtime/schema incompatibilities immediately. If executable validation remains unavailable, implement **bounded audit segment rotation/archival with protected cross-segment anchors and crash-safe rollover**, so audit growth is controlled without losing tamper evidence at segment boundaries.
+First obtain a real **.NET 8 build + unit-test + localhost Chromium integration + Windows DPAPI round-trip signal**, and run `tools/Nvidea.NebiusContractProbe` against a configured Nebius Token Factory key; fix compiler/runtime/schema incompatibilities immediately. If executable validation remains unavailable, implement **explicit browser-profile ownership and authenticated-session lifecycle with popup/new-tab tracking**, keeping credentials/session state local and preserving the current approval and host-boundary guarantees.

@@ -17,6 +17,9 @@ public sealed class BrowserSafetyPolicy
 
     public BrowserActionDecision Evaluate(BrowserAction action, BrowserObservation observation)
     {
+        ArgumentNullException.ThrowIfNull(action);
+        ArgumentNullException.ThrowIfNull(observation);
+
         if (action.Kind == BrowserActionKind.Navigate && action.Destination is not null)
         {
             if (!IsSafeWebUri(action.Destination))
@@ -26,7 +29,7 @@ public sealed class BrowserSafetyPolicy
         if (action.Kind == BrowserActionKind.Upload)
             return High("Uploading local data crosses a trust boundary and always requires explicit approval.");
 
-        var target = BuildTargetText(action);
+        var target = BuildTargetText(action, observation);
         if (ContainsAny(target, SensitiveFieldTerms))
         {
             if (action.Kind == BrowserActionKind.Type)
@@ -68,16 +71,30 @@ public sealed class BrowserSafetyPolicy
     private static bool IsSafeWebUri(Uri uri) =>
         uri.IsAbsoluteUri && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp);
 
-    private static string BuildTargetText(BrowserAction action)
+    private static string BuildTargetText(BrowserAction action, BrowserObservation observation)
     {
-        return string.Join(' ', new[]
+        var parts = new List<string?>
         {
             action.Locator?.Value,
             action.Locator?.Name,
             action.Locator?.Role,
             action.ExpectedState,
             action.Rationale
-        }.Where(static value => !string.IsNullOrWhiteSpace(value)));
+        };
+
+        if (action.Locator?.Kind == BrowserLocatorKind.AccessibilityRef)
+        {
+            var observed = observation.Elements.FirstOrDefault(element =>
+                string.Equals(element.Reference, action.Locator.Value, StringComparison.Ordinal));
+            if (observed is not null)
+            {
+                parts.Add(observed.Name);
+                parts.Add(observed.Role);
+                parts.Add(observed.Value);
+            }
+        }
+
+        return string.Join(' ', parts.Where(static value => !string.IsNullOrWhiteSpace(value)));
     }
 
     private static bool ContainsAny(string haystack, IEnumerable<string> needles) =>

@@ -5,15 +5,12 @@ Build a competition-grade, open-source Personal AI operating layer for Windows f
 
 Target track: **Personal AI**. Secondary target: **Best Use of Tavily**. Overall ambition: top-three / Grand Prize quality as a complete product rather than a model wrapper.
 
-## HARD REPOSITORY BOUNDARY
+## Hard Repository Boundary
 - WRITE ONLY to `UnknownGod2011/NVIDEA`.
-- `UnknownGod2011/keyboard.wtf` is READ-ONLY reference material. Never mutate it in any way.
-- Never write to ANY other repository.
+- `UnknownGod2011/keyboard.wtf` is READ-ONLY reference material; never mutate it.
+- Never write to any other repository.
 - Before every GitHub mutation, verify the repository target is exactly `UnknownGod2011/NVIDEA`.
 - Do not remove working NVIDEA functionality merely to simplify implementation.
-
-## Required Work Loop
-Every run must read this file first, inspect current NVIDEA state, choose the highest-value unfinished engineering task, verify current platform/API assumptions where needed, implement real code/tests/docs only in NVIDEA, validate as far as tooling permits, review security/correctness, update this ledger, and continue while meaningful work remains.
 
 ## Target Architecture
 - **Desktop shell:** Windows global hotkeys, voice/text invocation, orb/status, active-app/selected-text/clipboard context, local speech where useful, permission UX and emergency stop.
@@ -38,14 +35,15 @@ The <=3 minute demo should prove invocation anywhere on Windows, context awarene
 - Durable resumable jobs, ephemeral approval handoff and Nebius Serverless REST contract under `Jobs`.
 - `BrowserHostRuntime` owns isolated local Playwright + safety + capability + audit + child-job orchestration and exposes only bounded observations/high-level outcomes.
 - `NemotronBrowserPlanner` turns a fresh untrusted observation into one validated step/complete/stop decision. Autonomous actions use bounded typed postconditions rather than free-text `expected_state`.
-- `BrowserGoalAgent` runs the bounded observe -> plan -> job -> verify loop and halts at approval boundaries.
+- `BrowserGoalAgent` runs the bounded observe -> plan -> job -> verify loop, halts at approval boundaries, and now independently rejects any autonomous action that reintroduces legacy `ExpectedState` or omits typed postconditions for write-like actions before a durable child is reserved.
 - Browser goal sessions persist separately from approval state, with privacy-minimized verified history, action/planner/context/wall-clock budgets, and no persisted raw typed browser values.
 - Parent/child browser orchestration persists a reserved child ID before child creation/execution and reconciles that exact durable child on restart instead of blindly re-planning or replaying it.
 - Durable `Running` child jobs are never automatically replayed. Evidence-only reconciliation may mark them complete only when deterministic fresh evidence proves the intended end state; otherwise they stop for human resolution.
 - Lost ephemeral approval after restart is restored only as a non-authorizing approval wait; explicit approval is required again.
 - WPF host has global `Ctrl+Shift+Space`, foreground app/window context, read-only UI Automation selected-text capture, opt-in clipboard disclosure, browser confirmation UX, live status, emergency stop and evidence-only interrupted-work recovery UX.
 - Typed browser postconditions support exact URL, title/text presence, element existence/value, checked state and enabled state. The same evaluator is used by normal post-action verification and ambiguous crash reconciliation.
-- Opt-in localhost Chromium integration harness now covers both the exact approval boundary and deterministic Nemotron-planner -> durable child -> Playwright -> typed-verifier path.
+- `BrowserLegacyActionMigration` conservatively upgrades only deterministic legacy cases: redundant `ExpectedState` is removed when typed postconditions already exist; legacy navigation can be converted to exact `UrlEquals(destination)`; arbitrary free-text click/type/select/etc. mutations are classified as requiring human review rather than guessed.
+- Opt-in localhost Chromium integration harness covers both the exact approval boundary and deterministic Nemotron-planner -> durable child -> Playwright -> typed-verifier path.
 - Root README + MIT license.
 - No repository other than NVIDEA has been mutated.
 
@@ -76,53 +74,49 @@ The <=3 minute demo should prove invocation anywhere on Windows, context awarene
 - Added deterministic no-model ambiguous-side-effect reconciliation using fresh browser evidence; uploads/downloads are never auto-reconciled from DOM evidence.
 - Added `BrowserAmbiguousRecoveryService`, audited completion of proven ambiguous jobs and Windows **Inspect evidence** UX with no retry/execute-anyway affordance.
 
-### 2026-09-07 — Typed browser verification
-- Added `BrowserPostconditionKind`, `BrowserPostcondition` and `BrowserPostconditionEvaluator`.
-- Added exact URL, title/text, element existence/value, checked-state and enabled-state predicates, capped at 8 per action.
+### 2026-09-07 — Typed browser verification and Nemotron migration
+- Added `BrowserPostconditionKind`, `BrowserPostcondition` and `BrowserPostconditionEvaluator` for exact URL, title/text, element existence/value, checked-state and enabled-state predicates, capped at 8 per action.
 - `ConservativeBrowserVerifier` and `BrowserAmbiguousStateReconciler` share the same typed evaluator and require all predicates to succeed.
 - Upload/download actions remain excluded from automatic crash reconciliation even when DOM predicates appear successful.
-- Kept legacy `ExpectedState` only for backwards compatibility with already-durable jobs.
-
-### 2026-09-07 — Nemotron planner migrated to typed postconditions
-- Replaced autonomous planner `expected_state` schema with bounded `postconditions[]` covering exact URL, title/visible text, element existence/value, checked state and enabled state.
-- Added local postcondition shape validation independent of model/schema compliance.
-- Write/navigation/back/refresh planner actions fail closed unless at least one typed postcondition is supplied.
-- CSS/test-id verification selectors are rejected because the sanitized observation/evaluator cannot prove them deterministically.
-- Accessibility-ref postconditions must reference an element present in the fresh pre-action observation; future-state assertions must use semantic role/name, label or text locators.
-- `url_equals` rejects non-HTTP(S) values; boolean predicates require `expected_boolean`; irrelevant fields are rejected rather than ignored.
-- Planner-created `BrowserAction.ExpectedState` is always null; typed `Postconditions` are the autonomous path.
+- Replaced autonomous planner `expected_state` schema with bounded `postconditions[]`; planner-created `BrowserAction.ExpectedState` is always null.
+- Added local postcondition shape validation independent of model/schema compliance; malformed URL/boolean/locator assertions fail closed.
 - Added contract tests for valid typed mapping and malformed/unsafe planner outputs.
 
 ### 2026-09-07 — Real Chromium typed planner contract harness
+- Migrated the real-Chromium approval integration action from legacy `ExpectedState` to typed verification.
+- Added deterministic inference fixture through the production `NemotronBrowserPlanner` and `BrowserGoalAgent`.
+- Harness proves planner schema -> typed action -> durable parent/child linkage -> approval pause -> Playwright form submission -> fresh observation -> typed verifier -> verified-history persistence -> planner completion.
+- Durable `jobs.json` is checked for typed postconditions and absence of grant/bearer material while approval is pending.
+- Planner fixture records response schemas and asserts `postconditions` is present while autonomous `expected_state` is absent.
+
+### 2026-09-07 — Legacy browser verification retirement guard
 Completed:
-- Re-verified every GitHub mutation target as exactly `UnknownGod2011/NVIDEA`; no other repository was written.
-- Migrated the existing real-Chromium approval integration action away from legacy `ExpectedState` to a typed `VisibleTextContains("approved mutation complete")` postcondition.
-- Strengthened the direct runtime integration assertions so the durable child must contain typed postconditions and the completed verified step must report typed verification evidence.
-- Added a second opt-in real-Chromium integration path using a deterministic `IAgentInferenceClient` fixture through the production `NemotronBrowserPlanner` and `BrowserGoalAgent`.
-- The new harness proves planner schema -> typed action -> durable parent/child linkage -> approval pause -> real Playwright form submission -> fresh observation -> typed verifier -> verified-history persistence -> planner completion.
-- The deterministic inference fixture records every response schema and asserts each contains `postconditions` and excludes autonomous `expected_state`.
-- Durable `jobs.json` is checked for the typed postcondition and absence of grant/bearer material while approval is pending.
-- Durable browser-goal state is reloaded after completion to prove verified-step history survives serialization while `PendingAction` remains non-persistent/private by design.
-- Updated `docs/browser-integration-harness.md` with both integration contracts, execution instructions and failure interpretation.
+- Added `BrowserLegacyActionMigration` as a conservative compatibility boundary for already-existing `BrowserAction.ExpectedState` records.
+- If typed postconditions already exist, migration removes only the redundant free-text field.
+- Legacy `Navigate` can be upgraded without guessing by replacing free text with exact `UrlEquals(Destination)` when the destination is absolute HTTP(S).
+- Legacy write-like actions whose success condition exists only as arbitrary free text are not auto-converted and return `RequiresHumanReview`; no replay or guessed verification is authorized.
+- Added `EnsureAutonomousActionUsesTypedVerification`: autonomous write/navigation/back/refresh actions require at least one typed postcondition, and any non-empty `ExpectedState` is rejected even if typed predicates are also present.
+- Wired that guard into `BrowserGoalAgent` immediately after the Nemotron decision and before child-ID reservation, durable child creation, approval, or execution. Invalid contracts stop the goal with a descriptive reason and execute nothing.
+- Added `BrowserLegacyActionMigrationTests` covering exact-navigation migration, unsafe mutation quarantine, removal of redundant legacy free text, rejection of legacy autonomous contracts, rejection of unverifiable writes, and allowance of read-only actions.
 
 Validation / evidence:
-- Source-level review completed against `NemotronBrowserPlanner`, `BrowserGoalAgent`, `BrowserHostRuntime`, `JsonBrowserGoalSessionStore`, typed postcondition evaluator and existing Playwright harness.
-- Environment probe again found no usable `dotnet`, `msbuild` or `csc`; therefore **no compile/test/Chromium success is claimed in this run**.
+- Reviewed the resulting `BrowserGoalAgent` commit diff and confirmed the behavioral change is confined to the new pre-execution autonomous verification guard; no execution/approval path was broadened.
+- Re-probed the execution environment: `dotnet`, `msbuild`, and `csc` are still unavailable, so **no compile/test/Chromium success is claimed**.
 - No GitHub Actions workflow was created or rerun merely to manufacture a green signal.
 
 Security / privacy review:
-- Consequential mutation is still proven to remain at zero before exact approval in the localhost harness.
-- Planner fixture has no execution authority; all action execution still flows through hard safety, capability policy, exact approval, audit and single-use grant handling.
-- Typed postconditions are declarative evidence only and grant no capability.
-- Authorization material is not serialized into durable child or goal state.
-- No CAPTCHA/login/site/OS safeguard bypass or credential handling was introduced.
+- Migration never treats legacy free text as authority and never calls a model to reinterpret it.
+- Only destination-derived exact URL verification is auto-generated, because it is independently present in the trusted persisted action structure.
+- Ambiguous legacy mutations require human review rather than silent conversion or replay.
+- The autonomous guard executes before durable child reservation, so a malformed Nemotron verification contract cannot create an executable job or approval prompt.
+- No credentials, approval grants, bearer tokens, page bodies, CAPTCHA/login bypasses, or new cloud disclosures were introduced.
 
 ## Current Unverified / Risks
 - **Highest risk remains compilation/runtime validation:** source review is not a substitute for `dotnet build`, `dotnet test` and a real Playwright Chromium launch.
 - Matching Playwright Chromium binaries have not been installed/launched in this execution environment.
 - WPF has not been compiled/launched on Windows here.
 - The strict planner postcondition schema still needs a live Nebius Token Factory / Nemotron exercise; OpenAI-compatible backends can differ in supported strict-schema subsets.
-- Existing persisted jobs with legacy `ExpectedState` still use the old permissive compatibility branch; this should be retired after a persistence migration window.
+- The new migration helper is not yet a durable `jobs.json` rewrite/versioning pass. Direct non-goal legacy jobs can still reach the compatibility branch in `BrowserActionJobHandler`; autonomous Nemotron goal execution is now protected independently.
 - The recovery card currently discovers sessions already marked failed/ambiguous. A process that dies while the parent still says `Running` may require goal resume to classify the child first.
 - `JsonAgentJobStore` and `JsonBrowserGoalSessionStore` are individually atomic files, not a cross-file transaction; the reserved-child-ID protocol remains the safety mechanism across that boundary.
 - Goal-session JSON, child jobs, audit JSONL and memory JSON are not encrypted at rest yet.
@@ -131,4 +125,4 @@ Security / privacy review:
 - Tavily Extract/richer source authority/freshness work and a verified production embedding adapter remain opportunities.
 
 ## Single Best Next Task
-First obtain a real **.NET 8 build + unit-test + localhost Chromium integration signal** if a capable runtime becomes available and fix all compile/runtime defects immediately. If it remains unavailable, implement a durable legacy-browser-job migration/retirement path so already-persisted `ExpectedState` records are explicitly versioned and converted where safely possible, while new autonomous jobs can fail closed if legacy free-text verification unexpectedly reappears. In parallel, add a provider-contract test fixture for the exact Nebius strict JSON-schema shape so live Token Factory verification can be performed with a single credentialed command when a key is available.
+First obtain a real **.NET 8 build + unit-test + localhost Chromium integration signal** if a capable runtime becomes available and fix all compile/runtime defects immediately. If compilation remains unavailable, implement the durable legacy checkpoint versioning/rewrite pass over `jobs.json`: explicitly mark verification-contract version, safely rewrite deterministic legacy navigation/redundant typed cases, quarantine ambiguous legacy mutations without executing them, and make `BrowserActionJobHandler` reject unversioned legacy writes after migration. Then add a one-command live Nebius strict-schema contract probe for Token Factory.

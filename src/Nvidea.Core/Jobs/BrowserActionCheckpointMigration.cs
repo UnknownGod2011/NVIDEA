@@ -1,12 +1,9 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Nvidea.Core.Browser;
 
 namespace Nvidea.Core.Jobs;
-
-public sealed record BrowserActionCheckpointEnvelope(
-    int VerificationContractVersion,
-    BrowserAction Action);
 
 public sealed record BrowserActionCheckpointMigrationReport(
     int Examined,
@@ -18,6 +15,8 @@ public sealed record BrowserActionCheckpointMigrationReport(
 /// Versioned serializer for durable browser-action checkpoints. Version 2 is the first
 /// contract that requires typed postconditions for state-changing autonomous actions and
 /// forbids free-text ExpectedState from being treated as executable verification.
+/// The version marker is added to the existing top-level BrowserAction JSON shape so older
+/// read-only recovery/UX readers can still deserialize the descriptive action safely.
 /// </summary>
 public static class BrowserActionCheckpointCodec
 {
@@ -32,9 +31,11 @@ public static class BrowserActionCheckpointCodec
     {
         ArgumentNullException.ThrowIfNull(action);
         ValidateCurrent(action);
-        return JsonSerializer.Serialize(
-            new BrowserActionCheckpointEnvelope(CurrentVerificationContractVersion, action),
-            JsonOptions);
+
+        var node = JsonSerializer.SerializeToNode(action, JsonOptions) as JsonObject
+            ?? throw new InvalidOperationException("Browser action did not serialize to an object.");
+        node["verificationContractVersion"] = CurrentVerificationContractVersion;
+        return node.ToJsonString(JsonOptions);
     }
 
     public static BrowserAction DeserializeCurrent(string? payload)
@@ -42,25 +43,32 @@ public static class BrowserActionCheckpointCodec
         if (string.IsNullOrWhiteSpace(payload))
             throw new InvalidOperationException("Browser action job requires a persisted action checkpoint payload.");
 
-        BrowserActionCheckpointEnvelope envelope;
         try
         {
-            envelope = JsonSerializer.Deserialize<BrowserActionCheckpointEnvelope>(payload, JsonOptions)
-                ?? throw new InvalidOperationException("Browser action checkpoint envelope was empty after deserialization.");
+            using var document = JsonDocument.Parse(payload);
+            if (document.RootElement.ValueKind != JsonValueKind.Object
+                || !document.RootElement.TryGetProperty("verificationContractVersion", out var version)
+                || !version.TryGetInt32(out var parsed))
+            {
+                throw new InvalidOperationException(
+                    "Browser action checkpoint is unversioned. Run durable browser checkpoint migration before resuming it.");
+            }
+
+            if (parsed != CurrentVerificationContractVersion)
+            {
+                throw new InvalidOperationException(
+                    $"Browser action checkpoint verification contract v{parsed} is not executable. Run durable browser checkpoint migration before resuming it.");
+            }
+
+            var action = JsonSerializer.Deserialize<BrowserAction>(payload, JsonOptions)
+                ?? throw new InvalidOperationException("Browser action checkpoint was empty after deserialization.");
+            ValidateCurrent(action);
+            return action;
         }
         catch (JsonException ex)
         {
-            throw new InvalidOperationException("Browser action checkpoint payload is invalid or unversioned.", ex);
+            throw new InvalidOperationException("Browser action checkpoint payload is invalid.", ex);
         }
-
-        if (envelope.VerificationContractVersion != CurrentVerificationContractVersion)
-        {
-            throw new InvalidOperationException(
-                $"Browser action checkpoint verification contract v{envelope.VerificationContractVersion} is not executable. Run durable browser checkpoint migration before resuming it.");
-        }
-
-        ValidateCurrent(envelope.Action);
-        return envelope.Action;
     }
 
     public static bool IsCurrent(string? payload)
@@ -176,13 +184,11 @@ public sealed class BrowserActionCheckpointMigrationService
             try
             {
                 var payload = BrowserActionCheckpointCodec.SerializeCurrent(result.Action);
+                var now = DateTimeOffset.UtcNow;
                 var rewritten = job with
                 {
-                    Checkpoint = new AgentJobCheckpoint(
-                        BrowserActionJobHandler.CheckpointStep,
-                        payload,
-                        DateTimeOffset.UtcNow),
-                    UpdatedAt = DateTimeOffset.UtcNow
+                    Checkpoint = new AgentJobCheckpoint(BrowserActionJobHandler.CheckpointStep, payload, now),
+                    UpdatedAt = now
                 };
                 await _store.SaveAsync(rewritten, cancellationToken).ConfigureAwait(false);
                 migrated++;

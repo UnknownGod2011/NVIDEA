@@ -41,6 +41,7 @@ The <=3 minute demo should prove invocation anywhere on Windows, context awarene
 - Memory, durable jobs and browser-goal sessions use versioned protected local-state envelopes; on Windows the default protector is CurrentUser DPAPI.
 - Local capability audit uses protected per-event payloads, append-only hash chaining, crash-safe protected tail seals, segmented rotation and protected cross-segment manifests.
 - Production browser orchestration uses `SegmentedAuditTrail`.
+- Production browser runtime now uses an NVIDEA-owned persistent Chromium profile and session-aware popup/new-tab tracking.
 - Root README + MIT license.
 - No repository other than NVIDEA has been mutated.
 
@@ -81,9 +82,8 @@ Validation / evidence:
 - Popup classification timing hardening commit: `0995c08844300d9451b7ae55653a265f116c87ad`.
 - Persistence-boundary clarification commit: `d42f2c7e2c5a0c2973f91b71d2b7271611295e36`.
 - Integration-harness docs commit: `de674ceb9dfaad9691e08f9c7e7817d2b1c3f1dd`.
-- Current official Playwright .NET docs were checked during this run. They confirm that `LaunchPersistentContextAsync` stores browser session data such as cookies/local storage in the supplied user-data directory, that closing the persistent context closes its browser, that a separate automation profile should be used instead of the user's default Chrome profile, and that `BrowserContext.Page` is the supported new-page event.
-- The execution environment was checked again for `dotnet`, `msbuild` and `csc`; none is available. Therefore **no compilation, unit-test or Chromium-execution success is claimed**.
-- No GitHub Actions workflow was created or rerun merely to manufacture a green result.
+- Current official Playwright .NET docs were checked during this work. They confirm that `LaunchPersistentContextAsync` stores browser session data such as cookies/local storage in the supplied user-data directory, that closing the persistent context closes its browser, that a separate automation profile should be used instead of the user's default Chrome profile, and that `BrowserContext.Page` is the supported new-page event.
+- No compilation, unit-test or Chromium-execution success was claimed because the available execution environment lacked a .NET toolchain.
 
 Security / privacy review:
 - The desktop runtime no longer needs or accepts the user's normal Chrome/Edge profile. Authentication state is scoped to the NVIDEA-owned profile directory.
@@ -91,14 +91,31 @@ Security / privacy review:
 - Popup adoption remains host-boundary constrained; a disallowed HTTP(S) page is closed rather than becoming active agent context.
 - Session diagnostics expose URLs/boundary status only and do not enumerate cookie values or local storage.
 - Persistent Chromium profile data is local browser-managed data, **not** DPAPI-wrapped application state. Do not claim that browser cookies/profile files receive the same application-level encryption as NVIDEA memory/jobs/audit files.
-- The new persistent profile materially increases the value of the local browser-profile directory, so threat-model/onboarding language must make its local credential scope explicit.
+
+### 2026-09-08 — DPAPI-safe real-browser integration assertions
+Completed:
+- Re-read `BrowserHostRuntimeIntegrationTests` and confirmed two integration scenarios still inspected raw `jobs.json` text even though the production job store is DPAPI-protected by default on Windows.
+- Replaced those raw filesystem assertions with logical `JsonAgentJobStore.GetAsync(...)` assertions. This means Windows integration tests now validate the decrypted durable record through the same storage abstraction the application uses rather than making assumptions about ciphertext representation.
+- The consequential-click test now verifies the durable child is actually `WaitingForApproval`, carries the exact approval scope, retains typed postconditions in its checkpoint, contains no grant/token material in the checkpoint, becomes `Completed`, and clears its persisted approval scope after the single approved execution.
+- The Nemotron planner integration test now verifies the actual durable child record preserves typed postconditions, omits grant/bearer material, and clears approval state after verified completion.
+- No production security boundary was weakened; the tests continue to verify that approval capabilities remain ephemeral while becoming compatible with protected-at-rest state.
+
+Validation / evidence:
+- Test-hardening commit: `245e281ca329fe7b07d73526ea9234c3270df8a3`.
+- Source-level review confirms `JsonAgentJobStore` decrypts DPAPI-protected state on Windows before returning logical `AgentJobRecord` values and applies browser-checkpoint migration under its storage lock.
+- The execution environment was checked again for `dotnet`, `msbuild`, and `csc`; none is available, so **no compile/test success is claimed**.
+- No GitHub Actions workflow was created or rerun merely to manufacture a green result.
+
+Security / privacy review:
+- Tests no longer encourage treating encrypted durable files as inspectable plaintext.
+- Assertions target only the durable record fields/checkpoint that are intentionally persisted; ephemeral approval grants remain outside `AgentJobRecord`.
+- Clearing `ApprovalScope` after completion is now explicitly covered at the integration level, strengthening replay-resistance evidence.
 
 ## Current Unverified / Risks
 - **Highest risk remains executable validation:** source review is not a substitute for `dotnet build`, `dotnet test`, a Windows WPF launch and a real Playwright Chromium launch.
-- The new production persistent-context path and new integration tests have not compiled or executed here.
+- The production persistent-context path and browser integration tests have not compiled or executed in this environment.
 - The live Token Factory strict-schema probe remains unexecuted because .NET and a Nebius API key are unavailable here.
 - DPAPI P/Invoke, protected stores, audit payloads/tail seals/segment manifests remain unexecuted on a real Windows runner in this environment.
-- Existing `BrowserHostRuntimeIntegrationTests` still contain some raw `jobs.json` content assertions that predate Windows DPAPI protection; on Windows those assertions should be migrated to inspect the logical store/record rather than ciphertext text before treating the full integration suite as authoritative.
 - Persistent Chromium profile contents are local but not application-encrypted by NVIDEA. OS/user-profile protections remain the boundary for Chromium-managed cookies and storage.
 - Segmentation bounds active audit files by event count, but lifetime archive retention and byte-size quotas remain absent.
 - Durable download lifecycle remains incomplete.
@@ -107,4 +124,4 @@ Security / privacy review:
 - Cross-file browser parent/child state is still separate atomic files; reserved-child ordering remains the crash-safety mechanism.
 
 ## Single Best Next Task
-Obtain the first real .NET 8 build/test/Chromium/Windows signal and immediately fix compile/runtime issues in the new persistent-context path. Before relying on the Windows browser integration suite, migrate the old raw `jobs.json` assertions to logical `JsonAgentJobStore`/checkpoint assertions so DPAPI-protected state is tested correctly. Then run the persistent restart + allowed/disallowed popup integration tests and the live Nebius strict-schema probe. If executable validation remains unavailable, the next implementation fallback is durable, permissioned download lifecycle management with quarantine/verification and explicit user handoff.
+Obtain the first real .NET 8 build/test/Chromium/Windows signal and immediately fix compile/runtime issues in the persistent-context and protected-store paths. Run the persistent restart + allowed/disallowed popup integration tests and the live Nebius strict-schema probe. If executable validation remains unavailable, implement the durable, permissioned download lifecycle next: quarantine browser downloads inside NVIDEA-owned state, verify completion/metadata before exposure, require an explicit user handoff for moving files outside quarantine, and ensure cancellation/restart cannot silently publish partial or unverified files.

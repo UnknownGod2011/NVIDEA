@@ -44,7 +44,10 @@ public sealed class BrowserActionJobHandler : IAgentJobHandler
         if (!string.Equals(job.Definition.JobType, Type, StringComparison.Ordinal))
             throw new InvalidOperationException($"BrowserActionJobHandler cannot execute job type '{job.Definition.JobType}'.");
 
-        var action = DeserializeAction(job.Checkpoint?.Payload);
+        // Execution accepts only the explicitly versioned typed-verification contract.
+        // Unversioned legacy checkpoints must pass through BrowserActionCheckpointMigrationService
+        // before they can reach an execution boundary.
+        var action = BrowserActionCheckpointCodec.DeserializeCurrent(job.Checkpoint?.Payload);
 
         // Use the job id as the stable capability action id. It is descriptive audit
         // scope only, not authorization, and stays constant across approval resume.
@@ -100,23 +103,7 @@ public sealed class BrowserActionJobHandler : IAgentJobHandler
     public static string SerializeAction(BrowserAction action)
     {
         ArgumentNullException.ThrowIfNull(action);
-        return JsonSerializer.Serialize(action, JsonOptions);
-    }
-
-    private static BrowserAction DeserializeAction(string? payload)
-    {
-        if (string.IsNullOrWhiteSpace(payload))
-            throw new InvalidOperationException("Browser action job requires a persisted action checkpoint payload.");
-
-        try
-        {
-            return JsonSerializer.Deserialize<BrowserAction>(payload, JsonOptions)
-                ?? throw new InvalidOperationException("Browser action checkpoint was empty after deserialization.");
-        }
-        catch (JsonException ex)
-        {
-            throw new InvalidOperationException("Browser action checkpoint payload is invalid.", ex);
-        }
+        return BrowserActionCheckpointCodec.SerializeCurrent(action);
     }
 
     private static JobStepResult ToStepResult(

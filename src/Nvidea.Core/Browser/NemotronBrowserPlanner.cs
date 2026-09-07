@@ -248,11 +248,11 @@ public sealed class NemotronBrowserPlanner
         if (!needsLocator && action.Locator is not null)
             throw new InvalidDataException($"{action.Kind} actions must not contain a locator.");
 
-        if (action.Kind is BrowserActionKind.Type or BrowserActionKind.Select or BrowserActionKind.Upload
-            && string.IsNullOrWhiteSpace(action.Value))
-        {
+        var needsValue = action.Kind is BrowserActionKind.Type or BrowserActionKind.Select or BrowserActionKind.Upload;
+        if (needsValue && string.IsNullOrWhiteSpace(action.Value))
             throw new InvalidDataException($"{action.Kind} actions require a value.");
-        }
+        if (!needsValue && action.Value is not null)
+            throw new InvalidDataException($"{action.Kind} actions must not contain an input value.");
 
         if (action.Locator?.Kind == BrowserLocatorKind.AccessibilityRef)
         {

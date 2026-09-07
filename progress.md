@@ -21,7 +21,7 @@ Target: **Personal AI**. Secondary target: **Best Use of Tavily**. Ambition: top
 - **Skills / permissions:** capability registry, least privilege, monotonic risk, single-use approvals and append-only audit.
 - **Jobs:** durable checkpoints, retries, cancellation, approval-paused states, ephemeral grants and local-vs-Nebius execution policy.
 - **Cloud:** Nebius Serverless only for suitable long-running/background workloads; private OS actions stay local.
-- **Local security:** high-sensitivity durable Windows state protected with a CurrentUser DPAPI boundary, versioned formats, purpose binding, conservative migration and fail-closed reads.
+- **Local security:** high-sensitivity durable Windows state protected with CurrentUser DPAPI, purpose binding, conservative migration and fail-closed reads.
 
 ## Hackathon Demo Bar
 The <=3 minute demo should prove invocation anywhere on Windows, context awareness, durable memory changing later behavior, Tavily research with sources, complex browser work with visible verification, approval before consequential actions, meaningful Nebius background work, and an architecture view proving Nemotron/Nebius/Tavily are core.
@@ -31,78 +31,80 @@ The <=3 minute demo should prove invocation anywhere on Windows, context awarene
 - Nebius Token Factory inference client with Nemotron default, structured output/tools, conservative routing, retries, timeout/cancellation and endpoint validation.
 - Layered privacy-aware personal memory under `Memory`.
 - Tavily provider + Nemotron research engine under `Research`.
-- Concrete Playwright .NET browser driver, hard safety policy, capability execution boundary and deterministic verifier under `Browser`.
+- Concrete Playwright browser driver, hard safety policy, capability execution boundary and deterministic verifier under `Browser`.
 - Capability registry, least-privilege permission policy, exact single-use approval authorizer and privacy-minimized audit under `Capabilities`.
 - Durable resumable jobs, ephemeral approval handoff and Nebius Serverless REST contract under `Jobs`.
 - `BrowserHostRuntime` owns local Playwright + safety + capability + audit + child-job orchestration and exposes only bounded observations/high-level outcomes.
 - `NemotronBrowserPlanner` turns fresh untrusted observations into validated one-step decisions using typed postconditions.
 - `BrowserGoalAgent` runs a bounded observe -> plan -> durable child -> verify loop, halts at approval boundaries, and independently rejects legacy/unverifiable autonomous action contracts before child reservation.
-- Browser goal sessions persist separately from approval state with privacy-minimized verified history and action/planner/context/wall-clock budgets.
-- Parent/child browser orchestration persists a reserved child ID before creation/execution and reconciles that exact child after restart.
-- Durable `Running` child jobs are never blindly replayed. Fresh deterministic evidence may reconcile them; otherwise human resolution is required.
-- WPF host has global `Ctrl+Shift+Space`, foreground app/window context, read-only selected-text capture, opt-in clipboard disclosure, confirmation UX, live status, emergency stop and interrupted-work evidence inspection.
-- Typed browser postconditions support exact URL, title/text presence, element existence/value, checked state and enabled state; normal execution and crash reconciliation share the evaluator.
-- Durable browser-action checkpoints carry verification contract v2. Safe legacy records are migrated; ambiguous legacy mutations are quarantined without execution.
-- `BrowserActionJobHandler` accepts only current typed-verification checkpoints.
-- Opt-in localhost Chromium integration harness covers approval boundaries and deterministic Nemotron planner -> durable child -> Playwright -> typed verifier behavior.
-- Live Nebius strict-schema contract probe exists under `tools/Nvidea.NebiusContractProbe`.
+- Typed browser postconditions and verification-contract v2 are enforced for durable browser actions; safe legacy records migrate and ambiguous legacy mutations quarantine without execution.
 - Memory, durable jobs and browser-goal sessions use versioned protected local-state envelopes; on Windows the default protector is CurrentUser DPAPI.
-- Local capability audit records use per-event protection on Windows plus a versioned append-only hash chain, crash-safe protected tail seals, and segmented cross-segment anchors.
-- Production browser orchestration uses `SegmentedAuditTrail`; active audit segments rotate after 1,000 events by default.
+- Local capability audit uses protected per-event payloads, append-only hash chaining, crash-safe protected tail seals, segmented rotation and protected cross-segment manifests.
+- Production browser orchestration uses `SegmentedAuditTrail`.
 - Root README + MIT license.
 - No repository other than NVIDEA has been mutated.
 
 ## Persistent Progress History
 
 ### 2026-09-06 to 2026-09-07 — Core platform milestones
-- Added Nebius/Nemotron inference abstraction, layered memory, Tavily research, provider-neutral browser contracts, capability registry, approval boundary, durable jobs and Nebius Serverless contracts.
-- Added Playwright browser execution, Windows desktop shell, durable parent/child browser orchestration, deterministic crash reconciliation, typed postconditions, verification-contract v2 migration, and an end-to-end Chromium contract harness.
+- Added Nebius/Nemotron inference abstraction, layered memory, Tavily research, browser contracts, capability registry, approval boundary, durable jobs and Nebius Serverless contracts.
+- Added Playwright execution, Windows shell, durable parent/child browser orchestration, deterministic crash reconciliation, typed postconditions, verification-contract v2 migration and end-to-end Chromium contract harnesses.
 - Added live Nebius strict-schema probe using the production `NebiusTokenFactoryClient` and `NemotronBrowserPlanner`.
 - Added CurrentUser DPAPI-backed local-state protection for memory/jobs/browser-goal sessions.
-- Reworked local audit storage into encrypted per-event hash chains with crash-safe protected tail seals, then added bounded segmented rotation with protected cross-segment manifests and deterministic recovery.
+- Reworked audit persistence into protected hash-chained records, tail seals and bounded segmented rotation.
 
-### 2026-09-07 — Explicit browser-profile ownership + safe popup/new-tab tracking
+### 2026-09-07 — Browser profile ownership + popup/new-tab tracking
+- Added `BrowserProfileOwnership` with a dedicated `browser-profile` directory beneath NVIDEA state and an atomic `.nvidea-profile.json` ownership marker.
+- Existing unmarked/corrupt profile directories fail closed instead of being adopted.
+- Added `PlaywrightBrowserSessionDriver`, which uses `BrowserContext.Page` events to track new pages and closes cross-boundary HTTP(S) popups rather than exposing them to the agent.
+- Added privacy-minimized session snapshots containing page URL/boundary status only, with no cookie/local-storage/auth-header disclosure.
+- Added profile-boundary tests.
+- Commits: `f3335f59111de2928cc6e6c186370e25d8b29241`, `43cfb4ffb19d5c9a07d72887fa429353bbe656cf`, `384d136338f26eb9d17f61d4eb4f81c7c9a092a5`, `970b40bce228adfe97cfeacf34422b01e7887de8`.
+
+### 2026-09-08 — Persistent Chromium session active in production runtime
 Completed:
-- Added `src/Nvidea.Core/Browser/BrowserProfileOwnership.cs`.
-- The profile boundary reserves a dedicated `browser-profile` directory beneath the NVIDEA state directory; arbitrary external Chrome/Edge user-data paths are never accepted by this component.
-- A versioned `.nvidea-profile.json` ownership marker is written atomically on first creation. Existing unmarked directories fail closed instead of being silently adopted.
-- Corrupt/unsupported ownership markers fail closed and existing browser data is never deleted during validation.
-- Added `src/Nvidea.Core/Browser/PlaywrightBrowserSessionDriver.cs`, which composes the existing per-page `PlaywrightBrowserDriver` rather than duplicating action logic.
-- The session-aware driver listens to Playwright `BrowserContext.Page` events and tracks newly-created tabs/popups without assuming an undocumented ordering for `BrowserContext.Pages`.
-- Newly-created pages become active only after their URL is absolute HTTP(S) and satisfies the configured allowed-host boundary.
-- Cross-boundary HTTP(S) popups are closed without being observed or acted upon by the agent. `about:blank`/not-yet-navigated pages remain pending until a later browser boundary call can classify their destination.
-- After click actions, the driver resolves pending pages before returning so the next verifier observation can attach to the permitted popup/new tab when that is the action result.
-- Added a read-only session snapshot model for diagnostics without exposing cookies, local storage, authorization headers or other browser credentials.
-- Added `tests/Nvidea.Core.Tests/BrowserProfileOwnershipTests.cs` covering dedicated-profile creation/reuse, refusal to adopt unmarked directories, corrupt-marker fail-closed behavior while preserving state, and rejection of profile paths outside the NVIDEA state root.
+- Added `src/Nvidea.Core/Browser/PersistentBrowserContextFactory.cs`.
+- The factory validates/creates the dedicated NVIDEA-owned profile and launches Chromium with Playwright `LaunchPersistentContextAsync`.
+- On every startup, any restored tabs are closed before agent use. Browser-managed authenticated/profile state such as cookies/local storage may persist, but stale prior pages are never implicitly trusted as current agent context.
+- The runtime creates a fresh explicitly permitted `StartUri` page after persistent-context launch.
+- `BrowserHostRuntime` now uses the persistent-context factory and `PlaywrightBrowserSessionDriver` at the real production composition point. The former ephemeral `IBrowser -> NewContextAsync -> single PlaywrightBrowserDriver` path is removed.
+- Persistent-context shutdown now closes the context as the browser-process ownership boundary; the obsolete separate `IBrowser` close path is removed.
+- `BrowserHostRuntime.GetSessionSnapshotAsync` exposes the existing privacy-minimized session diagnostic.
+- Hardened click/popup timing: already-created `about:blank` candidate pages receive a short bounded classification window so an allowed popup can finish navigation before the next typed verifier observation. This does not discover arbitrary future pages or interact with the popup before classification.
+- Added `tests/Nvidea.Core.Tests/PersistentBrowserSessionIntegrationTests.cs` with opt-in real-Chromium coverage for harmless cookie persistence across a runtime restart, stale-tab non-adoption, same-host popup adoption and cross-host popup rejection.
+- Updated `docs/browser-integration-harness.md` with the persistent-session and popup-boundary scenarios.
 
 Validation / evidence:
-- Profile ownership commit: `f3335f59111de2928cc6e6c186370e25d8b29241`.
-- Initial session driver commit: `43cfb4ffb19d5c9a07d72887fa429353bbe656cf`.
-- Profile-boundary tests commit: `384d136338f26eb9d17f61d4eb4f81c7c9a092a5`.
-- Session-driver event-order hardening commit: `970b40bce228adfe97cfeacf34422b01e7887de8`.
-- Current official Playwright .NET docs were checked during this run. They confirm that persistent contexts use a dedicated user-data directory and that `BrowserContext.Page` is emitted for new pages/popups; the implementation deliberately follows those documented primitives rather than automating a user's default Chrome profile.
-- The execution container was probed again for `dotnet`, `msbuild` and `csc`; none is available. Therefore **no compilation or test execution success is claimed**.
-- No GitHub Actions workflow was created or rerun merely to manufacture a green signal.
+- Persistent context factory commit: `d362130b0243c667f3d5de504a26ca41bf64cdb7`.
+- Production BrowserHostRuntime wiring commit: `1ae2e2781846552b8d20c1250527a0be0a334e02`.
+- Persistent-session integration tests commit: `4668403236f247eeb3832505b7b02780c5efe85e`.
+- Popup classification timing hardening commit: `0995c08844300d9451b7ae55653a265f116c87ad`.
+- Persistence-boundary clarification commit: `d42f2c7e2c5a0c2973f91b71d2b7271611295e36`.
+- Integration-harness docs commit: `de674ceb9dfaad9691e08f9c7e7817d2b1c3f1dd`.
+- Current official Playwright .NET docs were checked during this run. They confirm that `LaunchPersistentContextAsync` stores browser session data such as cookies/local storage in the supplied user-data directory, that closing the persistent context closes its browser, that a separate automation profile should be used instead of the user's default Chrome profile, and that `BrowserContext.Page` is the supported new-page event.
+- The execution environment was checked again for `dotnet`, `msbuild` and `csc`; none is available. Therefore **no compilation, unit-test or Chromium-execution success is claimed**.
+- No GitHub Actions workflow was created or rerun merely to manufacture a green result.
 
 Security / privacy review:
-- Profile ownership is local-only metadata and contains only a random profile ID, format version and creation timestamp; no cookies, credentials or session contents are copied into NVIDEA state metadata.
-- The design intentionally creates a NVIDEA-owned profile instead of taking control of the user's default browser profile, reducing accidental credential/session scope.
-- Popup adoption is constrained by the same allowed-host boundary used by direct navigation. A newly-created disallowed HTTP(S) page is closed instead of becoming agent-visible context.
-- The session snapshot surfaces only page URLs and boundary classification, not cookies/local-storage data.
-- The new session-aware driver is not yet the `BrowserHostRuntime` production driver, so these protections are implemented and reviewable but **not yet active in the desktop composition root**.
-- Persistent browser profile data itself will be managed by Chromium once production wiring lands; it is local but not yet wrapped by the NVIDEA DPAPI envelope. Do not claim full encrypted-at-rest browser credential storage.
+- The desktop runtime no longer needs or accepts the user's normal Chrome/Edge profile. Authentication state is scoped to the NVIDEA-owned profile directory.
+- Startup deliberately discards restored page/tab context while retaining browser-managed profile state, reducing the chance that a stale authenticated page silently becomes agent-visible context after restart.
+- Popup adoption remains host-boundary constrained; a disallowed HTTP(S) page is closed rather than becoming active agent context.
+- Session diagnostics expose URLs/boundary status only and do not enumerate cookie values or local storage.
+- Persistent Chromium profile data is local browser-managed data, **not** DPAPI-wrapped application state. Do not claim that browser cookies/profile files receive the same application-level encryption as NVIDEA memory/jobs/audit files.
+- The new persistent profile materially increases the value of the local browser-profile directory, so threat-model/onboarding language must make its local credential scope explicit.
 
 ## Current Unverified / Risks
-- **Highest risk remains compilation/runtime validation:** source review is not a substitute for `dotnet build`, `dotnet test`, a Windows WPF launch and a real Playwright Chromium launch.
-- The live strict-schema probe still has not been compiled or run against Token Factory here because .NET and a Nebius API key are unavailable.
-- DPAPI P/Invoke, protected stores, protected audit events/tail seals and protected segment manifests have not executed on a real Windows runner in this environment.
-- `BrowserHostRuntime` still launches a non-persistent context and still uses the single-page `PlaywrightBrowserDriver`; the new ownership/session components must be wired into production before authenticated-session persistence or popup tracking can be claimed end to end.
-- Persistent Chromium profile contents are local but are not application-encrypted by NVIDEA. Threat-model/user-disclosure language must distinguish local browser-managed secrets from DPAPI-wrapped NVIDEA state.
-- Segmentation bounds active audit files by event count, but total archive retention and byte-size quotas are not yet implemented.
+- **Highest risk remains executable validation:** source review is not a substitute for `dotnet build`, `dotnet test`, a Windows WPF launch and a real Playwright Chromium launch.
+- The new production persistent-context path and new integration tests have not compiled or executed here.
+- The live Token Factory strict-schema probe remains unexecuted because .NET and a Nebius API key are unavailable here.
+- DPAPI P/Invoke, protected stores, audit payloads/tail seals/segment manifests remain unexecuted on a real Windows runner in this environment.
+- Existing `BrowserHostRuntimeIntegrationTests` still contain some raw `jobs.json` content assertions that predate Windows DPAPI protection; on Windows those assertions should be migrated to inspect the logical store/record rather than ciphertext text before treating the full integration suite as authoritative.
+- Persistent Chromium profile contents are local but not application-encrypted by NVIDEA. OS/user-profile protections remain the boundary for Chromium-managed cookies and storage.
+- Segmentation bounds active audit files by event count, but lifetime archive retention and byte-size quotas remain absent.
 - Durable download lifecycle remains incomplete.
 - Local voice/transcription is absent.
 - Tavily Extract/richer source authority/freshness work and a verified production embedding adapter remain opportunities.
 - Cross-file browser parent/child state is still separate atomic files; reserved-child ordering remains the crash-safety mechanism.
 
 ## Single Best Next Task
-Wire the new browser ownership/session layer into `BrowserHostRuntime` using Playwright `LaunchPersistentContextAsync` with the dedicated NVIDEA-owned profile directory, make the browser field/context shutdown logic correct for persistent-context semantics, expose a safe session diagnostic if useful, and add an opt-in localhost Chromium integration test proving: authenticated/session state survives a runtime restart, an allowed popup becomes the verified active page, and a cross-boundary popup is never adopted. Then obtain the first real .NET 8 build/test/Chromium/Windows-DPAPI/live-Nebius signal as soon as an executable environment is available.
+Obtain the first real .NET 8 build/test/Chromium/Windows signal and immediately fix compile/runtime issues in the new persistent-context path. Before relying on the Windows browser integration suite, migrate the old raw `jobs.json` assertions to logical `JsonAgentJobStore`/checkpoint assertions so DPAPI-protected state is tested correctly. Then run the persistent restart + allowed/disallowed popup integration tests and the live Nebius strict-schema probe. If executable validation remains unavailable, the next implementation fallback is durable, permissioned download lifecycle management with quarantine/verification and explicit user handoff.

@@ -25,7 +25,7 @@ public sealed class JsonFileMemoryStore : IMemoryStore, IDisposable
             throw new ArgumentException("A memory file path is required.", nameof(path));
 
         _path = Path.GetFullPath(path);
-        _protector = protector;
+        _protector = protector ?? (OperatingSystem.IsWindows() ? new WindowsDpapiLocalStateProtector() : null);
     }
 
     public async Task<IReadOnlyList<MemoryRecord>> ReadAllAsync(CancellationToken cancellationToken = default)

@@ -101,6 +101,7 @@ public interface ICrashConsistentBrowserGoalHost : IBrowserGoalHost
     Task<BrowserJobOutcome> CreateActionAsync(Guid jobId, BrowserAction action, CancellationToken cancellationToken = default);
     Task<BrowserJobOutcome> AdvanceActionAsync(Guid jobId, CancellationToken cancellationToken = default);
     Task<BrowserJobOutcome?> GetAsync(Guid jobId, CancellationToken cancellationToken = default);
+    Task<BrowserJobOutcome> RearmApprovalAsync(Guid jobId, string exactScope, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -155,7 +156,7 @@ public sealed class BrowserGoalAgent
         if (session.Status == BrowserGoalStatus.WaitingForApproval)
         {
             // Waiting state carries descriptive scope only. Never recreate authorization on restart.
-            // We may reconcile a child that already completed before the parent update was persisted.
+            // Reconcile a child that may have moved after the last parent persistence boundary.
             if (_host is ICrashConsistentBrowserGoalHost crashHost && session.PendingJobId is { } waitingJobId)
             {
                 var child = await crashHost.GetAsync(waitingJobId, cancellationToken).ConfigureAwait(false);
@@ -164,6 +165,26 @@ public sealed class BrowserGoalAgent
                     var reconciled = AppendVerifiedStep(ClearPending(session with { Status = BrowserGoalStatus.Running }), child.VerifiedStep);
                     await PersistAsync(reconciled, cancellationToken).ConfigureAwait(false);
                     return await RunUntilPauseAsync(reconciled, cancellationToken).ConfigureAwait(false);
+                }
+
+                if (child?.State == AgentJobState.Pending && !string.IsNullOrWhiteSpace(session.PendingExactScope))
+                {
+                    // Approval was consumed into an ephemeral grant, but the process died before
+                    // execution began. Re-arm only the non-authorizing wait; the user must approve again.
+                    await crashHost.RearmApprovalAsync(waitingJobId, session.PendingExactScope, cancellationToken).ConfigureAwait(false);
+                    return await PersistAsync(Touch(session with
+                    {
+                        Detail = "Approval expired across restart before execution; explicit approval is required again."
+                    }), cancellationToken).ConfigureAwait(false);
+                }
+
+                if (child?.State == AgentJobState.Running)
+                {
+                    return await PersistAsync(Touch(session with
+                    {
+                        Status = BrowserGoalStatus.Failed,
+                        Detail = "Browser child was in-flight when the process stopped. It will not be replayed automatically because the side effect is ambiguous."
+                    }), cancellationToken).ConfigureAwait(false);
                 }
             }
             return session;
@@ -305,6 +326,14 @@ public sealed class BrowserGoalAgent
             return await PersistAsync(Touch(ClearPending(resumed) with { Status = BrowserGoalStatus.Cancelled }), cancellationToken).ConfigureAwait(false);
         if (outcome.State == AgentJobState.WaitingForApproval)
             throw new InvalidOperationException("A single browser action requested a second approval after consuming the exact grant.");
+        if (outcome.State == AgentJobState.Running)
+        {
+            return await PersistAsync(Touch(resumed with
+            {
+                Status = BrowserGoalStatus.Failed,
+                Detail = "Browser action is in an ambiguous in-flight state and will not be replayed automatically."
+            }), cancellationToken).ConfigureAwait(false);
+        }
 
         return await PersistAsync(Touch(ClearPending(resumed) with { Status = BrowserGoalStatus.Failed }), cancellationToken).ConfigureAwait(false);
     }
@@ -363,15 +392,19 @@ public sealed class BrowserGoalAgent
         }
 
         if (existing.State == AgentJobState.WaitingForApproval)
-        {
-            var waiting = await HandleChildOutcomeAsync(session, existing, session.PendingAction, cancellationToken).ConfigureAwait(false);
-            return waiting;
-        }
+            return await HandleChildOutcomeAsync(session, existing, session.PendingAction, cancellationToken).ConfigureAwait(false);
 
         if (existing.State is AgentJobState.Failed or AgentJobState.Cancelled)
+            return await HandleChildOutcomeAsync(session, existing, session.PendingAction, cancellationToken).ConfigureAwait(false);
+
+        if (existing.State == AgentJobState.Running)
         {
-            var terminal = await HandleChildOutcomeAsync(session, existing, session.PendingAction, cancellationToken).ConfigureAwait(false);
-            return terminal;
+            var ambiguous = await PersistAsync(Touch(session with
+            {
+                Status = BrowserGoalStatus.Failed,
+                Detail = "Recovered an in-flight browser action with ambiguous side-effect state. It was not replayed automatically."
+            }), cancellationToken).ConfigureAwait(false);
+            return (ambiguous, false);
         }
 
         var advanced = await host.AdvanceActionAsync(jobId, cancellationToken).ConfigureAwait(false);
@@ -424,7 +457,17 @@ public sealed class BrowserGoalAgent
             return (cancelled, false);
         }
 
-        if (outcome.State is AgentJobState.Pending or AgentJobState.Running or AgentJobState.RetryScheduled)
+        if (outcome.State == AgentJobState.Running)
+        {
+            var ambiguous = await PersistAsync(Touch(session with
+            {
+                Status = BrowserGoalStatus.Failed,
+                Detail = "Browser child is in an ambiguous in-flight state and was not replayed."
+            }), cancellationToken).ConfigureAwait(false);
+            return (ambiguous, false);
+        }
+
+        if (outcome.State is AgentJobState.Pending or AgentJobState.RetryScheduled)
         {
             // Preserve the exact child link and stop this invocation; a later resume reconciles it.
             var pending = await PersistAsync(Touch(session with
@@ -567,6 +610,9 @@ public sealed class BrowserGoalAgent
 
         public Task<BrowserJobOutcome?> GetAsync(Guid jobId, CancellationToken cancellationToken = default) =>
             _host.GetAsync(jobId, cancellationToken);
+
+        public Task<BrowserJobOutcome> RearmApprovalAsync(Guid jobId, string exactScope, CancellationToken cancellationToken = default) =>
+            _host.RearmApprovalAsync(jobId, exactScope, cancellationToken);
 
         public Task<BrowserJobOutcome> ApproveAndResumeAsync(Guid jobId, string exactScope, CancellationToken cancellationToken = default) =>
             _host.ApproveAndResumeAsync(jobId, exactScope, cancellationToken);

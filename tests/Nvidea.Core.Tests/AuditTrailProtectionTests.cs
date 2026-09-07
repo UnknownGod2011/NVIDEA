@@ -23,9 +23,13 @@ public sealed class AuditTrailProtectionTests
             Assert.DoesNotContain("sensitive-summary", persisted, StringComparison.Ordinal);
             Assert.Contains("\"protected\":true", persisted, StringComparison.OrdinalIgnoreCase);
 
-            var restored = await trail.ReadAllAsync();
-            Assert.Single(restored);
-            Assert.Equal(auditEvent, restored[0]);
+            var restored = Assert.Single(await trail.ReadAllAsync());
+            Assert.Equal(auditEvent.EventId, restored.EventId);
+            Assert.Equal(auditEvent.CapabilityId, restored.CapabilityId);
+            Assert.Equal(auditEvent.ActionId, restored.ActionId);
+            Assert.Equal(auditEvent.Summary, restored.Summary);
+            Assert.NotNull(restored.Metadata);
+            Assert.Equal("example.test", restored.Metadata!["host"]);
         }
         finally
         {
@@ -68,23 +72,49 @@ public sealed class AuditTrailProtectionTests
     }
 
     [Fact]
-    public async Task LegacyPlaintextJsonl_MigratesOnlyAfterSuccessfulParsing()
+    public async Task HashChain_RejectsRecordDeletion()
     {
         var directory = CreateTempDirectory();
         try
         {
             var path = Path.Combine(directory, "audit.jsonl");
-            var auditEvent = CreateEvent("legacy-private-summary");
-            var json = JsonSerializer.Serialize(auditEvent, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            var trail = new JsonLinesAuditTrail(path, new TestProtector());
+            await trail.AppendAsync(CreateEvent("first"));
+            await trail.AppendAsync(CreateEvent("second"));
+            await trail.AppendAsync(CreateEvent("third"));
+
+            var lines = await File.ReadAllLinesAsync(path);
+            await File.WriteAllLinesAsync(path, new[] { lines[0], lines[2] });
+
+            await Assert.ThrowsAsync<InvalidDataException>(() => trail.ReadAllAsync());
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task LegacyPlaintextJsonl_MigratesAndCanAppendToExactWrittenChain()
+    {
+        var directory = CreateTempDirectory();
+        try
+        {
+            var path = Path.Combine(directory, "audit.jsonl");
+            var legacyEvent = CreateEvent("legacy-private-summary");
+            var json = JsonSerializer.Serialize(legacyEvent, new JsonSerializerOptions(JsonSerializerDefaults.Web));
             await File.WriteAllTextAsync(path, json + Environment.NewLine);
 
             var trail = new JsonLinesAuditTrail(path, new TestProtector());
-            var restored = await trail.ReadAllAsync();
+            Assert.Single(await trail.ReadAllAsync());
+            await trail.AppendAsync(CreateEvent("after-migration"));
 
-            Assert.Single(restored);
+            var restored = await trail.ReadAllAsync();
+            Assert.Equal(2, restored.Count);
             var persisted = await File.ReadAllTextAsync(path);
             Assert.DoesNotContain("legacy-private-summary", persisted, StringComparison.Ordinal);
-            Assert.Contains("\"sequence\":1", persisted, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("after-migration", persisted, StringComparison.Ordinal);
+            Assert.Contains("\"sequence\":2", persisted, StringComparison.OrdinalIgnoreCase);
         }
         finally
         {

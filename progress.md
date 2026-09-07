@@ -39,8 +39,8 @@ The <=3 minute demo should prove invocation anywhere on Windows, context awarene
 - `BrowserHostRuntime` owns isolated local Playwright + safety + capability + audit + child-job orchestration and exposes only bounded observations/high-level outcomes.
 - `NemotronBrowserPlanner` turns a fresh untrusted observation into one validated step/complete/stop decision. `BrowserGoalAgent` runs the bounded observe -> plan -> job -> verify loop and halts at approval boundaries.
 - Browser goal sessions persist separately from approval state, with restart recovery, privacy-minimized verified history, action/planner/context/wall-clock budgets, and no persisted raw typed browser values.
-- Parent/child browser orchestration now persists a reserved child ID before child creation/execution, then reconciles the exact durable child on restart instead of blindly re-planning or replaying it.
-- Durable `Running` child jobs are now treated as ambiguous after crash and are not automatically replayed.
+- Parent/child browser orchestration persists a reserved child ID before child creation/execution, then reconciles that exact durable child on restart instead of blindly re-planning or replaying it.
+- Durable `Running` child jobs are never automatically replayed. A new evidence-only reconciliation path can mark them completed only when fresh URL/DOM state deterministically proves the intended end state; otherwise they remain stopped for human resolution.
 - A lost ephemeral approval grant between approval and execution is restored only as a non-authorizing `WaitingForApproval` state; explicit user approval is required again.
 - WPF host has global `Ctrl+Shift+Space`, foreground app/window context, read-only UI Automation selected-text capture, opt-in clipboard disclosure, browser confirmation UX, live status and emergency stop.
 - Opt-in localhost real-Chromium integration harness exists for the trusted browser approval path.
@@ -67,53 +67,59 @@ The <=3 minute demo should prove invocation anywhere on Windows, context awarene
 - Added privacy-minimized verified browser history and planner/action/context/wall-clock budgets.
 
 ### 2026-09-07 — Crash-consistent parent/child browser execution
-Completed:
-- Re-verified every GitHub mutation target as exactly `UnknownGod2011/NVIDEA`; `keyboard.wtf` and every other repository remained untouched.
 - Added caller-supplied durable job IDs to `ResumableJobOrchestrator.CreateAsync` with equivalent-definition/checkpoint idempotency checks. Permission sets are compared structurally rather than by object identity.
-- Split `BrowserHostRuntime` browser child creation from execution:
-  - `CreateActionAsync(jobId, action)` creates the durable child and checkpoint without executing it.
-  - `AdvanceActionAsync(jobId)` advances only that exact existing child.
-  - legacy `StartActionAsync` remains as a compatibility wrapper around create + advance.
-- Added `ICrashConsistentBrowserGoalHost` so `BrowserGoalAgent` can use the stronger protocol without breaking existing `IBrowserGoalHost` test doubles/callers.
-- New browser goal ordering is: Nemotron decision -> reserve child GUID -> persist parent session with that GUID -> create durable child -> advance exact child -> reconcile result.
-- Recovery behavior now covers the critical crash windows:
-  1. **Parent reserved ID, child never created:** child lookup returns missing, action reservation is released, action budget is restored, and the agent safely re-plans. No browser side effect could have happened.
-  2. **Child created but never advanced:** restart advances that exact child ID; it does not create a replacement.
-  3. **Child waiting for approval:** restart preserves the same descriptive exact scope and performs no approval or execution.
-  4. **Child completed before parent update:** restart imports the verified child result into privacy-minimized parent history and continues without replay.
-  5. **Approval consumed but process died before execution:** the child may be durably `Pending` while the grant is gone. `RearmApprovalAsync` restores only `WaitingForApproval`; no grant is minted and the user must approve again.
-  6. **Child durably `Running` after process failure:** state is considered side-effect-ambiguous and fails closed. `RunNextStepAsync` no longer automatically replays durable `Running` jobs.
-- Added `BrowserGoalCrashConsistencyTests` for missing child, created-but-not-run child, waiting child, lost-grant re-arm, completed-before-parent-update, and ambiguous-running fail-closed behavior.
-- Added explicit audit event `job.approval_rearmed` for restart recovery. Re-arming revokes any ephemeral grant and creates no authorization.
+- Split `BrowserHostRuntime` browser child creation from execution into `CreateActionAsync` and `AdvanceActionAsync`; legacy `StartActionAsync` remains a compatibility wrapper.
+- Added `ICrashConsistentBrowserGoalHost`; browser goal ordering is now Nemotron decision -> reserve child GUID -> persist parent -> create exact durable child -> advance exact child -> reconcile result.
+- Recovery handles missing child, created-but-not-run child, approval-paused child, child completed before parent update, lost ephemeral approval, and durable `Running` ambiguity.
+- Durable `Running` jobs fail closed rather than replaying because execution may have crossed an external side-effect boundary before the process died.
+- Added `BrowserGoalCrashConsistencyTests` for the crash windows above.
+- Added `job.approval_rearmed` audit event; re-arming revokes ephemeral grants and creates no authorization.
+
+### 2026-09-07 — Evidence-based ambiguous side-effect reconciliation
+Completed:
+- Re-verified every GitHub mutation target as exactly `UnknownGod2011/NVIDEA`; `keyboard.wtf` and all other repositories remained untouched.
+- Added `BrowserAmbiguousStateReconciler`, a deterministic no-model verifier for durable `Running` browser jobs after crash.
+- Reconciliation rules deliberately use only fresh browser evidence:
+  - read-only steps may be recovered from a fresh observation;
+  - navigation requires the current normalized URL to exactly match the intended destination;
+  - click/type/select/back/refresh require an explicit `ExpectedState` that is visibly present in fresh title/text/element evidence;
+  - upload/download never auto-reconcile from DOM evidence and require human resolution.
+- Added `BrowserHostRuntime.TryReconcileAmbiguousAsync`. It performs observe -> deterministic proof -> audited mark-complete and **never calls the browser action executor**.
+- Added internal `ResumableJobOrchestrator.CompleteAmbiguousRunningAsync` transition. It only accepts a durable `Running` job, revokes any ephemeral approval residue, writes a verified checkpoint, clears approval/error/retry state and records `job.reconciled_completed` in the audit trail. It never invokes a handler.
+- Added `BrowserAmbiguousRecoveryService` for parent goal sessions. Positive evidence restores the parent to `Running`, clears the exact pending child link and appends privacy-minimized verified history. Inconclusive evidence preserves the pending child and keeps the goal stopped with a clear human-resolution message.
+- Added `IBrowserAmbiguousRecoveryHost` so the recovery coordinator is testable without Playwright.
+- `NvideaCompositionRoot` now exposes `CreateBrowserAmbiguousRecoveryServiceAsync`, sharing the exact browser host and `goal-sessions.json` store used by the goal agent.
+- Added `BrowserAmbiguousRecoveryTests` covering exact navigation proof, expected-state proof, file-transfer refusal, successful parent restoration without replay and inconclusive evidence preserving the ambiguous child for human resolution.
 
 Validation / evidence:
-- Repository compare from prior head `a3e7c458eaa0908bdcf46e36af1a16546b5e7a76` shows only NVIDEA changes in `BrowserGoalAgent.cs`, `BrowserHostRuntime.cs`, `ResumableJobOrchestrator.cs`, the new crash-consistency tests, and this progress ledger.
-- Source review caught and fixed a logical-idempotency bug where record equality would not safely compare independently-created `IReadOnlySet<DataPermission>` instances.
-- Source review also identified and closed the approval-loss window where `ResumeAfterApprovalAsync` can persist `Pending` before the ephemeral grant reaches execution.
-- `dotnet`, `msbuild`, and `csc` are still unavailable in this execution environment. **No compile/test success is claimed.**
+- GitHub compare from prior head `2cc1853a40682d7d7c30d9dead4a17e357114bf0` shows only five NVIDEA files changed before this ledger update: new recovery implementation/tests plus targeted browser host, composition-root and orchestrator changes.
+- Source review confirms the recovery path contains no call to `AdvanceActionAsync`, `RunNextStepAsync` or `IBrowserDriver.ExecuteAsync`; the only browser operation in reconciliation is a fresh bounded `ObserveAsync`.
+- Source review confirms upload/download are explicitly excluded from automatic reconciliation even when DOM text appears to say completion occurred.
+- `Nvidea.Core.csproj` targets `net8.0`, has nullable enabled and treats warnings as errors; source-level validation was performed with those constraints in mind.
+- Runtime tool check again found no `dotnet`, `msbuild` or `csc`. **No compile/test success is claimed.**
+- Matching Playwright Chromium binaries still cannot be launched in this execution environment.
 - No GitHub Actions workflow was created or rerun just to manufacture a green signal.
 
 Security / privacy review:
-- Parent sessions persist child IDs and descriptive exact scopes only; they do not persist `ApprovalGrant`, grant IDs, bearer tokens or other execution authority.
-- Raw pending browser action payload remains stripped from parent goal-session persistence; the durable child checkpoint remains the concrete action source of truth.
-- Missing child recovery cannot replay an action because no durable child ever existed.
-- Existing child recovery is ID-addressed; it does not ask Nemotron to reconstruct a possibly different action before reconciliation.
-- `Running` after restart is deliberately fail-closed because execution may have crossed an external side-effect boundary before the process died.
-- Lost ephemeral approvals never regenerate themselves. Restart can restore only a waiting state and requires a new explicit user approval.
-- Existing prompt-injection, capability, exact-scope, browser safety and verification boundaries remain downstream and authoritative.
+- Ambiguous recovery is evidence-only. It does not re-execute the action, call Nemotron, mint/recreate approval, or translate descriptive scope into authorization.
+- Reconciled completion requires positive end-state evidence; absence of evidence never becomes inferred success.
+- File upload/download remain human-only after ambiguity because DOM state cannot reliably establish external file-transfer side effects.
+- Parent sessions continue to persist descriptive pending data but no grant IDs, bearer tokens or execution authority.
+- Reconciliation audit records that completion was inferred from post-crash evidence rather than normal execution.
 - No CAPTCHA/login/site/OS safeguard bypass was introduced.
 
 ## Current Unverified / Risks
 - **Highest risk remains compilation/runtime validation:** source review is not a substitute for `dotnet build`, `dotnet test` and a real Playwright Chromium launch.
 - Matching Playwright Chromium binaries have not been installed/launched in this environment.
-- The new crash-consistency tests have not been executed here because no .NET SDK/compiler exists.
-- Durable `Running` jobs now fail closed rather than replay, but the product still needs a user-facing/manual reconciliation path that can inspect fresh browser evidence and decide whether an ambiguous action already took effect.
-- `JsonAgentJobStore` and `JsonBrowserGoalSessionStore` are individually atomic files, but there is no cross-file transaction. The reserved-child-ID protocol is designed to remain safe across that boundary rather than pretending a distributed transaction exists.
-- The Nemotron planner strict JSON schema still needs live Token Factory exercise; OpenAI-compatible backends can differ in supported strict-schema subsets.
+- New ambiguous-recovery tests have not executed here because no .NET SDK/compiler exists.
+- `BrowserGoalAgent` still surfaces a durable `Running` child as failed/ambiguous first; the explicit recovery service must then be invoked by the Windows UX. A polished WPF recovery card/dialog is still needed.
+- `ExpectedState` is planner-supplied and may be broad. Reconciliation is intentionally safer than replay, but future hardening should support structured state predicates (URL/element/value assertions) rather than free-text matching alone.
+- `JsonAgentJobStore` and `JsonBrowserGoalSessionStore` are individually atomic files, not a cross-file transaction; the reserved-child-ID protocol remains the safety mechanism across that boundary.
+- Nemotron strict JSON schema still needs live Token Factory exercise; OpenAI-compatible backends can differ in supported strict-schema subsets.
 - Goal-session JSON, child jobs, audit JSONL and memory JSON are not encrypted at rest yet.
 - Authenticated persistent browser-profile ownership, popup/new-tab tracking and durable download lifecycle remain incomplete.
 - WPF has not been compiled/launched on Windows here; UX is functional/minimal and local voice/transcription is absent.
 - Tavily Extract/richer source authority/freshness work and a verified production embedding adapter remain opportunities.
 
 ## Single Best Next Task
-Obtain the first real **.NET 8 build + unit test + localhost Chromium integration signal** and fix every compile/runtime defect immediately. Once that is green, implement an explicit **ambiguous side-effect reconciliation flow** for crashed `Running` browser jobs: inspect fresh DOM/URL evidence, prove whether the expected state already exists, mark the child verified without replay when evidence is sufficient, otherwise stop for human resolution. This is the remaining reliability gap before claiming robust long-running browser automation.
+Obtain the first real **.NET 8 build + unit test + localhost Chromium integration signal** and fix every compile/runtime defect immediately. If the execution environment still cannot provide .NET, wire `BrowserAmbiguousRecoveryService` into the WPF browser UX so an ambiguous crash displays fresh evidence and a clear `reconciled automatically` versus `human resolution required` state without ever offering an automatic retry. After that, strengthen `ExpectedState` into typed postcondition predicates for more rigorous crash reconciliation and ordinary post-action verification.

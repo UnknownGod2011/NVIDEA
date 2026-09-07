@@ -175,11 +175,18 @@ public sealed class BrowserHostRuntime : IAsyncDisposable
         return _driver.ObserveAsync(cancellationToken);
     }
 
-    public async Task<BrowserJobOutcome> StartActionAsync(
+    /// <summary>
+    /// Creates the durable child job without advancing it. Callers may persist the returned job id
+    /// in a parent workflow before any browser action can execute.
+    /// </summary>
+    public async Task<BrowserJobOutcome> CreateActionAsync(
+        Guid jobId,
         BrowserAction action,
         CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
+        if (jobId == Guid.Empty)
+            throw new ArgumentException("Job id is required.", nameof(jobId));
         ArgumentNullException.ThrowIfNull(action);
 
         var permissions = BrowserCapabilityExecutionService.PermissionsFor(action.Kind);
@@ -194,11 +201,39 @@ public sealed class BrowserHostRuntime : IAsyncDisposable
             MaxAttempts: 2);
 
         var created = await _jobs.CreateAsync(
+            jobId,
             definition,
             BrowserActionJobHandler.CreateCheckpoint(action),
             cancellationToken).ConfigureAwait(false);
-        var advanced = await _jobs.RunNextStepAsync(created.JobId, cancellationToken).ConfigureAwait(false);
-        return Describe(advanced, action);
+        return Describe(created, action);
+    }
+
+    /// <summary>
+    /// Advances exactly one previously-created durable child job. It never creates a replacement
+    /// job, which makes parent/child recovery id-addressable after process failure.
+    /// </summary>
+    public async Task<BrowserJobOutcome> AdvanceActionAsync(
+        Guid jobId,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (jobId == Guid.Empty)
+            throw new ArgumentException("Job id is required.", nameof(jobId));
+
+        var advanced = await _jobs.RunNextStepAsync(jobId, cancellationToken).ConfigureAwait(false);
+        return Describe(advanced, TryReadAction(advanced));
+    }
+
+    public async Task<BrowserJobOutcome> StartActionAsync(
+        BrowserAction action,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(action);
+
+        var jobId = Guid.NewGuid();
+        await CreateActionAsync(jobId, action, cancellationToken).ConfigureAwait(false);
+        return await AdvanceActionAsync(jobId, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<BrowserJobOutcome> ApproveAndResumeAsync(
@@ -270,6 +305,7 @@ public sealed class BrowserHostRuntime : IAsyncDisposable
             AgentJobState.Cancelled => "Browser action was cancelled.",
             AgentJobState.Failed => $"Browser action failed: {job.LastError}",
             AgentJobState.RetryScheduled => $"Browser action failed safely and is eligible for retry: {job.LastError}",
+            AgentJobState.Pending => "Browser action is durably created and has not executed yet.",
             _ => "Browser action is pending."
         };
 

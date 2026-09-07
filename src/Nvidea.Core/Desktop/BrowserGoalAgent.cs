@@ -155,8 +155,6 @@ public sealed class BrowserGoalAgent
 
         if (session.Status == BrowserGoalStatus.WaitingForApproval)
         {
-            // Waiting state carries descriptive scope only. Never recreate authorization on restart.
-            // Reconcile a child that may have moved after the last parent persistence boundary.
             if (_host is ICrashConsistentBrowserGoalHost crashHost && session.PendingJobId is { } waitingJobId)
             {
                 var child = await crashHost.GetAsync(waitingJobId, cancellationToken).ConfigureAwait(false);
@@ -169,8 +167,6 @@ public sealed class BrowserGoalAgent
 
                 if (child?.State == AgentJobState.Pending && !string.IsNullOrWhiteSpace(session.PendingExactScope))
                 {
-                    // Approval was consumed into an ephemeral grant, but the process died before
-                    // execution began. Re-arm only the non-authorizing wait; the user must approve again.
                     await crashHost.RearmApprovalAsync(waitingJobId, session.PendingExactScope, cancellationToken).ConfigureAwait(false);
                     return await PersistAsync(Touch(session with
                     {
@@ -260,6 +256,19 @@ public sealed class BrowserGoalAgent
                 }), cancellationToken).ConfigureAwait(false);
             }
 
+            try
+            {
+                BrowserLegacyActionMigration.EnsureAutonomousActionUsesTypedVerification(decision.Action);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return await PersistAsync(Touch(current with
+                {
+                    Status = BrowserGoalStatus.Stopped,
+                    Detail = $"Nemotron produced an invalid autonomous verification contract: {ex.Message}"
+                }), cancellationToken).ConfigureAwait(false);
+            }
+
             BrowserJobOutcome outcome;
             if (_host is ICrashConsistentBrowserGoalHost crashHost)
             {
@@ -273,7 +282,6 @@ public sealed class BrowserGoalAgent
                     Detail = "Browser child job reserved; no browser action has executed yet."
                 });
 
-                // Critical ordering: parent linkage is durable before child creation or execution.
                 await PersistAsync(current, cancellationToken).ConfigureAwait(false);
                 await crashHost.CreateActionAsync(childJobId, decision.Action, cancellationToken).ConfigureAwait(false);
                 outcome = await crashHost.AdvanceActionAsync(childJobId, cancellationToken).ConfigureAwait(false);
@@ -353,7 +361,6 @@ public sealed class BrowserGoalAgent
             }
             catch (KeyNotFoundException) when (_host is ICrashConsistentBrowserGoalHost)
             {
-                // Parent may have durably reserved an id immediately before a crash, before child creation.
             }
         }
 
@@ -373,8 +380,6 @@ public sealed class BrowserGoalAgent
         var existing = await host.GetAsync(jobId, cancellationToken).ConfigureAwait(false);
         if (existing is null)
         {
-            // The parent id reservation won the race but the process died before child creation.
-            // No browser side effect can have occurred, so re-plan safely and release the reservation.
             var replannable = Touch(ClearPending(session) with
             {
                 ActionCount = Math.Max(0, session.ActionCount - 1),
@@ -469,7 +474,6 @@ public sealed class BrowserGoalAgent
 
         if (outcome.State is AgentJobState.Pending or AgentJobState.RetryScheduled)
         {
-            // Preserve the exact child link and stop this invocation; a later resume reconciles it.
             var pending = await PersistAsync(Touch(session with
             {
                 Status = BrowserGoalStatus.Running,

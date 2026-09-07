@@ -38,8 +38,9 @@ The <=3 minute demo should prove invocation anywhere on Windows, context awarene
 - Durable resumable jobs, ephemeral approval handoff and Nebius Serverless REST contract under `Jobs`.
 - End-to-end browser jobs route through fresh observation -> browser safety -> capability policy -> exact ephemeral approval -> concrete driver -> fresh observation -> verification.
 - Trusted desktop-facing composition layer under `Desktop` gives Windows code one safe API for Nemotron, memory and optional Tavily research.
+- Trusted `BrowserHostRuntime` owns a local isolated Playwright session, browser capability policy, audit trail, resumable jobs and exact ephemeral approvals behind the desktop composition root.
 - Desktop session controller exposes observable agent states and real emergency-stop cancellation.
-- Minimal WPF Windows host at `src/Nvidea.Windows` with global `Ctrl+Shift+Space`, text invocation, foreground-app/window context, read-only UI Automation selected-text capture, explicit clipboard disclosure, state/status binding and emergency stop.
+- Minimal WPF Windows host at `src/Nvidea.Windows` with global `Ctrl+Shift+Space`, text invocation, foreground-app/window context, read-only UI Automation selected-text capture, explicit clipboard disclosure, browser confirmation UX, state/status binding and emergency stop.
 - Root README + MIT license.
 - No repository other than NVIDEA has been mutated.
 
@@ -114,14 +115,45 @@ Validation / evidence:
 - Local environment check still finds no `dotnet`, `msbuild` or `csc`; compilation/Windows launch is therefore NOT claimed.
 - No CI workflow was added, triggered or rerun.
 
+### 2026-09-07 — Windows exact approval UX + trusted browser host composition
+Completed:
+- Re-verified `UnknownGod2011/NVIDEA` before every mutation; `keyboard.wtf` and every other repository remained untouched.
+- Added atomic initial-checkpoint creation to `ResumableJobOrchestrator`, preventing a durable browser job from existing without the descriptive action checkpoint required for recovery. Checkpoints remain data-only and confer no authorization.
+- Added `BrowserHostRuntime` under the trusted desktop layer. It owns an isolated local Playwright Chromium context plus browser safety, capability policy, last-mile tool execution, append-only audit, resumable jobs and the ephemeral approval store.
+- Browser jobs from the Windows host are marked as containing private OS/browser data, keeping them local under `ConservativeJobExecutionPolicy`.
+- Added lazy browser creation to `NvideaCompositionRoot`, so unavailable Playwright browser binaries do not prevent Nemotron chat, memory or Tavily research from starting.
+- Added optional `NVIDEA_BROWSER_START_URL`, `NVIDEA_BROWSER_ALLOWED_HOSTS` and `NVIDEA_BROWSER_HEADLESS` configuration while keeping the concrete driver/authorizer private to the trusted composition layer.
+- Added WPF `ApprovalDialog` showing the requested action, target and exact paused authorization scope. The action remains paused while the dialog is open.
+- Confirmation resumes only the exact persisted scope; `ResumableJobOrchestrator` mints the short-lived single-use grant internally and gives it only to the immediate resumed tool call. WPF never receives or persists the grant.
+- Denial cancels the paused job without executing the browser action.
+- Added a credential-free browser action surface to the Windows shell and connected emergency-stop cancellation to active foreground browser work.
+- Reused the configured Playwright driver for all host observations so host allowlist/observation settings stay consistent during preflight and execution.
+- Added `InitialCheckpointTests` for atomic checkpoint persistence before handler execution and invalid checkpoint rejection.
+
+Security / privacy review:
+- The browser context is local and isolated/non-persistent by default; authenticated persistent-profile ownership is intentionally not claimed yet.
+- Browser writes still pass through fresh observation -> browser hard-safety floor -> capability policy -> exact approval -> `CapabilityToolExecutor` -> Playwright -> fresh observation -> verification.
+- The exact scope binds capability + stable job/action id + effective permission set. A policy/scope change fails closed and needs new approval.
+- Authorization material is never serialized into `jobs.json`; restart, cancellation or failure removes the ephemeral path.
+- UI code has no direct reference to `IBrowserDriver`, `ScopedApprovalAuthorizer`, `ApprovalGrant` or the capability backend.
+- Navigation remains limited to absolute HTTP(S), with optional exact-host allowlisting.
+- No CAPTCHA/login/site/OS safeguard bypass was added.
+
+Validation / evidence:
+- Source review covered Playwright lifetime ordering, lazy initialization, cancellation, exact-scope handoff, denial behavior, checkpoint atomicity, host-boundary consistency and fail-closed state transitions.
+- Current Playwright .NET documentation supports Playwright creation, Chromium launch, isolated contexts and explicit context/browser close semantics; the runtime closes its context before its browser.
+- The repository currently has no `.github/workflows` directory, so these commits did not trigger or spam GitHub Actions.
+- The execution environment still exposes no `dotnet`, `msbuild` or `csc`; the WPF/browser changes and tests are therefore NOT claimed as compiled, launched or passing.
+
 Unverified / risks:
-- Full repository compilation remains the highest immediate technical risk.
-- Some applications do not expose selection through UI Automation; those correctly yield no selected-text context rather than using invasive clipboard fallback.
-- The WPF shell is functional/minimal rather than polished orb UX; voice/local transcription remains absent.
-- The trusted Windows composition root still does not instantiate browser lifetime/session ownership or permission-approval UI.
+- Full repository compilation remains the highest immediate technical risk; source review cannot replace `dotnet build` / `dotnet test`.
+- Matching Playwright Chromium binaries have not been installed/launched in this environment.
+- The Windows browser surface currently demonstrates one permissioned typed action; Nemotron-driven multi-action browser planning is not yet connected to the host UX.
+- Authenticated persistent browser-profile ownership, popup/new-tab tracking and durable download lifecycle remain incomplete.
+- Confirmation UX could improve from the exact machine scope to richer human-readable permission/risk explanations while retaining exact scope binding.
 - Memory/job/audit JSON persistence is not yet encrypted at rest.
-- Authenticated Playwright session ownership, popup/new-tab lifecycle and durable download handling remain incomplete.
 - A deterministic real Chromium integration harness still does not exist.
+- The WPF shell remains functional/minimal rather than final orb-quality UX; voice/local transcription remains absent.
 
 ## Single Best Next Task
-Add **explicit approval UX + browser host composition**: create a concrete Windows approval dialog/view-model that can approve only the exact scope requested by a paused capability/job, mint the corresponding ephemeral single-use grant only after the user confirms, and instantiate Playwright/browser-job lifetime inside the trusted Windows composition root. Then add a deterministic credential-free local Chromium scenario proving observe -> plan -> approval -> action -> fresh observation -> verification, and obtain real `dotnet test`/Windows launch evidence as soon as a .NET-capable environment is available.
+Build a **deterministic credential-free localhost Chromium integration harness** exercising the real `BrowserHostRuntime` end-to-end: serve a controlled local page, create a browser write that pauses, prove DOM state does not change before approval, resume with the exact scope, verify the expected state from a fresh observation, and prove approval replay cannot execute again. Then obtain the first real `dotnet build` / `dotnet test` / Playwright launch signal in a .NET-capable environment and immediately fix any compile/runtime defects before expanding to Nemotron-driven multi-step browser planning.

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Nvidea.Core.Security;
 
 namespace Nvidea.Core.Desktop;
 
@@ -17,6 +18,8 @@ public interface IBrowserGoalSessionStore
 /// </summary>
 public sealed class JsonBrowserGoalSessionStore : IBrowserGoalSessionStore
 {
+    private const string ProtectionPurpose = "browser-goal-sessions-v1";
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true,
@@ -24,13 +27,15 @@ public sealed class JsonBrowserGoalSessionStore : IBrowserGoalSessionStore
     };
 
     private readonly string _path;
+    private readonly ILocalStateProtector? _protector;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
-    public JsonBrowserGoalSessionStore(string path)
+    public JsonBrowserGoalSessionStore(string path, ILocalStateProtector? protector = null)
     {
         if (string.IsNullOrWhiteSpace(path))
             throw new ArgumentException("Browser goal session store path is required.", nameof(path));
         _path = Path.GetFullPath(path);
+        _protector = protector;
     }
 
     public async Task<BrowserGoalSession?> GetAsync(Guid sessionId, CancellationToken cancellationToken = default)
@@ -82,10 +87,7 @@ public sealed class JsonBrowserGoalSessionStore : IBrowserGoalSessionStore
                 records.Add(persisted);
 
             records.Sort(static (a, b) => a.StartedAt.CompareTo(b.StartedAt));
-            Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-            var temp = _path + ".tmp";
-            await File.WriteAllTextAsync(temp, JsonSerializer.Serialize(records, JsonOptions), cancellationToken).ConfigureAwait(false);
-            File.Move(temp, _path, overwrite: true);
+            await PersistUnlockedAsync(records, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -98,16 +100,44 @@ public sealed class JsonBrowserGoalSessionStore : IBrowserGoalSessionStore
         if (!File.Exists(_path))
             return Array.Empty<PersistedBrowserGoalSession>();
 
-        var json = await File.ReadAllTextAsync(_path, cancellationToken).ConfigureAwait(false);
+        var persisted = await File.ReadAllBytesAsync(_path, cancellationToken).ConfigureAwait(false);
+        LocalStatePayload payload;
+        if (_protector is not null)
+            payload = LocalStateEnvelope.Decode(persisted, _protector, ProtectionPurpose);
+        else if (LocalStateEnvelope.HasProtectedHeader(persisted))
+            throw new InvalidDataException("Browser goal session store is protected but no local-state protector was configured.");
+        else
+            payload = new LocalStatePayload(persisted, false);
+
+        List<PersistedBrowserGoalSession> records;
         try
         {
-            return JsonSerializer.Deserialize<List<PersistedBrowserGoalSession>>(json, JsonOptions)
+            records = JsonSerializer.Deserialize<List<PersistedBrowserGoalSession>>(payload.Plaintext, JsonOptions)
                 ?? new List<PersistedBrowserGoalSession>();
         }
         catch (JsonException ex)
         {
-            throw new InvalidDataException("Browser goal session store contains invalid JSON.", ex);
+            throw new InvalidDataException("Browser goal session store contains invalid data.", ex);
         }
+
+        if (_protector is not null && !payload.WasProtected)
+            await PersistUnlockedAsync(records, cancellationToken).ConfigureAwait(false);
+
+        return records;
+    }
+
+    private async Task PersistUnlockedAsync(
+        IReadOnlyList<PersistedBrowserGoalSession> records,
+        CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+        var plaintext = JsonSerializer.SerializeToUtf8Bytes(records, JsonOptions);
+        var persisted = _protector is null
+            ? plaintext
+            : LocalStateEnvelope.Encode(plaintext, _protector, ProtectionPurpose);
+        var temp = _path + ".tmp";
+        await File.WriteAllBytesAsync(temp, persisted, cancellationToken).ConfigureAwait(false);
+        File.Move(temp, _path, overwrite: true);
     }
 
     private sealed record PersistedBrowserGoalSession(

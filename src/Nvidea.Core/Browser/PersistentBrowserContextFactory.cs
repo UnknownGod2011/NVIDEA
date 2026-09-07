@@ -1,0 +1,84 @@
+using Microsoft.Playwright;
+
+namespace Nvidea.Core.Browser;
+
+/// <summary>
+/// Creates a Chromium persistent context rooted exclusively in the NVIDEA-owned browser profile.
+/// Existing tabs are never adopted on startup: browser-managed authenticated state (cookies,
+/// local/session storage as supported by Chromium) may persist, but every runtime begins on a fresh
+/// explicitly-permitted page so stale tabs cannot silently become agent-visible context.
+/// </summary>
+public static class PersistentBrowserContextFactory
+{
+    public static async Task<PersistentBrowserContextSession> LaunchAsync(
+        IPlaywright playwright,
+        string stateDirectory,
+        Uri startUri,
+        PlaywrightBrowserDriverOptions driverOptions,
+        bool headless,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(playwright);
+        ArgumentNullException.ThrowIfNull(startUri);
+        ArgumentNullException.ThrowIfNull(driverOptions);
+
+        if (!startUri.IsAbsoluteUri || startUri.Scheme is not ("http" or "https"))
+            throw new ArgumentException("Browser start URI must be absolute HTTP(S).", nameof(startUri));
+
+        var profileDirectory = BrowserProfileOwnership.PrepareOwnedProfile(stateDirectory);
+        BrowserProfileOwnership.ValidateOwnedProfile(stateDirectory, profileDirectory);
+
+        IBrowserContext? context = null;
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            context = await playwright.Chromium.LaunchPersistentContextAsync(
+                profileDirectory,
+                new BrowserTypeLaunchPersistentContextOptions
+                {
+                    Headless = headless,
+                    AcceptDownloads = true
+                }).WaitAsync(cancellationToken).ConfigureAwait(false);
+
+            // Chromium may restore pages from a previous persistent-context run. Keep the useful
+            // authenticated/profile state, but never trust restored tabs as current agent context.
+            // Closing these pages is not a site action and does not clear profile credentials.
+            foreach (var existing in context.Pages.ToArray())
+                await SafeCloseAsync(existing).ConfigureAwait(false);
+
+            cancellationToken.ThrowIfCancellationRequested();
+            var page = await context.NewPageAsync().WaitAsync(cancellationToken).ConfigureAwait(false);
+            await page.GotoAsync(startUri.AbsoluteUri, new PageGotoOptions
+            {
+                WaitUntil = WaitUntilState.DOMContentLoaded,
+                Timeout = driverOptions.ActionTimeoutMilliseconds
+            }).WaitAsync(cancellationToken).ConfigureAwait(false);
+
+            var driver = new PlaywrightBrowserSessionDriver(context, page, driverOptions);
+            return new PersistentBrowserContextSession(profileDirectory, context, driver);
+        }
+        catch
+        {
+            if (context is not null)
+                await SafeCloseAsync(context).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private static async Task SafeCloseAsync(IPage page)
+    {
+        try { await page.CloseAsync(new PageCloseOptions { RunBeforeUnload = false }).ConfigureAwait(false); }
+        catch { }
+    }
+
+    private static async Task SafeCloseAsync(IBrowserContext context)
+    {
+        try { await context.CloseAsync().ConfigureAwait(false); }
+        catch { }
+    }
+}
+
+public sealed record PersistentBrowserContextSession(
+    string ProfileDirectory,
+    IBrowserContext Context,
+    PlaywrightBrowserSessionDriver Driver);

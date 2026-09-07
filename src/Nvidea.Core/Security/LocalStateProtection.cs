@@ -143,9 +143,9 @@ public sealed class WindowsDpapiLocalStateProtector : ILocalStateProtector
         }
         finally
         {
-            Free(ref inputBlob, zero: true);
-            Free(ref entropyBlob, zero: true);
-            Free(ref outputBlob, zero: true);
+            FreeHGlobal(ref inputBlob, zero: true);
+            FreeHGlobal(ref entropyBlob, zero: true);
+            FreeLocal(ref outputBlob, zero: true);
             if (description != IntPtr.Zero)
                 LocalFree(description);
             CryptographicOperations.ZeroMemory(inputBytes);
@@ -163,19 +163,33 @@ public sealed class WindowsDpapiLocalStateProtector : ILocalStateProtector
         return new DataBlob { Size = bytes.Length, Data = pointer };
     }
 
-    private static void Free(ref DataBlob blob, bool zero)
+    private static void FreeHGlobal(ref DataBlob blob, bool zero)
     {
         if (blob.Data == IntPtr.Zero)
             return;
 
-        if (zero && blob.Size > 0)
-        {
-            var zeros = new byte[blob.Size];
-            Marshal.Copy(zeros, 0, blob.Data, blob.Size);
-        }
-
+        ZeroNativeBuffer(blob, zero);
         Marshal.FreeHGlobal(blob.Data);
         blob = default;
+    }
+
+    private static void FreeLocal(ref DataBlob blob, bool zero)
+    {
+        if (blob.Data == IntPtr.Zero)
+            return;
+
+        ZeroNativeBuffer(blob, zero);
+        LocalFree(blob.Data);
+        blob = default;
+    }
+
+    private static void ZeroNativeBuffer(DataBlob blob, bool zero)
+    {
+        if (!zero || blob.Size <= 0)
+            return;
+
+        var zeros = new byte[blob.Size];
+        Marshal.Copy(zeros, 0, blob.Data, blob.Size);
     }
 
     private static void EnsureWindows()

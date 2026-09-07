@@ -17,11 +17,6 @@ public sealed record BrowserAmbiguousRecoveryResult(
     BrowserJobOutcome ChildOutcome,
     BrowserObservation? Evidence = null);
 
-/// <summary>
-/// Host boundary used only for crash reconciliation. Implementations may inspect fresh browser
-/// evidence and mark an already-running durable job completed only when the intended end state can
-/// be proven without executing the action again.
-/// </summary>
 public interface IBrowserAmbiguousRecoveryHost
 {
     Task<BrowserJobOutcome?> GetAsync(Guid jobId, CancellationToken cancellationToken = default);
@@ -31,11 +26,6 @@ public interface IBrowserAmbiguousRecoveryHost
         CancellationToken cancellationToken = default);
 }
 
-/// <summary>
-/// Conservative, deterministic reconciliation rules for a browser action that may have crossed an
-/// external side-effect boundary immediately before a process crash. This code never executes an
-/// action and never asks a model whether an action probably succeeded.
-/// </summary>
 public static class BrowserAmbiguousStateReconciler
 {
     public static (bool Verified, string Detail) TryVerify(
@@ -48,22 +38,32 @@ public static class BrowserAmbiguousStateReconciler
         if (action.Kind == BrowserActionKind.Read)
             return (true, "Fresh read-only browser observation recovered the interrupted read step.");
 
-        if (action.Kind == BrowserActionKind.Navigate && action.Destination is not null)
-        {
-            var expected = Normalize(action.Destination);
-            var actual = Normalize(current.Url);
-            return expected == actual
-                ? (true, $"Crash reconciliation proved the navigation destination from the current URL: {actual}.")
-                : (false, $"Current URL {actual} does not prove the intended navigation destination {expected}.");
-        }
-
         // Download completion cannot be established from DOM/URL evidence, and upload success may
         // have an external effect beyond the page. Never auto-resolve either after a crash.
         if (action.Kind is BrowserActionKind.Download or BrowserActionKind.Upload)
             return (false, $"{action.Kind} completion requires human resolution after an ambiguous crash boundary.");
 
+        if (action.Postconditions is { Count: > 0 })
+        {
+            var typed = BrowserPostconditionEvaluator.VerifyAll(action.Postconditions, current);
+            return typed.Verified
+                ? (true, $"Crash reconciliation proved all typed postconditions. {typed.Detail}")
+                : (false, $"Typed postconditions did not prove completion. {typed.Detail}");
+        }
+
+        if (action.Kind == BrowserActionKind.Navigate && action.Destination is not null)
+        {
+            var typed = BrowserPostconditionEvaluator.VerifyOne(
+                new BrowserPostcondition(BrowserPostconditionKind.UrlEquals, action.Destination.AbsoluteUri), current);
+            return typed.Verified
+                ? (true, $"Crash reconciliation proved the navigation destination. {typed.Detail}")
+                : (false, typed.Detail);
+        }
+
+        // Backwards compatibility for durable jobs written before typed postconditions existed.
+        // New planner output should not rely on this permissive text search.
         if (string.IsNullOrWhiteSpace(action.ExpectedState))
-            return (false, "The interrupted action has no deterministic expected-state assertion, so it cannot be auto-reconciled safely.");
+            return (false, "The interrupted action has no deterministic typed postcondition, so it cannot be auto-reconciled safely.");
 
         var expectedState = action.ExpectedState.Trim();
         var visible = current.VisibleText.Contains(expectedState, StringComparison.OrdinalIgnoreCase)
@@ -73,22 +73,11 @@ public static class BrowserAmbiguousStateReconciler
                 || (element.Value?.Contains(expectedState, StringComparison.OrdinalIgnoreCase) ?? false));
 
         return visible
-            ? (true, $"Crash reconciliation observed the intended expected state: {expectedState}")
-            : (false, $"Fresh browser evidence does not contain the intended expected state: {expectedState}");
-    }
-
-    private static string Normalize(Uri uri)
-    {
-        var builder = new UriBuilder(uri) { Fragment = string.Empty };
-        return builder.Uri.AbsoluteUri.TrimEnd('/');
+            ? (true, "Legacy expected-state text was observed during crash reconciliation.")
+            : (false, "Legacy expected-state text did not prove completion.");
     }
 }
 
-/// <summary>
-/// Explicit recovery service for a parent browser-goal session whose child was left durably
-/// Running by a process failure. Positive browser evidence may restore the parent to Running;
-/// inconclusive evidence leaves the session untouched for human resolution and never replays it.
-/// </summary>
 public sealed class BrowserAmbiguousRecoveryService
 {
     private readonly IBrowserAmbiguousRecoveryHost _host;

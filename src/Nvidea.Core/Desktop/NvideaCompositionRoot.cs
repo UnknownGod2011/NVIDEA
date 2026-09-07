@@ -112,14 +112,15 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
 
     /// <summary>
     /// Creates the trusted Nemotron-driven browser goal loop over the same local browser host.
-    /// The returned agent can propose multi-step work, but every concrete action still traverses
-    /// browser safety, capability enforcement, exact approval where required and verification.
+    /// Multi-step session state is persisted separately from authorization. Restarting the app
+    /// can recover the goal and paused job description, but never recreates an approval grant.
     /// </summary>
     public async Task<BrowserGoalAgent> CreateBrowserGoalAgentAsync(CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         var browser = await GetBrowserAsync(cancellationToken).ConfigureAwait(false);
-        return new BrowserGoalAgent(browser, new NemotronBrowserPlanner(_inference));
+        var goalStore = new JsonBrowserGoalSessionStore(Path.Combine(_stateDirectory, "browser", "goal-sessions.json"));
+        return new BrowserGoalAgent(browser, new NemotronBrowserPlanner(_inference), goalStore);
     }
 
     public async ValueTask DisposeAsync()

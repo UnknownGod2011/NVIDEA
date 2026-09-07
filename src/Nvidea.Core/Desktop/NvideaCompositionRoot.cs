@@ -7,6 +7,8 @@ namespace Nvidea.Core.Desktop;
 /// <summary>
 /// Owns the trusted provider graph for the desktop application. UI/plugin code receives
 /// high-level services only; provider credentials and raw clients stay behind this root.
+/// Browser automation is created lazily so a missing Playwright browser install cannot
+/// prevent chat/research/memory functionality from starting.
 /// </summary>
 public sealed class NvideaCompositionRoot : IAsyncDisposable
 {
@@ -14,6 +16,10 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     private readonly HttpClient? _tavilyHttp;
     private readonly JsonFileMemoryStore _memoryStore;
     private readonly PersonalMemoryService _memory;
+    private readonly string _stateDirectory;
+    private readonly SemaphoreSlim _browserGate = new(1, 1);
+    private BrowserHostRuntime? _browser;
+    private bool _disposed;
 
     private NvideaCompositionRoot(
         HttpClient nebiusHttp,
@@ -21,12 +27,14 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         JsonFileMemoryStore memoryStore,
         PersonalMemoryService memory,
         DesktopInvocationService desktop,
-        DesktopSessionController session)
+        DesktopSessionController session,
+        string stateDirectory)
     {
         _nebiusHttp = nebiusHttp;
         _tavilyHttp = tavilyHttp;
         _memoryStore = memoryStore;
         _memory = memory;
+        _stateDirectory = stateDirectory;
         Desktop = desktop;
         Session = session;
     }
@@ -62,17 +70,83 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
 
         var desktop = new DesktopInvocationService(inference, memory, research);
         var session = new DesktopSessionController(desktop);
-        return new NvideaCompositionRoot(nebiusHttp, tavilyHttp, memoryStore, memory, desktop, session);
+        return new NvideaCompositionRoot(nebiusHttp, tavilyHttp, memoryStore, memory, desktop, session, dataDirectory);
+    }
+
+    public async Task<BrowserHostRuntime> GetBrowserAsync(CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_browser is not null)
+            return _browser;
+
+        await _browserGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_browser is not null)
+                return _browser;
+
+            var browserDirectory = Path.Combine(_stateDirectory, "browser");
+            _browser = await BrowserHostRuntime.CreateAsync(
+                browserDirectory,
+                BrowserOptionsFromEnvironment(),
+                cancellationToken).ConfigureAwait(false);
+            return _browser;
+        }
+        finally
+        {
+            _browserGate.Release();
+        }
     }
 
     public async ValueTask DisposeAsync()
     {
+        if (_disposed)
+            return;
+        _disposed = true;
+
+        await _browserGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (_browser is not null)
+                await _browser.DisposeAsync().ConfigureAwait(false);
+            _browser = null;
+        }
+        finally
+        {
+            _browserGate.Release();
+        }
+
         Session.Dispose();
         _memory.Dispose();
         _memoryStore.Dispose();
         _tavilyHttp?.Dispose();
         _nebiusHttp.Dispose();
-        await ValueTask.CompletedTask;
+        _browserGate.Dispose();
+    }
+
+    private static BrowserHostOptions BrowserOptionsFromEnvironment()
+    {
+        var startRaw = Environment.GetEnvironmentVariable("NVIDEA_BROWSER_START_URL");
+        var start = string.IsNullOrWhiteSpace(startRaw)
+            ? BrowserHostOptions.Default.StartUri
+            : Uri.TryCreate(startRaw.Trim(), UriKind.Absolute, out var parsed)
+                ? parsed
+                : throw new InvalidOperationException("NVIDEA_BROWSER_START_URL must be an absolute HTTP(S) URL.");
+
+        var allowRaw = Environment.GetEnvironmentVariable("NVIDEA_BROWSER_ALLOWED_HOSTS");
+        IReadOnlySet<string>? allowedHosts = null;
+        if (!string.IsNullOrWhiteSpace(allowRaw))
+        {
+            allowedHosts = allowRaw
+                .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(static x => x.ToLowerInvariant())
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        }
+
+        var headless = bool.TryParse(Environment.GetEnvironmentVariable("NVIDEA_BROWSER_HEADLESS"), out var parsedHeadless)
+            && parsedHeadless;
+
+        return new BrowserHostOptions(start, allowedHosts, headless);
     }
 
     private static string ResolveStateDirectory(string? requested)

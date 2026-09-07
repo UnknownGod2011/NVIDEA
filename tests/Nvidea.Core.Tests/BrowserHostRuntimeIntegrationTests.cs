@@ -50,11 +50,16 @@ public sealed class BrowserHostRuntimeIntegrationTests
             Assert.False(string.IsNullOrWhiteSpace(paused.Approval!.ExactScope));
             Assert.Equal(0, site.MutationCount);
 
-            var persistedWhilePaused = await File.ReadAllTextAsync(Path.Combine(stateDirectory, "jobs.json"));
-            Assert.Contains("postconditions", persistedWhilePaused, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("approved mutation complete", persistedWhilePaused, StringComparison.Ordinal);
-            Assert.DoesNotContain("grant", persistedWhilePaused.ToLowerInvariant());
-            Assert.DoesNotContain("token", persistedWhilePaused.ToLowerInvariant());
+            var jobStore = new JsonAgentJobStore(Path.Combine(stateDirectory, "jobs.json"));
+            var persistedWhilePaused = await jobStore.GetAsync(paused.JobId);
+            Assert.NotNull(persistedWhilePaused);
+            Assert.Equal(AgentJobState.WaitingForApproval, persistedWhilePaused!.State);
+            Assert.Equal(paused.Approval.ExactScope, persistedWhilePaused.ApprovalScope);
+            Assert.NotNull(persistedWhilePaused.Checkpoint);
+            Assert.Contains("postconditions", persistedWhilePaused.Checkpoint!.Payload ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("approved mutation complete", persistedWhilePaused.Checkpoint.Payload ?? string.Empty, StringComparison.Ordinal);
+            Assert.DoesNotContain("grant", persistedWhilePaused.Checkpoint.Payload ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("token", persistedWhilePaused.Checkpoint.Payload ?? string.Empty, StringComparison.OrdinalIgnoreCase);
 
             var completed = await runtime.ApproveAndResumeAsync(paused.JobId, paused.Approval.ExactScope);
 
@@ -68,9 +73,13 @@ public sealed class BrowserHostRuntimeIntegrationTests
 
             Assert.Equal(1, site.MutationCount);
 
-            var persistedAfterCompletion = await File.ReadAllTextAsync(Path.Combine(stateDirectory, "jobs.json"));
-            Assert.DoesNotContain("grant", persistedAfterCompletion.ToLowerInvariant());
-            Assert.DoesNotContain("token", persistedAfterCompletion.ToLowerInvariant());
+            var persistedAfterCompletion = await jobStore.GetAsync(paused.JobId);
+            Assert.NotNull(persistedAfterCompletion);
+            Assert.Equal(AgentJobState.Completed, persistedAfterCompletion!.State);
+            Assert.Null(persistedAfterCompletion.ApprovalScope);
+            Assert.NotNull(persistedAfterCompletion.Checkpoint);
+            Assert.DoesNotContain("grant", persistedAfterCompletion.Checkpoint!.Payload ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("token", persistedAfterCompletion.Checkpoint.Payload ?? string.Empty, StringComparison.OrdinalIgnoreCase);
         }
         finally
         {
@@ -148,11 +157,16 @@ public sealed class BrowserHostRuntimeIntegrationTests
                 paused.PendingAction.Postconditions![0].Kind);
             Assert.False(string.IsNullOrWhiteSpace(paused.PendingExactScope));
 
-            var durableChildJson = await File.ReadAllTextAsync(Path.Combine(stateDirectory, "jobs.json"));
-            Assert.Contains("postconditions", durableChildJson, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("approved mutation complete", durableChildJson, StringComparison.Ordinal);
-            Assert.DoesNotContain("grant", durableChildJson.ToLowerInvariant());
-            Assert.DoesNotContain("bearer", durableChildJson.ToLowerInvariant());
+            var jobStore = new JsonAgentJobStore(Path.Combine(stateDirectory, "jobs.json"));
+            var durableChild = await jobStore.GetAsync(paused.PendingJobId!.Value);
+            Assert.NotNull(durableChild);
+            Assert.Equal(AgentJobState.WaitingForApproval, durableChild!.State);
+            Assert.Equal(paused.PendingExactScope, durableChild.ApprovalScope);
+            Assert.NotNull(durableChild.Checkpoint);
+            Assert.Contains("postconditions", durableChild.Checkpoint!.Payload ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("approved mutation complete", durableChild.Checkpoint.Payload ?? string.Empty, StringComparison.Ordinal);
+            Assert.DoesNotContain("grant", durableChild.Checkpoint.Payload ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("bearer", durableChild.Checkpoint.Payload ?? string.Empty, StringComparison.OrdinalIgnoreCase);
 
             var completed = await agent.ApproveAndContinueAsync(paused, paused.PendingExactScope!);
 
@@ -171,6 +185,13 @@ public sealed class BrowserHostRuntimeIntegrationTests
             Assert.Null(restored.PendingAction);
             Assert.Single(restored.VerifiedSteps!);
             Assert.Equal(completed.VerifiedSteps![0].JobId, restored.VerifiedSteps![0].JobId);
+
+            var completedChild = await jobStore.GetAsync(paused.PendingJobId.Value);
+            Assert.NotNull(completedChild);
+            Assert.Equal(AgentJobState.Completed, completedChild!.State);
+            Assert.Null(completedChild.ApprovalScope);
+            Assert.DoesNotContain("grant", completedChild.Checkpoint?.Payload ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("bearer", completedChild.Checkpoint?.Payload ?? string.Empty, StringComparison.OrdinalIgnoreCase);
 
             Assert.Equal(2, inference.RequestCount);
             Assert.All(inference.ResponseSchemas, schema =>

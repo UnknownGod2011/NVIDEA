@@ -54,7 +54,7 @@ public static class BrowserLegacyActionMigration
                     {
                         new BrowserPostcondition(
                             BrowserPostconditionKind.UrlEquals,
-                            ExpectedText: destination.AbsoluteUri)
+                            Expected: destination.AbsoluteUri)
                     }
                 },
                 "Replaced legacy navigation verification with an exact typed destination-URL postcondition.");

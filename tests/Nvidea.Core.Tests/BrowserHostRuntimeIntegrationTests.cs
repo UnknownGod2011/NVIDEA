@@ -45,8 +45,8 @@ public sealed class BrowserHostRuntimeIntegrationTests
             Assert.Equal(0, site.MutationCount);
 
             var persistedWhilePaused = await File.ReadAllTextAsync(Path.Combine(stateDirectory, "jobs.json"));
-            Assert.DoesNotContain("grant", persistedWhilePaused, StringComparison.OrdinalIgnoreCase);
-            Assert.DoesNotContain("token", persistedWhilePaused, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("grant", persistedWhilePaused.ToLowerInvariant());
+            Assert.DoesNotContain("token", persistedWhilePaused.ToLowerInvariant());
 
             var completed = await runtime.ApproveAndResumeAsync(paused.JobId, paused.Approval.ExactScope);
 
@@ -59,8 +59,8 @@ public sealed class BrowserHostRuntimeIntegrationTests
             Assert.Equal(1, site.MutationCount);
 
             var persistedAfterCompletion = await File.ReadAllTextAsync(Path.Combine(stateDirectory, "jobs.json"));
-            Assert.DoesNotContain("grant", persistedAfterCompletion, StringComparison.OrdinalIgnoreCase);
-            Assert.DoesNotContain("token", persistedAfterCompletion, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("grant", persistedAfterCompletion.ToLowerInvariant());
+            Assert.DoesNotContain("token", persistedAfterCompletion.ToLowerInvariant());
         }
         finally
         {
@@ -189,7 +189,12 @@ public sealed class BrowserHostRuntimeIntegrationTests
                     && string.Equals(path, "/mutate", StringComparison.Ordinal))
                 {
                     Interlocked.Increment(ref _mutationCount);
-                    await WriteResponseAsync(stream, "200 OK", "text/plain; charset=utf-8", "ok", cancellationToken).ConfigureAwait(false);
+                    await WriteResponseAsync(
+                        stream,
+                        "200 OK",
+                        "text/html; charset=utf-8",
+                        CompletedHtml,
+                        cancellationToken).ConfigureAwait(false);
                     return;
                 }
 
@@ -200,7 +205,7 @@ public sealed class BrowserHostRuntimeIntegrationTests
                     return;
                 }
 
-                await WriteResponseAsync(stream, "200 OK", "text/html; charset=utf-8", Html, cancellationToken).ConfigureAwait(false);
+                await WriteResponseAsync(stream, "200 OK", "text/html; charset=utf-8", InitialHtml, cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -220,7 +225,7 @@ public sealed class BrowserHostRuntimeIntegrationTests
             await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        private const string Html = """
+        private const string InitialHtml = """
             <!doctype html>
             <html lang="en">
             <head>
@@ -231,15 +236,26 @@ public sealed class BrowserHostRuntimeIntegrationTests
               <main>
                 <h1>Controlled browser approval harness</h1>
                 <p id="state">no mutation yet</p>
-                <button id="submit-demo" type="button">Submit demo mutation</button>
+                <form method="post" action="/mutate">
+                  <button id="submit-demo" type="submit">Submit demo mutation</button>
+                </form>
               </main>
-              <script>
-                document.getElementById('submit-demo').addEventListener('click', async () => {
-                  const response = await fetch('/mutate', { method: 'POST' });
-                  if (!response.ok) throw new Error('mutation failed');
-                  document.getElementById('state').textContent = 'approved mutation complete';
-                });
-              </script>
+            </body>
+            </html>
+            """;
+
+        private const string CompletedHtml = """
+            <!doctype html>
+            <html lang="en">
+            <head>
+              <meta charset="utf-8">
+              <title>NVIDEA browser approval harness</title>
+            </head>
+            <body>
+              <main>
+                <h1>Controlled browser approval harness</h1>
+                <p id="state">approved mutation complete</p>
+              </main>
             </body>
             </html>
             """;

@@ -35,7 +35,7 @@ public sealed class JsonBrowserGoalSessionStore : IBrowserGoalSessionStore
         if (string.IsNullOrWhiteSpace(path))
             throw new ArgumentException("Browser goal session store path is required.", nameof(path));
         _path = Path.GetFullPath(path);
-        _protector = protector;
+        _protector = protector ?? (OperatingSystem.IsWindows() ? new WindowsDpapiLocalStateProtector() : null);
     }
 
     public async Task<BrowserGoalSession?> GetAsync(Guid sessionId, CancellationToken cancellationToken = default)

@@ -188,6 +188,45 @@ public sealed class ResumableJobOrchestrator
         return waiting;
     }
 
+    /// <summary>
+    /// Completes a durable Running job only after a trusted host has independently proven the
+    /// intended post-action state from fresh evidence. This transition never invokes a handler,
+    /// never restores an approval grant, and exists solely to avoid replaying ambiguous side effects.
+    /// </summary>
+    internal async Task<AgentJobRecord> CompleteAmbiguousRunningAsync(
+        Guid jobId,
+        AgentJobCheckpoint verifiedCheckpoint,
+        string evidenceSummary,
+        CancellationToken cancellationToken = default)
+    {
+        if (verifiedCheckpoint is null)
+            throw new ArgumentNullException(nameof(verifiedCheckpoint));
+        if (string.IsNullOrWhiteSpace(verifiedCheckpoint.Step))
+            throw new ArgumentException("A verified checkpoint step is required.", nameof(verifiedCheckpoint));
+        if (string.IsNullOrWhiteSpace(evidenceSummary))
+            throw new ArgumentException("An evidence summary is required.", nameof(evidenceSummary));
+
+        var job = await GetRequiredAsync(jobId, cancellationToken).ConfigureAwait(false);
+        if (job.State != AgentJobState.Running)
+            throw new InvalidOperationException("Only a durable Running job may be completed through ambiguous-side-effect reconciliation.");
+
+        _ephemeralApprovals.Revoke(jobId);
+        var completed = job with
+        {
+            State = AgentJobState.Completed,
+            Checkpoint = verifiedCheckpoint,
+            ApprovalScope = null,
+            LastError = null,
+            NextAttemptAt = null,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+        await _store.SaveAsync(completed, cancellationToken).ConfigureAwait(false);
+        await AuditAsync(completed, "job.reconciled_completed", true, false,
+            $"Ambiguous in-flight job was marked complete from fresh post-crash evidence without replay. {evidenceSummary}",
+            cancellationToken).ConfigureAwait(false);
+        return completed;
+    }
+
     public async Task<AgentJobRecord> CancelAsync(Guid jobId, CancellationToken cancellationToken = default)
     {
         var job = await GetRequiredAsync(jobId, cancellationToken).ConfigureAwait(false);

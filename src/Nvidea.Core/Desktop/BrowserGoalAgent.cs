@@ -93,6 +93,17 @@ public interface IBrowserGoalHost
 }
 
 /// <summary>
+/// Optional stronger host contract for durable parent/child orchestration. Creation and advancement
+/// are deliberately separate so the parent can persist a child id before the child can execute.
+/// </summary>
+public interface ICrashConsistentBrowserGoalHost : IBrowserGoalHost
+{
+    Task<BrowserJobOutcome> CreateActionAsync(Guid jobId, BrowserAction action, CancellationToken cancellationToken = default);
+    Task<BrowserJobOutcome> AdvanceActionAsync(Guid jobId, CancellationToken cancellationToken = default);
+    Task<BrowserJobOutcome?> GetAsync(Guid jobId, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
 /// Durable observe -> Nemotron plan -> policy-enforced job -> verify loop.
 /// Consequential actions stop at exact approval boundaries. Persisted state is descriptive only;
 /// BrowserHostRuntime remains the sole owner of ephemeral single-use approval grants.
@@ -138,10 +149,25 @@ public sealed class BrowserGoalAgent
             ?? throw new KeyNotFoundException($"Browser goal session '{sessionId}' was not found.");
         ValidateSession(session);
 
-        // A restart never recreates authorization. Waiting sessions remain paused until the
-        // user explicitly approves the persisted descriptive scope again.
-        if (session.Status == BrowserGoalStatus.WaitingForApproval || IsTerminal(session.Status))
+        if (IsTerminal(session.Status))
             return session;
+
+        if (session.Status == BrowserGoalStatus.WaitingForApproval)
+        {
+            // Waiting state carries descriptive scope only. Never recreate authorization on restart.
+            // We may reconcile a child that already completed before the parent update was persisted.
+            if (_host is ICrashConsistentBrowserGoalHost crashHost && session.PendingJobId is { } waitingJobId)
+            {
+                var child = await crashHost.GetAsync(waitingJobId, cancellationToken).ConfigureAwait(false);
+                if (child?.State == AgentJobState.Completed)
+                {
+                    var reconciled = AppendVerifiedStep(ClearPending(session with { Status = BrowserGoalStatus.Running }), child.VerifiedStep);
+                    await PersistAsync(reconciled, cancellationToken).ConfigureAwait(false);
+                    return await RunUntilPauseAsync(reconciled, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            return session;
+        }
 
         return await RunUntilPauseAsync(session, cancellationToken).ConfigureAwait(false);
     }
@@ -158,6 +184,14 @@ public sealed class BrowserGoalAgent
 
         var current = Touch(session with { Status = BrowserGoalStatus.Running, Detail = null });
         await PersistAsync(current, cancellationToken).ConfigureAwait(false);
+
+        if (current.PendingJobId is not null && _host is ICrashConsistentBrowserGoalHost recoveryHost)
+        {
+            var recovery = await ReconcilePendingChildAsync(current, recoveryHost, cancellationToken).ConfigureAwait(false);
+            current = recovery.Session;
+            if (!recovery.ContinuePlanning)
+                return current;
+        }
 
         while (current.ActionCount < current.MaxActions)
         {
@@ -205,45 +239,34 @@ public sealed class BrowserGoalAgent
                 }), cancellationToken).ConfigureAwait(false);
             }
 
-            var outcome = await _host.StartActionAsync(decision.Action, cancellationToken).ConfigureAwait(false);
-            current = Touch(current with { ActionCount = current.ActionCount + 1 });
-
-            if (outcome.State == AgentJobState.WaitingForApproval)
+            BrowserJobOutcome outcome;
+            if (_host is ICrashConsistentBrowserGoalHost crashHost)
             {
-                if (outcome.Approval is null || string.IsNullOrWhiteSpace(outcome.Approval.ExactScope))
+                var childJobId = Guid.NewGuid();
+                current = Touch(current with
                 {
-                    return await PersistAsync(Touch(current with
-                    {
-                        Status = BrowserGoalStatus.Failed,
-                        Detail = "Browser job requested approval without an exact approval scope."
-                    }), cancellationToken).ConfigureAwait(false);
-                }
+                    ActionCount = current.ActionCount + 1,
+                    PendingJobId = childJobId,
+                    PendingExactScope = null,
+                    PendingAction = decision.Action,
+                    Detail = "Browser child job reserved; no browser action has executed yet."
+                });
 
-                return await PersistAsync(Touch(current with
-                {
-                    Status = BrowserGoalStatus.WaitingForApproval,
-                    Detail = outcome.Message,
-                    PendingJobId = outcome.JobId,
-                    PendingExactScope = outcome.Approval.ExactScope,
-                    PendingAction = decision.Action
-                }), cancellationToken).ConfigureAwait(false);
-            }
-
-            if (outcome.State == AgentJobState.Completed)
-            {
-                current = AppendVerifiedStep(current, outcome.VerifiedStep);
+                // Critical ordering: parent linkage is durable before child creation or execution.
                 await PersistAsync(current, cancellationToken).ConfigureAwait(false);
-                continue;
+                await crashHost.CreateActionAsync(childJobId, decision.Action, cancellationToken).ConfigureAwait(false);
+                outcome = await crashHost.AdvanceActionAsync(childJobId, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                outcome = await _host.StartActionAsync(decision.Action, cancellationToken).ConfigureAwait(false);
+                current = Touch(current with { ActionCount = current.ActionCount + 1 });
             }
 
-            if (outcome.State == AgentJobState.Cancelled)
-                return await PersistAsync(Touch(current with { Status = BrowserGoalStatus.Cancelled, Detail = outcome.Message }), cancellationToken).ConfigureAwait(false);
-
-            return await PersistAsync(Touch(current with
-            {
-                Status = BrowserGoalStatus.Failed,
-                Detail = outcome.Message
-            }), cancellationToken).ConfigureAwait(false);
+            var handled = await HandleChildOutcomeAsync(current, outcome, decision.Action, cancellationToken).ConfigureAwait(false);
+            current = handled.Session;
+            if (!handled.ContinuePlanning)
+                return current;
         }
 
         return await ExhaustAsync(current, "action", cancellationToken).ConfigureAwait(false);
@@ -270,26 +293,20 @@ public sealed class BrowserGoalAgent
         var outcome = await _host
             .ApproveAndResumeAsync(session.PendingJobId.Value, exactScope, cancellationToken)
             .ConfigureAwait(false);
-        var resumed = Touch(session with
-        {
-            PendingJobId = null,
-            PendingExactScope = null,
-            PendingAction = null,
-            Detail = outcome.Message
-        });
+        var resumed = Touch(session with { Detail = outcome.Message });
 
         if (outcome.State == AgentJobState.Completed)
         {
-            resumed = AppendVerifiedStep(resumed, outcome.VerifiedStep);
+            resumed = AppendVerifiedStep(ClearPending(resumed with { Status = BrowserGoalStatus.Running }), outcome.VerifiedStep);
             await PersistAsync(resumed, cancellationToken).ConfigureAwait(false);
-            return await RunUntilPauseAsync(resumed with { Status = BrowserGoalStatus.Running }, cancellationToken).ConfigureAwait(false);
+            return await RunUntilPauseAsync(resumed, cancellationToken).ConfigureAwait(false);
         }
         if (outcome.State == AgentJobState.Cancelled)
-            return await PersistAsync(Touch(resumed with { Status = BrowserGoalStatus.Cancelled }), cancellationToken).ConfigureAwait(false);
+            return await PersistAsync(Touch(ClearPending(resumed) with { Status = BrowserGoalStatus.Cancelled }), cancellationToken).ConfigureAwait(false);
         if (outcome.State == AgentJobState.WaitingForApproval)
             throw new InvalidOperationException("A single browser action requested a second approval after consuming the exact grant.");
 
-        return await PersistAsync(Touch(resumed with { Status = BrowserGoalStatus.Failed }), cancellationToken).ConfigureAwait(false);
+        return await PersistAsync(Touch(ClearPending(resumed) with { Status = BrowserGoalStatus.Failed }), cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<BrowserGoalSession> CancelAsync(
@@ -300,16 +317,131 @@ public sealed class BrowserGoalAgent
         ValidateSession(session);
 
         if (session.PendingJobId is { } jobId)
-            await _host.CancelAsync(jobId, cancellationToken).ConfigureAwait(false);
+        {
+            try
+            {
+                await _host.CancelAsync(jobId, cancellationToken).ConfigureAwait(false);
+            }
+            catch (KeyNotFoundException) when (_host is ICrashConsistentBrowserGoalHost)
+            {
+                // Parent may have durably reserved an id immediately before a crash, before child creation.
+            }
+        }
 
-        return await PersistAsync(Touch(session with
+        return await PersistAsync(Touch(ClearPending(session) with
         {
             Status = BrowserGoalStatus.Cancelled,
-            Detail = "Browser goal cancelled by the user.",
-            PendingJobId = null,
-            PendingExactScope = null,
-            PendingAction = null
+            Detail = "Browser goal cancelled by the user."
         }), cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<(BrowserGoalSession Session, bool ContinuePlanning)> ReconcilePendingChildAsync(
+        BrowserGoalSession session,
+        ICrashConsistentBrowserGoalHost host,
+        CancellationToken cancellationToken)
+    {
+        var jobId = session.PendingJobId!.Value;
+        var existing = await host.GetAsync(jobId, cancellationToken).ConfigureAwait(false);
+        if (existing is null)
+        {
+            // The parent id reservation won the race but the process died before child creation.
+            // No browser side effect can have occurred, so re-plan safely and release the reservation.
+            var replannable = Touch(ClearPending(session) with
+            {
+                ActionCount = Math.Max(0, session.ActionCount - 1),
+                Detail = "Recovered a reserved child id that was never created; safely re-planning."
+            });
+            await PersistAsync(replannable, cancellationToken).ConfigureAwait(false);
+            return (replannable, true);
+        }
+
+        if (existing.State == AgentJobState.Completed)
+        {
+            var completed = AppendVerifiedStep(ClearPending(session), existing.VerifiedStep);
+            await PersistAsync(completed, cancellationToken).ConfigureAwait(false);
+            return (completed, true);
+        }
+
+        if (existing.State == AgentJobState.WaitingForApproval)
+        {
+            var waiting = await HandleChildOutcomeAsync(session, existing, session.PendingAction, cancellationToken).ConfigureAwait(false);
+            return waiting;
+        }
+
+        if (existing.State is AgentJobState.Failed or AgentJobState.Cancelled)
+        {
+            var terminal = await HandleChildOutcomeAsync(session, existing, session.PendingAction, cancellationToken).ConfigureAwait(false);
+            return terminal;
+        }
+
+        var advanced = await host.AdvanceActionAsync(jobId, cancellationToken).ConfigureAwait(false);
+        return await HandleChildOutcomeAsync(session, advanced, session.PendingAction, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<(BrowserGoalSession Session, bool ContinuePlanning)> HandleChildOutcomeAsync(
+        BrowserGoalSession session,
+        BrowserJobOutcome outcome,
+        BrowserAction? action,
+        CancellationToken cancellationToken)
+    {
+        if (outcome.State == AgentJobState.WaitingForApproval)
+        {
+            if (outcome.Approval is null || string.IsNullOrWhiteSpace(outcome.Approval.ExactScope))
+            {
+                var failedScope = await PersistAsync(Touch(session with
+                {
+                    Status = BrowserGoalStatus.Failed,
+                    Detail = "Browser job requested approval without an exact approval scope."
+                }), cancellationToken).ConfigureAwait(false);
+                return (failedScope, false);
+            }
+
+            var waiting = await PersistAsync(Touch(session with
+            {
+                Status = BrowserGoalStatus.WaitingForApproval,
+                Detail = outcome.Message,
+                PendingJobId = outcome.JobId,
+                PendingExactScope = outcome.Approval.ExactScope,
+                PendingAction = action
+            }), cancellationToken).ConfigureAwait(false);
+            return (waiting, false);
+        }
+
+        if (outcome.State == AgentJobState.Completed)
+        {
+            var completed = AppendVerifiedStep(ClearPending(session with { Status = BrowserGoalStatus.Running, Detail = outcome.Message }), outcome.VerifiedStep);
+            await PersistAsync(completed, cancellationToken).ConfigureAwait(false);
+            return (completed, true);
+        }
+
+        if (outcome.State == AgentJobState.Cancelled)
+        {
+            var cancelled = await PersistAsync(Touch(ClearPending(session) with
+            {
+                Status = BrowserGoalStatus.Cancelled,
+                Detail = outcome.Message
+            }), cancellationToken).ConfigureAwait(false);
+            return (cancelled, false);
+        }
+
+        if (outcome.State is AgentJobState.Pending or AgentJobState.Running or AgentJobState.RetryScheduled)
+        {
+            // Preserve the exact child link and stop this invocation; a later resume reconciles it.
+            var pending = await PersistAsync(Touch(session with
+            {
+                Status = BrowserGoalStatus.Running,
+                PendingJobId = outcome.JobId,
+                Detail = outcome.Message
+            }), cancellationToken).ConfigureAwait(false);
+            return (pending, false);
+        }
+
+        var failed = await PersistAsync(Touch(ClearPending(session) with
+        {
+            Status = BrowserGoalStatus.Failed,
+            Detail = outcome.Message
+        }), cancellationToken).ConfigureAwait(false);
+        return (failed, false);
     }
 
     private BrowserGoalSession AppendVerifiedStep(BrowserGoalSession session, BrowserGoalVerifiedStep? step)
@@ -324,6 +456,13 @@ public sealed class BrowserGoalAgent
             history.RemoveRange(0, history.Count - 50);
         return Touch(session with { VerifiedSteps = history });
     }
+
+    private static BrowserGoalSession ClearPending(BrowserGoalSession session) => session with
+    {
+        PendingJobId = null,
+        PendingExactScope = null,
+        PendingAction = null
+    };
 
     private IReadOnlyList<BrowserActionReceipt> ToPlannerHistory(IReadOnlyList<BrowserGoalVerifiedStep>? steps)
     {
@@ -407,7 +546,7 @@ public sealed class BrowserGoalAgent
             throw new InvalidOperationException("Browser goal session is missing its start time.");
     }
 
-    private sealed class BrowserHostAdapter : IBrowserGoalHost
+    private sealed class BrowserHostAdapter : ICrashConsistentBrowserGoalHost
     {
         private readonly BrowserHostRuntime _host;
 
@@ -419,6 +558,15 @@ public sealed class BrowserGoalAgent
 
         public Task<BrowserJobOutcome> StartActionAsync(BrowserAction action, CancellationToken cancellationToken = default) =>
             _host.StartActionAsync(action, cancellationToken);
+
+        public Task<BrowserJobOutcome> CreateActionAsync(Guid jobId, BrowserAction action, CancellationToken cancellationToken = default) =>
+            _host.CreateActionAsync(jobId, action, cancellationToken);
+
+        public Task<BrowserJobOutcome> AdvanceActionAsync(Guid jobId, CancellationToken cancellationToken = default) =>
+            _host.AdvanceActionAsync(jobId, cancellationToken);
+
+        public Task<BrowserJobOutcome?> GetAsync(Guid jobId, CancellationToken cancellationToken = default) =>
+            _host.GetAsync(jobId, cancellationToken);
 
         public Task<BrowserJobOutcome> ApproveAndResumeAsync(Guid jobId, string exactScope, CancellationToken cancellationToken = default) =>
             _host.ApproveAndResumeAsync(jobId, exactScope, cancellationToken);

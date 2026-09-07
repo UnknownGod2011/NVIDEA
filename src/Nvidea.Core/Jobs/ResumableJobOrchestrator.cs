@@ -65,7 +65,7 @@ public sealed class ResumableJobOrchestrator
         var existing = await _store.GetAsync(jobId, cancellationToken).ConfigureAwait(false);
         if (existing is not null)
         {
-            if (!Equals(existing.Definition, definition)
+            if (!DefinitionEquivalent(existing.Definition, definition)
                 || !CheckpointEquivalent(existing.Checkpoint, initialCheckpoint))
             {
                 throw new InvalidOperationException($"Job '{jobId}' already exists with a different definition or checkpoint.");
@@ -167,6 +167,15 @@ public sealed class ResumableJobOrchestrator
     private Task AuditAsync(AgentJobRecord job, string eventType, bool allowed, bool approved, string summary, CancellationToken cancellationToken) =>
         _auditTrail.AppendAsync(new AuditEvent(Guid.NewGuid(), DateTimeOffset.UtcNow, job.Definition.CapabilityId, job.JobId.ToString("N"), eventType, job.Definition.Risk, allowed, approved, job.ApprovalScope ?? string.Empty, summary,
             new Dictionary<string, string> { ["jobType"] = job.Definition.JobType, ["state"] = job.State.ToString(), ["executionLocation"] = job.ExecutionLocation.ToString(), ["attempt"] = job.Attempt.ToString() }), cancellationToken);
+
+    private static bool DefinitionEquivalent(AgentJobDefinition left, AgentJobDefinition right) =>
+        string.Equals(left.JobType, right.JobType, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(left.CapabilityId, right.CapabilityId, StringComparison.Ordinal)
+        && left.Risk == right.Risk
+        && left.ContainsPrivateOsData == right.ContainsPrivateOsData
+        && left.BenefitsFromBackgroundExecution == right.BenefitsFromBackgroundExecution
+        && left.MaxAttempts == right.MaxAttempts
+        && left.RequiredPermissions.SetEquals(right.RequiredPermissions);
 
     private static bool CheckpointEquivalent(AgentJobCheckpoint? left, AgentJobCheckpoint? right)
     {

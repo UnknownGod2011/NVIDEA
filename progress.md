@@ -41,7 +41,8 @@ The <=3 minute demo should prove invocation anywhere on Windows, context awarene
 - Memory, durable jobs and browser-goal sessions use versioned protected local-state envelopes; on Windows the default protector is CurrentUser DPAPI.
 - Local capability audit uses protected per-event payloads, append-only hash chaining, crash-safe protected tail seals, segmented rotation and protected cross-segment manifests.
 - Production browser orchestration uses `SegmentedAuditTrail`.
-- Production browser runtime now uses an NVIDEA-owned persistent Chromium profile and session-aware popup/new-tab tracking.
+- Production browser runtime uses an NVIDEA-owned persistent Chromium profile and session-aware popup/new-tab tracking.
+- Browser downloads are now captured into an NVIDEA-owned durable quarantine before a `Download` action may return successfully; quarantine metadata is DPAPI-protected by default on Windows and export is a separate explicit user-approved handoff.
 - Root README + MIT license.
 - No repository other than NVIDEA has been mutated.
 
@@ -54,74 +55,63 @@ The <=3 minute demo should prove invocation anywhere on Windows, context awarene
 - Added CurrentUser DPAPI-backed local-state protection for memory/jobs/browser-goal sessions.
 - Reworked audit persistence into protected hash-chained records, tail seals and bounded segmented rotation.
 
-### 2026-09-07 — Browser profile ownership + popup/new-tab tracking
-- Added `BrowserProfileOwnership` with a dedicated `browser-profile` directory beneath NVIDEA state and an atomic `.nvidea-profile.json` ownership marker.
-- Existing unmarked/corrupt profile directories fail closed instead of being adopted.
-- Added `PlaywrightBrowserSessionDriver`, which uses `BrowserContext.Page` events to track new pages and closes cross-boundary HTTP(S) popups rather than exposing them to the agent.
-- Added privacy-minimized session snapshots containing page URL/boundary status only, with no cookie/local-storage/auth-header disclosure.
-- Added profile-boundary tests.
-- Commits: `f3335f59111de2928cc6e6c186370e25d8b29241`, `43cfb4ffb19d5c9a07d72887fa429353bbe656cf`, `384d136338f26eb9d17f61d4eb4f81c7c9a092a5`, `970b40bce228adfe97cfeacf34422b01e7887de8`.
+### 2026-09-07 to 2026-09-08 — Persistent authenticated browser boundary
+- Added `BrowserProfileOwnership` with a dedicated `browser-profile` directory and ownership marker; unmarked/corrupt profiles fail closed.
+- Added `PlaywrightBrowserSessionDriver` using `BrowserContext.Page` to track popups/new tabs and reject cross-boundary HTTP(S) pages.
+- Added privacy-minimized session snapshots containing page URL/boundary state only.
+- Added `PersistentBrowserContextFactory` using Playwright `LaunchPersistentContextAsync`; startup closes restored tabs while preserving browser-managed profile/auth state.
+- Wired persistent Chromium into production `BrowserHostRuntime` and added opt-in integration coverage for cookie persistence, stale-tab non-adoption and popup boundaries.
+- Fixed browser integration tests to inspect logical DPAPI-decrypted durable job records instead of raw `jobs.json` text.
+- Representative commits: `f3335f59111de2928cc6e6c186370e25d8b29241`, `43cfb4ffb19d5c9a07d72887fa429353bbe656cf`, `d362130b0243c667f3d5de504a26ca41bf64cdb7`, `1ae2e2781846552b8d20c1250527a0be0a334e02`, `245e281ca329fe7b07d73526ea9234c3270df8a3`.
 
-### 2026-09-08 — Persistent Chromium session active in production runtime
+### 2026-09-08 — Durable permissioned browser download quarantine
 Completed:
-- Added `src/Nvidea.Core/Browser/PersistentBrowserContextFactory.cs`.
-- The factory validates/creates the dedicated NVIDEA-owned profile and launches Chromium with Playwright `LaunchPersistentContextAsync`.
-- On every startup, any restored tabs are closed before agent use. Browser-managed authenticated/profile state such as cookies/local storage may persist, but stale prior pages are never implicitly trusted as current agent context.
-- The runtime creates a fresh explicitly permitted `StartUri` page after persistent-context launch.
-- `BrowserHostRuntime` now uses the persistent-context factory and `PlaywrightBrowserSessionDriver` at the real production composition point. The former ephemeral `IBrowser -> NewContextAsync -> single PlaywrightBrowserDriver` path is removed.
-- Persistent-context shutdown now closes the context as the browser-process ownership boundary; the obsolete separate `IBrowser` close path is removed.
-- `BrowserHostRuntime.GetSessionSnapshotAsync` exposes the existing privacy-minimized session diagnostic.
-- Hardened click/popup timing: already-created `about:blank` candidate pages receive a short bounded classification window so an allowed popup can finish navigation before the next typed verifier observation. This does not discover arbitrary future pages or interact with the popup before classification.
-- Added `tests/Nvidea.Core.Tests/PersistentBrowserSessionIntegrationTests.cs` with opt-in real-Chromium coverage for harmless cookie persistence across a runtime restart, stale-tab non-adoption, same-host popup adoption and cross-host popup rejection.
-- Updated `docs/browser-integration-harness.md` with the persistent-session and popup-boundary scenarios.
+- Added `src/Nvidea.Core/Browser/BrowserDownloadQuarantine.cs`.
+- Every browser artifact managed by this subsystem has a durable record with id, source page URI, sanitized suggested filename, lifecycle state, byte length, SHA-256 digest, timestamps, failure state and optional explicit export path.
+- Download bytes first land at an NVIDEA-owned `.partial` quarantine path. Only after the producer completes, the file exists, its length is measured, and SHA-256 is computed is it atomically renamed to a stable `.payload` quarantine object and marked `Ready`.
+- A durable `Receiving` record is written before browser bytes are accepted. On restart, any still-`Receiving` entry becomes `Interrupted`; partial files are cleanup-only and are never promoted automatically.
+- Export is a separate operation requiring `userApproved: true`, an already-existing caller-selected destination directory, a safe sanitized leaf filename, no overwrite of an existing file, and re-verification of the quarantine payload's length + SHA-256.
+- Export uses a destination-side temporary file, verifies the copied bytes again, then atomically renames it to the final destination. The original quarantine payload is retained for audit/recovery rather than silently moved away.
+- Download metadata uses the existing `NVIDEA-STATE-V1` local-state envelope with purpose `browser-download-metadata-v1`; on Windows the default protector is CurrentUser DPAPI. The payload itself remains a local quarantined file and is not claimed to be application-encrypted.
+- Added `tests/Nvidea.Core.Tests/BrowserDownloadQuarantineTests.cs` covering capture/hash persistence, approval-required export, tamper detection, successful handoff, path traversal sanitization, cancellation/interrupted state, protected metadata non-disclosure, and no-overwrite behavior.
+- Hardened `PlaywrightBrowserSessionDriver` so browser actions are serialized and a `BrowserActionKind.Download` requires a configured quarantine boundary.
+- `PlaywrightBrowserSessionDriver` subscribes to Playwright `Page.Download`, associates capture with the source page and a monotonic sequence, waits for the post-click download capture, calls Playwright `SaveAsAsync`, checks `FailureAsync`, and only allows the `Download` action to return after durable quarantine capture succeeds.
+- A download from another page or an earlier sequence cannot prove the current download action. Unrelated captures may still be quarantined but are not accepted as action evidence.
+- `PersistentBrowserContextFactory` now constructs `BrowserDownloadQuarantine(stateDirectory)` and injects it into the production persistent session driver, so real `BrowserHostRuntime` download actions use this boundary rather than merely clicking a download control.
+- The session driver exposes `ListDownloadsAsync` and `ExportDownloadAsync` for an explicit handoff surface. The desktop UX/runtime still needs a polished user-facing download panel/confirmation flow; no autonomous export path was added.
 
 Validation / evidence:
-- Persistent context factory commit: `d362130b0243c667f3d5de504a26ca41bf64cdb7`.
-- Production BrowserHostRuntime wiring commit: `1ae2e2781846552b8d20c1250527a0be0a334e02`.
-- Persistent-session integration tests commit: `4668403236f247eeb3832505b7b02780c5efe85e`.
-- Popup classification timing hardening commit: `0995c08844300d9451b7ae55653a265f116c87ad`.
-- Persistence-boundary clarification commit: `d42f2c7e2c5a0c2973f91b71d2b7271611295e36`.
-- Integration-harness docs commit: `de674ceb9dfaad9691e08f9c7e7817d2b1c3f1dd`.
-- Current official Playwright .NET docs were checked during this work. They confirm that `LaunchPersistentContextAsync` stores browser session data such as cookies/local storage in the supplied user-data directory, that closing the persistent context closes its browser, that a separate automation profile should be used instead of the user's default Chrome profile, and that `BrowserContext.Page` is the supported new-page event.
-- No compilation, unit-test or Chromium-execution success was claimed because the available execution environment lacked a .NET toolchain.
+- Download quarantine commit: `86ce7ccfdfd09ad27fdb129c6220fe4deff02633`.
+- Quarantine regression tests commit: `588fdee148fca3c98c5ed90ac758aa899e689f69`.
+- Playwright download capture integration commit: `58374c4126288b5bfffd62e343667f7d1ce746e9`.
+- Production persistent-session wiring commit: `2bd59d1aa21e2a246a36e2ea65e834d5db279ca0`.
+- Current official Playwright .NET documentation was checked. It states that `Page.Download` is emitted when a download starts, downloaded context-owned files are otherwise temporary, and `SaveAsAsync` is the supported mechanism for persisting the completed download. The current BrowserType API also exposes `AcceptDownloads` on persistent contexts.
+- Source-level review of the committed files was performed after mutation.
+- Execution environment was checked again: `dotnet`, `msbuild`, `csc`, and `mcs` are unavailable. Direct GitHub cloning also still fails DNS resolution in the container. Therefore **no compile, unit-test, Chromium-run, DPAPI-run, or live Token Factory success is claimed**.
+- No GitHub Actions workflow was created, modified or rerun merely to manufacture a green signal.
 
 Security / privacy review:
-- The desktop runtime no longer needs or accepts the user's normal Chrome/Edge profile. Authentication state is scoped to the NVIDEA-owned profile directory.
-- Startup deliberately discards restored page/tab context while retaining browser-managed profile state, reducing the chance that a stale authenticated page silently becomes agent-visible context after restart.
-- Popup adoption remains host-boundary constrained; a disallowed HTTP(S) page is closed rather than becoming active agent context.
-- Session diagnostics expose URLs/boundary status only and do not enumerate cookie values or local storage.
-- Persistent Chromium profile data is local browser-managed data, **not** DPAPI-wrapped application state. Do not claim that browser cookies/profile files receive the same application-level encryption as NVIDEA memory/jobs/audit files.
-
-### 2026-09-08 — DPAPI-safe real-browser integration assertions
-Completed:
-- Re-read `BrowserHostRuntimeIntegrationTests` and confirmed two integration scenarios still inspected raw `jobs.json` text even though the production job store is DPAPI-protected by default on Windows.
-- Replaced those raw filesystem assertions with logical `JsonAgentJobStore.GetAsync(...)` assertions. This means Windows integration tests now validate the decrypted durable record through the same storage abstraction the application uses rather than making assumptions about ciphertext representation.
-- The consequential-click test now verifies the durable child is actually `WaitingForApproval`, carries the exact approval scope, retains typed postconditions in its checkpoint, contains no grant/token material in the checkpoint, becomes `Completed`, and clears its persisted approval scope after the single approved execution.
-- The Nemotron planner integration test now verifies the actual durable child record preserves typed postconditions, omits grant/bearer material, and clears approval state after verified completion.
-- No production security boundary was weakened; the tests continue to verify that approval capabilities remain ephemeral while becoming compatible with protected-at-rest state.
-
-Validation / evidence:
-- Test-hardening commit: `245e281ca329fe7b07d73526ea9234c3270df8a3`.
-- Source-level review confirms `JsonAgentJobStore` decrypts DPAPI-protected state on Windows before returning logical `AgentJobRecord` values and applies browser-checkpoint migration under its storage lock.
-- The execution environment was checked again for `dotnet`, `msbuild`, and `csc`; none is available, so **no compile/test success is claimed**.
-- No GitHub Actions workflow was created or rerun merely to manufacture a green result.
-
-Security / privacy review:
-- Tests no longer encourage treating encrypted durable files as inspectable plaintext.
-- Assertions target only the durable record fields/checkpoint that are intentionally persisted; ephemeral approval grants remain outside `AgentJobRecord`.
-- Clearing `ApprovalScope` after completion is now explicitly covered at the integration level, strengthening replay-resistance evidence.
+- Browser download is no longer synonymous with publishing an arbitrary site-controlled filename into the user's Downloads folder.
+- Suggested filenames are reduced to a bounded safe leaf filename; path separators/control characters are removed and export re-checks that the final path remains under the approved directory.
+- Existing destination files are never overwritten by this handoff path.
+- Quarantine payload tampering is detected before export by exact byte length and SHA-256 comparison, and the copied destination temp file is re-verified before final rename.
+- Cancellation/restart cannot auto-export a partial payload. A failed or interrupted record is not exportable.
+- Browser download metadata can contain sensitive source URLs/filenames, so it is DPAPI-protected by default on Windows. Quarantine payload bytes are not application-encrypted and rely on the local Windows user/profile boundary.
+- The Playwright event-handler capture is deliberately non-authorizing: it may finish quarantining bytes after the calling action is cancelled, but this can only result in a local `Ready` quarantine record; it cannot export/publish the file.
+- Current handoff approval is an explicit API boolean, not yet a single-use cryptographic approval grant integrated into `ScopedApprovalAuthorizer`. The desktop handoff UI must therefore remain a trusted caller boundary until that integration is added.
 
 ## Current Unverified / Risks
 - **Highest risk remains executable validation:** source review is not a substitute for `dotnet build`, `dotnet test`, a Windows WPF launch and a real Playwright Chromium launch.
-- The production persistent-context path and browser integration tests have not compiled or executed in this environment.
+- The production persistent-context path, download event/capture path and browser integration tests have not compiled or executed in this environment.
 - The live Token Factory strict-schema probe remains unexecuted because .NET and a Nebius API key are unavailable here.
-- DPAPI P/Invoke, protected stores, audit payloads/tail seals/segment manifests remain unexecuted on a real Windows runner in this environment.
-- Persistent Chromium profile contents are local but not application-encrypted by NVIDEA. OS/user-profile protections remain the boundary for Chromium-managed cookies and storage.
+- DPAPI P/Invoke, protected stores, audit payloads/tail seals/segment manifests and protected download metadata remain unexecuted on a real Windows runner in this environment.
+- Persistent Chromium profile contents and quarantined download payload bytes are local but not application-encrypted by NVIDEA. OS/user-profile protections remain their confidentiality boundary.
+- The download handoff API still uses a trusted `userApproved` boolean instead of a single-use scoped approval capability and is not yet surfaced as polished Windows UX.
+- Unsolicited/background page downloads can be quarantined; their capture task is not authorization to export, but the session driver should eventually add explicit lifecycle diagnostics and cleanup/retention policy.
 - Segmentation bounds active audit files by event count, but lifetime archive retention and byte-size quotas remain absent.
-- Durable download lifecycle remains incomplete.
 - Local voice/transcription is absent.
 - Tavily Extract/richer source authority/freshness work and a verified production embedding adapter remain opportunities.
 - Cross-file browser parent/child state is still separate atomic files; reserved-child ordering remains the crash-safety mechanism.
 
 ## Single Best Next Task
-Obtain the first real .NET 8 build/test/Chromium/Windows signal and immediately fix compile/runtime issues in the persistent-context and protected-store paths. Run the persistent restart + allowed/disallowed popup integration tests and the live Nebius strict-schema probe. If executable validation remains unavailable, implement the durable, permissioned download lifecycle next: quarantine browser downloads inside NVIDEA-owned state, verify completion/metadata before exposure, require an explicit user handoff for moving files outside quarantine, and ensure cancellation/restart cannot silently publish partial or unverified files.
+Obtain the first real .NET 8 build/test/Chromium/Windows signal and immediately fix compile/runtime issues in the persistent-context, protected-store and new download-quarantine paths. Run an opt-in localhost Chromium test that serves a real attachment, proves `BrowserActionKind.Download` cannot finish before quarantine capture, proves restart leaves only `Ready`/`Interrupted` durable states, and proves explicit export rejects tampering/overwrite. If executable validation remains unavailable, replace the download handoff `userApproved` boolean with a single-use exact-scope approval grant integrated with the existing capability/audit boundary and surface a minimal trusted Windows confirmation/list UI without enabling autonomous export.

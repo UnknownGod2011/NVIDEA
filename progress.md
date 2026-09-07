@@ -39,7 +39,7 @@ The <=3 minute demo should prove invocation anywhere on Windows, context awarene
 - End-to-end browser jobs route through fresh observation -> browser safety -> capability policy -> exact ephemeral approval -> concrete driver -> fresh observation -> verification.
 - Trusted desktop-facing composition layer under `Desktop` gives Windows code one safe API for Nemotron, memory and optional Tavily research.
 - Desktop session controller exposes observable agent states and real emergency-stop cancellation.
-- Minimal WPF Windows host now exists at `src/Nvidea.Windows` with global `Ctrl+Shift+Space`, text invocation, foreground-app/window context, explicit clipboard disclosure, state/status binding and emergency stop.
+- Minimal WPF Windows host at `src/Nvidea.Windows` with global `Ctrl+Shift+Space`, text invocation, foreground-app/window context, read-only UI Automation selected-text capture, explicit clipboard disclosure, state/status binding and emergency stop.
 - Root README + MIT license.
 - No repository other than NVIDEA has been mutated.
 
@@ -76,15 +76,7 @@ Completed:
 - Added application bootstrap that creates `NvideaCompositionRoot` from environment configuration and fails visibly if required Nebius configuration is absent.
 - Added `WindowsContextCapture` using bounded Win32 foreground-window/process metadata and optional clipboard capture.
 - Clipboard capture is opt-in and catches transient clipboard lock failures instead of failing the entire invocation.
-- Added a compact WPF host with:
-  - global `Ctrl+Shift+Space` registration via `RegisterHotKey`;
-  - foreground context capture before NVIDEA activates itself, preserving the invoking application/window;
-  - Auto/Chat/Research mode selection;
-  - explicit `Allow clipboard context` control;
-  - live session status binding;
-  - emergency-stop button wired to `DesktopSessionController.EmergencyStop()`;
-  - bounded error display rather than fake success states.
-- Hotkey registration failure degrades to manual Run-button invocation rather than preventing startup.
+- Added a compact WPF host with global `Ctrl+Shift+Space`, foreground context capture before activation, Auto/Chat/Research modes, explicit clipboard disclosure, live session state, emergency stop, bounded errors and graceful manual-invocation fallback if the hotkey cannot register.
 - Clipboard disclosure is re-checked at execution time; a previous hotkey capture cannot cause clipboard contents to be sent after the user disables disclosure.
 
 Security / privacy review:
@@ -100,9 +92,31 @@ Validation / evidence:
 - This execution environment still does not expose a usable Windows/.NET build runtime, so `Nvidea.Windows` is NOT claimed as compiled or launched.
 - No GitHub Actions workflow was added, triggered or rerun, avoiding CI/storage spam.
 
+### 2026-09-07 — Safe selected-text capture
+Completed:
+- Re-verified the write target as exactly `UnknownGod2011/NVIDEA` before every mutation; no other repository was touched.
+- Added `WindowsSelectionCapture` using Windows UI Automation `AutomationElement.FocusedElement` + `TextPattern.GetSelection()`.
+- Selection capture is read-only: it never synthesizes `Ctrl+C`, sends keystrokes, or changes clipboard contents.
+- Unsupported controls, stale automation elements, COM/UIA failures and empty/degenerate caret-only selections fail closed to `null` rather than blocking invocation.
+- Multiple selections are bounded to 16 ranges and 8,000 total characters before entering the existing untrusted-context boundary.
+- `WindowsContextCapture` now includes the selected text while the invoking application still owns focus, before NVIDEA activates itself.
+- The Windows shell now shows a `selection captured` indicator so users can see whether selection context was actually available.
+
+Security / privacy review:
+- UI Automation is used only for read access; no Invoke/Value/Selection mutation patterns are requested.
+- Selected text remains bounded and is already labeled/handled as untrusted external context by `DesktopInvocationService`.
+- Clipboard disclosure semantics are unchanged and remain separately opt-in.
+- This change does not grant or execute any browser/OS capability and does not weaken approval policy.
+
+Validation / evidence:
+- Current Microsoft UI Automation documentation confirms `TextPattern.GetSelection()` is the supported mechanism for retrieving selected text; a caret-only/no-selection state may return a degenerate range, which the implementation ignores when its text is empty.
+- Source review checked focus timing, range limits, empty-selection behavior and exception handling.
+- Local environment check still finds no `dotnet`, `msbuild` or `csc`; compilation/Windows launch is therefore NOT claimed.
+- No CI workflow was added, triggered or rerun.
+
 Unverified / risks:
 - Full repository compilation remains the highest immediate technical risk.
-- Selected-text capture is not yet implemented in the Windows host; the core contract supports it, but the host currently supplies `null` rather than using unsafe clipboard-stealing tricks.
+- Some applications do not expose selection through UI Automation; those correctly yield no selected-text context rather than using invasive clipboard fallback.
 - The WPF shell is functional/minimal rather than polished orb UX; voice/local transcription remains absent.
 - The trusted Windows composition root still does not instantiate browser lifetime/session ownership or permission-approval UI.
 - Memory/job/audit JSON persistence is not yet encrypted at rest.
@@ -110,4 +124,4 @@ Unverified / risks:
 - A deterministic real Chromium integration harness still does not exist.
 
 ## Single Best Next Task
-Add **safe selected-text capture + explicit approval UX + browser host composition**: use Windows accessibility/UI Automation for read-only selection retrieval where supported (without synthesizing Ctrl+C or mutating the clipboard), add a concrete approval dialog/view-model that can mint only the exact ephemeral grant requested by a paused capability/job, and instantiate Playwright/browser-job lifetime inside the trusted Windows host so a deterministic local browser scenario can demonstrate observe -> plan -> approval -> action -> verification. Pair this with the first credential-free Chromium integration harness and obtain real `dotnet test`/Windows launch evidence as soon as a .NET-capable environment is available.
+Add **explicit approval UX + browser host composition**: create a concrete Windows approval dialog/view-model that can approve only the exact scope requested by a paused capability/job, mint the corresponding ephemeral single-use grant only after the user confirms, and instantiate Playwright/browser-job lifetime inside the trusted Windows composition root. Then add a deterministic credential-free local Chromium scenario proving observe -> plan -> approval -> action -> fresh observation -> verification, and obtain real `dotnet test`/Windows launch evidence as soon as a .NET-capable environment is available.

@@ -17,7 +17,12 @@ public sealed class BrowserActionJobHandlerTests
             DateTimeOffset.UtcNow,
             SnapshotId: "before"));
 
-        var action = new BrowserAction(BrowserActionKind.Read, ExpectedState: "Hello world");
+        var action = new BrowserAction(
+            BrowserActionKind.Read,
+            Postconditions: new[]
+            {
+                new BrowserPostcondition(BrowserPostconditionKind.VisibleTextContains, Expected: "Hello world")
+            });
         var job = await CreateJobAsync(fixture, action, DataPermission.BrowserRead, CapabilityRiskLevel.Low);
 
         var completed = await fixture.Orchestrator.RunNextStepAsync(job.JobId);
@@ -47,8 +52,11 @@ public sealed class BrowserActionJobHandlerTests
         var action = new BrowserAction(
             BrowserActionKind.Click,
             BrowserLocator.Accessibility("nv-1"),
-            ExpectedState: "Sent",
-            Rationale: "Send the reviewed message");
+            Rationale: "Send the reviewed message",
+            Postconditions: new[]
+            {
+                new BrowserPostcondition(BrowserPostconditionKind.VisibleTextContains, Expected: "Message Sent")
+            });
         var job = await CreateJobAsync(fixture, action, DataPermission.BrowserWrite, CapabilityRiskLevel.High);
 
         var paused = await fixture.Orchestrator.RunNextStepAsync(job.JobId);
@@ -77,7 +85,11 @@ public sealed class BrowserActionJobHandlerTests
         var action = new BrowserAction(
             BrowserActionKind.Click,
             new BrowserLocator(BrowserLocatorKind.Text, "Submit"),
-            Rationale: "Submit the form");
+            Rationale: "Submit the form",
+            Postconditions: new[]
+            {
+                new BrowserPostcondition(BrowserPostconditionKind.VisibleTextContains, Expected: "Submitted")
+            });
         var job = await CreateJobAsync(fixture, action, DataPermission.BrowserWrite, CapabilityRiskLevel.High);
         var paused = await fixture.Orchestrator.RunNextStepAsync(job.JobId);
 
@@ -101,7 +113,14 @@ public sealed class BrowserActionJobHandlerTests
             BrowserActionKind.Type,
             BrowserLocator.Accessibility("nv-1") with { Name = "Password" },
             Value: "not-a-real-secret",
-            Rationale: "Type password");
+            Rationale: "Type password",
+            Postconditions: new[]
+            {
+                new BrowserPostcondition(
+                    BrowserPostconditionKind.ElementValueEquals,
+                    Locator: BrowserLocator.Accessibility("nv-1"),
+                    Expected: "not-a-real-secret")
+            });
         var job = await CreateJobAsync(fixture, action, DataPermission.BrowserWrite, CapabilityRiskLevel.High);
 
         var result = await fixture.Orchestrator.RunNextStepAsync(job.JobId);
@@ -120,8 +139,11 @@ public sealed class BrowserActionJobHandlerTests
         var action = new BrowserAction(
             BrowserActionKind.Click,
             new BrowserLocator(BrowserLocatorKind.Text, "Next"),
-            ExpectedState: "Dashboard",
-            Rationale: "Open next page");
+            Rationale: "Open next page",
+            Postconditions: new[]
+            {
+                new BrowserPostcondition(BrowserPostconditionKind.VisibleTextContains, Expected: "Dashboard")
+            });
         var job = await CreateJobAsync(fixture, action, DataPermission.BrowserWrite, CapabilityRiskLevel.Medium);
 
         var paused = await fixture.Orchestrator.RunNextStepAsync(job.JobId);
@@ -147,7 +169,11 @@ public sealed class BrowserActionJobHandlerTests
         var action = new BrowserAction(
             BrowserActionKind.Click,
             new BrowserLocator(BrowserLocatorKind.Text, "Submit"),
-            Rationale: "Submit application");
+            Rationale: "Submit application",
+            Postconditions: new[]
+            {
+                new BrowserPostcondition(BrowserPostconditionKind.VisibleTextContains, Expected: "Submitted")
+            });
         var job = await CreateJobAsync(fixture, action, DataPermission.BrowserWrite, CapabilityRiskLevel.High);
 
         var paused = await fixture.Orchestrator.RunNextStepAsync(job.JobId);

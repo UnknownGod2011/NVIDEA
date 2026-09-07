@@ -7,6 +7,8 @@ namespace Nvidea.Core.Tests;
 
 public sealed class AuditTrailProtectionTests
 {
+    private const string TailSealPurpose = "audit-tail-seal-v1";
+
     [Fact]
     public async Task ProtectedAudit_RoundTripsWithoutPersistingSummary()
     {
@@ -22,6 +24,7 @@ public sealed class AuditTrailProtectionTests
             var persisted = await File.ReadAllTextAsync(path);
             Assert.DoesNotContain("sensitive-summary", persisted, StringComparison.Ordinal);
             Assert.Contains("\"protected\":true", persisted, StringComparison.OrdinalIgnoreCase);
+            Assert.True(File.Exists(path + ".seal"));
 
             var restored = Assert.Single(await trail.ReadAllAsync());
             Assert.Equal(auditEvent.EventId, restored.EventId);
@@ -95,6 +98,89 @@ public sealed class AuditTrailProtectionTests
     }
 
     [Fact]
+    public async Task TailSeal_RejectsFinalRecordDeletion()
+    {
+        var directory = CreateTempDirectory();
+        try
+        {
+            var path = Path.Combine(directory, "audit.jsonl");
+            var trail = new JsonLinesAuditTrail(path, new TestProtector());
+            await trail.AppendAsync(CreateEvent("first"));
+            await trail.AppendAsync(CreateEvent("second"));
+
+            var lines = await File.ReadAllLinesAsync(path);
+            await File.WriteAllLinesAsync(path, new[] { lines[0] });
+
+            var error = await Assert.ThrowsAsync<InvalidDataException>(() => trail.ReadAllAsync());
+            Assert.Contains("tail seal", error.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task TailSeal_PendingStateRecoversWhenAppendReachedDisk()
+    {
+        var directory = CreateTempDirectory();
+        try
+        {
+            var path = Path.Combine(directory, "audit.jsonl");
+            var protector = new TestProtector();
+            var trail = new JsonLinesAuditTrail(path, protector);
+            await trail.AppendAsync(CreateEvent("first"));
+            await trail.AppendAsync(CreateEvent("second"));
+
+            var hashes = await ReadLineHashesAsync(path);
+            await WriteTestSealAsync(path, protector, new TestSeal(1, "pending", 1, hashes[0], 2, hashes[1]));
+
+            Assert.Equal(2, (await trail.ReadAllAsync()).Count);
+            var recovered = await ReadTestSealAsync(path, protector);
+            Assert.Equal("committed", recovered.State);
+            Assert.Equal(2, recovered.CommittedSequence);
+            Assert.Equal(hashes[1], recovered.CommittedHash);
+            Assert.Null(recovered.PendingSequence);
+            Assert.Null(recovered.PendingHash);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task TailSeal_PendingStateRecoversWhenAppendDidNotReachDisk()
+    {
+        var directory = CreateTempDirectory();
+        try
+        {
+            var path = Path.Combine(directory, "audit.jsonl");
+            var protector = new TestProtector();
+            var trail = new JsonLinesAuditTrail(path, protector);
+            await trail.AppendAsync(CreateEvent("first"));
+            await trail.AppendAsync(CreateEvent("second"));
+
+            var lines = await File.ReadAllLinesAsync(path);
+            var hashes = await ReadLineHashesAsync(path);
+            await WriteTestSealAsync(path, protector, new TestSeal(1, "pending", 1, hashes[0], 2, hashes[1]));
+            await File.WriteAllLinesAsync(path, new[] { lines[0] });
+
+            Assert.Single(await trail.ReadAllAsync());
+            var recovered = await ReadTestSealAsync(path, protector);
+            Assert.Equal("committed", recovered.State);
+            Assert.Equal(1, recovered.CommittedSequence);
+            Assert.Equal(hashes[0], recovered.CommittedHash);
+            Assert.Null(recovered.PendingSequence);
+            Assert.Null(recovered.PendingHash);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task LegacyPlaintextJsonl_MigratesAndCanAppendToExactWrittenChain()
     {
         var directory = CreateTempDirectory();
@@ -115,6 +201,7 @@ public sealed class AuditTrailProtectionTests
             Assert.DoesNotContain("legacy-private-summary", persisted, StringComparison.Ordinal);
             Assert.DoesNotContain("after-migration", persisted, StringComparison.Ordinal);
             Assert.Contains("\"sequence\":2", persisted, StringComparison.OrdinalIgnoreCase);
+            Assert.True(File.Exists(path + ".seal"));
         }
         finally
         {
@@ -135,6 +222,7 @@ public sealed class AuditTrailProtectionTests
             var trail = new JsonLinesAuditTrail(path, new TestProtector());
             await Assert.ThrowsAsync<InvalidDataException>(() => trail.ReadAllAsync());
             Assert.Equal(invalid, await File.ReadAllTextAsync(path));
+            Assert.False(File.Exists(path + ".seal"));
         }
         finally
         {
@@ -153,14 +241,41 @@ public sealed class AuditTrailProtectionTests
             var auditEvent = CreateEvent("once");
             await trail.AppendAsync(auditEvent);
             var before = await File.ReadAllTextAsync(path);
+            var sealBefore = await File.ReadAllBytesAsync(path + ".seal");
 
             await Assert.ThrowsAsync<InvalidOperationException>(() => trail.AppendAsync(auditEvent));
             Assert.Equal(before, await File.ReadAllTextAsync(path));
+            Assert.Equal(sealBefore, await File.ReadAllBytesAsync(path + ".seal"));
         }
         finally
         {
             Directory.Delete(directory, recursive: true);
         }
+    }
+
+    private static async Task<string[]> ReadLineHashesAsync(string path)
+    {
+        var lines = await File.ReadAllLinesAsync(path);
+        return lines.Select(line =>
+        {
+            using var doc = JsonDocument.Parse(line);
+            return doc.RootElement.GetProperty("hash").GetString()!;
+        }).ToArray();
+    }
+
+    private static async Task WriteTestSealAsync(string path, ILocalStateProtector protector, TestSeal seal)
+    {
+        var plaintext = JsonSerializer.SerializeToUtf8Bytes(seal, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var encoded = LocalStateEnvelope.Encode(plaintext, protector, TailSealPurpose);
+        await File.WriteAllBytesAsync(path + ".seal", encoded);
+    }
+
+    private static async Task<TestSeal> ReadTestSealAsync(string path, ILocalStateProtector protector)
+    {
+        var persisted = await File.ReadAllBytesAsync(path + ".seal");
+        var decoded = LocalStateEnvelope.Decode(persisted, protector, TailSealPurpose);
+        Assert.True(decoded.WasProtected);
+        return JsonSerializer.Deserialize<TestSeal>(decoded.Plaintext, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
     }
 
     private static AuditEvent CreateEvent(string summary) => new(
@@ -182,6 +297,14 @@ public sealed class AuditTrailProtectionTests
         Directory.CreateDirectory(path);
         return path;
     }
+
+    private sealed record TestSeal(
+        int Version,
+        string State,
+        long CommittedSequence,
+        string CommittedHash,
+        long? PendingSequence,
+        string? PendingHash);
 
     private sealed class TestProtector : ILocalStateProtector
     {

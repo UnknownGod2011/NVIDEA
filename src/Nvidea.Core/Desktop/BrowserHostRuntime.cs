@@ -27,7 +27,8 @@ public sealed record BrowserJobOutcome(
     Guid JobId,
     AgentJobState State,
     string Message,
-    BrowserApprovalPrompt? Approval = null)
+    BrowserApprovalPrompt? Approval = null,
+    BrowserGoalVerifiedStep? VerifiedStep = null)
 {
     public bool IsTerminal => State is AgentJobState.Completed or AgentJobState.Failed or AgentJobState.Cancelled;
 }
@@ -272,7 +273,42 @@ public sealed class BrowserHostRuntime : IAsyncDisposable
             _ => "Browser action is pending."
         };
 
-        return new BrowserJobOutcome(job.JobId, job.State, message, prompt);
+        return new BrowserJobOutcome(job.JobId, job.State, message, prompt, TryReadVerifiedStep(job));
+    }
+
+    private static BrowserGoalVerifiedStep? TryReadVerifiedStep(AgentJobRecord job)
+    {
+        if (job.State != AgentJobState.Completed
+            || job.Checkpoint is null
+            || !string.Equals(job.Checkpoint.Step, "browser.action.verified", StringComparison.Ordinal)
+            || string.IsNullOrWhiteSpace(job.Checkpoint.Payload))
+        {
+            return null;
+        }
+
+        try
+        {
+            var checkpoint = JsonSerializer.Deserialize<VerifiedBrowserActionCheckpoint>(job.Checkpoint.Payload, JsonOptions);
+            if (checkpoint is null
+                || !Enum.TryParse<BrowserActionKind>(checkpoint.Kind, ignoreCase: true, out var kind)
+                || checkpoint.UrlBefore is null
+                || checkpoint.UrlAfter is null)
+            {
+                return null;
+            }
+
+            return new BrowserGoalVerifiedStep(
+                job.JobId,
+                kind,
+                checkpoint.UrlBefore,
+                checkpoint.UrlAfter,
+                checkpoint.VerificationDetail,
+                checkpoint.CompletedAt);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     private static BrowserAction? TryReadAction(AgentJobRecord job)
@@ -326,4 +362,12 @@ public sealed class BrowserHostRuntime : IAsyncDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
     }
+
+    private sealed record VerifiedBrowserActionCheckpoint(
+        string Kind,
+        Guid ActionId,
+        Uri UrlBefore,
+        Uri UrlAfter,
+        string? VerificationDetail,
+        DateTimeOffset CompletedAt);
 }

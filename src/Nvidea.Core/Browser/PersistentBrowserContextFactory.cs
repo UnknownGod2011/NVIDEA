@@ -4,9 +4,9 @@ namespace Nvidea.Core.Browser;
 
 /// <summary>
 /// Creates a Chromium persistent context rooted exclusively in the NVIDEA-owned browser profile.
-/// Existing tabs are never adopted on startup: browser-managed authenticated state (cookies,
-/// local/session storage as supported by Chromium) may persist, but every runtime begins on a fresh
-/// explicitly-permitted page so stale tabs cannot silently become agent-visible context.
+/// Existing tabs are never adopted on startup: browser-managed authenticated/profile state such as
+/// cookies and local storage may persist, but every runtime begins on a fresh explicitly-permitted
+/// page so stale tabs cannot silently become agent-visible context.
 /// </summary>
 public static class PersistentBrowserContextFactory
 {

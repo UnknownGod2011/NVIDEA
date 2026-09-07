@@ -51,6 +51,8 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
     private readonly IBrowserContext _context;
     private readonly IBrowserDriver _driver;
     private readonly PlaywrightBrowserSessionDriver _sessionDriver;
+    private readonly BrowserDownloadHandoffService _downloadHandoff;
+    private readonly ScopedApprovalAuthorizer _approvals;
     private readonly IAgentJobStore _jobStore;
     private readonly ResumableJobOrchestrator _jobs;
     private bool _disposed;
@@ -59,6 +61,8 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
         IPlaywright playwright,
         IBrowserContext context,
         PlaywrightBrowserSessionDriver driver,
+        BrowserDownloadHandoffService downloadHandoff,
+        ScopedApprovalAuthorizer approvals,
         IAgentJobStore jobStore,
         ResumableJobOrchestrator jobs)
     {
@@ -66,6 +70,8 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
         _context = context;
         _driver = driver;
         _sessionDriver = driver;
+        _downloadHandoff = downloadHandoff;
+        _approvals = approvals;
         _jobStore = jobStore;
         _jobs = jobs;
     }
@@ -120,12 +126,25 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
                     },
                     CapabilityRiskLevel.Medium,
                     RequiresConfirmation: false,
-                    "Bounded local browser automation with exact approvals for consequential writes.")
+                    "Bounded local browser automation with exact approvals for consequential writes."),
+                new CapabilityDescriptor(
+                    BrowserDownloadHandoffService.CapabilityId,
+                    "1.0.0",
+                    "Browser download handoff",
+                    new HashSet<DataPermission> { DataPermission.FilesWrite },
+                    CapabilityRiskLevel.High,
+                    RequiresConfirmation: true,
+                    "Release a verified quarantined browser download to a human-selected destination only after exact approval.")
             });
             var capabilityPolicy = new CapabilityPermissionPolicy(registry);
             var approvals = new ScopedApprovalAuthorizer();
             var ephemeralApprovals = new EphemeralJobApprovalStore();
             var audit = new SegmentedAuditTrail(Path.Combine(fullStateDirectory, "audit.jsonl"));
+            var downloadHandoff = new BrowserDownloadHandoffService(
+                session.Downloads,
+                capabilityPolicy,
+                approvals,
+                audit);
             var backend = new BrowserCapabilityBackend(driver);
             var toolExecutor = new CapabilityToolExecutor(capabilityPolicy, approvals, audit, backend);
             var execution = new BrowserCapabilityExecutionService(
@@ -145,7 +164,14 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
                 approvals,
                 ephemeralApprovals);
 
-            return new BrowserHostRuntime(playwright, context, driver, store, orchestrator);
+            return new BrowserHostRuntime(
+                playwright,
+                context,
+                driver,
+                downloadHandoff,
+                approvals,
+                store,
+                orchestrator);
         }
         catch
         {
@@ -174,6 +200,51 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
     {
         ThrowIfDisposed();
         return _sessionDriver.GetSessionSnapshotAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Lists quarantined browser downloads for a trusted UI. Payload bytes remain inside NVIDEA
+    /// state and this read-only operation cannot authorize a handoff.
+    /// </summary>
+    public Task<IReadOnlyList<BrowserDownloadRecord>> ListDownloadsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        return _sessionDriver.ListDownloadsAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Prepares the exact download + destination approval scope for display by a trusted human UI.
+    /// This method does not mint a grant and cannot move the quarantined payload.
+    /// </summary>
+    public Task<BrowserDownloadHandoffPlan> PrepareDownloadHandoffAsync(
+        Guid downloadId,
+        string destinationDirectory,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        return _downloadHandoff.PrepareAsync(downloadId, destinationDirectory, cancellationToken);
+    }
+
+    /// <summary>
+    /// Trusted UI boundary for a human-confirmed download handoff. The caller must echo the exact
+    /// scope shown during confirmation. A short-lived single-use grant is minted only after that
+    /// equality check and is consumed by BrowserDownloadHandoffService before any filesystem copy.
+    /// </summary>
+    public async Task<BrowserDownloadExportReceipt> ApproveAndExportDownloadAsync(
+        BrowserDownloadHandoffPlan approvedPlan,
+        string exactScope,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(approvedPlan);
+        if (string.IsNullOrWhiteSpace(exactScope))
+            throw new ArgumentException("Exact approval scope is required.", nameof(exactScope));
+        if (!string.Equals(exactScope, approvedPlan.Decision.ApprovalScope, StringComparison.Ordinal))
+            throw new UnauthorizedAccessException("Download approval scope does not match the prepared handoff.");
+
+        var grant = _approvals.Grant(approvedPlan.Decision, TimeSpan.FromMinutes(2));
+        return await _downloadHandoff.ExportAsync(approvedPlan, grant, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>

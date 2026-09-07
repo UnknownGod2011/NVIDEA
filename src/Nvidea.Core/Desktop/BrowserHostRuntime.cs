@@ -252,6 +252,25 @@ public sealed class BrowserHostRuntime : IAsyncDisposable
         return Describe(advanced, TryReadAction(advanced));
     }
 
+    /// <summary>
+    /// Restores only the non-authorizing wait state when a restart lost an ephemeral grant before
+    /// execution began. No ApprovalGrant is minted by this operation.
+    /// </summary>
+    public async Task<BrowserJobOutcome> RearmApprovalAsync(
+        Guid jobId,
+        string exactScope,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (jobId == Guid.Empty)
+            throw new ArgumentException("Job id is required.", nameof(jobId));
+        if (string.IsNullOrWhiteSpace(exactScope))
+            throw new ArgumentException("Exact approval scope is required.", nameof(exactScope));
+
+        var rearmed = await _jobs.RearmApprovalAsync(jobId, exactScope, cancellationToken).ConfigureAwait(false);
+        return Describe(rearmed, TryReadAction(rearmed));
+    }
+
     public async Task<BrowserJobOutcome> CancelAsync(Guid jobId, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
@@ -306,6 +325,7 @@ public sealed class BrowserHostRuntime : IAsyncDisposable
             AgentJobState.Failed => $"Browser action failed: {job.LastError}",
             AgentJobState.RetryScheduled => $"Browser action failed safely and is eligible for retry: {job.LastError}",
             AgentJobState.Pending => "Browser action is durably created and has not executed yet.",
+            AgentJobState.Running => "Browser action has an ambiguous in-flight checkpoint and will not be replayed automatically.",
             _ => "Browser action is pending."
         };
 

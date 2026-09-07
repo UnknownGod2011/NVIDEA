@@ -87,7 +87,8 @@ public sealed record BrowserAction(
     string? Value = null,
     Uri? Destination = null,
     string? ExpectedState = null,
-    string? Rationale = null);
+    string? Rationale = null,
+    IReadOnlyList<BrowserPostcondition>? Postconditions = null);
 
 public sealed record BrowserActionDecision(
     BrowserRiskLevel Risk,

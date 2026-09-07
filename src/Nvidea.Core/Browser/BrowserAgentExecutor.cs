@@ -71,9 +71,7 @@ public sealed class BrowserAgentExecutor
 
         if (decision.RequiresApproval)
         {
-            var approved = await _approval
-                .RequestApprovalAsync(action, decision, before, cancellationToken)
-                .ConfigureAwait(false);
+            var approved = await _approval.RequestApprovalAsync(action, decision, before, cancellationToken).ConfigureAwait(false);
             if (!approved)
             {
                 return new BrowserActionReceipt(
@@ -89,14 +87,11 @@ public sealed class BrowserAgentExecutor
             await _driver.ExecuteAsync(action, cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             var after = await _driver.ObserveAsync(cancellationToken).ConfigureAwait(false);
-            var verification = await _verifier
-                .VerifyAsync(action, before, after, cancellationToken)
-                .ConfigureAwait(false);
+            var verification = await _verifier.VerifyAsync(action, before, after, cancellationToken).ConfigureAwait(false);
 
             return new BrowserActionReceipt(
                 actionId, action, decision, started, DateTimeOffset.UtcNow,
-                DriverReportedSuccess: true,
-                Verified: verification.Verified,
+                DriverReportedSuccess: true, Verified: verification.Verified,
                 VerificationDetail: verification.Detail,
                 before.Url, after.Url);
         }
@@ -107,15 +102,7 @@ public sealed class BrowserAgentExecutor
         catch (Exception ex)
         {
             BrowserObservation? after = null;
-            try
-            {
-                after = await _driver.ObserveAsync(CancellationToken.None).ConfigureAwait(false);
-            }
-            catch
-            {
-                // Best-effort recovery observation only; preserve the primary failure.
-            }
-
+            try { after = await _driver.ObserveAsync(CancellationToken.None).ConfigureAwait(false); } catch { }
             return new BrowserActionReceipt(
                 actionId, action, decision, started, DateTimeOffset.UtcNow,
                 DriverReportedSuccess: false, Verified: false,
@@ -138,15 +125,18 @@ public sealed class ConservativeBrowserVerifier : IBrowserActionVerifier
         if (action.Kind == BrowserActionKind.Read)
             return Task.FromResult((true, "Read-only observation completed."));
 
+        if (action.Postconditions is { Count: > 0 })
+            return Task.FromResult(BrowserPostconditionEvaluator.VerifyAll(action.Postconditions, after));
+
         if (action.Kind == BrowserActionKind.Navigate && action.Destination is not null)
         {
-            var destination = Normalize(action.Destination);
-            var actual = Normalize(after.Url);
-            var verified = destination == actual;
-            return Task.FromResult((verified,
-                verified ? "Navigation destination verified." : $"Expected {destination}, observed {actual}."));
+            var result = BrowserPostconditionEvaluator.VerifyOne(
+                new BrowserPostcondition(BrowserPostconditionKind.UrlEquals, action.Destination.AbsoluteUri), after);
+            return Task.FromResult(result);
         }
 
+        // Legacy persisted actions may still contain ExpectedState. Keep this path only for
+        // backwards compatibility; new planner output should use typed postconditions.
         if (!string.IsNullOrWhiteSpace(action.ExpectedState))
         {
             var expected = action.ExpectedState.Trim();
@@ -155,9 +145,8 @@ public sealed class ConservativeBrowserVerifier : IBrowserActionVerifier
                 || after.Elements.Any(element =>
                     (element.Name?.Contains(expected, StringComparison.OrdinalIgnoreCase) ?? false)
                     || (element.Value?.Contains(expected, StringComparison.OrdinalIgnoreCase) ?? false));
-
             return Task.FromResult((verified,
-                verified ? $"Expected state observed: {expected}" : $"Expected state not observed: {expected}"));
+                verified ? "Legacy expected-state text observed." : "Legacy expected-state text was not observed."));
         }
 
         var changed = before.Url != after.Url
@@ -165,15 +154,7 @@ public sealed class ConservativeBrowserVerifier : IBrowserActionVerifier
             || !string.Equals(before.SnapshotId, after.SnapshotId, StringComparison.Ordinal);
 
         return Task.FromResult((changed,
-            changed
-                ? "Browser state changed after action."
-                : "No verifiable browser-state change was observed; action is treated as unverified."));
-    }
-
-    private static string Normalize(Uri uri)
-    {
-        var builder = new UriBuilder(uri) { Fragment = string.Empty };
-        return builder.Uri.AbsoluteUri.TrimEnd('/');
+            changed ? "Browser state changed after action." : "No verifiable browser-state change was observed; action is treated as unverified."));
     }
 }
 

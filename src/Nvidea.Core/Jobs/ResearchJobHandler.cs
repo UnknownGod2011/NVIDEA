@@ -92,21 +92,21 @@ public sealed class ResearchJobHandler : IAgentJobHandler
         var planned = DeserializeBounded<PlannedCheckpoint>(payload);
         ValidateQuestion(planned.Question);
         var plan = planned.Plan ?? throw new InvalidOperationException("Research plan checkpoint is missing its plan.");
-        var evidence = await _engine.GatherEvidenceAsync(planned.Question, plan, cancellationToken).ConfigureAwait(false);
+        var prepared = await _engine.GatherEvidenceAsync(planned.Question, plan, cancellationToken).ConfigureAwait(false);
 
         return new JobStepResult(
             Completed: false,
             CheckpointStep: EvidenceStep,
-            CheckpointPayload: SerializeBounded(new EvidenceCheckpoint(planned.Question, plan, evidence)));
+            CheckpointPayload: SerializeBounded(new EvidenceCheckpoint(planned.Question, prepared)));
     }
 
     private async Task<JobStepResult> SynthesizeAsync(string? payload, CancellationToken cancellationToken)
     {
         var evidenceCheckpoint = DeserializeBounded<EvidenceCheckpoint>(payload);
         ValidateQuestion(evidenceCheckpoint.Question);
-        var plan = evidenceCheckpoint.Plan ?? throw new InvalidOperationException("Research evidence checkpoint is missing its plan.");
-        var evidence = evidenceCheckpoint.Evidence ?? throw new InvalidOperationException("Research evidence checkpoint is missing evidence.");
-        var report = await _engine.SynthesizeAsync(evidenceCheckpoint.Question, plan, evidence, cancellationToken).ConfigureAwait(false);
+        var prepared = evidenceCheckpoint.Prepared
+            ?? throw new InvalidOperationException("Research evidence checkpoint is missing prepared evidence.");
+        var report = await _engine.SynthesizeAsync(evidenceCheckpoint.Question, prepared, cancellationToken).ConfigureAwait(false);
 
         return new JobStepResult(
             Completed: true,
@@ -141,6 +141,6 @@ public sealed class ResearchJobHandler : IAgentJobHandler
 
     private sealed record RequestedCheckpoint(string Question);
     private sealed record PlannedCheckpoint(string Question, ResearchPlan? Plan);
-    private sealed record EvidenceCheckpoint(string Question, ResearchPlan? Plan, ResearchBatch? Evidence);
+    private sealed record EvidenceCheckpoint(string Question, ResearchPreparedEvidence? Prepared);
     private sealed record CompletedCheckpoint(ResearchReport? Report);
 }

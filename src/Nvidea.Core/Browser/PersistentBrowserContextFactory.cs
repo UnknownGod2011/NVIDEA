@@ -26,7 +26,7 @@ public static class PersistentBrowserContextFactory
             headless,
             new BrowserDownloadQuarantineOptions(),
             stagingOptions: null,
-            cancellationToken);
+            cancellationToken: cancellationToken);
 
     /// <summary>
     /// Internal configuration seam used by deterministic integration coverage and composition tests.

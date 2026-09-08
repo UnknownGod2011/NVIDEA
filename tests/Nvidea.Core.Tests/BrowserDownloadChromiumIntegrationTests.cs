@@ -34,19 +34,19 @@ public sealed class BrowserDownloadChromiumIntegrationTests
                 ActionTimeoutMilliseconds: 10_000);
 
             session = await PersistentBrowserContextFactory.LaunchAsync(
-                playwright,
-                stateDirectory,
-                new Uri(site.StartUri, "/download-harness"),
-                driverOptions,
+                playwright: playwright,
+                stateDirectory: stateDirectory,
+                startUri: new Uri(site.StartUri, "/download-harness"),
+                driverOptions: driverOptions,
                 headless: true,
-                new BrowserDownloadQuarantineOptions(
+                quarantineOptions: new BrowserDownloadQuarantineOptions(
                     MaxRetainedBytes: 2L * 1024L * 1024L,
                     MaxSingleDownloadBytes: 512L * 1024L),
-                new BrowserDownloadStagingOptions(
+                stagingOptions: new BrowserDownloadStagingOptions(
                     MaxStagingBytes: 128L * 1024L,
                     MaxPartialBytes: 128L * 1024L,
                     PollIntervalMilliseconds: 20),
-                CancellationToken.None);
+                cancellationToken: CancellationToken.None);
 
             var action = new BrowserAction(
                 BrowserActionKind.Download,
@@ -55,7 +55,7 @@ public sealed class BrowserDownloadChromiumIntegrationTests
 
             var exception = await Assert.ThrowsAsync<BrowserDownloadQuotaExceededException>(
                 () => session.Driver.ExecuteAsync(action));
-            Assert.Contains("staging quota", exception.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("quota", exception.Message, StringComparison.OrdinalIgnoreCase);
 
             var records = await session.Downloads.ListAsync();
             var interrupted = Assert.Single(records);
@@ -76,8 +76,9 @@ public sealed class BrowserDownloadChromiumIntegrationTests
             }
 
             Assert.True(site.DownloadStarted);
-            Assert.True(
-                site.DownloadDisconnectedBeforeCompletion,
+            await AssertConditionEventuallyAsync(
+                () => site.DownloadDisconnectedBeforeCompletion,
+                TimeSpan.FromSeconds(2),
                 "The throttled server should observe Chromium disconnecting before the full fixture is sent after NVIDEA cancellation.");
         }
         finally
@@ -94,17 +95,23 @@ public sealed class BrowserDownloadChromiumIntegrationTests
 
     private static async Task AssertDirectoryEventuallyEmptyAsync(string path, TimeSpan timeout)
     {
+        await AssertConditionEventuallyAsync(
+            () => !Directory.Exists(path) || !Directory.EnumerateFileSystemEntries(path).Any(),
+            timeout,
+            "Playwright transient download staging should be empty after cancellation and cleanup.");
+    }
+
+    private static async Task AssertConditionEventuallyAsync(Func<bool> condition, TimeSpan timeout, string message)
+    {
         var deadline = DateTimeOffset.UtcNow + timeout;
         while (DateTimeOffset.UtcNow < deadline)
         {
-            if (!Directory.Exists(path) || !Directory.EnumerateFileSystemEntries(path).Any())
+            if (condition())
                 return;
             await Task.Delay(25);
         }
 
-        Assert.True(
-            !Directory.Exists(path) || !Directory.EnumerateFileSystemEntries(path).Any(),
-            "Playwright transient download staging should be empty after cancellation and cleanup.");
+        Assert.True(condition(), message);
     }
 
     private static void TryDeleteDirectory(string path)

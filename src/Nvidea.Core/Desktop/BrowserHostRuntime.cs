@@ -150,7 +150,7 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
             var capabilityPolicy = new CapabilityPermissionPolicy(registry);
             var approvals = new ScopedApprovalAuthorizer();
             var ephemeralApprovals = new EphemeralJobApprovalStore();
-            var audit = new SegmentedAuditTrail(Path.Combine(fullStateDirectory, "audit.jsonl"));
+            var audit = new BoundedSegmentedAuditTrail(Path.Combine(fullStateDirectory, "audit.jsonl"));
             var downloadHandoff = new BrowserDownloadHandoffService(
                 session.Downloads,
                 capabilityPolicy,

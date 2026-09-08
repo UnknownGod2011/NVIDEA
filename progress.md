@@ -13,112 +13,82 @@ Target: **Personal AI**. Secondary target: **Best Use of Tavily**. Ambition: top
 - Do not remove working NVIDEA functionality merely to simplify implementation.
 
 ## Target Architecture
-- **Desktop shell:** Windows global hotkeys, voice/text invocation, orb/status, active-app/selected-text/clipboard context, local speech where useful, permission UX and emergency stop.
-- **Agent core:** Nemotron through Nebius Token Factory, structured tools/output, bounded execution, verification, retries/cancellation and approvals.
-- **Memory:** typed working/episodic/semantic/project/skill memory with privacy-aware writes, hybrid retrieval, provenance/confidence/sensitivity/retention and deletion controls.
-- **Research:** Nemotron planning -> Tavily evidence -> untrusted-content boundary -> Nemotron synthesis -> validated citations.
-- **Browser:** DOM/accessibility observation -> Nemotron one-step plan -> typed action + typed postconditions -> hard-safety floor -> capability policy -> exact approval -> Playwright -> fresh observation -> deterministic verification -> repeat under strict budgets.
-- **Skills / permissions:** capability registry, least privilege, monotonic risk, single-use approvals and append-only audit.
-- **Jobs:** durable checkpoints, retries, cancellation, approval-paused states, ephemeral grants and local-vs-Nebius execution policy.
-- **Cloud:** Nebius Serverless only for suitable long-running/background workloads; private OS actions stay local.
-- **Local security:** high-sensitivity durable Windows state protected with CurrentUser DPAPI, purpose binding, conservative migration and fail-closed reads.
-
-## Hackathon Demo Bar
-The <=3 minute demo should prove invocation anywhere on Windows, context awareness, durable memory changing later behavior, Tavily research with sources, complex browser work with visible verification, approval before consequential actions, meaningful Nebius background work, and an architecture view proving Nemotron/Nebius/Tavily are core.
+- Windows-first desktop shell with global invocation, voice/text, context capture, permissions and emergency stop.
+- Nemotron via Nebius Token Factory as the primary reasoning runtime with structured tools, routing, retries, cancellation and bounded execution.
+- Layered privacy-aware memory, Tavily-backed research, safe browser automation, capability registry, single-use exact approvals, durable jobs and Nebius background execution.
+- Private OS actions remain local; high-sensitivity Windows durable state uses CurrentUser DPAPI where implemented.
 
 ## Current State
-- .NET 8 core at `src/Nvidea.Core` plus WPF host at `src/Nvidea.Windows`.
-- Nebius Token Factory inference client with Nemotron default, structured output/tools, conservative routing, retries, timeout/cancellation and endpoint validation.
-- Layered privacy-aware personal memory under `Memory`.
-- Tavily provider + Nemotron research engine under `Research`.
-- Concrete Playwright browser driver, hard safety policy, capability execution boundary and deterministic verifier under `Browser`.
-- Capability registry, least-privilege permission policy, exact single-use approval authorizer and privacy-minimized audit under `Capabilities`.
-- Durable resumable jobs, ephemeral approval handoff and Nebius Serverless REST contract under `Jobs`.
-- `BrowserHostRuntime` owns local Playwright + safety + capability + audit + child-job orchestration and exposes only bounded observations/high-level outcomes.
-- `NemotronBrowserPlanner` turns fresh untrusted observations into validated one-step decisions using typed postconditions.
-- `BrowserGoalAgent` runs a bounded observe -> plan -> durable child -> verify loop, halts at approval boundaries, and independently rejects legacy/unverifiable autonomous action contracts before child reservation.
-- Typed browser postconditions and verification-contract v2 are enforced for durable browser actions; safe legacy records migrate and ambiguous legacy mutations quarantine without execution.
-- Memory, durable jobs and browser-goal sessions use versioned protected local-state envelopes; on Windows the default protector is CurrentUser DPAPI.
-- Local capability audit uses protected per-event payloads, append-only hash chaining, crash-safe protected tail seals, segmented rotation and protected cross-segment manifests.
-- Production browser orchestration uses `SegmentedAuditTrail`.
-- Production browser runtime uses an NVIDEA-owned persistent Chromium profile and session-aware popup/new-tab tracking.
-- Browser downloads are captured into an NVIDEA-owned durable quarantine before a `Download` action may return successfully; quarantine metadata is DPAPI-protected by default on Windows.
-- `BrowserDownloadHandoffService` provides exact-scope, single-use approval and audit for releasing quarantined artifacts.
-- **Production runtime now composes that handoff service directly.** The handoff capability is registered in the same capability registry, uses the same `ScopedApprovalAuthorizer` and segmented audit trail, and the persistent browser session exposes the exact quarantine instance used by Playwright capture.
-- `BrowserHostRuntime` now exposes trusted-UI APIs to list quarantined downloads, prepare an exact handoff plan, and approve/export only when the UI echoes the exact scope shown to the human. It mints a 2-minute single-use `ApprovalGrant` only after that equality check; `BrowserDownloadHandoffService` consumes it before the copy.
-- The old `PlaywrightBrowserSessionDriver.ExportDownloadAsync(..., bool userApproved)` escape hatch has been removed. The driver can list/capture downloads but cannot release them.
+- .NET 8 core at `src/Nvidea.Core`; WPF host at `src/Nvidea.Windows`.
+- Nebius/Nemotron inference abstraction with structured output/tools, retries, timeout/cancellation and conservative routing.
+- Layered personal memory, Tavily research engine, Playwright browser agent, deterministic verification, prompt-injection/safety boundaries, resumable browser-goal sessions and durable jobs.
+- Capability registry, least-privilege permission policy, exact single-use approval authorizer, protected segmented audit trail and emergency-stop plumbing.
+- Production browser runtime uses an NVIDEA-owned persistent Chromium profile, popup/new-tab tracking and durable download quarantine.
+- Browser downloads are captured as Receiving -> Ready/Interrupted with verified length/SHA-256 and DPAPI-protected metadata on Windows.
+- `BrowserDownloadHandoffService` binds a specific download + exact canonical destination to a high-risk `FilesWrite` approval scope, revalidates immediately before export, consumes a short-lived single-use grant before side effects and audits the handoff without persisting the raw destination path.
+- `BrowserHostRuntime` exposes `ListDownloadsAsync`, `PrepareDownloadHandoffAsync`, and `ApproveAndExportDownloadAsync`; production browser code has no boolean export API.
+- **Trusted WPF download handoff UI now exists.** `DownloadHandoffDialog` displays filename, source host, verified size/SHA-256 and exact destination. `MainWindow.Downloads.cs` shows Ready quarantine entries, uses the .NET 8 `OpenFolderDialog`, prepares the exact runtime scope, requires a fresh explicit confirmation click, then calls `ApproveAndExportDownloadAsync` without ever exposing or persisting `ApprovalGrant`.
 - Root README + MIT license.
-- No repository other than NVIDEA has been mutated.
 
 ## Persistent Progress History
 
 ### 2026-09-06 to 2026-09-07 — Core platform milestones
-- Added Nebius/Nemotron inference abstraction, layered memory, Tavily research, browser contracts, capability registry, approval boundary, durable jobs and Nebius Serverless contracts.
-- Added Playwright execution, Windows shell, durable parent/child browser orchestration, deterministic crash reconciliation, typed postconditions, verification-contract v2 migration and end-to-end Chromium contract harnesses.
-- Added live Nebius strict-schema probe using the production `NebiusTokenFactoryClient` and `NemotronBrowserPlanner`.
-- Added CurrentUser DPAPI-backed local-state protection for memory/jobs/browser-goal sessions.
-- Reworked audit persistence into protected hash-chained records, tail seals and bounded segmented rotation.
+Added Nebius/Nemotron inference, layered memory, Tavily research, browser contracts/execution, capability registry, approval boundary, durable jobs, Nebius Serverless contracts, Playwright execution, Windows shell, deterministic recovery, typed postconditions, verification-contract migration, live Nebius strict-schema probe, DPAPI-backed state protection, protected hash-chained audit with tail seals and segmented rotation.
 
 ### 2026-09-07 to 2026-09-08 — Persistent authenticated browser boundary
-- Added NVIDEA-owned browser-profile ownership markers, persistent Playwright context startup, safe popup/new-tab tracking, privacy-minimized session snapshots, and opt-in Chromium persistence/boundary tests.
-- Production `BrowserHostRuntime` uses the persistent Chromium composition.
-- Fixed Windows integration tests to inspect logical DPAPI-decrypted job records instead of raw encrypted `jobs.json` text.
+Added owned browser-profile markers, persistent Playwright startup, popup/new-tab tracking, privacy-minimized session snapshots, Chromium persistence/boundary tests and DPAPI-safe integration assertions.
 
 ### 2026-09-08 — Durable permissioned browser downloads
-- Added `BrowserDownloadQuarantine`: durable Receiving/Ready/Interrupted/Exported lifecycle; `.partial` -> SHA-256/length verification -> atomic `.payload`; restart interruption recovery; DPAPI-protected metadata; sanitized filenames; no-overwrite and destination-boundary checks; atomic verified export copy.
-- `PlaywrightBrowserSessionDriver` correlates `Page.Download` events to the active page/action sequence and does not complete `BrowserActionKind.Download` until quarantine capture succeeds.
-- Production persistent browser composition injects the download quarantine.
-- Added quarantine regression tests for capture/hash persistence, tampering, cancellation, protected metadata and no-overwrite behavior.
+- Added `BrowserDownloadQuarantine` with durable Receiving/Ready/Interrupted/Exported lifecycle, `.partial` capture, SHA-256/length verification, atomic `.payload`, restart recovery, protected metadata, filename sanitization, no-overwrite and destination-boundary checks.
+- Wired Playwright `Page.Download` correlation so a `Download` action cannot complete before verified quarantine capture.
 - Representative commits: `86ce7ccfdfd09ad27fdb129c6220fe4deff02633`, `588fdee148fca3c98c5ed90ac758aa899e689f69`, `58374c4126288b5bfffd62e343667f7d1ce746e9`, `2bd59d1aa21e2a246a36e2ea65e834d5db279ca0`.
 
-### 2026-09-08 — Exact-scope download handoff approval boundary
-- Added `BrowserDownloadHandoffService` and regression tests.
-- Scope binds download id + canonical destination fingerprint to `FilesWrite`; policy requires high-risk exact approval.
-- Re-derives the plan immediately before export, consumes a short-lived single-use grant before side effects, and audits waiting/scope-changed/start/success/cancel/failure without persisting the raw destination path.
-- Representative commits: `74b1c00ea306a825486a32d55be26dfca8bbf3fd`, `ec2eca992d867d27193e527fb9667b77f817de71`.
+### 2026-09-08 — Exact-scope handoff and production wiring
+- Added `BrowserDownloadHandoffService`; scope binds download id + destination fingerprint to high-risk `FilesWrite`; fresh revalidation + single-use grant + audit.
+- Runtime registers `browser.download.handoff` and shares the same quarantine/policy/authorizer/audit as browser capture.
+- Removed `PlaywrightBrowserSessionDriver.ExportDownloadAsync(..., bool)`.
+- Representative commits: `74b1c00ea306a825486a32d55be26dfca8bbf3fd`, `ec2eca992d867d27193e527fb9667b77f817de71`, `6bbd177297126a237017cbea2435455472ec5870`, `e7dfbaac046d6fbd9f51cd3c8f1f6e3b1993b12c`, `bcca57e7c4577ac7bf118329fe3fd9ac4d2e20ab`.
 
-### 2026-09-08 — Production download handoff wiring
+### 2026-09-08 — Trusted WPF download approval flow
 Completed:
-- `src/Nvidea.Core/Browser/PersistentBrowserContextFactory.cs`
-  - `PersistentBrowserContextSession` now returns the exact `BrowserDownloadQuarantine` instance used by the Playwright session, so production authorization and capture operate on one durable store rather than parallel instances.
-  - Commit: `6bbd177297126a237017cbea2435455472ec5870`.
-- `src/Nvidea.Core/Browser/PlaywrightBrowserSessionDriver.cs`
-  - removed `ExportDownloadAsync(Guid, string, bool, ...)`; the browser driver no longer has any boolean-based release API.
-  - capture and read-only listing remain intact.
-  - Commit: `e7dfbaac046d6fbd9f51cd3c8f1f6e3b1993b12c`.
-- `src/Nvidea.Core/Desktop/BrowserHostRuntime.cs`
-  - registered `browser.download.handoff` as a distinct high-risk, confirmation-required `FilesWrite` capability. This fixes a real production composition bug: without the descriptor, `BrowserDownloadHandoffService.PrepareAsync` would fail capability lookup if wired into the runtime.
-  - composes `BrowserDownloadHandoffService` with the same capability policy, `ScopedApprovalAuthorizer`, quarantine and `SegmentedAuditTrail` used by the production browser host.
-  - added `ListDownloadsAsync`, `PrepareDownloadHandoffAsync`, and `ApproveAndExportDownloadAsync` as the trusted runtime boundary.
-  - approval requires an exact scope echo matching the prepared plan. Only then does the runtime mint a 2-minute grant from `ScopedApprovalAuthorizer`; the handoff service re-prepares the plan and consumes the grant before export.
-  - Commit: `bcca57e7c4577ac7bf118329fe3fd9ac4d2e20ab`.
+- `src/Nvidea.Windows/DownloadHandoffDialog.xaml` / `.xaml.cs`
+  - trusted confirmation surface with filename, source host, verified byte count/SHA-256, exact destination and explicit explanation that approval is single-use and exact-scope.
+  - confirmation requires a fresh `Export file` click; no approval token/grant is surfaced.
+  - commits: `06af85bc690e7eecf4f640a7f74f272453a5325b`, `0042bc349ba6f3e582f31b597a0a3424b872ac63`.
+- `src/Nvidea.Windows/MainWindow.xaml`
+  - added a visible Ready-download quarantine panel with `Review & export` action and no automatic handoff.
+  - commit: `d19278ed0e3e4b0d5089b71b61942f0f20a0f5f9`.
+- `src/Nvidea.Windows/MainWindow.Downloads.cs`
+  - read-only polling discovers the newest Ready artifact.
+  - uses `Microsoft.Win32.OpenFolderDialog` to select an existing destination folder.
+  - calls `PrepareDownloadHandoffAsync` before confirmation, passes the exact prepared scope back only after the human confirms, and then calls `ApproveAndExportDownloadAsync`.
+  - grant creation remains exclusively inside `BrowserHostRuntime`; UI never receives or persists `ApprovalGrant`.
+  - successful export reports exact destination + SHA-256; failures remain fail-closed.
+  - commit: `3009d0702c5953bb3c3f4800ba627d93ad40c1c2`.
 
 Validation / evidence:
 - Repository identity was explicitly re-verified as exactly `UnknownGod2011/NVIDEA` before every mutation.
-- Re-fetched the modified runtime after commit and confirmed the handoff descriptor, shared policy/authorizer/audit composition and trusted runtime APIs are present.
-- Git tree at `bcca57e7c4577ac7bf118329fe3fd9ac4d2e20ab` confirms only NVIDEA files changed and shows the expected new blobs for `PersistentBrowserContextFactory.cs`, `PlaywrightBrowserSessionDriver.cs`, and `BrowserHostRuntime.cs`.
-- Searched the repository for `ExportDownloadAsync`; no default-branch result remains.
-- The execution environment was checked again for `dotnet`, `msbuild`, `csc`, and `mcs`; none is available. No compile/test/Chromium/DPAPI success is claimed and no GitHub Actions run was triggered merely to create a green signal.
+- Re-read `progress.md`, current WPF shell, runtime handoff API, quarantine records and handoff plan before implementation.
+- Environment check again found no `dotnet`, `msbuild` or `csc`; therefore compilation/WPF launch/Chromium/DPAPI execution is NOT claimed.
+- No GitHub Actions workflow was rerun merely to obtain a green signal.
 
 Security / privacy review:
-- Browser code that observes/clicks/downloads no longer possesses a direct boolean release method; release authority is concentrated in the runtime handoff boundary.
-- The exact quarantine instance is shared between capture and handoff, avoiding state desynchronization or a second unverified download store.
-- Handoff remains least-privilege `FilesWrite`, high-risk, consequential and human-confirmed.
-- Destination paths are shown only to the trusted UI/runtime plan; the durable audit stores only a fingerprint.
-- Grant material remains ephemeral and short-lived. A scope mismatch fails before minting the grant; handoff revalidation can still reject mutation after approval preparation.
-- The low-level `BrowserDownloadQuarantine.ExportAsync(..., bool userApproved)` primitive remains public for now because existing unit tests directly exercise it and executable validation is unavailable. It is no longer reachable from `PlaywrightBrowserSessionDriver` or `BrowserHostRuntime`. Make it `internal` only after compiling the test assembly boundary or adding an explicit test-only friend assembly.
+- The UI only sees read-only metadata and the exact prepared destination; it never sees `ApprovalGrant`.
+- Destination selection happens before exact-scope preparation; confirmation happens after the destination path is fixed.
+- A changed download/destination still fails runtime handoff revalidation and requires a new approval.
+- Quarantined payload bytes remain local until explicit export.
+- The UI displays source host rather than arbitrary source-page content, minimizing prompt-injection influence in the approval surface.
+- Polling is read-only, but currently causes browser-runtime initialization when the main window first renders; this should be revisited after executable validation to avoid unnecessary Chromium startup if desired.
 
 ## Current Unverified / Risks
-- **Highest risk remains executable validation:** source review is not a substitute for `dotnet build`, `dotnet test`, Windows WPF launch and a real Playwright Chromium launch.
-- Persistent Chromium, browser download capture, runtime handoff wiring and DPAPI-protected stores have not compiled/executed in this environment.
-- Live Token Factory strict-schema probe remains unexecuted because .NET and a Nebius API key are unavailable here.
-- The trusted WPF download list/destination confirmation UI is still absent; the runtime APIs now exist for it.
-- `BrowserDownloadQuarantine.ExportAsync(..., bool userApproved)` remains public at the low-level storage layer although production driver/runtime callers no longer expose it.
-- Persistent Chromium profile contents and quarantined payload bytes are local but not application-encrypted by NVIDEA; OS/user-profile protections remain their confidentiality boundary.
-- Unsolicited/background page downloads can be quarantined; cleanup/retention policy remains future work.
-- Segmentation bounds active audit files by event count, but lifetime archive retention and byte-size quotas remain absent.
+- Highest risk remains executable validation: no real `dotnet build`, `dotnet test`, Windows WPF launch, persistent Chromium launch or DPAPI round-trip has run in this environment.
+- The new WPF flow depends on .NET 8 `Microsoft.Win32.OpenFolderDialog`; source-level compatibility is expected but must be compiled on Windows before claiming success.
+- `BrowserDownloadQuarantine.ExportAsync(..., bool userApproved)` remains public at the low-level storage layer for tests, though no production driver/runtime caller exposes it.
+- Persistent Chromium profile contents and quarantined payload bytes rely on the OS user-profile boundary rather than application-level encryption.
+- Unsolicited/background downloads can still be quarantined; cleanup/retention policy remains future work.
+- Audit lifetime retention/byte quotas remain absent.
 - Local voice/transcription is absent.
-- Tavily Extract/richer source authority/freshness work and a verified production embedding adapter remain opportunities.
+- Tavily Extract/richer authority/freshness work and a verified embedding adapter remain opportunities.
 
 ## Single Best Next Task
-First obtain a real .NET 8 build/test/Chromium/Windows signal and immediately fix compile/runtime issues. If executable validation remains unavailable, build the minimal trusted WPF Ready-download list and destination-picker confirmation flow on top of `BrowserHostRuntime.ListDownloadsAsync` / `PrepareDownloadHandoffAsync` / `ApproveAndExportDownloadAsync`. The UI must display filename, source host, size/hash and exact destination, require a fresh explicit click, and never expose or persist `ApprovalGrant`. After that, make the quarantine boolean export primitive internal (with an explicit test-only friend assembly if needed) so no public API can release a file using a bare boolean.
+Obtain the first real Windows/.NET 8 build + unit tests + WPF launch + persistent Chromium + DPAPI signal and immediately repair any compile/runtime issues. If executable validation remains unavailable, internalize the low-level `BrowserDownloadQuarantine.ExportAsync(..., bool)` primitive using a test-only friend assembly or equivalent test seam, then add bounded quarantine retention/cleanup with explicit user controls so unsolicited artifacts cannot accumulate indefinitely.

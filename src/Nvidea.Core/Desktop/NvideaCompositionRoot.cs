@@ -21,6 +21,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     private readonly string _stateDirectory;
     private readonly SemaphoreSlim _browserGate = new(1, 1);
     private BrowserHostRuntime? _browser;
+    private StateDirectoryLease? _browserStateLease;
     private bool _disposed;
 
     private NvideaCompositionRoot(
@@ -105,11 +106,29 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
                 return _browser;
 
             var browserDirectory = Path.Combine(_stateDirectory, "browser");
-            _browser = await BrowserHostRuntime.CreateAsync(
-                browserDirectory,
-                BrowserOptionsFromEnvironment(),
-                cancellationToken).ConfigureAwait(false);
-            return _browser;
+            StateDirectoryLease? lease = null;
+            try
+            {
+                // Acquire the cross-process state lease before Playwright/profile/download/audit
+                // initialization. A second NVIDEA process fails closed instead of concurrently
+                // mutating the same durable browser state.
+                lease = StateDirectoryLease.Acquire(browserDirectory);
+                var browser = await BrowserHostRuntime.CreateAsync(
+                    browserDirectory,
+                    BrowserOptionsFromEnvironment(),
+                    cancellationToken).ConfigureAwait(false);
+
+                _browserStateLease = lease;
+                lease = null;
+                _browser = browser;
+                return browser;
+            }
+            finally
+            {
+                // If browser startup fails or is cancelled, immediately release the lease. The
+                // persistent lock file may remain, but the kernel lock cannot be orphaned.
+                lease?.Dispose();
+            }
         }
         finally
         {
@@ -165,9 +184,17 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         await _browserGate.WaitAsync().ConfigureAwait(false);
         try
         {
-            if (_browser is not null)
-                await _browser.DisposeAsync().ConfigureAwait(false);
-            _browser = null;
+            try
+            {
+                if (_browser is not null)
+                    await _browser.DisposeAsync().ConfigureAwait(false);
+                _browser = null;
+            }
+            finally
+            {
+                _browserStateLease?.Dispose();
+                _browserStateLease = null;
+            }
         }
         finally
         {

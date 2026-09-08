@@ -8,10 +8,26 @@ public partial class MainWindow
     private Guid? _activeResearchJobId;
     private CancellationTokenSource? _researchCts;
     private bool _researchRunning;
+    private bool _researchWindowHooksAttached;
 
     private async void ResearchWindow_Loaded(object sender, RoutedEventArgs e)
     {
+        if (!_researchWindowHooksAttached)
+        {
+            StopButton.Click += ResearchEmergencyStop_Click;
+            Closed += ResearchWindow_Closed;
+            _researchWindowHooksAttached = true;
+        }
         await RefreshResearchAsync();
+    }
+
+    private void ResearchEmergencyStop_Click(object sender, RoutedEventArgs e) => _researchCts?.Cancel();
+
+    private void ResearchWindow_Closed(object? sender, EventArgs e)
+    {
+        _researchCts?.Cancel();
+        _researchCts?.Dispose();
+        _researchCts = null;
     }
 
     private async void ResearchStartButton_Click(object sender, RoutedEventArgs e)
@@ -149,6 +165,20 @@ public partial class MainWindow
     private void SetResearchRunning(bool running)
     {
         _researchRunning = running;
+        if (running)
+        {
+            InvokeButton.IsEnabled = false;
+            BrowserButton.IsEnabled = false;
+            BrowserUrlBox.IsEnabled = false;
+            PromptBox.IsEnabled = false;
+            ModeBox.IsEnabled = false;
+            ClipboardCheck.IsEnabled = false;
+            StopButton.IsEnabled = true;
+        }
+        else
+        {
+            UpdateBusyControls();
+        }
         UpdateResearchControls(null);
     }
 

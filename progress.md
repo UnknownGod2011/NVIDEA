@@ -26,11 +26,12 @@ Target: **Personal AI**. Secondary target: **Best Use of Tavily**. Ambition: top
 - Production browser runtime uses an NVIDEA-owned persistent Chromium profile, popup/new-tab tracking and durable download quarantine.
 - Browser downloads are captured as Receiving -> Ready/Interrupted with verified length/SHA-256 and DPAPI-protected metadata on Windows.
 - `BrowserDownloadHandoffService` binds a specific download + exact canonical destination to a high-risk `FilesWrite` approval scope, revalidates immediately before export, consumes a short-lived single-use grant before side effects and audits the handoff without persisting the raw destination path.
-- `BrowserDownloadDiscardService` binds a specific retained payload identity (download id + verified SHA-256) to a separate high-risk `FilesWrite` approval scope. It revalidates immediately before deletion, consumes a single-use grant before the mutation and audits the result.
-- `BrowserHostRuntime` exposes trusted prepare/approve boundaries for both export and discard; WPF never receives or persists `ApprovalGrant`.
-- Trusted WPF download controls display sanitized filename, source host, verified size/SHA-256 and exact destination/operation before explicit human confirmation.
-- Low-level `BrowserDownloadQuarantine.ExportAsync(..., bool)` and `DiscardAsync(..., bool)` storage primitives are assembly-internal; reflection regression tests guard against accidental public exposure.
-- Download quarantine has fail-closed byte quotas: default 512 MiB retained total / 128 MiB per file. Quota checks never silently evict Ready or Exported artifacts.
+- `BrowserDownloadDiscardService` similarly binds deletion to a specific retained payload identity, uses an exact fresh approval scope, and performs crash-recoverable `.payload -> .discarding -> Discarded` deletion without touching already-exported user files.
+- Trusted WPF controls display sanitized filename, source host, verified size/SHA-256 and exact operation/destination before explicit human confirmation. WPF never receives or persists `ApprovalGrant`.
+- Low-level quarantine export/discard primitives are assembly-internal; regression tests protect that API boundary.
+- Retained download quarantine defaults to 512 MiB total / 128 MiB per verified file and never silently evicts Ready/Exported artifacts.
+- **New:** browser-managed in-progress download bytes are routed to an NVIDEA-owned Playwright `DownloadsPath` and guarded during transfer. Both Playwright staging bytes and the quarantine `.partial` copy default to 128 MiB ceilings; exceeding either invokes Playwright `Download.CancelAsync()` and fails closed before final quarantine promotion.
+- Browser-managed temporary copies are explicitly deleted after quarantine capture/failure so they do not consume the next staging budget for the lifetime of the persistent context.
 - Root README + MIT license.
 
 ## Persistent Progress History
@@ -42,54 +43,45 @@ Added Nebius/Nemotron inference, layered memory, Tavily research, browser contra
 Added owned browser-profile markers, persistent Playwright startup, popup/new-tab tracking, privacy-minimized session snapshots, Chromium persistence/boundary tests and DPAPI-safe integration assertions.
 
 ### 2026-09-08 — Durable permissioned browser downloads
-- Added `BrowserDownloadQuarantine` with durable Receiving/Ready/Interrupted/Exported lifecycle, `.partial` capture, SHA-256/length verification, atomic `.payload`, restart recovery, protected metadata, filename sanitization, no-overwrite and destination-boundary checks.
-- Wired Playwright `Page.Download` correlation so a `Download` action cannot complete before verified quarantine capture.
-- Representative commits: `86ce7ccfdfd09ad27fdb129c6220fe4deff02633`, `588fdee148fca3c98c5ed90ac758aa899e689f69`, `58374c4126288b5bfffd62e343667f7d1ce746e9`, `2bd59d1aa21e2a246a36e2ea65e834d5db279ca0`.
+Added durable Receiving/Ready/Interrupted/Exported/Discarded lifecycle, SHA-256/length verification, exact-scope handoff, single-use grants, WPF confirmation, crash-recoverable discard and fail-closed retained-byte quotas. Representative commits: `86ce7ccfdfd09ad27fdb129c6220fe4deff02633`, `74b1c00ea306a825486a32d55be26dfca8bbf3fd`, `bcca57e7c4577ac7bf118329fe3fd9ac4d2e20ab`, `5baf8569512ea91cbadaaa8d543a18dc18447878`, `494fb682f42d445d0ef50aca6f9d07c33ce8ca9c`, `2a0bd1d556d26329b46b6043c31ee90ddc4111e2`, `26d8275339db8a5bd18a6fc5eab52d743b682a66`.
 
-### 2026-09-08 — Exact-scope handoff, WPF approval and quota
-- Added `BrowserDownloadHandoffService`, exact destination binding, single-use grant consumption, audit, runtime wiring and trusted WPF confirmation.
-- Internalized the low-level boolean export primitive and added an API-surface regression guard.
-- Added `BrowserDownloadQuarantineOptions` with fail-closed 512 MiB retained / 128 MiB per-file defaults and concurrency-safe final promotion checks.
-- Representative commits: `74b1c00ea306a825486a32d55be26dfca8bbf3fd`, `bcca57e7c4577ac7bf118329fe3fd9ac4d2e20ab`, `3009d0702c5953bb3c3f4800ba627d93ad40c1c2`, `f1f85339558965c57f031368a855237dc6502001`, `5baf8569512ea91cbadaaa8d543a18dc18447878`, `eecad36143ca10d4687f9c36f0c5975afaf76c28`.
-
-### 2026-09-08 — Exact-scope audited quarantine discard
+### 2026-09-08 — Bounded in-progress browser download staging
 Completed:
-- Added `BrowserDownloadDiscardService` and `BrowserDownloadDiscardPlan`; discard approval scope is bound to the exact download id + current verified SHA-256 identity and uses high-risk `FilesWrite` policy.
-- Added a durable `Discarded` state and assembly-internal `BrowserDownloadQuarantine.DiscardAsync(..., bool)` primitive.
-- Discard verifies the retained payload length/SHA-256 immediately before mutation.
-- Implemented a crash-recoverable two-phase local deletion transition: `.payload -> .discarding`, persist the `Discarded` tombstone, then delete `.discarding`. If metadata persistence fails, the payload is restored. On restart, Ready/Exported metadata restores a pre-tombstone `.discarding` file, while durable Discarded metadata removes leftover payload/discarding files.
-- `BrowserHostRuntime` now registers `browser.download.discard`, composes it against the same quarantine/policy/authorizer/segmented audit trail, and exposes `PrepareDownloadDiscardAsync` + `ApproveAndDiscardDownloadAsync`. Grants remain runtime-local, short-lived and single-use.
-- WPF now shows Ready and Exported retained quarantine entries, adds a separate `Discard copy` control, and displays sanitized filename, source host, verified size/SHA-256 plus a warning that already-exported user files are untouched.
-- Expanded API-surface protection so both low-level export and discard primitives must remain assembly-internal.
-- Added discard tests covering approval requirement, scope mutation rejection, quota reclamation, exported-copy preservation, restart recovery before tombstone commit, and cleanup after a durable tombstone.
-- Commits: `494fb682f42d445d0ef50aca6f9d07c33ce8ca9c`, `81fef085e8fc0d8986a7b68eb4c0a53b94cda97b`, `fcc554101e4838a6a3142ff48ae5bcda3c090b6b`, `81e1612c4ec33a10a197e648532975adc27d22dd`, `2a0bd1d556d26329b46b6043c31ee90ddc4111e2`, `a4c408196763e9ee33b831da0a1b98f3d29606ef`, `26d8275339db8a5bd18a6fc5eab52d743b682a66`, `64826c0dc6c29f768541024422bf62da287e4791`, `32217fcf12a7273927dcc8bb01bcf4d66231c6d8`, `4a18a2baa7ab562d23ba2364907c1e28402a7e28`.
+- Added `BrowserDownloadStagingGuard` with independently configurable browser-staging and quarantine-partial limits plus a bounded polling interval.
+- `PersistentBrowserContextFactory` now configures Playwright `DownloadsPath` to `browser-downloads/browser-staging`, an NVIDEA-owned state path, and derives both transient limits from the quarantine's 128 MiB single-download limit.
+- `PlaywrightBrowserSessionDriver` now runs `SaveAsAsync` through the staging guard, monitors both Playwright-managed staging bytes and the destination `.partial`, and invokes `IDownload.CancelAsync()` before surfacing `BrowserDownloadQuotaExceededException` if either exceeds policy.
+- Capture now has a bounded lifetime derived from the existing browser action timeout (clamped to 1–120 seconds) instead of allowing an event-forked download capture to wait indefinitely.
+- The driver best-effort calls `IDownload.DeleteAsync()` after successful or failed quarantine capture so Playwright's transient duplicate does not consume the persistent context's staging budget after verification.
+- Added `BrowserDownloadStagingGuardTests` for oversized `.partial`, oversized Playwright staging, normal under-limit completion, caller cancellation propagation and invalid configuration.
+- Commits: `96adbcf0b8d00257207d282a01aef9cf78f64e94`, `a1a8157454ee87dd60735c3bc515688d974f93ad`, `1f4a988c4ff367d02a9191dfa174e474515728b6`, `adbd92474ab4fe8240f685a6bc4c4b35b97a3fa6`.
 
 Validation / evidence:
 - Repository identity was explicitly re-verified as exactly `UnknownGod2011/NVIDEA` before every GitHub mutation in this run.
-- Re-read `progress.md`, current quarantine implementation, exact-scope handoff service, capability policy, runtime composition, WPF download flow and existing tests before changing them.
-- Re-read the new discard service and recent commit chain after wiring it into production.
-- Source-level review caught and repaired a discard crash-consistency flaw before completion; the final implementation uses reversible `.discarding` state until the durable tombstone succeeds.
+- Re-read `progress.md`, the full quarantine implementation, persistent-context composition, session driver and existing quota tests before changing code.
+- Current Playwright .NET documentation confirms `Download.CancelAsync()` is the supported cancellation primitive and `BrowserTypeLaunchPersistentContextOptions.DownloadsPath` is supported for persistent contexts.
+- `src/Nvidea.Core/Nvidea.Core.csproj` currently pins Microsoft.Playwright 1.62.0, well after `Download.CancelAsync()` was introduced.
+- Recent commit chain was re-read after implementation and contains only the intended NVIDEA changes.
 - Re-checked the execution environment for `dotnet`, `msbuild`, `csc`, and `mcs`; none is available, so compilation/test/WPF/Chromium/DPAPI execution is NOT claimed.
 - No GitHub Actions workflow was rerun merely to obtain a green signal.
 
 Security / privacy review:
-- Quota reclamation is never automatic and cannot be initiated by browser/model code through a public low-level API.
-- Export and discard are separate capabilities with separate exact scopes and separate fresh confirmations.
-- The UI does not receive `ApprovalGrant`; it only echoes the exact prepared scope after the human click.
-- Discarded quarantine bytes are removed without deleting any previously exported user file.
-- A stale or forged discard plan fails revalidation before a grant can authorize deletion.
-- Crash before tombstone durability restores the retained payload; crash after tombstone durability treats deletion as authoritative and finishes cleanup.
-- Audit records operation identity/verified hash/size but not payload contents.
+- A hostile/accidental unknown-size transfer is no longer allowed to grow an NVIDEA `.partial` indefinitely before the final quota check.
+- Playwright's own pre-SaveAs browser storage is also placed under an explicit NVIDEA-owned path and monitored, rather than leaving only the copied `.partial` bounded.
+- Quota failure cancels the browser source before returning the failure and the quarantine's existing catch path deletes incomplete `.partial`/payload files and records Interrupted state.
+- Retained verified artifacts are unaffected and never auto-evicted to make room for a hostile transfer.
+- Transient browser bytes remain OS-user-profile protected rather than application-encrypted; they are untrusted and never exposed as approved user files.
 
 ## Current Unverified / Risks
 - Highest risk remains executable validation: no real `dotnet build`, `dotnet test`, Windows WPF launch, persistent Chromium launch or DPAPI round-trip has run in this environment.
-- The WPF flow depends on .NET 8 `Microsoft.Win32.OpenFolderDialog`; source-level compatibility is expected but must be compiled on Windows before claiming success.
+- The new in-progress guard is polling-based, not a filesystem hard quota. Overshoot can occur between polls and while browser cancellation propagates; it is bounded operationally rather than byte-perfect.
+- Need a real Playwright integration test proving `DownloadsPath` file growth is observable during a large transfer and `CancelAsync()` stops that transfer on Windows/Chromium as expected.
+- Crash-leftover files in `browser-staging` should be explicitly reclaimed on next owned-browser startup; currently Playwright/context cleanup is relied upon for normal shutdown.
+- WPF depends on .NET 8 `Microsoft.Win32.OpenFolderDialog`; compile on Windows before claiming compatibility.
 - Persistent Chromium profile contents and quarantined payload bytes rely on the OS user-profile boundary rather than application-level encryption.
-- Quota protects retained completed bytes, but an unknown-size in-progress `.partial` can transiently exceed the final per-file limit before Playwright finishes saving it.
 - Audit lifetime retention/byte quotas remain absent.
 - Local voice/transcription is absent.
 - Tavily Extract/richer authority/freshness work and a verified embedding adapter remain opportunities.
-- The WPF download polling path can initialize the browser runtime at window render time even when the user has not requested browser work, which is safe but suboptimal for startup latency/resources.
+- WPF download polling can initialize the browser runtime at window render time even when browser work was not requested, which is safe but suboptimal for startup latency/resources.
 
 ## Single Best Next Task
-Obtain the first real Windows/.NET 8 build + unit tests + WPF launch + persistent Chromium + DPAPI signal and immediately repair any compile/runtime issues. If executable validation remains unavailable, harden the remaining unbounded in-progress download path so a hostile/accidental large transfer cannot transiently consume arbitrary local disk before final quota rejection, while preserving Playwright cancellation and the existing quarantine verification model.
+Obtain the first real Windows/.NET 8 build + unit tests + WPF launch + persistent Chromium + DPAPI signal and immediately repair compile/runtime issues. If executable validation remains unavailable, add safe startup reclamation for stale NVIDEA-owned Playwright staging bytes and a deterministic integration fixture that serves a throttled large download, proving cancellation/cleanup behavior once Chromium execution becomes available.

@@ -54,11 +54,15 @@
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <TextBlock Text="Browser" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,10,0"/>
                 <TextBox x:Name="BrowserUrlBox" Grid.Column="1" Text="https://example.com"
                          ToolTip="Credential-free browser action demo target"/>
-                <Button x:Name="BrowserButton" Grid.Column="2" Content="Open safely" Margin="10,0,0,0"
+                <Button x:Name="AuditStatusButton" Grid.Column="2" Content="Audit status" Margin="10,0,0,0"
+                        Padding="12,5" Click="AuditStatusButton_Click"
+                        ToolTip="Show payload-free local audit retention and pruning status"/>
+                <Button x:Name="BrowserButton" Grid.Column="3" Content="Open safely" Margin="8,0,0,0"
                         Padding="14,5" Click="BrowserButton_Click"/>
             </Grid>
         </Border>

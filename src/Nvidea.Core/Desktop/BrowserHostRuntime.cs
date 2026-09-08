@@ -82,37 +82,66 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
         _jobs = jobs;
     }
 
-    public static async Task<BrowserHostRuntime> CreateAsync(
+    public static Task<BrowserHostRuntime> CreateAsync(
         string stateDirectory,
         BrowserHostOptions? options = null,
+        CancellationToken cancellationToken = default) =>
+        CreateAsync(
+            stateDirectory,
+            options,
+            static token => Playwright.CreateAsync().WaitAsync(token),
+            cancellationToken);
+
+    /// <summary>
+    /// Internal transport seam used to verify that durable-state contention fails before Playwright
+    /// transport startup. Production callers use the public overload, which supplies Playwright.CreateAsync.
+    /// </summary>
+    internal static async Task<BrowserHostRuntime> CreateAsync(
+        string stateDirectory,
+        BrowserHostOptions? options,
+        Func<CancellationToken, Task<IPlaywright>> playwrightFactory,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(stateDirectory))
             throw new ArgumentException("State directory is required.", nameof(stateDirectory));
+        ArgumentNullException.ThrowIfNull(playwrightFactory);
 
         var effective = options ?? BrowserHostOptions.Default;
         ValidateOptions(effective);
         var fullStateDirectory = Path.GetFullPath(stateDirectory);
-        Directory.CreateDirectory(fullStateDirectory);
 
+        StateDirectoryLease? stateLease = null;
         IPlaywright? playwright = null;
         IBrowserContext? context = null;
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            playwright = await Playwright.CreateAsync().WaitAsync(cancellationToken).ConfigureAwait(false);
+
+            // Acquire single-owner durable state before creating the Playwright transport. A second
+            // NVIDEA instance therefore fails closed without starting browser infrastructure at all.
+            stateLease = StateDirectoryLease.Acquire(fullStateDirectory);
+            cancellationToken.ThrowIfCancellationRequested();
+            playwright = await playwrightFactory(cancellationToken).ConfigureAwait(false);
 
             var driverOptions = new PlaywrightBrowserDriverOptions(
                 effective.AllowedHosts,
                 MaxObservationCharacters: 12_000,
                 MaxObservedElements: 250,
                 ActionTimeoutMilliseconds: 15_000);
-            var session = await PersistentBrowserContextFactory.LaunchAsync(
+
+            // Ownership transfers exactly once to the persistent-context boundary. It will release the
+            // same lease on context Close or any failed initialization path.
+            var transferredLease = stateLease;
+            stateLease = null;
+            var session = await PersistentBrowserContextFactory.LaunchOwnedAsync(
                 playwright,
                 fullStateDirectory,
                 effective.StartUri,
                 driverOptions,
                 effective.Headless,
+                new BrowserDownloadQuarantineOptions(),
+                stagingOptions: null,
+                transferredLease,
                 cancellationToken).ConfigureAwait(false);
             context = session.Context;
             var driver = session.Driver;
@@ -199,6 +228,7 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
             if (context is not null)
                 await SafeCloseAsync(context).ConfigureAwait(false);
             playwright?.Dispose();
+            stateLease?.Dispose();
             throw;
         }
     }

@@ -17,8 +17,10 @@ public partial class MainWindow
 
         try
         {
-            _browserHost ??= await _root.GetBrowserAsync(cancellationToken);
-            var status = await _browserHost.GetAuditRetentionStatusAsync(cancellationToken);
+            // Local audit inspection is intentionally browser-free. This path never creates a
+            // Playwright runtime or receives browser-action, approval-grant, export, or discard
+            // authority merely because the user asked to inspect protected local state.
+            var status = await _root.LocalState.GetAuditRetentionStatusAsync(cancellationToken);
 
             var pruning = status.HasPrunedHistory
                 ? $"Older protected history was intentionally retired through segment {status.PrunedThroughSegmentIndex}.\n"

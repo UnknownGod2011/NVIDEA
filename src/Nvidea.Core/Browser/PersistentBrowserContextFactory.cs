@@ -1,4 +1,5 @@
 using Microsoft.Playwright;
+using Nvidea.Core.Desktop;
 
 namespace Nvidea.Core.Browser;
 
@@ -50,29 +51,39 @@ public static class PersistentBrowserContextFactory
         ArgumentNullException.ThrowIfNull(quarantineOptions);
         quarantineOptions.Validate();
 
+        if (string.IsNullOrWhiteSpace(stateDirectory))
+            throw new ArgumentException("State directory is required.", nameof(stateDirectory));
         if (!startUri.IsAbsoluteUri || startUri.Scheme is not ("http" or "https"))
             throw new ArgumentException("Browser start URI must be absolute HTTP(S).", nameof(startUri));
 
-        var profileDirectory = BrowserProfileOwnership.PrepareOwnedProfile(stateDirectory);
-        BrowserProfileOwnership.ValidateOwnedProfile(stateDirectory, profileDirectory);
-
-        var downloads = new BrowserDownloadQuarantine(stateDirectory, quarantineOptions);
-        var effectiveStagingOptions = stagingOptions ?? new BrowserDownloadStagingOptions(
-            MaxStagingBytes: quarantineOptions.MaxSingleDownloadBytes,
-            MaxPartialBytes: quarantineOptions.MaxSingleDownloadBytes);
-        effectiveStagingOptions.Validate();
-        var staging = new BrowserDownloadStagingGuard(stateDirectory, effectiveStagingOptions);
-
-        // No browser context exists yet, so every file in NVIDEA's dedicated Playwright staging
-        // directory is necessarily a crash/abnormal-shutdown leftover. Reclaim it before launch so
-        // stale bytes cannot consume the next transfer's transient quota. Reclamation itself is
-        // fail-closed and refuses recursive/reparse-point deletion.
-        staging.ReclaimStartupLeftovers();
-
+        var fullStateDirectory = Path.GetFullPath(stateDirectory);
+        StateDirectoryLease? stateLease = null;
         IBrowserContext? context = null;
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
+
+            // The durable-state lease belongs to the lowest browser boundary that can mutate the
+            // persistent profile/download/audit-owned directory. This prevents direct callers from
+            // bypassing single-owner protection merely by skipping NvideaCompositionRoot.
+            stateLease = StateDirectoryLease.Acquire(fullStateDirectory);
+
+            var profileDirectory = BrowserProfileOwnership.PrepareOwnedProfile(fullStateDirectory);
+            BrowserProfileOwnership.ValidateOwnedProfile(fullStateDirectory, profileDirectory);
+
+            var downloads = new BrowserDownloadQuarantine(fullStateDirectory, quarantineOptions);
+            var effectiveStagingOptions = stagingOptions ?? new BrowserDownloadStagingOptions(
+                MaxStagingBytes: quarantineOptions.MaxSingleDownloadBytes,
+                MaxPartialBytes: quarantineOptions.MaxSingleDownloadBytes);
+            effectiveStagingOptions.Validate();
+            var staging = new BrowserDownloadStagingGuard(fullStateDirectory, effectiveStagingOptions);
+
+            // No browser context exists yet, so every file in NVIDEA's dedicated Playwright staging
+            // directory is necessarily a crash/abnormal-shutdown leftover. Reclaim it before launch so
+            // stale bytes cannot consume the next transfer's transient quota. Reclamation itself is
+            // fail-closed and refuses recursive/reparse-point deletion.
+            staging.ReclaimStartupLeftovers();
+
             context = await playwright.Chromium.LaunchPersistentContextAsync(
                 profileDirectory,
                 new BrowserTypeLaunchPersistentContextOptions
@@ -81,6 +92,12 @@ public static class PersistentBrowserContextFactory
                     AcceptDownloads = true,
                     DownloadsPath = staging.StagingDirectory
                 }).WaitAsync(cancellationToken).ConfigureAwait(false);
+
+            // Tie state ownership to the actual Chromium context lifetime. Close is emitted for normal
+            // shutdown, browser closure, and browser crashes; StateDirectoryLease.Dispose is idempotent.
+            var ownedLease = stateLease;
+            context.Close += (_, _) => ownedLease.Dispose();
+            stateLease = null;
 
             // Chromium may restore pages from a previous persistent-context run. Keep the useful
             // authenticated/profile state, but never trust restored tabs as current agent context.
@@ -103,6 +120,7 @@ public static class PersistentBrowserContextFactory
         {
             if (context is not null)
                 await SafeCloseAsync(context).ConfigureAwait(false);
+            stateLease?.Dispose();
             throw;
         }
     }

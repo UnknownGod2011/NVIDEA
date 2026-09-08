@@ -28,7 +28,8 @@ Target: **Personal AI**. Secondary target: **Best Use of Tavily**. Ambition: top
 - `BrowserDownloadHandoffService` binds a specific download + exact canonical destination to a high-risk `FilesWrite` approval scope, revalidates immediately before export, consumes a short-lived single-use grant before side effects and audits the handoff without persisting the raw destination path.
 - `BrowserHostRuntime` exposes `ListDownloadsAsync`, `PrepareDownloadHandoffAsync`, and `ApproveAndExportDownloadAsync`; production browser code has no boolean export API.
 - Trusted WPF download handoff UI displays filename, source host, verified size/SHA-256 and exact destination, then requires a fresh explicit confirmation before exact-scope export.
-- The low-level `BrowserDownloadQuarantine.ExportAsync(..., bool)` storage primitive is now assembly-internal. Tests retain access only through `InternalsVisibleTo("Nvidea.Core.Tests")`, and a reflection regression test guards against accidental public re-exposure.
+- The low-level `BrowserDownloadQuarantine.ExportAsync(..., bool)` storage primitive is assembly-internal. Tests retain access only through `InternalsVisibleTo("Nvidea.Core.Tests")`, and a reflection regression test guards against accidental public re-exposure.
+- Download quarantine now has fail-closed byte quotas: default 512 MiB retained total / 128 MiB per file. Quota checks never silently evict Ready or Exported artifacts.
 - Root README + MIT license.
 
 ## Persistent Progress History
@@ -57,33 +58,43 @@ Added owned browser-profile markers, persistent Playwright startup, popup/new-ta
 - Representative commits: `06af85bc690e7eecf4f640a7f74f272453a5325b`, `0042bc349ba6f3e582f31b597a0a3424b872ac63`, `d19278ed0e3e4b0d5089b71b61942f0f20a0f5f9`, `3009d0702c5953bb3c3f4800ba627d93ad40c1c2`.
 
 ### 2026-09-08 — Low-level export API containment
+- Added test-only friend assembly access and internalized `BrowserDownloadQuarantine.ExportAsync(..., bool userApproved)`.
+- Added reflection guard preventing accidental public API re-exposure.
+- Representative commits: `49b8fea298a772f0345d05c9ef1072aeb32d22de`, `f1f85339558965c57f031368a855237dc6502001`, `277c175c0ebe6ed0c8a85a0aa35d7ddf5c9734eb`.
+
+### 2026-09-08 — Fail-closed browser-download quarantine quota
 Completed:
-- Added `src/Nvidea.Core/Properties/AssemblyInfo.cs` with a single friend-assembly declaration for `Nvidea.Core.Tests`.
-- Changed `BrowserDownloadQuarantine.ExportAsync(..., bool userApproved)` from `public` to `internal`, removing the last direct production-callable boolean export primitive while preserving the existing tested storage implementation.
-- Added `BrowserDownloadApiSurfaceTests.LowLevelExportPrimitiveIsNotPublicApi` to assert via reflection that `ExportAsync` remains assembly-internal and cannot silently regress to public API.
-- Commits: `49b8fea298a772f0345d05c9ef1072aeb32d22de`, `f1f85339558965c57f031368a855237dc6502001`, `277c175c0ebe6ed0c8a85a0aa35d7ddf5c9734eb`.
+- Added `BrowserDownloadQuarantineOptions` with explicit `MaxRetainedBytes` and `MaxSingleDownloadBytes`; defaults are 512 MiB retained total and 128 MiB per file.
+- Added `BrowserDownloadQuotaExceededException` for a typed fail-closed storage refusal.
+- Capture now refuses to start another browser save when retained quota is already full.
+- After transfer, per-file quota is checked before hashing/promotion. Final Ready promotion is serialized under the quarantine gate and atomically re-checks aggregate retained bytes, preventing concurrent captures from oversubscribing the configured retained quota.
+- Quota refusal deletes only the current `.partial`/uncommitted payload and records the current item as `Interrupted`; it never silently deletes or demotes an existing Ready/Exported artifact.
+- Added `BrowserDownloadQuotaTests` covering oversized single files, aggregate quota preservation, pre-save rejection at full capacity, and invalid quota configuration.
+- Commits: `5baf8569512ea91cbadaaa8d543a18dc18447878`, `eecad36143ca10d4687f9c36f0c5975afaf76c28`.
 
 Validation / evidence:
-- Repository identity was explicitly re-verified as exactly `UnknownGod2011/NVIDEA` before every mutation.
-- Re-read `progress.md`, `BrowserDownloadQuarantine`, and the quarantine tests before implementation.
+- Repository identity was explicitly re-verified as exactly `UnknownGod2011/NVIDEA` before every attempted GitHub mutation, including retry after a stale content SHA conflict.
+- Re-read `progress.md`, `BrowserDownloadQuarantine`, its existing tests, recent commits, and the exact-scope handoff service before implementation.
+- Source-level review confirms existing constructor call sites remain compatible because the original `(stateDirectory, protector?)` constructor is preserved and delegates to default quota options.
 - Re-checked the execution environment for `dotnet`, `msbuild`, `csc`, and `mcs`; none is available, so compilation/test/WPF/Chromium/DPAPI execution is NOT claimed.
 - No GitHub Actions workflow was rerun merely to obtain a green signal.
 
 Security / privacy review:
-- Production code outside `Nvidea.Core` can no longer bypass the exact-scope handoff service by calling the boolean storage primitive directly.
-- The test seam is limited to the named test assembly rather than exposing the method publicly.
-- Runtime grant creation, destination binding, payload hash/length verification, no-overwrite behavior and audit semantics are unchanged.
-- Quarantined payload bytes remain local until explicit exact-scope export.
-- Existing WPF approval surfaces still avoid rendering arbitrary downloaded/page content into the trusted confirmation UI.
+- Quota exhaustion is fail-closed: no user-visible export occurs and no existing trusted Ready artifact is automatically destroyed to make space.
+- Concurrent completed downloads cannot both independently pass a stale aggregate quota check because final promotion and aggregate accounting happen while holding the quarantine gate.
+- Quota failure metadata uses a generic local-storage explanation and does not persist payload contents.
+- A file can temporarily occupy `.partial` space while its final size is unknown; once transfer completes, an oversized current partial is deleted rather than promoted. A streaming hard cap during Playwright transfer remains a possible future hardening step.
+- Export authorization, exact destination binding, SHA-256/length verification, no-overwrite semantics, and audit behavior remain unchanged.
 
 ## Current Unverified / Risks
 - Highest risk remains executable validation: no real `dotnet build`, `dotnet test`, Windows WPF launch, persistent Chromium launch or DPAPI round-trip has run in this environment.
 - The WPF flow depends on .NET 8 `Microsoft.Win32.OpenFolderDialog`; source-level compatibility is expected but must be compiled on Windows before claiming success.
 - Persistent Chromium profile contents and quarantined payload bytes rely on the OS user-profile boundary rather than application-level encryption.
-- Unsolicited/background downloads can still be quarantined; bounded quota/retention and explicit discard controls remain future work.
+- Quota protects retained completed bytes, but an unknown-size in-progress `.partial` can transiently exceed the final per-file limit before Playwright finishes saving it.
+- Explicit audited discard controls are still absent, so a user currently cannot intentionally reclaim quarantine capacity through a trusted NVIDEA deletion flow.
 - Audit lifetime retention/byte quotas remain absent.
 - Local voice/transcription is absent.
 - Tavily Extract/richer authority/freshness work and a verified embedding adapter remain opportunities.
 
 ## Single Best Next Task
-Obtain the first real Windows/.NET 8 build + unit tests + WPF launch + persistent Chromium + DPAPI signal and immediately repair any compile/runtime issues. If executable validation remains unavailable, add a fail-closed browser-download quarantine quota plus explicit audited discard controls so unsolicited downloads cannot grow local storage indefinitely without silently deleting Ready artifacts.
+Obtain the first real Windows/.NET 8 build + unit tests + WPF launch + persistent Chromium + DPAPI signal and immediately repair any compile/runtime issues. If executable validation remains unavailable, add explicit exact-scope/audited discard controls for quarantined downloads (with a trusted WPF confirmation surface) so users can reclaim quota intentionally without silent retention pruning or model-controlled deletion.

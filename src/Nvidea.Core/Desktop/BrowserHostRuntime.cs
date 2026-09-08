@@ -53,6 +53,7 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
     private readonly PlaywrightBrowserSessionDriver _sessionDriver;
     private readonly BrowserDownloadHandoffService _downloadHandoff;
     private readonly BrowserDownloadDiscardService _downloadDiscard;
+    private readonly BoundedSegmentedAuditTrail _audit;
     private readonly ScopedApprovalAuthorizer _approvals;
     private readonly IAgentJobStore _jobStore;
     private readonly ResumableJobOrchestrator _jobs;
@@ -64,6 +65,7 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
         PlaywrightBrowserSessionDriver driver,
         BrowserDownloadHandoffService downloadHandoff,
         BrowserDownloadDiscardService downloadDiscard,
+        BoundedSegmentedAuditTrail audit,
         ScopedApprovalAuthorizer approvals,
         IAgentJobStore jobStore,
         ResumableJobOrchestrator jobs)
@@ -74,6 +76,7 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
         _sessionDriver = driver;
         _downloadHandoff = downloadHandoff;
         _downloadDiscard = downloadDiscard;
+        _audit = audit;
         _approvals = approvals;
         _jobStore = jobStore;
         _jobs = jobs;
@@ -186,6 +189,7 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
                 driver,
                 downloadHandoff,
                 downloadDiscard,
+                audit,
                 approvals,
                 store,
                 orchestrator);
@@ -216,6 +220,16 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
     {
         ThrowIfDisposed();
         return _sessionDriver.ListDownloadsAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Returns payload-free audit retention/storage status suitable for trusted desktop UI.
+    /// This API never returns audit-event contents or tool/browser metadata.
+    /// </summary>
+    public Task<AuditRetentionStatus> GetAuditRetentionStatusAsync(CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        return _audit.GetRetentionStatusAsync(cancellationToken);
     }
 
     public Task<BrowserDownloadHandoffPlan> PrepareDownloadHandoffAsync(

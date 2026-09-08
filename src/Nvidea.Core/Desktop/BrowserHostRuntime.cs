@@ -52,6 +52,7 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
     private readonly IBrowserDriver _driver;
     private readonly PlaywrightBrowserSessionDriver _sessionDriver;
     private readonly BrowserDownloadHandoffService _downloadHandoff;
+    private readonly BrowserDownloadDiscardService _downloadDiscard;
     private readonly ScopedApprovalAuthorizer _approvals;
     private readonly IAgentJobStore _jobStore;
     private readonly ResumableJobOrchestrator _jobs;
@@ -62,6 +63,7 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
         IBrowserContext context,
         PlaywrightBrowserSessionDriver driver,
         BrowserDownloadHandoffService downloadHandoff,
+        BrowserDownloadDiscardService downloadDiscard,
         ScopedApprovalAuthorizer approvals,
         IAgentJobStore jobStore,
         ResumableJobOrchestrator jobs)
@@ -71,6 +73,7 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
         _driver = driver;
         _sessionDriver = driver;
         _downloadHandoff = downloadHandoff;
+        _downloadDiscard = downloadDiscard;
         _approvals = approvals;
         _jobStore = jobStore;
         _jobs = jobs;
@@ -134,13 +137,26 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
                     new HashSet<DataPermission> { DataPermission.FilesWrite },
                     CapabilityRiskLevel.High,
                     RequiresConfirmation: true,
-                    "Release a verified quarantined browser download to a human-selected destination only after exact approval.")
+                    "Release a verified quarantined browser download to a human-selected destination only after exact approval."),
+                new CapabilityDescriptor(
+                    BrowserDownloadDiscardService.CapabilityId,
+                    "1.0.0",
+                    "Browser download discard",
+                    new HashSet<DataPermission> { DataPermission.FilesWrite },
+                    CapabilityRiskLevel.High,
+                    RequiresConfirmation: true,
+                    "Delete one verified retained browser-download payload only after exact human approval.")
             });
             var capabilityPolicy = new CapabilityPermissionPolicy(registry);
             var approvals = new ScopedApprovalAuthorizer();
             var ephemeralApprovals = new EphemeralJobApprovalStore();
             var audit = new SegmentedAuditTrail(Path.Combine(fullStateDirectory, "audit.jsonl"));
             var downloadHandoff = new BrowserDownloadHandoffService(
+                session.Downloads,
+                capabilityPolicy,
+                approvals,
+                audit);
+            var downloadDiscard = new BrowserDownloadDiscardService(
                 session.Downloads,
                 capabilityPolicy,
                 approvals,
@@ -169,6 +185,7 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
                 context,
                 driver,
                 downloadHandoff,
+                downloadDiscard,
                 approvals,
                 store,
                 orchestrator);
@@ -182,30 +199,18 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
         }
     }
 
-    /// <summary>
-    /// Returns a fresh, bounded observation from the owned browser session. This is read-only
-    /// evidence for trusted planning; it does not grant any capability or bypass action policy.
-    /// </summary>
     public Task<BrowserObservation> ObserveAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         return _driver.ObserveAsync(cancellationToken);
     }
 
-    /// <summary>
-    /// Returns privacy-minimized page/session diagnostics. It intentionally exposes no cookies,
-    /// local storage, authorization headers or other browser credential material.
-    /// </summary>
     public Task<BrowserSessionSnapshot> GetSessionSnapshotAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         return _sessionDriver.GetSessionSnapshotAsync(cancellationToken);
     }
 
-    /// <summary>
-    /// Lists quarantined browser downloads for a trusted UI. Payload bytes remain inside NVIDEA
-    /// state and this read-only operation cannot authorize a handoff.
-    /// </summary>
     public Task<IReadOnlyList<BrowserDownloadRecord>> ListDownloadsAsync(
         CancellationToken cancellationToken = default)
     {
@@ -213,10 +218,6 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
         return _sessionDriver.ListDownloadsAsync(cancellationToken);
     }
 
-    /// <summary>
-    /// Prepares the exact download + destination approval scope for display by a trusted human UI.
-    /// This method does not mint a grant and cannot move the quarantined payload.
-    /// </summary>
     public Task<BrowserDownloadHandoffPlan> PrepareDownloadHandoffAsync(
         Guid downloadId,
         string destinationDirectory,
@@ -226,11 +227,6 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
         return _downloadHandoff.PrepareAsync(downloadId, destinationDirectory, cancellationToken);
     }
 
-    /// <summary>
-    /// Trusted UI boundary for a human-confirmed download handoff. The caller must echo the exact
-    /// scope shown during confirmation. A short-lived single-use grant is minted only after that
-    /// equality check and is consumed by BrowserDownloadHandoffService before any filesystem copy.
-    /// </summary>
     public async Task<BrowserDownloadExportReceipt> ApproveAndExportDownloadAsync(
         BrowserDownloadHandoffPlan approvedPlan,
         string exactScope,
@@ -248,9 +244,37 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
     }
 
     /// <summary>
-    /// Creates the durable child job without advancing it. Callers may persist the returned job id
-    /// in a parent workflow before any browser action can execute.
+    /// Prepares a non-authorizing, exact approval scope for deleting one retained quarantine payload.
+    /// The returned plan is safe to display to trusted UI; no ApprovalGrant is exposed.
     /// </summary>
+    public Task<BrowserDownloadDiscardPlan> PrepareDownloadDiscardAsync(
+        Guid downloadId,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        return _downloadDiscard.PrepareAsync(downloadId, cancellationToken);
+    }
+
+    /// <summary>
+    /// Trusted human-confirmation boundary for quota reclamation. The exact scope shown by the UI
+    /// must be echoed back before a short-lived single-use grant is created and immediately consumed.
+    /// </summary>
+    public async Task<BrowserDownloadDiscardReceipt> ApproveAndDiscardDownloadAsync(
+        BrowserDownloadDiscardPlan approvedPlan,
+        string exactScope,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(approvedPlan);
+        if (string.IsNullOrWhiteSpace(exactScope))
+            throw new ArgumentException("Exact approval scope is required.", nameof(exactScope));
+        if (!string.Equals(exactScope, approvedPlan.Decision.ApprovalScope, StringComparison.Ordinal))
+            throw new UnauthorizedAccessException("Download discard approval scope does not match the prepared plan.");
+
+        var grant = _approvals.Grant(approvedPlan.Decision, TimeSpan.FromMinutes(2));
+        return await _downloadDiscard.DiscardAsync(approvedPlan, grant, cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task<BrowserJobOutcome> CreateActionAsync(
         Guid jobId,
         BrowserAction action,
@@ -280,10 +304,6 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
         return Describe(created, action);
     }
 
-    /// <summary>
-    /// Advances exactly one previously-created durable child job. It never creates a replacement
-    /// job, which makes parent/child recovery id-addressable after process failure.
-    /// </summary>
     public async Task<BrowserJobOutcome> AdvanceActionAsync(
         Guid jobId,
         CancellationToken cancellationToken = default)
@@ -324,10 +344,6 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
         return Describe(advanced, TryReadAction(advanced));
     }
 
-    /// <summary>
-    /// Restores only the non-authorizing wait state when a restart lost an ephemeral grant before
-    /// execution began. No ApprovalGrant is minted by this operation.
-    /// </summary>
     public async Task<BrowserJobOutcome> RearmApprovalAsync(
         Guid jobId,
         string exactScope,
@@ -343,11 +359,6 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
         return Describe(rearmed, TryReadAction(rearmed));
     }
 
-    /// <summary>
-    /// Attempts to reconcile a job left durably Running by a process crash. This method is strictly
-    /// read/verify/mark-complete: it never invokes the browser action. Only deterministic current
-    /// URL or expected-state evidence can convert the ambiguous child into Completed.
-    /// </summary>
     public async Task<BrowserAmbiguousRecoveryResult> TryReconcileAmbiguousAsync(
         Guid jobId,
         CancellationToken cancellationToken = default)
@@ -428,9 +439,6 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
             return;
         _disposed = true;
 
-        // A persistent context owns its browser process. Closing the context is the supported
-        // shutdown boundary; unlike the previous ephemeral composition there is no separate
-        // IBrowser instance to close afterward.
         await SafeCloseAsync(_context).ConfigureAwait(false);
         _playwright.Dispose();
     }

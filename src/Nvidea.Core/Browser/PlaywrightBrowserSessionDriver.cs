@@ -15,6 +15,7 @@ public sealed class PlaywrightBrowserSessionDriver : IBrowserDriver
     private readonly IBrowserContext _context;
     private readonly PlaywrightBrowserDriverOptions _options;
     private readonly BrowserDownloadQuarantine? _downloads;
+    private readonly BrowserDownloadStagingGuard? _downloadStaging;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly SemaphoreSlim _actionGate = new(1, 1);
     private readonly ConcurrentQueue<IPage> _newPages = new();
@@ -26,12 +27,14 @@ public sealed class PlaywrightBrowserSessionDriver : IBrowserDriver
         IBrowserContext context,
         IPage initialPage,
         PlaywrightBrowserDriverOptions? options = null,
-        BrowserDownloadQuarantine? downloads = null)
+        BrowserDownloadQuarantine? downloads = null,
+        BrowserDownloadStagingGuard? downloadStaging = null)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
         _activePage = initialPage ?? throw new ArgumentNullException(nameof(initialPage));
         _options = options ?? new PlaywrightBrowserDriverOptions();
         _downloads = downloads;
+        _downloadStaging = downloadStaging;
 
         if (!_context.Pages.Any(page => ReferenceEquals(page, initialPage)))
             throw new ArgumentException("Initial page must belong to the supplied browser context.", nameof(initialPage));
@@ -243,17 +246,46 @@ public sealed class PlaywrightBrowserSessionDriver : IBrowserDriver
         if (!TryParseWebUri(download.Page.Url, out var sourceUri) || !IsPermitted(download.Page.Url))
             throw new InvalidOperationException("Download source page is outside the permitted web boundary.");
 
-        return await _downloads.CaptureAsync(
-            sourceUri,
-            download.SuggestedFilename,
-            async (path, cancellationToken) =>
-            {
-                await download.SaveAsAsync(path).WaitAsync(cancellationToken).ConfigureAwait(false);
-                var failure = await download.FailureAsync().WaitAsync(cancellationToken).ConfigureAwait(false);
-                if (!string.IsNullOrWhiteSpace(failure))
-                    throw new InvalidDataException("Playwright reported that the browser download failed before quarantine completion.");
-            },
-            CancellationToken.None).ConfigureAwait(false);
+        using var captureTimeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(
+            Math.Min(120_000, Math.Max(1_000, _options.ActionTimeoutMilliseconds))));
+
+        try
+        {
+            return await _downloads.CaptureAsync(
+                sourceUri,
+                download.SuggestedFilename,
+                async (path, cancellationToken) =>
+                {
+                    async Task SaveAndVerifyAsync()
+                    {
+                        await download.SaveAsAsync(path).ConfigureAwait(false);
+                        var failure = await download.FailureAsync().ConfigureAwait(false);
+                        if (!string.IsNullOrWhiteSpace(failure))
+                            throw new InvalidDataException("Playwright reported that the browser download failed before quarantine completion.");
+                    }
+
+                    if (_downloadStaging is null)
+                    {
+                        await SaveAndVerifyAsync().WaitAsync(cancellationToken).ConfigureAwait(false);
+                        return;
+                    }
+
+                    await _downloadStaging.RunBoundedAsync(
+                        path,
+                        SaveAndVerifyAsync,
+                        download.CancelAsync,
+                        cancellationToken).ConfigureAwait(false);
+                },
+                captureTimeout.Token).ConfigureAwait(false);
+        }
+        finally
+        {
+            // Playwright retains its browser-managed copy until context close unless explicitly
+            // removed. Once quarantine capture has succeeded or failed, that transient duplicate
+            // should not continue consuming the bounded staging budget.
+            try { await download.DeleteAsync().ConfigureAwait(false); }
+            catch { }
+        }
     }
 
     private PlaywrightBrowserDriver CreatePageDriver(IPage page) => new(page, _options);

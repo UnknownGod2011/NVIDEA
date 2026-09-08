@@ -37,10 +37,10 @@ public partial class MainWindow
                 + $"Archived bytes retained: {FormatBytes(status.RetainedArchivedBytes)} / {FormatBytes(status.MaxArchivedBytes)}\n"
                 + $"Total retained audit bytes: {FormatBytes(status.RetainedTotalBytes)}\n\n"
                 + pruning
-                + "\n\nThis view intentionally contains no prompts, URLs, filenames, tool arguments, summaries, or other audit payload contents.";
+                + "\n\nThis read-only snapshot intentionally performs no browser launch, audit append, approval, export/discard, repair, or deletion. It also contains no prompts, URLs, filenames, tool arguments, summaries, or other audit payload contents.";
             StatusText.Text = status.HasPrunedHistory
-                ? "Audit — retention is healthy; older history has a protected pruning tombstone"
-                : "Audit — retention is healthy; no history has been pruned";
+                ? "Audit — read-only retention snapshot; older history has a protected pruning tombstone"
+                : "Audit — read-only retention snapshot; no history has been pruned";
         }
         catch (OperationCanceledException)
         {
@@ -49,8 +49,8 @@ public partial class MainWindow
         }
         catch (Exception ex)
         {
-            OutputBox.Text = $"Audit retention status could not be verified.\n\n{ex.Message}";
-            StatusText.Text = "Audit — status verification failed safely";
+            OutputBox.Text = $"Audit retention status could not be read safely.\n\n{ex.Message}";
+            StatusText.Text = "Audit — read-only status failed safely";
         }
         finally
         {

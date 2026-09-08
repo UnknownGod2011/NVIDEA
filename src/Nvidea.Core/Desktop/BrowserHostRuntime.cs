@@ -131,7 +131,8 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
 
             // Ownership transfers exactly once to the persistent-context boundary. It will release the
             // same lease on context Close or any failed initialization path.
-            var transferredLease = stateLease;
+            var transferredLease = stateLease
+                ?? throw new InvalidOperationException("Browser state lease was unexpectedly unavailable before context launch.");
             stateLease = null;
             var session = await PersistentBrowserContextFactory.LaunchOwnedAsync(
                 playwright,
@@ -141,8 +142,8 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
                 effective.Headless,
                 new BrowserDownloadQuarantineOptions(),
                 stagingOptions: null,
-                transferredLease,
-                cancellationToken).ConfigureAwait(false);
+                stateLease: transferredLease,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
             context = session.Context;
             var driver = session.Driver;
 

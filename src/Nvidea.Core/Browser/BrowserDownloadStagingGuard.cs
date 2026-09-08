@@ -9,7 +9,8 @@ namespace Nvidea.Core.Browser;
 public sealed record BrowserDownloadStagingOptions(
     long MaxStagingBytes = 128L * 1024L * 1024L,
     long MaxPartialBytes = 128L * 1024L * 1024L,
-    int PollIntervalMilliseconds = 50)
+    int PollIntervalMilliseconds = 50,
+    int MaxStartupReclaimEntries = 2_048)
 {
     internal void Validate()
     {
@@ -19,8 +20,12 @@ public sealed record BrowserDownloadStagingOptions(
             throw new ArgumentOutOfRangeException(nameof(MaxPartialBytes), "Partial-copy quota must be positive.");
         if (PollIntervalMilliseconds is < 10 or > 1_000)
             throw new ArgumentOutOfRangeException(nameof(PollIntervalMilliseconds), "Polling interval must be between 10 and 1000 milliseconds.");
+        if (MaxStartupReclaimEntries is < 1 or > 100_000)
+            throw new ArgumentOutOfRangeException(nameof(MaxStartupReclaimEntries), "Startup reclaim entry limit must be between 1 and 100000.");
     }
 }
+
+public sealed record BrowserDownloadStagingReclaimResult(int FilesDeleted, long BytesDeleted);
 
 public sealed class BrowserDownloadStagingGuard
 {
@@ -39,6 +44,46 @@ public sealed class BrowserDownloadStagingGuard
     }
 
     public string StagingDirectory { get; }
+
+    /// <summary>
+    /// Reclaims crash-leftover Playwright staging files before Chromium is launched. This method
+    /// must only be called while no browser context is active. It deliberately refuses recursive
+    /// cleanup, reparse points, or unexpectedly large directory populations instead of broadening
+    /// the deletion boundary. A failed cleanup therefore blocks browser startup rather than risking
+    /// deletion outside NVIDEA-owned transient state.
+    /// </summary>
+    public BrowserDownloadStagingReclaimResult ReclaimStartupLeftovers()
+    {
+        Directory.CreateDirectory(StagingDirectory);
+
+        var entries = Directory.EnumerateFileSystemEntries(StagingDirectory, "*", SearchOption.TopDirectoryOnly)
+            .Take(_options.MaxStartupReclaimEntries + 1)
+            .ToArray();
+
+        if (entries.Length > _options.MaxStartupReclaimEntries)
+            throw new InvalidOperationException("Browser staging contains too many startup leftovers to reclaim safely.");
+
+        long bytes = 0;
+        foreach (var entry in entries)
+        {
+            var fullPath = Path.GetFullPath(entry);
+            if (!IsStrictChildPath(StagingDirectory, fullPath))
+                throw new InvalidOperationException("Browser staging cleanup encountered a path outside the owned staging directory.");
+
+            var attributes = File.GetAttributes(fullPath);
+            if ((attributes & FileAttributes.Directory) != 0)
+                throw new InvalidOperationException("Browser staging cleanup encountered an unexpected directory and refused recursive deletion.");
+            if ((attributes & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidOperationException("Browser staging cleanup encountered a reparse point and refused deletion.");
+
+            checked { bytes += new FileInfo(fullPath).Length; }
+        }
+
+        foreach (var entry in entries)
+            File.Delete(entry);
+
+        return new BrowserDownloadStagingReclaimResult(entries.Length, bytes);
+    }
 
     /// <summary>
     /// Runs a Playwright save operation while bounding browser-managed staging bytes and the
@@ -127,6 +172,13 @@ public sealed class BrowserDownloadStagingGuard
             throw new BrowserDownloadQuotaExceededException("Browser download exceeded the transient Playwright staging quota and was cancelled.");
         if (partialBytes > _options.MaxPartialBytes)
             throw new BrowserDownloadQuotaExceededException("Browser download exceeded the in-progress quarantine partial quota and was cancelled.");
+    }
+
+    private static bool IsStrictChildPath(string root, string candidate)
+    {
+        var normalizedRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)) + Path.DirectorySeparatorChar;
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        return candidate.StartsWith(normalizedRoot, comparison) && candidate.Length > normalizedRoot.Length;
     }
 
     private static async Task CancelBestEffortAsync(Func<Task> cancelSourceAsync)

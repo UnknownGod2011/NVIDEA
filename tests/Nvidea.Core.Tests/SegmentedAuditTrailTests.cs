@@ -41,6 +41,7 @@ public sealed class SegmentedAuditTrailTests
             Assert.Equal(2, manifest.ActiveIndex);
             Assert.Single(manifest.Archived);
             Assert.Equal(2, manifest.Archived[0].EventCount);
+            Assert.Equal(0, manifest.PrunedThroughIndex);
         }
         finally
         {
@@ -157,6 +158,132 @@ public sealed class SegmentedAuditTrailTests
         }
     }
 
+    [Fact]
+    public async Task Retention_PrunesOldestArchivedSegment_WithProtectedTombstone()
+    {
+        var directory = CreateTempDirectory();
+        try
+        {
+            var path = Path.Combine(directory, "audit.jsonl");
+            var protector = new TestProtector();
+            var trail = new SegmentedAuditTrail(
+                path,
+                maxEventsPerSegment: 2,
+                protector,
+                new AuditRetentionPolicy(MaxArchivedSegments: 1, MaxArchivedBytes: 1024 * 1024));
+
+            var first = CreateEvent("first");
+            var second = CreateEvent("second");
+            var third = CreateEvent("third");
+            var fourth = CreateEvent("fourth");
+            var fifth = CreateEvent("fifth");
+            await trail.AppendAsync(first);
+            await trail.AppendAsync(second);
+            await trail.AppendAsync(third);
+            await trail.AppendAsync(fourth);
+            await trail.AppendAsync(fifth);
+
+            var retained = await trail.ReadAllAsync();
+            Assert.Equal(new[] { third.EventId, fourth.EventId, fifth.EventId }, retained.Select(x => x.EventId));
+            Assert.False(File.Exists(path));
+            Assert.False(File.Exists(path + ".seal"));
+            Assert.True(File.Exists(path + ".segment-000002.jsonl"));
+            Assert.True(File.Exists(path + ".segment-000003.jsonl"));
+
+            var manifest = ReadManifest(await File.ReadAllBytesAsync(path + ".segments"), protector);
+            Assert.Equal(3, manifest.ActiveIndex);
+            Assert.Single(manifest.Archived);
+            Assert.Equal(2, manifest.Archived[0].Index);
+            Assert.Equal(1, manifest.PrunedThroughIndex);
+            Assert.Equal(2, manifest.PrunedEventCount);
+            Assert.Matches("^[0-9A-F]{64}$", manifest.PrunedAnchorDigest!);
+            Assert.Empty(manifest.PendingDeleteIndices ?? Array.Empty<int>());
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Retention_ByteQuotaFailsClosed_BeforeOversizedActiveSegmentIsArchived()
+    {
+        var directory = CreateTempDirectory();
+        try
+        {
+            var path = Path.Combine(directory, "audit.jsonl");
+            var trail = new SegmentedAuditTrail(
+                path,
+                maxEventsPerSegment: 2,
+                new TestProtector(),
+                new AuditRetentionPolicy(MaxArchivedSegments: 8, MaxArchivedBytes: 1));
+
+            var first = CreateEvent("first");
+            var second = CreateEvent("second");
+            await trail.AppendAsync(first);
+            await trail.AppendAsync(second);
+
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() => trail.AppendAsync(CreateEvent("blocked")));
+            Assert.Contains("retention quota", error.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(new[] { first.EventId, second.EventId }, (await trail.ReadAllAsync()).Select(x => x.EventId));
+            Assert.False(File.Exists(path + ".segment-000002.jsonl"));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Retention_PendingDeleteManifest_RecoversExactDeletionAfterCrash()
+    {
+        var directory = CreateTempDirectory();
+        try
+        {
+            var path = Path.Combine(directory, "audit.jsonl");
+            var protector = new TestProtector();
+            var first = CreateEvent("first");
+            var second = CreateEvent("second");
+            var third = CreateEvent("third");
+            var baseTrail = new JsonLinesAuditTrail(path, protector);
+            await baseTrail.AppendAsync(first);
+            await baseTrail.AppendAsync(second);
+            await new JsonLinesAuditTrail(path + ".segment-000002.jsonl", protector).AppendAsync(third);
+
+            var prunedAnchor = await BuildAnchorAsync(path, index: 1, eventCount: 2);
+            var digest = ComputePrunedAnchorDigest(string.Empty, prunedAnchor);
+            await WriteManifestAsync(
+                path,
+                protector,
+                new TestManifest(
+                    1,
+                    "committed",
+                    2,
+                    Array.Empty<TestAnchor>(),
+                    null,
+                    PrunedThroughIndex: 1,
+                    PrunedEventCount: 2,
+                    PrunedAnchorDigest: digest,
+                    PendingDeleteIndices: new[] { 1 }));
+
+            var trail = new SegmentedAuditTrail(path, 2, protector, new AuditRetentionPolicy(1, 1024 * 1024));
+            var restored = await trail.ReadAllAsync();
+
+            Assert.Single(restored);
+            Assert.Equal(third.EventId, restored[0].EventId);
+            Assert.False(File.Exists(path));
+            Assert.False(File.Exists(path + ".seal"));
+            var recovered = ReadManifest(await File.ReadAllBytesAsync(path + ".segments"), protector);
+            Assert.Empty(recovered.PendingDeleteIndices ?? Array.Empty<int>());
+            Assert.Equal(1, recovered.PrunedThroughIndex);
+            Assert.Equal(digest, recovered.PrunedAnchorDigest);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     private static async Task<TestAnchor> BuildAnchorAsync(string path, int index, int eventCount)
     {
         var segmentPath = index == 1 ? path : path + $".segment-{index:D6}.jsonl";
@@ -165,6 +292,18 @@ public sealed class SegmentedAuditTrailTests
             eventCount,
             await Sha256Async(segmentPath),
             await Sha256Async(segmentPath + ".seal"));
+    }
+
+    private static string ComputePrunedAnchorDigest(string previousDigest, TestAnchor anchor)
+    {
+        var canonical = string.Join(
+            "\n",
+            previousDigest,
+            anchor.Index.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            anchor.EventCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            anchor.DataSha256,
+            anchor.SealSha256);
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
     }
 
     private static async Task<string> Sha256Async(string path)
@@ -213,7 +352,11 @@ public sealed class SegmentedAuditTrailTests
         string State,
         int ActiveIndex,
         IReadOnlyList<TestAnchor> Archived,
-        int? PendingActiveIndex);
+        int? PendingActiveIndex,
+        int PrunedThroughIndex = 0,
+        long PrunedEventCount = 0,
+        string? PrunedAnchorDigest = null,
+        IReadOnlyList<int>? PendingDeleteIndices = null);
 
     private sealed record TestAnchor(
         int Index,

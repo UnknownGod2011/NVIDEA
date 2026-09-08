@@ -19,9 +19,9 @@ public sealed class LocalStateRuntimeTests
         var parameter = Assert.Single(method.GetParameters());
         Assert.Equal(typeof(CancellationToken), parameter.ParameterType);
 
-        var surface = string.Join('|', methods.Select(static candidate =>
+        var surface = string.Join("|", methods.Select(static candidate =>
             candidate.ReturnType.FullName + ":" + candidate.Name + ":" +
-            string.Join(',', candidate.GetParameters().Select(static p => p.ParameterType.FullName))));
+            string.Join(",", candidate.GetParameters().Select(static p => p.ParameterType.FullName))));
 
         foreach (var forbidden in new[]
                  {
@@ -39,6 +39,14 @@ public sealed class LocalStateRuntimeTests
         {
             Assert.DoesNotContain(forbidden, surface, StringComparison.Ordinal);
         }
+
+        var declaredFields = typeof(LocalStateRuntime)
+            .GetFields(BindingFlags.NonPublic | BindingFlags.Instance)
+            .Select(static field => field.FieldType.FullName ?? field.FieldType.Name)
+            .ToArray();
+        Assert.DoesNotContain(declaredFields, static typeName => typeName.Contains("BoundedSegmentedAuditTrail", StringComparison.Ordinal));
+        Assert.DoesNotContain(declaredFields, static typeName => typeName.Contains("Browser", StringComparison.Ordinal));
+        Assert.DoesNotContain(declaredFields, static typeName => typeName.Contains("Approval", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -48,14 +56,16 @@ public sealed class LocalStateRuntimeTests
         try
         {
             var path = Path.Combine(directory, "audit.jsonl");
+            var protector = new TestProtector();
+            var retention = new AuditRetentionPolicy(MaxArchivedSegments: 4, MaxArchivedBytes: 4 * 1024 * 1024);
             var trail = new BoundedSegmentedAuditTrail(
                 path,
                 maxEventsPerSegment: 2,
-                protector: new TestProtector(),
-                retention: new AuditRetentionPolicy(MaxArchivedSegments: 4, MaxArchivedBytes: 4 * 1024 * 1024));
+                protector: protector,
+                retention: retention);
             await trail.AppendAsync(CreateEvent("PRIVATE-LOCAL-STATE-PAYLOAD"));
 
-            var runtime = new LocalStateRuntime(trail);
+            var runtime = new LocalStateRuntime(path, protector, retention);
             var status = await runtime.GetAuditRetentionStatusAsync();
 
             Assert.Equal(1, status.ActiveEventCount);
@@ -69,7 +79,7 @@ public sealed class LocalStateRuntimeTests
     }
 
     [Fact]
-    public void SeparateFacadesForSamePath_ShareProcessSynchronizationGate()
+    public void SeparateAuditFacadesForSamePath_ShareProcessSynchronizationGate()
     {
         var directory = CreateTempDirectory();
         try

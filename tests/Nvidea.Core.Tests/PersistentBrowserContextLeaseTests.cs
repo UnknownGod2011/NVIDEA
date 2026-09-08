@@ -59,6 +59,68 @@ public sealed class PersistentBrowserContextLeaseTests
         }
     }
 
+    [Fact]
+    public async Task Browser_host_contention_fails_before_playwright_transport_factory_runs()
+    {
+        var stateDirectory = CreateTempDirectory();
+        try
+        {
+            using var owner = StateDirectoryLease.Acquire(stateDirectory);
+            var transportFactoryCalled = false;
+
+            var error = await Assert.ThrowsAsync<StateDirectoryLeaseUnavailableException>(() =>
+                BrowserHostRuntime.CreateAsync(
+                    stateDirectory,
+                    BrowserHostOptions.Default,
+                    _ =>
+                    {
+                        transportFactoryCalled = true;
+                        return Task.FromException<IPlaywright>(
+                            new InvalidOperationException("Playwright transport factory must not run under state contention."));
+                    }));
+
+            Assert.False(transportFactoryCalled);
+            Assert.Equal(owner.Owner.InstanceId, error.Owner?.InstanceId);
+        }
+        finally
+        {
+            DeleteTempDirectory(stateDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task Browser_host_transport_failure_releases_pretransport_state_lease()
+    {
+        var stateDirectory = CreateTempDirectory();
+        try
+        {
+            var transportFactoryCalled = false;
+
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                BrowserHostRuntime.CreateAsync(
+                    stateDirectory,
+                    BrowserHostOptions.Default,
+                    _ =>
+                    {
+                        transportFactoryCalled = true;
+                        return Task.FromException<IPlaywright>(
+                            new InvalidOperationException("synthetic Playwright transport failure"));
+                    }));
+
+            Assert.True(transportFactoryCalled);
+            Assert.Equal("synthetic Playwright transport failure", error.Message);
+
+            using var reacquired = StateDirectoryLease.Acquire(stateDirectory);
+            Assert.Equal(
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(stateDirectory)),
+                Path.TrimEndingDirectorySeparator(reacquired.StateDirectory));
+        }
+        finally
+        {
+            DeleteTempDirectory(stateDirectory);
+        }
+    }
+
     private static PlaywrightBrowserDriverOptions DriverOptions() => new(
         AllowedHosts: null,
         MaxObservationCharacters: 12_000,

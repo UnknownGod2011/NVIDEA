@@ -108,13 +108,16 @@ public partial class MainWindow
         if (expectedCount <= 0)
             return;
 
+        _browserActionCts?.Dispose();
+        _browserActionCts = new CancellationTokenSource();
+        var cancellationToken = _browserActionCts.Token;
         SetBrowserRunning(true);
         StatusText.Text = "Download recovery — starting trusted local browser runtime";
         OutputBox.Text = string.Empty;
         try
         {
-            _browserHost ??= await _root.GetBrowserAsync();
-            var records = await _browserHost.ListDownloadsAsync();
+            _browserHost ??= await _root.GetBrowserAsync(cancellationToken);
+            var records = await _browserHost.ListDownloadsAsync(cancellationToken);
             var interrupted = records.Count(static item => item.State == BrowserDownloadState.Interrupted);
             OutputBox.Text =
                 $"Trusted quarantine recovery completed.\n\n" +
@@ -135,6 +138,8 @@ public partial class MainWindow
         }
         finally
         {
+            _browserActionCts?.Dispose();
+            _browserActionCts = null;
             SetBrowserRunning(false);
             await RefreshDownloadsAsync();
         }

@@ -24,6 +24,8 @@ Target: **Personal AI**. Secondary target: **Best Use of Tavily**. Ambition: top
 - Authority scoring is intentionally syntactic and heuristic, not a trust oracle: `.gov`/`.mil`/`.int`, country-code government/military suffixes, `.edu`/country-code education/academic suffixes, and documentation-like subdomains receive modest boosts. A deceptive subdomain such as `gov.example.com` remains default-web authority.
 - Evidence ranking preserves exact source IDs, canonical URLs and citation provenance. Locally computed quality metadata is passed to Nemotron separately and explicitly labeled as heuristic rather than proof of truth.
 - Research synthesis remains Nemotron-first and prompt-injection hardened: source text is untrusted data, extracted text is preferred over snippets, quality metadata cannot redefine policy, conflicts/insufficient evidence must be surfaced, and `[src:SOURCE_ID]` markers are machine-validated.
+- Durable research jobs now checkpoint versioned request -> plan -> prepared evidence -> completed report stages. The prepared-evidence checkpoint contains ranked source/citation provenance, deterministic quality metadata, warnings and cumulative Tavily credit usage, allowing synthesis to resume without re-running Search/Extract or re-spending Tavily credits.
+- Research checkpoints are bounded to 2 MiB UTF-8 and reject malformed/oversized payloads before remote work.
 - Capability registry, least-privilege permission policy, exact single-use approval authorizer, protected segmented audit trail and emergency-stop plumbing.
 - Production browser runtime uses an NVIDEA-owned persistent Chromium profile with popup/new-tab tracking and durable download quarantine.
 - Browser downloads use Receiving -> Ready/Interrupted with verified length/SHA-256 and DPAPI-protected metadata on Windows.
@@ -106,13 +108,41 @@ Security / privacy / cost review:
 - Tavily date windows retain their documented semantics but do not become invented publication timestamps in NVIDEA provenance.
 - No secrets, browser credentials, local file contents or personal-memory data are added by this layer.
 
+### 2026-09-09 — Durable resumable Nemotron + Tavily research jobs
+Completed this run:
+- Re-read `progress.md`, recent commits, `ResearchEngine`, job contracts/orchestrator, Tavily contracts and existing tests before modifying code.
+- Split `ResearchEngine` at durable remote-work boundaries. `PlanAsync` remains Nemotron planning; `GatherEvidenceAsync` performs Tavily Search, optional Tavily Extract and deterministic rank/quality preparation; `SynthesizeAsync` consumes only already-prepared evidence and performs no Tavily call or re-ranking.
+- Added `ResearchPreparedEvidence` so the ranked `ResearchBatch` and source-ID keyed deterministic quality metadata can be checkpointed together without recomputing diversity ordering after restart.
+- Added `ResearchJobHandler` with versioned `research.requested.v1`, `research.planned.v1`, `research.evidence.v1`, and `research.completed.v1` checkpoints.
+- The evidence checkpoint persists the actual source/citation provenance, extracted evidence, warnings, Tavily `ProviderCreditsUsed`, and deterministic authority/freshness/diversity quality metadata before final Nemotron synthesis.
+- Added a 2 MiB UTF-8 ceiling to every research checkpoint serialization/deserialization boundary. Oversized or missing payloads fail before remote work instead of becoming unbounded durable state.
+- Added `ReadCompletedReport` for a trusted caller to recover the final report from a completed durable job without invoking providers again.
+- Added `ResearchJobHandlerTests` covering stage transitions, persisted credit/quality metadata, evidence-resume behavior with a provider that throws if called, and oversized-checkpoint rejection before any network/provider call.
+- During review, caught a subtle initial design issue where `GatherEvidenceAsync` returned an already-ranked batch but `SynthesizeAsync` reranked it, which could alter diversity penalties/order after resume. Replaced that with explicit `ResearchPreparedEvidence`; synthesis now preserves the exact checkpointed ranking and quality decisions.
+- Implementation/test commits before this progress update: `067c3b94b83fd9eebe48a39c4b7aa47dcec922af`, `5affb9d37266b3d137fe2adb4c84dc367bdfcadb`, `a536f9ab9af8f09db74d5752a3147ce1e8dfe557`, `d22608d4bfd1b5ee38cf53dd400894ffb736f1c0`, `d72172bc6e7377df90ec4ab7e9536ac02334afdc`.
+
+Validation / evidence:
+- Repository identity was explicitly verified as exactly `UnknownGod2011/NVIDEA` immediately before every mutation.
+- Existing research and durable-job contracts were re-read before implementation; no other repository was mutated.
+- Static call-flow review confirms the `research.evidence.v1` resume path calls only `ResearchEngine.SynthesizeAsync`; it has no provider/Tavily invocation path.
+- Regression tests use a `ThrowingProvider` on resume so any accidental Search call fails the test, and assert Tavily credit plus quality metadata are present in the durable evidence checkpoint.
+- This environment still does not provide a usable .NET SDK/compiler signal, so compilation and test execution are not claimed. GitHub Actions was not triggered merely to manufacture a green result.
+
+Security / privacy / cost review:
+- Research checkpoints can contain web evidence and the original research question; they intentionally contain no API keys, approval grants, browser credentials, or OS-private context.
+- The 2 MiB ceiling bounds local durable-state growth and JSON parsing exposure. A future production store should additionally encrypt these research checkpoints at rest when they may include sensitive user questions.
+- Resume after the evidence checkpoint avoids duplicate Tavily Search/Extract charges and preserves exact source/citation/quality provenance.
+- Research remains side-effect-free with no consequential-action approval bypass introduced by this handler.
+- Untrusted web evidence is still passed to Nemotron through the existing explicit untrusted-evidence boundary; checkpointing does not promote source text into trusted instructions.
+
 ## Current Unverified / Risks
 - Highest risk remains executable validation: no real `dotnet build`, `dotnet test`, Windows WPF launch, persistent Chromium launch or DPAPI round-trip has run in this environment.
-- The Tavily Extract tests, new evidence-ranker tests and ResearchEngine quality-metadata integration assertions are implemented but unexecuted here. Verify .NET compilation and run the test suite before relying on the demo path.
+- The Tavily Extract tests, evidence-ranker tests, ResearchEngine staged API changes, and new `ResearchJobHandlerTests` are implemented but unexecuted here. Verify .NET compilation and run the test suite before relying on the demo path.
 - Live Tavily Search/Extract compatibility still needs a controlled test with a real `TAVILY_API_KEY`; in particular, current production Search still has no provider-populated `PublishedAt` because the documented result shape lacks that field.
+- Durable research checkpoints currently rely on whichever `IAgentJobStore` is composed by the host; the existing JSON store does not yet add DPAPI/application-level protection specifically for research payloads.
+- The durable research handler is not yet wired into the Windows composition root/UI, so the final demo cannot yet start, display, interrupt and resume these research stages visibly.
 - Authority scoring is intentionally a bounded syntactic heuristic, not registrable-domain/Public-Suffix-List validation or a curated source reputation database. It should never be surfaced as a binary trust verdict.
 - Search-window freshness depends on research providers honoring the `ResearchQuery` date contract. Production Tavily does send those bounds and current Tavily docs define their publish/update-date semantics; future provider adapters must preserve that contract.
-- Research jobs are not yet packaged as a durable resumable research workflow with visible plan/search/extract/rank/synthesis checkpoints and source evidence for the final demo.
 - The browser lease tests, real child-process fixture, recovery UX, oversized-download fixture and Windows staging/reparse behavior also remain unexecuted here.
 - Passive browser snapshots intentionally verify retained payload length, not SHA-256, on every four-second poll; trusted export/discard performs full hash verification before consequential mutation.
 - Persistent Chromium profile contents and quarantined payload bytes rely on the OS user-profile boundary rather than application-level encryption.
@@ -120,4 +150,4 @@ Security / privacy / cost review:
 - A verified production embedding adapter remains absent.
 
 ## Single Best Next Task
-Obtain the first real Windows/.NET 8 build + unit tests + WPF launch + persistent Chromium + DPAPI signal and repair any compile/runtime issues. If executable validation remains unavailable, build a durable resumable research-job/checkpoint surface that persists bounded plan/search/extract/rank/synthesis progress, source/citation evidence, Tavily credit usage and explicit uncertainty so the final <=3 minute demo can visibly show long-running Nemotron + Tavily research surviving interruption/resume.
+Obtain the first real Windows/.NET 8 build + unit tests + WPF launch + persistent Chromium + DPAPI signal and repair any compile/runtime issues. If executable validation remains unavailable, wire `ResearchJobHandler` into the production composition root and Windows UX with a privacy-safe stage/status surface, explicit cancel/resume controls, and protected local checkpoint storage so the <=3 minute demo visibly proves interruption-safe Nemotron + Tavily research.

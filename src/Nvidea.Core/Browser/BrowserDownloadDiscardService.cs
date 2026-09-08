@@ -11,11 +11,6 @@ public sealed record BrowserDownloadDiscardPlan(
     long? LengthBytes,
     string? Sha256);
 
-public sealed record BrowserDownloadDiscardReceipt(
-    Guid DownloadId,
-    BrowserDownloadState PreviousState,
-    DateTimeOffset DiscardedAt);
-
 /// <summary>
 /// Consequential boundary for intentionally deleting a quarantined browser payload.
 /// The exact download id and verified digest are bound into a short-lived single-use approval.

@@ -48,6 +48,8 @@ internal static class BrowserDownloadStateSynchronization
 internal sealed class BrowserDownloadSnapshotReader
 {
     private const string ProtectionPurpose = "browser-download-metadata-v1";
+    private const long MaxMetadataBytes = 4L * 1024L * 1024L;
+    private const int MaxMetadataRecords = 4096;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly string _payloadDirectory;
@@ -83,13 +85,19 @@ internal sealed class BrowserDownloadSnapshotReader
         try
         {
             var records = await LoadAsync(cancellationToken).ConfigureAwait(false);
+            if (records.Count > MaxMetadataRecords)
+                throw new InvalidDataException("Download metadata contains too many records for a passive snapshot.");
+
             var stable = new List<BrowserDownloadSnapshotItem>();
+            var seenIds = new HashSet<Guid>();
             long retainedBytes = 0;
             var pendingRecoveryCount = 0;
 
             foreach (var record in records)
             {
                 ValidateRecord(record);
+                if (!seenIds.Add(record.DownloadId))
+                    throw new InvalidDataException("Download metadata contains duplicate ids.");
 
                 if (record.State == BrowserDownloadState.Receiving)
                 {
@@ -148,7 +156,14 @@ internal sealed class BrowserDownloadSnapshotReader
         if (!File.Exists(_metadataPath))
             return Array.Empty<BrowserDownloadRecord>();
 
+        var info = new FileInfo(_metadataPath);
+        if (info.Length > MaxMetadataBytes)
+            throw new InvalidDataException("Download metadata is too large for a passive snapshot.");
+
         var persisted = await File.ReadAllBytesAsync(_metadataPath, cancellationToken).ConfigureAwait(false);
+        if (persisted.LongLength > MaxMetadataBytes)
+            throw new InvalidDataException("Download metadata grew beyond the passive snapshot limit while being read.");
+
         LocalStatePayload payload;
         if (_protector is not null)
             payload = LocalStateEnvelope.Decode(persisted, _protector, ProtectionPurpose);
@@ -156,6 +171,9 @@ internal sealed class BrowserDownloadSnapshotReader
             throw new InvalidDataException("Download metadata is protected but no local-state protector was configured.");
         else
             payload = new LocalStatePayload(persisted, false);
+
+        if (payload.Plaintext.LongLength > MaxMetadataBytes)
+            throw new InvalidDataException("Decoded download metadata is too large for a passive snapshot.");
 
         try
         {

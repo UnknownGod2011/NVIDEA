@@ -1,0 +1,109 @@
+using System.Text.Json;
+using Nvidea.Core.Security;
+
+namespace Nvidea.Core.Capabilities;
+
+/// <summary>
+/// Logical payload limits for the mutable active audit segment. Archived bytes are governed by
+/// <see cref="AuditRetentionPolicy"/>; these limits prevent a single hostile or accidental audit
+/// event from inflating the current segment before count-based rotation can occur.
+/// </summary>
+public sealed record AuditPayloadPolicy(
+    int MaxEventPayloadBytes = 64 * 1024,
+    long MaxActiveSegmentPayloadBytes = 4L * 1024L * 1024L)
+{
+    public static AuditPayloadPolicy Default { get; } = new();
+
+    internal void Validate()
+    {
+        if (MaxEventPayloadBytes < 1)
+            throw new ArgumentOutOfRangeException(nameof(MaxEventPayloadBytes), "Audit event payload limit must be positive.");
+        if (MaxActiveSegmentPayloadBytes < MaxEventPayloadBytes)
+            throw new ArgumentOutOfRangeException(nameof(MaxActiveSegmentPayloadBytes), "Active-segment payload limit must be at least the single-event limit.");
+    }
+}
+
+/// <summary>
+/// Production-safe facade over <see cref="SegmentedAuditTrail"/> that adds deterministic logical
+/// payload ceilings without weakening its protected hash chain, rollover, retention, or crash
+/// recovery semantics. Limits are evaluated against UTF-8 JSON for <see cref="AuditEvent"/> before
+/// any protected audit side effect occurs; encryption/base64/file-format overhead therefore cannot
+/// be attacker-controlled without first passing the smaller logical payload ceiling.
+/// </summary>
+public sealed class BoundedSegmentedAuditTrail : IAuditTrail
+{
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
+    private readonly SegmentedAuditTrail _inner;
+    private readonly int _maxEventsPerSegment;
+    private readonly AuditPayloadPolicy _payloadPolicy;
+    private readonly SemaphoreSlim _gate = new(1, 1);
+
+    public BoundedSegmentedAuditTrail(
+        string path,
+        int maxEventsPerSegment = 1_000,
+        ILocalStateProtector? protector = null,
+        AuditRetentionPolicy? retention = null,
+        AuditPayloadPolicy? payloadPolicy = null)
+    {
+        if (maxEventsPerSegment < 2)
+            throw new ArgumentOutOfRangeException(nameof(maxEventsPerSegment), "Audit segments must allow at least two events.");
+
+        _payloadPolicy = payloadPolicy ?? AuditPayloadPolicy.Default;
+        _payloadPolicy.Validate();
+        _maxEventsPerSegment = maxEventsPerSegment;
+        _inner = new SegmentedAuditTrail(path, maxEventsPerSegment, protector, retention);
+    }
+
+    public async Task AppendAsync(AuditEvent auditEvent, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(auditEvent);
+        var eventBytes = MeasurePayloadBytes(auditEvent);
+        if (eventBytes > _payloadPolicy.MaxEventPayloadBytes)
+        {
+            throw new InvalidOperationException(
+                $"Audit event logical payload is {eventBytes} bytes, exceeding the {_payloadPolicy.MaxEventPayloadBytes}-byte limit.");
+        }
+
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var retained = await _inner.ReadAllAsync(cancellationToken).ConfigureAwait(false);
+
+            // Retention only prunes complete archived segments, each containing exactly
+            // _maxEventsPerSegment records. Therefore retained-count modulo the segment size still
+            // identifies the active segment after pruning. A zero remainder with retained events
+            // means the active segment is full and the next append will rotate into an empty one.
+            var remainder = retained.Count % _maxEventsPerSegment;
+            var activeCount = retained.Count == 0
+                ? 0
+                : remainder == 0 ? _maxEventsPerSegment : remainder;
+
+            long activePayloadBytes = 0;
+            if (activeCount < _maxEventsPerSegment)
+            {
+                for (var i = retained.Count - activeCount; i < retained.Count; i++)
+                    activePayloadBytes = checked(activePayloadBytes + MeasurePayloadBytes(retained[i]));
+            }
+
+            var nextActiveBytes = checked(activePayloadBytes + eventBytes);
+            if (nextActiveBytes > _payloadPolicy.MaxActiveSegmentPayloadBytes)
+            {
+                throw new InvalidOperationException(
+                    $"Audit active-segment logical payload would reach {nextActiveBytes} bytes, exceeding the {_payloadPolicy.MaxActiveSegmentPayloadBytes}-byte limit.");
+            }
+
+            await _inner.AppendAsync(auditEvent, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public Task<IReadOnlyList<AuditEvent>> ReadAllAsync(CancellationToken cancellationToken = default) =>
+        _inner.ReadAllAsync(cancellationToken);
+
+    private static int MeasurePayloadBytes(AuditEvent auditEvent) =>
+        JsonSerializer.SerializeToUtf8Bytes(auditEvent, JsonOptions).Length;
+}

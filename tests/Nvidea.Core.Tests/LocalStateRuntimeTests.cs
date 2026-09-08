@@ -1,4 +1,5 @@
 using System.Reflection;
+using Nvidea.Core.Browser;
 using Nvidea.Core.Capabilities;
 using Nvidea.Core.Desktop;
 using Nvidea.Core.Security;
@@ -8,16 +9,25 @@ namespace Nvidea.Core.Tests;
 public sealed class LocalStateRuntimeTests
 {
     [Fact]
-    public void PublicSurface_ExposesOnlyPayloadFreeStatusRead()
+    public void PublicSurface_ExposesOnlyPassiveTelemetryReads()
     {
         var methods = typeof(LocalStateRuntime)
-            .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+            .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+            .OrderBy(static method => method.Name, StringComparer.Ordinal)
+            .ToArray();
 
-        var method = Assert.Single(methods);
-        Assert.Equal(nameof(LocalStateRuntime.GetAuditRetentionStatusAsync), method.Name);
-        Assert.Equal(typeof(Task<AuditRetentionStatus>), method.ReturnType);
-        var parameter = Assert.Single(method.GetParameters());
-        Assert.Equal(typeof(CancellationToken), parameter.ParameterType);
+        Assert.Equal(2, methods.Length);
+        Assert.Contains(methods, static method =>
+            method.Name == nameof(LocalStateRuntime.GetAuditRetentionStatusAsync) &&
+            method.ReturnType == typeof(Task<AuditRetentionStatus>));
+        Assert.Contains(methods, static method =>
+            method.Name == nameof(LocalStateRuntime.GetBrowserDownloadSnapshotAsync) &&
+            method.ReturnType == typeof(Task<BrowserDownloadSnapshot>));
+        Assert.All(methods, static method =>
+        {
+            var parameter = Assert.Single(method.GetParameters());
+            Assert.Equal(typeof(CancellationToken), parameter.ParameterType);
+        });
 
         var surface = string.Join("|", methods.Select(static candidate =>
             candidate.ReturnType.FullName + ":" + candidate.Name + ":" +
@@ -29,12 +39,13 @@ public sealed class LocalStateRuntimeTests
                      "BrowserHostRuntime",
                      "ApprovalGrant",
                      "ScopedApprovalAuthorizer",
-                     "BrowserDownload",
                      "IAuditTrail",
                      "AppendAsync",
                      "Delete",
                      "Discard",
-                     "Export"
+                     "Export",
+                     "Recover",
+                     "Repair"
                  })
         {
             Assert.DoesNotContain(forbidden, surface, StringComparison.Ordinal);
@@ -45,8 +56,9 @@ public sealed class LocalStateRuntimeTests
             .Select(static field => field.FieldType.FullName ?? field.FieldType.Name)
             .ToArray();
         Assert.DoesNotContain(declaredFields, static typeName => typeName.Contains("BoundedSegmentedAuditTrail", StringComparison.Ordinal));
-        Assert.DoesNotContain(declaredFields, static typeName => typeName.Contains("Browser", StringComparison.Ordinal));
+        Assert.DoesNotContain(declaredFields, static typeName => typeName.Contains("BrowserHostRuntime", StringComparison.Ordinal));
         Assert.DoesNotContain(declaredFields, static typeName => typeName.Contains("Approval", StringComparison.Ordinal));
+        Assert.DoesNotContain(declaredFields, static typeName => typeName.Contains("Quarantine", StringComparison.Ordinal));
     }
 
     [Fact]

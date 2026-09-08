@@ -41,11 +41,18 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         _stateDirectory = stateDirectory;
         Desktop = desktop;
         Session = session;
+        LocalState = new LocalStateRuntime(Path.Combine(stateDirectory, "browser"));
     }
 
     public DesktopInvocationService Desktop { get; }
     public DesktopSessionController Session { get; }
     public PersonalMemoryService Memory => _memory;
+
+    /// <summary>
+    /// Read-only protected local-state inspection that never initializes Playwright/Chromium or
+    /// exposes approval/browser mutation authority.
+    /// </summary>
+    public LocalStateRuntime LocalState { get; }
 
     public static async Task<NvideaCompositionRoot> CreateFromEnvironmentAsync(
         string? stateDirectory = null,

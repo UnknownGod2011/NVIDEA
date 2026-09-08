@@ -141,7 +141,8 @@ public partial class MainWindow
 
     private void ApplyResearchStatus(ResearchJobStatus status)
     {
-        ResearchStatusText.Text = $"{status.DisplayText} · local durable execution · attempt {status.Attempt}";
+        var location = status.ExecutionLocation == JobExecutionLocation.Local ? "local" : "Nebius Serverless";
+        ResearchStatusText.Text = $"{status.DisplayText} · {location} durable execution · attempt {status.Attempt}";
         UpdateResearchControls(status);
     }
 

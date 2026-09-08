@@ -95,7 +95,8 @@ public static class PersistentBrowserContextFactory
 
             // Tie state ownership to the actual Chromium context lifetime. Close is emitted for normal
             // shutdown, browser closure, and browser crashes; StateDirectoryLease.Dispose is idempotent.
-            var ownedLease = stateLease;
+            var ownedLease = stateLease
+                ?? throw new InvalidOperationException("Browser state lease was unexpectedly unavailable after context launch.");
             context.Close += (_, _) => ownedLease.Dispose();
             stateLease = null;
 

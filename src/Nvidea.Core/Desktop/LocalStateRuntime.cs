@@ -13,7 +13,7 @@ public sealed class LocalStateRuntime
 {
     private readonly AuditRetentionStatusReader _statusReader;
     private readonly SemaphoreSlim _auditGate;
-    private readonly BrowserDownloadSnapshotReader _downloadReader;
+    private readonly BrowserDownloadSnapshotReader? _downloadReader;
 
     internal LocalStateRuntime(string browserStateDirectory)
         : this(
@@ -22,23 +22,41 @@ public sealed class LocalStateRuntime
                 : browserStateDirectory),
             protector: null,
             retention: AuditRetentionPolicy.Default,
-            downloadOptions: null)
+            downloadOptions: new BrowserDownloadQuarantineOptions())
     {
+    }
+
+    // Retained for focused audit tests: this constructor interprets the first path as the exact
+    // audit file and deliberately does not create a download-reader surface.
+    internal LocalStateRuntime(
+        string auditPath,
+        ILocalStateProtector? protector,
+        AuditRetentionPolicy? retention = null)
+    {
+        if (string.IsNullOrWhiteSpace(auditPath))
+            throw new ArgumentException("Audit path is required.", nameof(auditPath));
+
+        var fullAuditPath = Path.GetFullPath(auditPath);
+        var effectiveRetention = retention ?? AuditRetentionPolicy.Default;
+        _statusReader = new AuditRetentionStatusReader(fullAuditPath, protector, effectiveRetention);
+        _auditGate = BoundedSegmentedAuditTrail.GetSynchronizationGate(fullAuditPath);
     }
 
     internal LocalStateRuntime(
         string browserStateDirectory,
         ILocalStateProtector? protector,
-        AuditRetentionPolicy? retention = null,
-        BrowserDownloadQuarantineOptions? downloadOptions = null)
+        AuditRetentionPolicy retention,
+        BrowserDownloadQuarantineOptions downloadOptions)
     {
         if (string.IsNullOrWhiteSpace(browserStateDirectory))
             throw new ArgumentException("Browser state directory is required.", nameof(browserStateDirectory));
 
+        ArgumentNullException.ThrowIfNull(retention);
+        ArgumentNullException.ThrowIfNull(downloadOptions);
+
         var browserRoot = Path.GetFullPath(browserStateDirectory);
         var auditPath = Path.Combine(browserRoot, "audit.jsonl");
-        var effectiveRetention = retention ?? AuditRetentionPolicy.Default;
-        _statusReader = new AuditRetentionStatusReader(auditPath, protector, effectiveRetention);
+        _statusReader = new AuditRetentionStatusReader(auditPath, protector, retention);
         _auditGate = BoundedSegmentedAuditTrail.GetSynchronizationGate(auditPath);
         _downloadReader = new BrowserDownloadSnapshotReader(browserRoot, downloadOptions, protector);
     }
@@ -71,6 +89,10 @@ public sealed class LocalStateRuntime
     /// source URLs, deletion methods, or approval objects cross this boundary.
     /// </summary>
     public Task<BrowserDownloadSnapshot> GetBrowserDownloadSnapshotAsync(
-        CancellationToken cancellationToken = default) =>
-        _downloadReader.ReadAsync(cancellationToken);
+        CancellationToken cancellationToken = default)
+    {
+        if (_downloadReader is null)
+            throw new InvalidOperationException("This local-state runtime was created for audit-only inspection.");
+        return _downloadReader.ReadAsync(cancellationToken);
+    }
 }

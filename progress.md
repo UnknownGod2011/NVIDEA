@@ -16,10 +16,14 @@ Target: **Personal AI**. Secondary target: **Best Use of Tavily**. Ambition: top
 - .NET 8 core at `src/Nvidea.Core`; WPF host at `src/Nvidea.Windows`.
 - Nebius/Nemotron inference abstraction with structured output/tools, retries, timeout/cancellation and conservative routing.
 - Layered personal memory, Tavily research engine, Playwright browser agent, deterministic verification, prompt-injection/safety boundaries, resumable browser-goal sessions and durable jobs.
-- Tavily research now uses both Search and query-focused Extract in the production research pipeline. Search results are canonicalized/deduplicated, then a bounded top-ranked subset is re-read through advanced `/extract`; extracted evidence replaces snippets only for matching URLs and total Tavily credits remain accounted.
-- Tavily Extract is bounded to 8 sources per batch and 3 query-focused chunks per source by default; both are validated against Tavily's documented limits. Extract uses markdown, disables images/favicon, tracks usage, and inherits the existing bounded retry/timeout/cancellation path.
-- Extract failures are fail-soft for research quality: a whole Extract outage or per-source extraction failure retains the original Search evidence and emits warnings rather than discarding the research run. User cancellation still propagates.
-- Research synthesis remains Nemotron-first and prompt-injection hardened: source text is explicitly untrusted, source IDs/canonical URLs are preserved, synthesis is told to prefer extracted source text, and referenced `[src:SOURCE_ID]` markers are machine-validated.
+- Tavily research uses Search plus query-focused advanced Extract. Search results are canonicalized/deduplicated, then a bounded top subset is re-read through `/extract`; extracted evidence replaces snippets only for matching URLs and total Tavily credits remain accounted.
+- Tavily Extract defaults to at most 8 sources and 3 focused chunks/source, uses markdown, disables images/favicon, and shares bounded retry/timeout/cancellation behavior. Extract failures retain Search evidence with explicit warnings; user cancellation still propagates.
+- Research now has a deterministic evidence-quality layer before Nemotron synthesis. `ResearchEvidenceRanker` combines provider relevance (60%), conservative host-authority heuristics (22%) and freshness evidence (18%), then applies a bounded same-host diversity penalty during ordering.
+- Freshness is not fabricated. Existing `PublishedAt` timestamps are scored when available; otherwise an explicit query `StartDate` is treated only as a bounded search-window freshness signal. News evidence with neither timestamp nor bounded window receives an explicit unverified-freshness warning. News evidence with a known publication timestamp older than 30 days receives a stale warning.
+- Current Tavily Search docs were checked before this scoring work: Tavily documents `start_date`/`end_date` as filters based on publish date or last-updated date, while the documented result object exposes relevance score but no publication timestamp. NVIDEA therefore does not invent a `PublishedAt` value from Search results.
+- Authority scoring is intentionally syntactic and heuristic, not a trust oracle: `.gov`/`.mil`/`.int`, country-code government/military suffixes, `.edu`/country-code education/academic suffixes, and documentation-like subdomains receive modest boosts. A deceptive subdomain such as `gov.example.com` remains default-web authority.
+- Evidence ranking preserves exact source IDs, canonical URLs and citation provenance. Locally computed quality metadata is passed to Nemotron separately and explicitly labeled as heuristic rather than proof of truth.
+- Research synthesis remains Nemotron-first and prompt-injection hardened: source text is untrusted data, extracted text is preferred over snippets, quality metadata cannot redefine policy, conflicts/insufficient evidence must be surfaced, and `[src:SOURCE_ID]` markers are machine-validated.
 - Capability registry, least-privilege permission policy, exact single-use approval authorizer, protected segmented audit trail and emergency-stop plumbing.
 - Production browser runtime uses an NVIDEA-owned persistent Chromium profile with popup/new-tab tracking and durable download quarantine.
 - Browser downloads use Receiving -> Ready/Interrupted with verified length/SHA-256 and DPAPI-protected metadata on Windows.
@@ -36,7 +40,7 @@ Target: **Personal AI**. Secondary target: **Best Use of Tavily**. Ambition: top
 - `StateDirectoryLease` combines process-local ownership with OS-backed `FileStream.Lock(0, 1)` on `.nvidea-state.lock`; stale lock files are not ownership.
 - Browser-state ownership is acquired by `BrowserHostRuntime.CreateAsync` before `Playwright.CreateAsync`; that exact lease is transferred once into `PersistentBrowserContextFactory.LaunchOwnedAsync` and retained through context lifetime. Direct factory callers remain intrinsically protected.
 - Cross-process lease coverage includes independent child-process ownership, contention, abrupt process-tree death and stale lock-file reacquisition. No-browser coverage proves contention prevents Playwright factory invocation and transport-creation failure releases the lease.
-- Root README + MIT license; README now documents Tavily Search + Extract as a judging-visible core dependency rather than future work.
+- Root README + MIT license; README documents Tavily Search + Extract + deterministic evidence-quality ranking as judging-visible core architecture.
 
 ## Persistent Progress History
 
@@ -64,46 +68,56 @@ Moved state ownership ahead of Playwright transport startup, added explicit sing
 Representative commits: `b840a2220353d035eca1d1c13de6cb15b8875c85`, `79b9338dceb55470f775d5467fd8b5ad2461ea29`, `0a4658deb4d78e0d747663fe9f80b9e0a47dca4a`, `1e7438cb9bdd80b3b5d5bdda10971033af650947`, `bd96428dae7222d702429a42ecaf1e337a88bcfa`, `2f3f1f33423f5bfbd33abcc174fafa0052278355`.
 
 ### 2026-09-09 — Tavily Extract evidence pipeline
+Added `IResearchExtractionProvider`, production advanced Tavily Extract enrichment, shared bounded Search/Extract transport, credit accounting, fail-soft partial/full extraction handling, synthesis integration, extraction contract tests and README/judging documentation.
+
+Representative commits: `9b45da151dedd946625962f485713a4543543cd6`, `cb521700f2edd588be5385b33c72f2275d7aea3e`, `b584a113452a091a9159b5ae3dd6581c2aa1a978`, `1c9ab04569f0c09bff7de07e9807a4b04223d933`, `fc2bc6c0f8fc23a8c3034553f902ce00fc23530e`, `c95a4f5405c0745e5e0cf1acf683d5efbdad6f02`.
+
+### 2026-09-09 — Deterministic evidence authority/freshness/diversity ranking
 Completed this run:
-- Re-read `progress.md`, recent commits, full repo tree, `ResearchEngine`, `TavilyResearchClient`, existing Tavily tests, ResearchEngine tests and README before implementation.
-- Verified current official Tavily API behavior before coding: `/extract` supports a URL/list of URLs, query-focused reranking, `chunks_per_source` 1-5, `extract_depth` basic/advanced, markdown/text format, `include_usage`, and batches up to 20 URLs. Current docs also confirm Bearer authentication and the `https://api.tavily.com` base URL.
-- Added `IResearchExtractionProvider` so extraction is a clean research capability rather than being hard-wired into the generic search interface.
-- Implemented `TavilyResearchClient.EnrichAsync`: selects a bounded top-ranked source subset, calls advanced Tavily Extract with the user's research intent for chunk reranking, canonicalizes response URLs, replaces matching search snippets with extracted content, preserves provenance/source IDs, and adds Extract credits to the batch usage total.
-- Refactored Tavily HTTP calls through one bounded retry/timeout/authentication path so Search and Extract share the same transport and error policy.
-- Added fail-soft behavior: provider/network/timeout failures return the original Search evidence with a warning; per-source failed extractions keep that source's snippet and emit a host-only warning; explicit user cancellation still propagates.
-- Wired `ResearchEngine.ResearchAsync` to automatically enrich evidence whenever the provider implements `IResearchExtractionProvider`, before untrusted-evidence wrapping and Nemotron synthesis.
-- Updated synthesis policy to prefer extracted source text over snippets while retaining exact `[src:SOURCE_ID]` citation validation and source-text-as-untrusted-data boundaries.
-- Added `TavilyExtractEnrichmentTests` covering the official request shape, advanced/query-focused extraction, credit accounting, partial source failure, and full Extract outage fallback.
-- Added `ResearchExtractionPipelineTests` proving enriched content, not the original snippet, is what reaches synthesis and that extraction is skipped when search returns no sources.
-- Updated README so Tavily Extract is represented as implemented core architecture and judging-visible pipeline behavior rather than future work.
-- Implementation/test/docs commits before this progress update: `9b45da151dedd946625962f485713a4543543cd6`, `cb521700f2edd588be5385b33c72f2275d7aea3e`, `b584a113452a091a9159b5ae3dd6581c2aa1a978`, `1c9ab04569f0c09bff7de07e9807a4b04223d933`, `fc2bc6c0f8fc23a8c3034553f902ce00fc23530e`.
+- Re-read `progress.md`, recent commits, the research implementation, existing research tests and README before changing code.
+- Re-verified current official Tavily Search documentation. The docs state that Search results are ranked by relevance; `news` is intended for real-time updates; `start_date`/`end_date` filter by publish date or last-updated date; and the documented result object does not expose a publication timestamp. This is why the implementation preserves `PublishedAt = null` for current Tavily Search results rather than inferring one.
+- Added `ResearchEvidenceQuality`, `ResearchEvidenceRanking` and `ResearchEvidenceRanker` in `src/Nvidea.Core/Research/ResearchEvidenceQuality.cs`.
+- Added deterministic composite ranking: 60% provider relevance, 22% conservative syntactic authority, 18% freshness evidence. Ranking then applies a bounded repeated-host penalty of 0.09 per earlier result from the same host, capped at 0.18, so one domain is less likely to monopolize the top evidence set.
+- Added provenance-safe freshness bases: known `PublishedAt`, bounded requested Search window, or Unknown. News sources without a timestamp or bounded date window emit an explicit uncertainty warning; known news evidence older than 30 days emits a stale warning.
+- Added an independent-corroboration warning when at least three sources come from only one host.
+- Added conservative authority tiers for government/international, academic/institutional, documentation-like, and default web hosts. During review, caught an unsafe first version that would have boosted any hostname containing a `gov`/`edu` label; corrected it so `gov.example.com` does not receive government authority. Country-code institutional recognition now requires the institutional label immediately before a two-letter country-code suffix.
+- Kept quality metadata separate from `ResearchSource`/`ResearchCitation` contracts instead of silently rewriting provenance fields. The ranker reorders existing sources/citations and returns a source-ID keyed quality map.
+- Wired `ResearchEngine` to rank evidence after Tavily Extract but before untrusted-evidence construction/Nemotron synthesis.
+- Added a deterministic quality metadata block keyed to exact source IDs. Nemotron is explicitly told these are heuristics rather than proof of truth and that unknown/stale warnings must be respected.
+- Added `ResearchEvidenceRankerTests` covering authority preference, deceptive-subdomain rejection, bounded search-window freshness without inventing publish time, stale/unknown news warnings, host diversity ordering and citation-order preservation.
+- Updated `ResearchEngineTests` to prove quality metadata and the untrusted evidence boundary both reach the synthesis request.
+- Updated README so this scoring layer is judging-visible and no longer listed as future work.
+- Implementation/test/docs commits before this progress update: `206515fafd9a0ac27314711a5f4e99bb301ce5ed` (initial quality-layer draft, immediately superseded by the provenance-compatible correction), `9451f69ada117196668d9051f314b8df4e72c0a6`, `9c7fcd4547f28367297a006ccdde2e753b249be5`, `9f16c1fb658394c0718d391f7fbead07d9166d45`, `bdccdba2fe5ec605b918dbeb1e6f30741b751c94`, `eaf6ba6ffecb8006cc64ec193a07ac53795cbbc0`, `36d41fcf65835cb28a2d373d68c460371ead1c43`.
 
 Validation / evidence:
 - Repository identity was explicitly re-verified as exactly `UnknownGod2011/NVIDEA` before every GitHub mutation.
-- Current official Tavily Extract documentation was checked on 2026-09-09 before implementation; no stale API shape was guessed.
-- The Extract implementation commit diff was re-read after mutation and confirmed to preserve the existing Search contract while adding a separate enrichment interface and shared transport path.
-- `command -v dotnet`, `msbuild`, `csc`, and `mcs` still returned no executable in this environment, so compilation/test execution is not claimed.
-- No GitHub Actions workflow was triggered merely to obtain a green result.
+- Official Tavily Search docs were checked on 2026-09-09 before implementing freshness logic; the code does not claim a response timestamp Tavily does not document.
+- The `ResearchEngine` integration diff was re-read after mutation to confirm ranking occurs after Extract, quality metadata is distinct from source text, and exact citation validation remains unchanged.
+- Tests were added at both the deterministic ranker layer and ResearchEngine synthesis-input layer.
+- `command -v dotnet`, `msbuild`, `csc`, and `mcs` returned no executable in this runtime, so compilation/test execution is not claimed.
+- No GitHub Actions workflow was triggered merely to manufacture a green result.
 - No other repository was mutated.
 
 Security / privacy / cost review:
-- Extracted web content remains untrusted evidence and cannot become instructions merely because it is deeper source text.
-- No API keys, credentials or browser/session state are added to persisted research objects.
-- Failure warnings use only the failed source host rather than Tavily's arbitrary remote error string, reducing accidental untrusted-data propagation into UI/logs.
-- Query-focused extraction sends the user's research question plus selected public result URLs to Tavily; this is appropriate for the web-research subsystem but should remain disclosed as cloud research data flow.
-- Extraction is bounded by source count and chunk count, images/favicon are disabled, and Tavily-reported Extract credits are accumulated into `ProviderCreditsUsed` for cost observability.
+- Evidence-quality scoring is deterministic local computation: it adds no external API call, token cost or new cloud data disclosure.
+- Source content remains untrusted web data. Quality metadata contains only source IDs and numeric/enumerated local scores, not copied web instructions.
+- Authority is explicitly heuristic and deliberately weighted below provider relevance. The implementation avoids claiming that a hostname suffix proves factual correctness.
+- Freshness warnings fail toward uncertainty rather than silently declaring undated current-event evidence fresh.
+- Tavily date windows retain their documented semantics but do not become invented publication timestamps in NVIDEA provenance.
+- No secrets, browser credentials, local file contents or personal-memory data are added by this layer.
 
 ## Current Unverified / Risks
 - Highest risk remains executable validation: no real `dotnet build`, `dotnet test`, Windows WPF launch, persistent Chromium launch or DPAPI round-trip has run in this environment.
-- The new Tavily Extract and research-pipeline tests are implemented but unexecuted here. Verify .NET serialization of the current request DTOs and live Tavily response compatibility with a real `TAVILY_API_KEY` before the demo.
+- The Tavily Extract tests, new evidence-ranker tests and ResearchEngine quality-metadata integration assertions are implemented but unexecuted here. Verify .NET compilation and run the test suite before relying on the demo path.
+- Live Tavily Search/Extract compatibility still needs a controlled test with a real `TAVILY_API_KEY`; in particular, current production Search still has no provider-populated `PublishedAt` because the documented result shape lacks that field.
+- Authority scoring is intentionally a bounded syntactic heuristic, not registrable-domain/Public-Suffix-List validation or a curated source reputation database. It should never be surfaced as a binary trust verdict.
+- Search-window freshness depends on research providers honoring the `ResearchQuery` date contract. Production Tavily does send those bounds and current Tavily docs define their publish/update-date semantics; future provider adapters must preserve that contract.
+- Research jobs are not yet packaged as a durable resumable research workflow with visible plan/search/extract/rank/synthesis checkpoints and source evidence for the final demo.
 - The browser lease tests, real child-process fixture, recovery UX, oversized-download fixture and Windows staging/reparse behavior also remain unexecuted here.
-- Research source `PublishedAt` is still not populated from provider evidence, so freshness scoring/stale-info warnings are not yet strong enough for a competition-grade current-events demo.
-- Source ranking still primarily uses Tavily provider score; richer deterministic authority/freshness/diversity scoring is absent.
-- Research jobs are not yet packaged as a durable resumable research workflow with visible checkpoint/source evidence for the final demo.
 - Passive browser snapshots intentionally verify retained payload length, not SHA-256, on every four-second poll; trusted export/discard performs full hash verification before consequential mutation.
 - Persistent Chromium profile contents and quarantined payload bytes rely on the OS user-profile boundary rather than application-level encryption.
 - Local voice/transcription is absent.
 - A verified production embedding adapter remains absent.
 
 ## Single Best Next Task
-Obtain the first real Windows/.NET 8 build + unit tests + WPF launch + persistent Chromium + DPAPI signal and repair any compile/runtime issues. If executable validation remains unavailable, strengthen the Tavily research path further with deterministic source authority/freshness/diversity scoring and stale-information warnings while preserving provenance, then add a durable resumable research job/checkpoint surface suitable for the <=3 minute demo.
+Obtain the first real Windows/.NET 8 build + unit tests + WPF launch + persistent Chromium + DPAPI signal and repair any compile/runtime issues. If executable validation remains unavailable, build a durable resumable research-job/checkpoint surface that persists bounded plan/search/extract/rank/synthesis progress, source/citation evidence, Tavily credit usage and explicit uncertainty so the final <=3 minute demo can visibly show long-running Nemotron + Tavily research surviving interruption/resume.

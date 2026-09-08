@@ -31,7 +31,8 @@ Target: **Personal AI**. Secondary target: **Best Use of Tavily**. Ambition: top
 - Passive download snapshots omit full URLs/query strings, exported paths, failure strings, payload bytes and approval state; stable entries are fail-closed on malformed metadata/missing or wrong-length payloads.
 - Browser-download metadata mutation and passive snapshot reads share one same-path in-process synchronization gate.
 - WPF surfaces an explicit **Download recovery needed** state for passive `Receiving` records. Recovery occurs only after deliberate user action and remains emergency-stop cancellable.
-- Production browser acquisition through `NvideaCompositionRoot` now takes a process-local + OS-backed durable-state lease before Playwright/profile/download/audit initialization. A second NVIDEA process targeting the same browser state fails closed rather than concurrently mutating it.
+- Production browser acquisition through `NvideaCompositionRoot` takes a process-local + OS-backed durable-state lease before Playwright/profile/download/audit initialization. A second production NVIDEA composition root targeting the same browser state fails closed rather than concurrently mutating it.
+- Cross-process lease regression coverage now includes a real independent `dotnet test` child process that owns the state lock, parent-process contention, simulated process-tree crash, and stale lock-file reacquisition.
 - Root README + MIT license.
 
 ## Persistent Progress History
@@ -49,44 +50,43 @@ Added crash-safe archived audit retention, protected pruning tombstones/digests,
 
 Representative commits: `467f6f1a4846fc1f88f76e59ee29111e5e070bb4`, `ab9285e84f13520fbce37ec9b8436371c568bf0e`, `58ad476cba7059220f9fd0129a086a2a661deb7c`, `6d547d218e03da473e552d69cfb02765a91407f2`, `d55c87a4333bfa1a48aa2c1fe87398371d4b180f`, `e09cdfe6c90db5e330abbc9b020a92ae642a72d7`, `44228a3ca42d3d06d9c0184a47a0d07efcdb56d9`, `537c3df7fdf10d46ccb7dde7b3bbed0615f4f32a`, `148962033b88a4b54b58346e7c9ee0b89ebfafbf`, `5a4fe4ab5660679bf24bad889cdfcd83473fe693`.
 
-### 2026-09-08 — Explicit trusted download recovery UX
+### 2026-09-08 — Trusted download recovery UX
 Added deliberate **Recover safely** UX, trusted quarantine reconciliation only after user action, sanitized pending-recovery telemetry, and emergency-stop cancellation for browser startup/recovery.
 
 Representative commits: `ac374dee484eb51b8c92e96b48b5b6d58c0200a9`, `a3617ce95cb3a7e41f593dba5888cf8bb63d51d7`, `1d8a164add9606af5ae5640eaad36ffbdd2499db`.
 
 ### 2026-09-08 — Single-owner browser durable-state lease
+Added `StateDirectoryLease`, combining a process-local path guard with an OS-backed `FileStream.Lock(0, 1)` on `.nvidea-state.lock`. Lease metadata is bounded and low-sensitivity; stale lock files are harmless because ownership is the live kernel lock. Production `NvideaCompositionRoot.GetBrowserAsync()` acquires the lease before Playwright/profile/download/audit initialization and releases it after browser shutdown or failed startup. Existing lease files that are reparse points are rejected.
+
+Representative commits: `2de5457b0ad514aa46cc0a0e645a3e8bcd0bcdbf`, `e8abde4be63d434079f1fcc427182f61418fef46`, `00549921b78e0aff0862d0ddfbebd87df0a3ca6c`, `97cb35651728f91cb7be6d9fda47e80e259bd92e`.
+
+### 2026-09-08 — True cross-process lease fixture
 Completed this run:
-- Re-read `progress.md`, browser profile ownership, `BrowserHostRuntime`, `NvideaCompositionRoot`, and existing test patterns before implementation.
-- Added `StateDirectoryLease`, which combines a process-local path ownership guard with an OS-backed `FileStream.Lock(0, 1)` on `.nvidea-state.lock`.
-- The lease file intentionally remains after shutdown/crash, but ownership is the live kernel lock rather than file existence; stale lock files therefore do not permanently brick startup.
-- Lease metadata is bounded and contains only format version, random instance id, local process id and acquisition timestamp; no prompts, URLs, filenames, credentials or browser state are written.
-- Existing lease files that are reparse points are rejected rather than followed.
-- `NvideaCompositionRoot.GetBrowserAsync()` acquires the lease before Playwright/profile/download/audit initialization and retains it for the complete production browser-runtime lifetime.
-- Browser startup failure/cancellation releases the lease immediately; normal disposal closes the browser before releasing state ownership.
-- Added regression tests for same-state exclusivity, release/reacquisition, stale-file recovery and different-state isolation.
-- During review, added the process-local guard because Unix byte-range locking behavior can differ for multiple handles in one process; the OS lock remains the cross-process authority.
-- Current Microsoft documentation was checked for `FileStream.Lock`; .NET uses region locking on Windows and Unix, with Unix lock behavior depending on stream access mode.
-- Files changed: `src/Nvidea.Core/Desktop/StateDirectoryLease.cs`, `src/Nvidea.Core/Desktop/NvideaCompositionRoot.cs`, `tests/Nvidea.Core.Tests/StateDirectoryLeaseTests.cs`, and this progress file.
-- Commits before this progress update: `2de5457b0ad514aa46cc0a0e645a3e8bcd0bcdbf`, `e8abde4be63d434079f1fcc427182f61418fef46`, `00549921b78e0aff0862d0ddfbebd87df0a3ca6c`, `97cb35651728f91cb7be6d9fda47e80e259bd92e`.
+- Re-read this progress file, recent commits, `StateDirectoryLease`, `BrowserHostRuntime`, `NvideaCompositionRoot`, and existing lease tests before implementation.
+- Added `StateDirectoryLeaseProcessTests` with a real independent `dotnet test` child process rather than another in-process handle.
+- The child acquires the state-directory lease and publishes only the random lease instance id to a temporary readiness marker.
+- The parent verifies same-state acquisition fails closed and binds the observed owner to the child-published lease instance id. It intentionally does not assume the `dotnet test` launcher PID equals the actual testhost PID.
+- The parent then kills the entire child process tree to simulate ungraceful process death and retries acquisition until the OS releases the kernel lock, proving the persistent `.nvidea-state.lock` file itself is not the authority.
+- The fixture has bounded startup/crash/reacquisition waits and cleanup fallbacks so it cannot wait indefinitely.
+- Files changed: `tests/Nvidea.Core.Tests/StateDirectoryLeaseProcessTests.cs` and this progress file.
+- Commits before this progress update: `f32619c68f06d1fbc99eb69cea7af8948dba4c1f`, `2ed36aa814793f33d81cf824befc0b1fc857ddfc`.
 
 Validation / evidence:
-- Repository identity was explicitly verified as exactly `UnknownGod2011/NVIDEA` immediately before every GitHub mutation.
-- Static review confirms the production composition root acquires state ownership before `BrowserHostRuntime.CreateAsync` and releases it on failure or disposal.
-- Tests were added but not executed in this environment.
-- `dotnet`, `msbuild`, `csc` and `mcs` remain unavailable here, so compilation/unit tests/WPF/Chromium/DPAPI execution cannot truthfully be reported as successful.
+- Repository identity was explicitly verified as exactly `UnknownGod2011/NVIDEA` before every GitHub mutation.
+- Static review found and corrected an invalid first assumption that the `dotnet test` launcher PID would equal the lease-owning testhost PID; the final assertion uses the random lease instance id written by the actual lease owner.
+- `dotnet`, `msbuild`, `csc` and `mcs` are still unavailable in this execution environment, so the new fixture has not been compiled or executed here and no Windows cross-process success claim is made.
 - No GitHub Actions workflow was triggered merely to manufacture a green signal.
 - No other repository was mutated.
 
 Security / privacy review:
-- A second production NVIDEA composition root cannot intentionally start a second browser mutator over the same durable browser directory while the first lease is alive.
-- The lease does not bypass Chromium's own profile safeguards; it adds an earlier NVIDEA ownership boundary.
-- Read-only `LocalStateRuntime` remains browser-free and does not acquire mutation authority.
-- No lock-file deletion is required for recovery, eliminating stale-file orphaning as a permanent-denial mechanism.
-- Lease metadata is intentionally low-sensitivity and bounded to 4 KiB.
+- The child-process fixture writes only temporary test coordination files under a unique temp directory and uses no user browser data, credentials, URLs, prompts or production state.
+- Crash-release behavior is tested without deleting the persistent lock file, preserving the intended stale-file recovery model.
+- The test is inert when run normally as the child-probe fact unless all three explicit probe environment variables are supplied by the parent fixture.
+- Timeouts are bounded and the parent forcibly terminates the child process tree on cleanup failure.
 
 ## Current Unverified / Risks
 - Highest risk remains executable validation: no real `dotnet build`, `dotnet test`, Windows WPF launch, persistent Chromium launch or DPAPI round-trip has run in this environment.
-- The cross-process lease is statically reviewed but has not yet been validated by two real independent Windows processes.
+- The new two-process fixture is implemented but unexecuted here; especially verify Windows `FileStream.Lock`, nested filtered `dotnet test --no-build`, process-tree termination and lock-release timing on a real Windows runner.
 - `BrowserHostRuntime.CreateAsync()` is public and can still be called directly by code that bypasses `NvideaCompositionRoot`; the production Windows composition path is protected, but the stronger end state is to make lease ownership intrinsic to every mutating browser-host construction path.
 - New recovery UX is statically reviewed but unexecuted; WPF binding/event behavior still needs real Windows evidence.
 - Passive snapshots intentionally verify retained payload length, not SHA-256, on every four-second poll. Trusted export/discard performs full hash verification before consequential mutation.
@@ -96,4 +96,4 @@ Security / privacy review:
 - Tavily Extract/richer source authority/freshness work and a verified embedding adapter remain opportunities.
 
 ## Single Best Next Task
-Obtain the first real Windows/.NET 8 build + unit tests + WPF launch + persistent Chromium + DPAPI signal and repair any compile/runtime issues. If executable validation remains unavailable, move the state lease into the lowest mutating browser-host composition boundary so direct `BrowserHostRuntime.CreateAsync()` callers cannot bypass it, and add a true two-process lease integration fixture proving contention, crash release and stale-file reacquisition.
+Obtain the first real Windows/.NET 8 build + unit tests + WPF launch + persistent Chromium + DPAPI signal and repair any compile/runtime issues. If executable validation remains unavailable, move `StateDirectoryLease` ownership into `BrowserHostRuntime.CreateAsync()` itself (or an even lower mutating browser-host factory) so direct callers cannot bypass state ownership, then simplify `NvideaCompositionRoot` to avoid double-leasing.

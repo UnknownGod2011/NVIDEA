@@ -50,16 +50,26 @@ public static class PersistentBrowserContextFactory
 
         var fullStateDirectory = Path.GetFullPath(stateDirectory);
         var stateLease = StateDirectoryLease.Acquire(fullStateDirectory);
-        return await LaunchOwnedAsync(
-            playwright,
-            fullStateDirectory,
-            startUri,
-            driverOptions,
-            headless,
-            quarantineOptions,
-            stagingOptions,
-            stateLease,
-            cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await LaunchOwnedAsync(
+                playwright,
+                fullStateDirectory,
+                startUri,
+                driverOptions,
+                headless,
+                quarantineOptions,
+                stagingOptions,
+                stateLease,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // LaunchOwnedAsync normally owns failure cleanup. Keep this idempotent outer guard so even
+            // pre-body argument/runtime validation can never strand a lease acquired by this wrapper.
+            stateLease.Dispose();
+            throw;
+        }
     }
 
     /// <summary>
@@ -79,22 +89,23 @@ public static class PersistentBrowserContextFactory
         StateDirectoryLease stateLease,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(playwright);
-        ArgumentNullException.ThrowIfNull(startUri);
-        ArgumentNullException.ThrowIfNull(driverOptions);
-        ArgumentNullException.ThrowIfNull(quarantineOptions);
         ArgumentNullException.ThrowIfNull(stateLease);
-        quarantineOptions.Validate();
 
-        if (string.IsNullOrWhiteSpace(stateDirectory))
-            throw new ArgumentException("State directory is required.", nameof(stateDirectory));
-        if (!startUri.IsAbsoluteUri || startUri.Scheme is not ("http" or "https"))
-            throw new ArgumentException("Browser start URI must be absolute HTTP(S).", nameof(startUri));
-
-        var fullStateDirectory = Path.GetFullPath(stateDirectory);
         IBrowserContext? context = null;
         try
         {
+            ArgumentNullException.ThrowIfNull(playwright);
+            ArgumentNullException.ThrowIfNull(startUri);
+            ArgumentNullException.ThrowIfNull(driverOptions);
+            ArgumentNullException.ThrowIfNull(quarantineOptions);
+            quarantineOptions.Validate();
+
+            if (string.IsNullOrWhiteSpace(stateDirectory))
+                throw new ArgumentException("State directory is required.", nameof(stateDirectory));
+            if (!startUri.IsAbsoluteUri || startUri.Scheme is not ("http" or "https"))
+                throw new ArgumentException("Browser start URI must be absolute HTTP(S).", nameof(startUri));
+
+            var fullStateDirectory = Path.GetFullPath(stateDirectory);
             var normalizedRequested = Path.TrimEndingDirectorySeparator(fullStateDirectory);
             var normalizedOwned = Path.TrimEndingDirectorySeparator(Path.GetFullPath(stateLease.StateDirectory));
             if (!string.Equals(normalizedRequested, normalizedOwned, StringComparison.OrdinalIgnoreCase))

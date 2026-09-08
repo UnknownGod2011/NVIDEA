@@ -9,7 +9,8 @@ public enum BrowserDownloadState
     Receiving,
     Ready,
     Interrupted,
-    Exported
+    Exported,
+    Discarded
 }
 
 public sealed record BrowserDownloadRecord(
@@ -30,6 +31,11 @@ public sealed record BrowserDownloadExportReceipt(
     long LengthBytes,
     string Sha256,
     DateTimeOffset ExportedAt);
+
+public sealed record BrowserDownloadDiscardReceipt(
+    Guid DownloadId,
+    BrowserDownloadState PreviousState,
+    DateTimeOffset DiscardedAt);
 
 public sealed record BrowserDownloadQuarantineOptions(
     long MaxRetainedBytes = 512L * 1024L * 1024L,
@@ -126,7 +132,7 @@ public sealed class BrowserDownloadQuarantine
             Directory.CreateDirectory(_payloadDirectory);
             var records = (await LoadUnlockedAsync(cancellationToken).ConfigureAwait(false)).ToList();
             if (GetRetainedBytes(records) >= _options.MaxRetainedBytes)
-                throw new BrowserDownloadQuotaExceededException("Browser download quarantine is full. Discard or export retained downloads before downloading another file.");
+                throw new BrowserDownloadQuotaExceededException("Browser download quarantine is full. Discard retained downloads before downloading another file.");
 
             records.Add(receiving);
             await PersistUnlockedAsync(records, cancellationToken).ConfigureAwait(false);
@@ -269,6 +275,54 @@ public sealed class BrowserDownloadQuarantine
                 record.LengthBytes.Value,
                 record.Sha256,
                 updated.UpdatedAt);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    internal async Task<BrowserDownloadDiscardReceipt> DiscardAsync(
+        Guid downloadId,
+        bool userApproved,
+        CancellationToken cancellationToken = default)
+    {
+        if (downloadId == Guid.Empty)
+            throw new ArgumentException("Download id is required.", nameof(downloadId));
+        if (!userApproved)
+            throw new UnauthorizedAccessException("Explicit user approval is required before a quarantined payload can be discarded.");
+
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var records = (await LoadUnlockedAsync(cancellationToken).ConfigureAwait(false)).ToList();
+            var index = records.FindIndex(x => x.DownloadId == downloadId);
+            if (index < 0)
+                throw new KeyNotFoundException($"Download '{downloadId}' was not found.");
+
+            var record = records[index];
+            if (record.State is not (BrowserDownloadState.Ready or BrowserDownloadState.Exported))
+                throw new InvalidOperationException($"Download is {record.State} and has no retained payload eligible for discard.");
+            if (record.LengthBytes is null || string.IsNullOrWhiteSpace(record.Sha256))
+                throw new InvalidDataException("Download metadata is incomplete and cannot authorize discard.");
+
+            var payloadPath = GetPayloadPath(downloadId);
+            await VerifyPayloadAsync(payloadPath, record, cancellationToken).ConfigureAwait(false);
+
+            // Delete the verified payload before persisting the tombstone. If deletion fails, metadata
+            // remains retained so quota/accounting cannot falsely claim capacity was reclaimed.
+            File.Delete(payloadPath);
+            var discardedAt = DateTimeOffset.UtcNow;
+            records[index] = record with
+            {
+                State = BrowserDownloadState.Discarded,
+                ExportedPath = null,
+                Failure = null,
+                UpdatedAt = discardedAt
+            };
+            await PersistUnlockedAsync(records, cancellationToken).ConfigureAwait(false);
+
+            return new BrowserDownloadDiscardReceipt(downloadId, record.State, discardedAt);
         }
         finally
         {

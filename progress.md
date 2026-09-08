@@ -31,8 +31,11 @@ Target: **Personal AI**. Secondary target: **Best Use of Tavily**. Ambition: top
 - Passive download snapshots omit full URLs/query strings, exported paths, failure strings, payload bytes and approval state; stable entries are fail-closed on malformed metadata/missing or wrong-length payloads.
 - Browser-download metadata mutation and passive snapshot reads share one same-path in-process synchronization gate.
 - WPF surfaces an explicit **Download recovery needed** state for passive `Receiving` records. Recovery occurs only after deliberate user action and remains emergency-stop cancellable.
-- Production browser acquisition through `NvideaCompositionRoot` takes a process-local + OS-backed durable-state lease before Playwright/profile/download/audit initialization. A second production NVIDEA composition root targeting the same browser state fails closed rather than concurrently mutating it.
-- Cross-process lease regression coverage now includes a real independent `dotnet test` child process that owns the state lock, parent-process contention, simulated process-tree crash, and stale lock-file reacquisition.
+- `StateDirectoryLease` combines process-local ownership with OS-backed `FileStream.Lock(0, 1)` on `.nvidea-state.lock`; stale lock files are not ownership.
+- Durable browser-state lease ownership is now intrinsic to `PersistentBrowserContextFactory.LaunchAsync`, the lowest boundary that can mutate the persistent Chromium profile/download state. Direct callers cannot bypass single-owner protection merely by skipping `NvideaCompositionRoot`.
+- The lease is acquired before profile preparation, quarantine/staging construction, stale-staging reclamation, or Chromium launch. It is tied to `IBrowserContext.Close`, and startup failure also disposes the same lease directly so ownership is released even if context shutdown itself fails before emitting `Close`.
+- `NvideaCompositionRoot` no longer double-leases browser state; it relies on the intrinsic browser-context boundary and keeps only its in-process lazy-creation semaphore.
+- Cross-process lease regression coverage includes an independent `dotnet test` child process that owns the kernel lock, parent-process contention, simulated process-tree crash, and stale lock-file reacquisition.
 - Root README + MIT license.
 
 ## Persistent Progress History
@@ -55,39 +58,39 @@ Added deliberate **Recover safely** UX, trusted quarantine reconciliation only a
 
 Representative commits: `ac374dee484eb51b8c92e96b48b5b6d58c0200a9`, `a3617ce95cb3a7e41f593dba5888cf8bb63d51d7`, `1d8a164add9606af5ae5640eaad36ffbdd2499db`.
 
-### 2026-09-08 — Single-owner browser durable-state lease
-Added `StateDirectoryLease`, combining a process-local path guard with an OS-backed `FileStream.Lock(0, 1)` on `.nvidea-state.lock`. Lease metadata is bounded and low-sensitivity; stale lock files are harmless because ownership is the live kernel lock. Production `NvideaCompositionRoot.GetBrowserAsync()` acquires the lease before Playwright/profile/download/audit initialization and releases it after browser shutdown or failed startup. Existing lease files that are reparse points are rejected.
+### 2026-09-08 — Single-owner durable browser state
+Added `StateDirectoryLease`, combining a process-local path guard with an OS-backed kernel region lock. Added same-state exclusivity/reacquisition tests plus a true independent-child-process fixture covering contention, abrupt process death and stale lock-file reacquisition.
 
-Representative commits: `2de5457b0ad514aa46cc0a0e645a3e8bcd0bcdbf`, `e8abde4be63d434079f1fcc427182f61418fef46`, `00549921b78e0aff0862d0ddfbebd87df0a3ca6c`, `97cb35651728f91cb7be6d9fda47e80e259bd92e`.
+Representative commits: `2de5457b0ad514aa46cc0a0e645a3e8bcd0bcdbf`, `e8abde4be63d434079f1fcc427182f61418fef46`, `00549921b78e0aff0862d0ddfbebd87df0a3ca6c`, `97cb35651728f91cb7be6d9fda47e80e259bd92e`, `f32619c68f06d1fbc99eb69cea7af8948dba4c1f`, `2ed36aa814793f33d81cf824befc0b1fc857ddfc`.
 
-### 2026-09-08 — True cross-process lease fixture
+### 2026-09-08 — Intrinsic browser-state lease ownership
 Completed this run:
-- Re-read this progress file, recent commits, `StateDirectoryLease`, `BrowserHostRuntime`, `NvideaCompositionRoot`, and existing lease tests before implementation.
-- Added `StateDirectoryLeaseProcessTests` with a real independent `dotnet test` child process rather than another in-process handle.
-- The child acquires the state-directory lease and publishes only the random lease instance id to a temporary readiness marker.
-- The parent verifies same-state acquisition fails closed and binds the observed owner to the child-published lease instance id. It intentionally does not assume the `dotnet test` launcher PID equals the actual testhost PID.
-- The parent then kills the entire child process tree to simulate ungraceful process death and retries acquisition until the OS releases the kernel lock, proving the persistent `.nvidea-state.lock` file itself is not the authority.
-- The fixture has bounded startup/crash/reacquisition waits and cleanup fallbacks so it cannot wait indefinitely.
-- Files changed: `tests/Nvidea.Core.Tests/StateDirectoryLeaseProcessTests.cs` and this progress file.
-- Commits before this progress update: `f32619c68f06d1fbc99eb69cea7af8948dba4c1f`, `2ed36aa814793f33d81cf824befc0b1fc857ddfc`.
+- Re-read `progress.md`, recent commits, `BrowserHostRuntime`, `NvideaCompositionRoot`, `StateDirectoryLease`, `PersistentBrowserContextFactory`, and relevant tests before implementation.
+- Moved state-lease acquisition out of `NvideaCompositionRoot` and into `PersistentBrowserContextFactory.LaunchAsync`, before any persistent profile/download/staging mutation.
+- Kept the lease alive for the full Chromium context lifetime by disposing it from the official Playwright `BrowserContext.Close` event, which is emitted for normal close and browser crash/disconnect scenarios.
+- Preserved an independent local lease reference during initialization so the catch path also disposes ownership directly; this closes the edge case where context shutdown itself fails before firing the close event.
+- Removed `_browserStateLease` and the redundant outer acquire/release logic from `NvideaCompositionRoot`, preventing self-deadlock/double leasing while retaining its lazy in-process creation gate.
+- Added `PersistentBrowserContextLeaseTests` using a `DispatchProxy` IPlaywright fake. One test proves a direct factory call fails closed against an already-held state directory before Playwright is touched; another forces startup failure and verifies the state lease can immediately be reacquired.
+- Current commits before this progress update: `15d905c52a472face95fdce4dc7f91e88f171a7e`, `d8922aa915d6f63fcd06327c55db7cd0afa0737e`, `8b8f08067dbbcff6575d7ad35ebfe65664267df9`, `9a2afc79fbcc09ad89f47f5e30be187b5b47f51e`, `832accb9e4aedc9d5b5224f3a43f00d1d53fcc95`.
 
 Validation / evidence:
 - Repository identity was explicitly verified as exactly `UnknownGod2011/NVIDEA` before every GitHub mutation.
-- Static review found and corrected an invalid first assumption that the `dotnet test` launcher PID would equal the lease-owning testhost PID; the final assertion uses the random lease instance id written by the actual lease owner.
-- `dotnet`, `msbuild`, `csc` and `mcs` are still unavailable in this execution environment, so the new fixture has not been compiled or executed here and no Windows cross-process success claim is made.
-- No GitHub Actions workflow was triggered merely to manufacture a green signal.
+- Static review found and corrected two lease-lifetime issues during the run: nullable event capture under warnings-as-errors, and a potential startup-failure leak if ownership had been transferred exclusively to the context close event.
+- Current official Playwright .NET documentation was checked on 2026-09-08 and confirms `BrowserContext.Close` is emitted when the context closes, the browser is closed, or the browser application crashes.
+- `dotnet`, `msbuild`, `csc` and `mcs` are still unavailable in this execution environment, so compilation/tests/WPF/Chromium/Windows DPAPI execution are not claimed.
+- No GitHub Actions workflow was triggered merely to obtain a green signal.
 - No other repository was mutated.
 
 Security / privacy review:
-- The child-process fixture writes only temporary test coordination files under a unique temp directory and uses no user browser data, credentials, URLs, prompts or production state.
-- Crash-release behavior is tested without deleting the persistent lock file, preserving the intended stale-file recovery model.
-- The test is inert when run normally as the child-probe fact unless all three explicit probe environment variables are supplied by the parent fixture.
-- Timeouts are bounded and the parent forcibly terminates the child process tree on cleanup failure.
+- Lease acquisition happens before browser-profile preparation, quarantine/staging construction and startup cleanup; a second owner cannot enter those mutating paths.
+- The change does not widen model/UI authority or alter approval, export/discard, audit, login/CAPTCHA, or browser-action policy.
+- The lease file remains bounded low-sensitivity owner metadata only; credentials, URLs, prompts, cookies and browser payload data are not written into lease metadata.
+- Normal context close, browser crash, cancellation and startup failure all have explicit ownership-release paths; disposal is idempotent.
 
 ## Current Unverified / Risks
 - Highest risk remains executable validation: no real `dotnet build`, `dotnet test`, Windows WPF launch, persistent Chromium launch or DPAPI round-trip has run in this environment.
-- The new two-process fixture is implemented but unexecuted here; especially verify Windows `FileStream.Lock`, nested filtered `dotnet test --no-build`, process-tree termination and lock-release timing on a real Windows runner.
-- `BrowserHostRuntime.CreateAsync()` is public and can still be called directly by code that bypasses `NvideaCompositionRoot`; the production Windows composition path is protected, but the stronger end state is to make lease ownership intrinsic to every mutating browser-host construction path.
+- The new intrinsic-lease tests and earlier two-process fixture are implemented but unexecuted here; especially verify Playwright 1.62 event binding, Windows `FileStream.Lock`, nested filtered `dotnet test --no-build`, process-tree termination and lock-release timing on a real Windows runner.
+- A direct `BrowserHostRuntime.CreateAsync()` caller still creates the Playwright transport before entering `PersistentBrowserContextFactory`, but persistent browser-state mutation is blocked by the intrinsic lease before profile/quarantine/staging work begins.
 - New recovery UX is statically reviewed but unexecuted; WPF binding/event behavior still needs real Windows evidence.
 - Passive snapshots intentionally verify retained payload length, not SHA-256, on every four-second poll. Trusted export/discard performs full hash verification before consequential mutation.
 - Chromium oversized-download fixture and Windows staging/reparse behavior remain unexecuted here.
@@ -96,4 +99,4 @@ Security / privacy review:
 - Tavily Extract/richer source authority/freshness work and a verified embedding adapter remain opportunities.
 
 ## Single Best Next Task
-Obtain the first real Windows/.NET 8 build + unit tests + WPF launch + persistent Chromium + DPAPI signal and repair any compile/runtime issues. If executable validation remains unavailable, move `StateDirectoryLease` ownership into `BrowserHostRuntime.CreateAsync()` itself (or an even lower mutating browser-host factory) so direct callers cannot bypass state ownership, then simplify `NvideaCompositionRoot` to avoid double-leasing.
+Obtain the first real Windows/.NET 8 build + unit tests + WPF launch + persistent Chromium + DPAPI signal and repair any compile/runtime issues. If executable validation remains unavailable, make direct `BrowserHostRuntime.CreateAsync()` acquire the lease before `Playwright.CreateAsync()` by introducing an owned-launch factory seam that transfers one lease into `PersistentBrowserContextFactory` without double acquisition, then add a no-browser-binary test proving same-state contention fails before Playwright transport startup.

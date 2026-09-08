@@ -23,17 +23,14 @@ public sealed class ResearchJobRuntimeTests
 
             var created = await runtime.CreateAsync("What changed?");
             Assert.True(created.CanRunNextStep);
+            Assert.Equal(JobExecutionLocation.Local, created.ExecutionLocation);
 
             var planned = await runtime.RunNextStepAsync(created.JobId);
             Assert.Equal(ResearchJobStage.GatheringEvidence, planned.Stage);
+            Assert.Equal(JobExecutionLocation.Local, planned.ExecutionLocation);
             var evidence = await runtime.RunNextStepAsync(created.JobId);
             Assert.Equal(ResearchJobStage.Synthesizing, evidence.Stage);
             Assert.Equal(1, provider.SearchCalls);
-
-            var store = new JsonAgentJobStore(Path.Combine(directory, "research-jobs.json"), new PassThroughProtector());
-            var persisted = await store.GetAsync(created.JobId);
-            Assert.NotNull(persisted);
-            Assert.Equal(JobExecutionLocation.Local, persisted!.ExecutionLocation);
 
             var resumedInference = new QueueInferenceClient([
                 new AgentCompletion("Durable answer [src:s1].", [], "model", "stop")
@@ -42,10 +39,14 @@ public sealed class ResearchJobRuntimeTests
             var resumed = new ResearchJobRuntime(directory, new ResearchEngine(resumedInference, throwingProvider), new MemoryAuditTrail());
 
             var statuses = await resumed.ListAsync();
-            Assert.Contains(statuses, status => status.JobId == created.JobId && status.Stage == ResearchJobStage.Synthesizing);
+            Assert.Contains(statuses, status =>
+                status.JobId == created.JobId
+                && status.Stage == ResearchJobStage.Synthesizing
+                && status.ExecutionLocation == JobExecutionLocation.Local);
 
             var completed = await resumed.RunNextStepAsync(created.JobId);
             Assert.Equal(ResearchJobStage.Completed, completed.Stage);
+            Assert.Equal(JobExecutionLocation.Local, completed.ExecutionLocation);
             Assert.Equal(0, throwingProvider.SearchCalls);
 
             var report = await resumed.ReadCompletedReportAsync(created.JobId);
@@ -76,6 +77,7 @@ public sealed class ResearchJobRuntimeTests
             Assert.True(cancelled.IsTerminal);
             Assert.False(cancelled.CanRunNextStep);
             Assert.False(cancelled.CanCancel);
+            Assert.Equal(JobExecutionLocation.Local, cancelled.ExecutionLocation);
         }
         finally
         {
@@ -130,11 +132,5 @@ public sealed class ResearchJobRuntimeTests
         }
         public Task<IReadOnlyList<AuditEvent>> ReadAllAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<AuditEvent>>(_events.ToArray());
-    }
-
-    private sealed class PassThroughProtector : Nvidea.Core.Security.ILocalStateProtector
-    {
-        public byte[] Protect(ReadOnlySpan<byte> plaintext, string purpose) => plaintext.ToArray();
-        public byte[] Unprotect(ReadOnlySpan<byte> protectedData, string purpose) => protectedData.ToArray();
     }
 }

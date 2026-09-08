@@ -34,13 +34,16 @@ Implemented now:
 - Query-focused Tavily Extract enrichment for top-ranked sources using advanced extraction, bounded URL/chunk counts, markdown output and exact usage-credit accounting.
 - Extraction failures degrade to the original search evidence rather than discarding the research run; per-source extraction failures remain explicit warnings.
 - Canonical URL normalization and source deduplication that strips common tracking parameters and retains the stronger provider result.
+- Deterministic evidence-quality ranking that combines Tavily relevance with conservative authority heuristics, timestamp/date-window freshness evidence and cross-host diversity penalties before synthesis.
+- Freshness is never fabricated: when the provider has no publication timestamp, NVIDEA distinguishes a bounded search-window signal from unknown freshness and emits explicit warnings for unverified or stale news evidence.
+- Authority scoring is intentionally heuristic and modest; syntactic `.gov`/`.edu`/country-code institutional suffixes are recognized, while deceptive subdomains such as `gov.example.com` are not treated as government sources.
 - Typed source provenance/citation objects instead of reducing research to a plain answer string.
 - An explicit untrusted-web-content envelope for prompt-injection resistance before evidence reaches Nemotron.
 - Nemotron-powered query planning through the existing Nebius structured-output path.
-- Nemotron research synthesis that prefers extracted evidence, requires `[src:SOURCE_ID]` markers and validates referenced IDs against the collected evidence set.
+- Nemotron research synthesis that receives deterministic quality metadata separately from untrusted web text, prefers extracted evidence, requires `[src:SOURCE_ID]` markers and validates referenced IDs against the collected evidence set.
 - Contract-focused tests using in-memory HTTP/memory/inference/provider fakes; no real cloud credentials are required.
 
-Still under active development: richer freshness/authority scoring, a verified production embedding adapter, memory compaction/summarization, browser automation, skills/permissions, desktop shell integration, resumable jobs, security hardening, packaging and the final hackathon demo.
+Still under active development: a verified production embedding adapter, memory compaction/summarization, richer durable research checkpoints, browser automation polish, skills/permissions, desktop-shell integration, resumable jobs, security hardening, packaging and the final hackathon demo.
 
 ## Why model routing is conservative
 
@@ -75,7 +78,7 @@ dotnet build .\src\Nvidea.Core\Nvidea.Core.csproj
 dotnet test .\tests\Nvidea.Core.Tests\Nvidea.Core.Tests.csproj
 ```
 
-The tests mock network/storage dependencies and cover request structure, model routing, bearer authentication, tool-call parsing, retry behavior, endpoint safety, memory privacy policy, session-only persistence, hybrid retrieval, embedding failure fallback, expiry, deduplicated updates, JSON round trips, Tavily Search/Extract request shapes, canonical URL deduplication, rate-limit retries, extraction fallback behavior, prompt-injection boundaries, research planning and citation-ID validation.
+The tests mock network/storage dependencies and cover request structure, model routing, bearer authentication, tool-call parsing, retry behavior, endpoint safety, memory privacy policy, session-only persistence, hybrid retrieval, embedding failure fallback, expiry, deduplicated updates, JSON round trips, Tavily Search/Extract request shapes, canonical URL deduplication, rate-limit retries, extraction fallback behavior, prompt-injection boundaries, research planning, deterministic authority/freshness/diversity ranking and citation-ID validation.
 
 ## Personal memory contract
 
@@ -100,9 +103,10 @@ Research is implemented as a pipeline rather than a single opaque search call:
 3. Results are normalized and deduplicated by canonical URL while preserving source IDs and provider scores.
 4. The strongest bounded subset is re-read through query-focused **Tavily Extract** so synthesis can rely on source-page evidence rather than snippets alone.
 5. Extracted content replaces only the matching source's evidence; failed extraction retains the original search evidence and emits a warning.
-6. Web text is wrapped as **untrusted evidence**, explicitly preventing source text from becoming agent instructions.
-7. Nemotron synthesizes only from the evidence and is instructed to emit exact `[src:SOURCE_ID]` markers.
-8. The engine resolves only markers that actually exist in collected evidence and surfaces unknown/missing markers as warnings.
+6. `ResearchEvidenceRanker` deterministically reorders evidence using relevance, conservative host authority, publication/search-window freshness and host diversity. Unknown freshness and stale current-event evidence become explicit warnings rather than silently high-confidence facts.
+7. Quality metadata is labeled as a local heuristic and kept separate from source text; web text itself is wrapped as **untrusted evidence**, explicitly preventing source text from becoming agent instructions.
+8. Nemotron synthesizes only from the evidence and is instructed to emit exact `[src:SOURCE_ID]` markers.
+9. The engine resolves only markers that actually exist in collected evidence and surfaces unknown/missing markers as warnings.
 
 This makes provenance machine-checkable, keeps Tavily central to both discovery and evidence acquisition, and creates a security boundary that the autonomous browser/skill system can reuse.
 

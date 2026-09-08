@@ -55,6 +55,11 @@ public sealed class BrowserDownloadStagingGuard
     public BrowserDownloadStagingReclaimResult ReclaimStartupLeftovers()
     {
         Directory.CreateDirectory(StagingDirectory);
+        RejectReparsePoint(StagingDirectory, "Browser staging root is a reparse point; startup cleanup refused.");
+
+        var parent = Directory.GetParent(StagingDirectory)?.FullName;
+        if (!string.IsNullOrWhiteSpace(parent))
+            RejectReparsePoint(parent, "Browser download state root is a reparse point; startup cleanup refused.");
 
         var entries = Directory.EnumerateFileSystemEntries(StagingDirectory, "*", SearchOption.TopDirectoryOnly)
             .Take(_options.MaxStartupReclaimEntries + 1)
@@ -179,6 +184,12 @@ public sealed class BrowserDownloadStagingGuard
         var normalizedRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)) + Path.DirectorySeparatorChar;
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         return candidate.StartsWith(normalizedRoot, comparison) && candidate.Length > normalizedRoot.Length;
+    }
+
+    private static void RejectReparsePoint(string path, string message)
+    {
+        if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidOperationException(message);
     }
 
     private static async Task CancelBestEffortAsync(Func<Task> cancelSourceAsync)

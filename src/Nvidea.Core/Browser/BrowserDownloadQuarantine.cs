@@ -174,7 +174,7 @@ public sealed class BrowserDownloadQuarantine
         return records.FirstOrDefault(x => x.DownloadId == downloadId);
     }
 
-    public async Task<BrowserDownloadExportReceipt> ExportAsync(
+    internal async Task<BrowserDownloadExportReceipt> ExportAsync(
         Guid downloadId,
         string destinationDirectory,
         bool userApproved,

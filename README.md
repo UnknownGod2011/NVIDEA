@@ -31,14 +31,16 @@ Implemented now:
 - Session memory is held in process and deliberately excluded from persistent storage.
 - Atomic JSON persistence, expiry cleanup, update-in-place by layer/key, deletion controls and embedding-provider abstraction.
 - Tavily research provider with multi-query batching, `general`/`news` topic support, date bounds, domain filters, bounded retries/timeouts/cancellation and usage-credit tracking.
+- Query-focused Tavily Extract enrichment for top-ranked sources using advanced extraction, bounded URL/chunk counts, markdown output and exact usage-credit accounting.
+- Extraction failures degrade to the original search evidence rather than discarding the research run; per-source extraction failures remain explicit warnings.
 - Canonical URL normalization and source deduplication that strips common tracking parameters and retains the stronger provider result.
 - Typed source provenance/citation objects instead of reducing research to a plain answer string.
 - An explicit untrusted-web-content envelope for prompt-injection resistance before evidence reaches Nemotron.
 - Nemotron-powered query planning through the existing Nebius structured-output path.
-- Nemotron research synthesis that requires `[src:SOURCE_ID]` markers and validates referenced IDs against the collected evidence set.
+- Nemotron research synthesis that prefers extracted evidence, requires `[src:SOURCE_ID]` markers and validates referenced IDs against the collected evidence set.
 - Contract-focused tests using in-memory HTTP/memory/inference/provider fakes; no real cloud credentials are required.
 
-Still under active development: Tavily Extract integration and richer freshness/authority scoring, a verified production embedding adapter, memory compaction/summarization, browser automation, skills/permissions, desktop shell integration, resumable jobs, security hardening, packaging and the final hackathon demo.
+Still under active development: richer freshness/authority scoring, a verified production embedding adapter, memory compaction/summarization, browser automation, skills/permissions, desktop shell integration, resumable jobs, security hardening, packaging and the final hackathon demo.
 
 ## Why model routing is conservative
 
@@ -73,7 +75,7 @@ dotnet build .\src\Nvidea.Core\Nvidea.Core.csproj
 dotnet test .\tests\Nvidea.Core.Tests\Nvidea.Core.Tests.csproj
 ```
 
-The tests mock network/storage dependencies and cover request structure, model routing, bearer authentication, tool-call parsing, retry behavior, endpoint safety, memory privacy policy, session-only persistence, hybrid retrieval, embedding failure fallback, expiry, deduplicated updates, JSON round trips, Tavily request shape, canonical URL deduplication, rate-limit retries, prompt-injection boundaries, research planning and citation-ID validation.
+The tests mock network/storage dependencies and cover request structure, model routing, bearer authentication, tool-call parsing, retry behavior, endpoint safety, memory privacy policy, session-only persistence, hybrid retrieval, embedding failure fallback, expiry, deduplicated updates, JSON round trips, Tavily Search/Extract request shapes, canonical URL deduplication, rate-limit retries, extraction fallback behavior, prompt-injection boundaries, research planning and citation-ID validation.
 
 ## Personal memory contract
 
@@ -96,11 +98,13 @@ Research is implemented as a pipeline rather than a single opaque search call:
 1. Nemotron creates a bounded, structured query plan.
 2. `TavilyResearchClient` executes those searches with cancellation, retry and endpoint controls.
 3. Results are normalized and deduplicated by canonical URL while preserving source IDs and provider scores.
-4. Web text is wrapped as **untrusted evidence**, explicitly preventing source text from becoming agent instructions.
-5. Nemotron synthesizes only from the evidence and is instructed to emit exact `[src:SOURCE_ID]` markers.
-6. The engine resolves only markers that actually exist in collected evidence and surfaces unknown/missing markers as warnings.
+4. The strongest bounded subset is re-read through query-focused **Tavily Extract** so synthesis can rely on source-page evidence rather than snippets alone.
+5. Extracted content replaces only the matching source's evidence; failed extraction retains the original search evidence and emits a warning.
+6. Web text is wrapped as **untrusted evidence**, explicitly preventing source text from becoming agent instructions.
+7. Nemotron synthesizes only from the evidence and is instructed to emit exact `[src:SOURCE_ID]` markers.
+8. The engine resolves only markers that actually exist in collected evidence and surfaces unknown/missing markers as warnings.
 
-This makes provenance machine-checkable and creates a security boundary that the later autonomous browser/skill system can reuse.
+This makes provenance machine-checkable, keeps Tavily central to both discovery and evidence acquisition, and creates a security boundary that the autonomous browser/skill system can reuse.
 
 ## Target architecture
 

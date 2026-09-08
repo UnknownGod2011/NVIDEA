@@ -1,10 +1,11 @@
 <Window x:Class="Nvidea.Windows.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="NVIDEA" Height="760" Width="800" MinHeight="620" MinWidth="660"
-        WindowStartupLocation="CenterScreen">
+        Title="NVIDEA" Height="840" Width="800" MinHeight="680" MinWidth="660"
+        WindowStartupLocation="CenterScreen" Loaded="ResearchWindow_Loaded">
     <Grid Margin="18">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -107,10 +108,35 @@
             </Grid>
         </Border>
 
-        <TextBox x:Name="OutputBox" Grid.Row="6" IsReadOnly="True" TextWrapping="Wrap"
+        <Border x:Name="ResearchPanel" Grid.Row="6" BorderThickness="1" CornerRadius="6" Padding="10"
+                Margin="0,0,0,10" Visibility="Collapsed">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock Text="Durable Nemotron + Tavily research" FontWeight="SemiBold"/>
+                    <TextBlock x:Name="ResearchStatusText" Text="No durable research job yet." Margin="0,3,14,0"
+                               TextWrapping="Wrap" Opacity="0.72"/>
+                    <TextBlock Text="Only coarse stage telemetry is shown here. Saved questions, source contents, URLs, checkpoint payloads, and provider errors stay out of status UI. Execution is local until real Nebius Serverless dispatch is wired."
+                               Margin="0,3,14,0" TextWrapping="Wrap" FontSize="11" Opacity="0.58"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <Button x:Name="ResearchStartButton" Content="Start durable research" Padding="14,5"
+                            Click="ResearchStartButton_Click"/>
+                    <Button x:Name="ResearchResumeButton" Content="Resume next step" Padding="14,5" Margin="0,6,0,0"
+                            Click="ResearchResumeButton_Click" IsEnabled="False"/>
+                    <Button x:Name="ResearchCancelButton" Content="Cancel" Padding="14,5" Margin="0,6,0,0"
+                            Click="ResearchCancelButton_Click" IsEnabled="False"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <TextBox x:Name="OutputBox" Grid.Row="7" IsReadOnly="True" TextWrapping="Wrap"
                  VerticalScrollBarVisibility="Auto" AcceptsReturn="True"/>
 
-        <DockPanel Grid.Row="7" Margin="0,10,0,0">
+        <DockPanel Grid.Row="8" Margin="0,10,0,0">
             <TextBlock Text="Status:" FontWeight="SemiBold"/>
             <TextBlock x:Name="StatusText" Text="Idle" Margin="6,0,0,0"/>
             <TextBlock Text="Clipboard is never sent unless the checkbox is enabled." DockPanel.Dock="Right"

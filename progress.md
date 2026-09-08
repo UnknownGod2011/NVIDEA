@@ -30,8 +30,9 @@ Target: **Personal AI**. Secondary target: **Best Use of Tavily**. Ambition: top
 - Trusted WPF controls display sanitized filename, source host, verified size/SHA-256 and exact operation/destination before explicit human confirmation. WPF never receives or persists `ApprovalGrant`.
 - Low-level quarantine export/discard primitives are assembly-internal; regression tests protect that API boundary.
 - Retained download quarantine defaults to 512 MiB total / 128 MiB per verified file and never silently evicts Ready/Exported artifacts.
-- **New:** browser-managed in-progress download bytes are routed to an NVIDEA-owned Playwright `DownloadsPath` and guarded during transfer. Both Playwright staging bytes and the quarantine `.partial` copy default to 128 MiB ceilings; exceeding either invokes Playwright `Download.CancelAsync()` and fails closed before final quarantine promotion.
+- Browser-managed in-progress download bytes are routed to an NVIDEA-owned Playwright `DownloadsPath` and guarded during transfer. Both Playwright staging bytes and the quarantine `.partial` copy default to 128 MiB ceilings; exceeding either invokes Playwright `Download.CancelAsync()` and fails closed before final quarantine promotion.
 - Browser-managed temporary copies are explicitly deleted after quarantine capture/failure so they do not consume the next staging budget for the lifetime of the persistent context.
+- **New:** crash-leftover files in the NVIDEA-owned Playwright staging directory are reclaimed before Chromium starts. Reclamation is bounded, top-level only, rejects unexpected directories/reparse points, and blocks browser startup rather than broadening the delete boundary.
 - Root README + MIT license.
 
 ## Persistent Progress History
@@ -48,34 +49,41 @@ Added durable Receiving/Ready/Interrupted/Exported/Discarded lifecycle, SHA-256/
 ### 2026-09-08 — Bounded in-progress browser download staging
 Completed:
 - Added `BrowserDownloadStagingGuard` with independently configurable browser-staging and quarantine-partial limits plus a bounded polling interval.
-- `PersistentBrowserContextFactory` now configures Playwright `DownloadsPath` to `browser-downloads/browser-staging`, an NVIDEA-owned state path, and derives both transient limits from the quarantine's 128 MiB single-download limit.
-- `PlaywrightBrowserSessionDriver` now runs `SaveAsAsync` through the staging guard, monitors both Playwright-managed staging bytes and the destination `.partial`, and invokes `IDownload.CancelAsync()` before surfacing `BrowserDownloadQuotaExceededException` if either exceeds policy.
-- Capture now has a bounded lifetime derived from the existing browser action timeout (clamped to 1–120 seconds) instead of allowing an event-forked download capture to wait indefinitely.
+- `PersistentBrowserContextFactory` configures Playwright `DownloadsPath` to `browser-downloads/browser-staging`, an NVIDEA-owned state path, deriving transient limits from the quarantine's 128 MiB single-download limit.
+- `PlaywrightBrowserSessionDriver` runs `SaveAsAsync` through the staging guard, monitors both Playwright-managed staging bytes and the destination `.partial`, and invokes `IDownload.CancelAsync()` before surfacing `BrowserDownloadQuotaExceededException` if either exceeds policy.
+- Capture has a bounded lifetime derived from the existing browser action timeout (clamped to 1–120 seconds) instead of allowing an event-forked download capture to wait indefinitely.
 - The driver best-effort calls `IDownload.DeleteAsync()` after successful or failed quarantine capture so Playwright's transient duplicate does not consume the persistent context's staging budget after verification.
 - Added `BrowserDownloadStagingGuardTests` for oversized `.partial`, oversized Playwright staging, normal under-limit completion, caller cancellation propagation and invalid configuration.
 - Commits: `96adbcf0b8d00257207d282a01aef9cf78f64e94`, `a1a8157454ee87dd60735c3bc515688d974f93ad`, `1f4a988c4ff367d02a9191dfa174e474515728b6`, `adbd92474ab4fe8240f685a6bc4c4b35b97a3fa6`.
 
+### 2026-09-08 — Fail-closed startup staging reclamation
+Completed:
+- Added `BrowserDownloadStagingGuard.ReclaimStartupLeftovers()` and call it from `PersistentBrowserContextFactory` before `LaunchPersistentContextAsync`, when no legitimate browser transfer can be active.
+- Reclamation is deliberately non-recursive and limited to 2,048 top-level entries by default. It first validates the whole candidate set before deleting anything, preventing a malformed sibling from causing partial cleanup.
+- Unexpected directories, reparse-point entries, a reparse-point staging root/parent, path-boundary violations, or excessive entry populations fail closed and block browser startup rather than expanding deletion authority.
+- Added a typed reclaim result with deleted file/byte counts for future diagnostics without retaining filenames/content.
+- Added unit coverage for successful reclamation, refusal of unexpected directories while preserving sibling files, excessive-entry refusal before deletion, and invalid reclaim configuration.
+- Commits: `5ed0e2753ad9d46610200303fc7b3418158d0d52`, `e0f5c693e380e230adf25ae71e776aebbdbee300`, `b5b4d896a5e59d3e67abeb9dc8da58ec57b6c42c`, `5d362f1067d2a31d146b7d256cb72b7f0a9699ef`.
+
 Validation / evidence:
 - Repository identity was explicitly re-verified as exactly `UnknownGod2011/NVIDEA` before every GitHub mutation in this run.
-- Re-read `progress.md`, the full quarantine implementation, persistent-context composition, session driver and existing quota tests before changing code.
-- Current Playwright .NET documentation confirms `Download.CancelAsync()` is the supported cancellation primitive and `BrowserTypeLaunchPersistentContextOptions.DownloadsPath` is supported for persistent contexts.
-- `src/Nvidea.Core/Nvidea.Core.csproj` currently pins Microsoft.Playwright 1.62.0, well after `Download.CancelAsync()` was introduced.
-- Recent commit chain was re-read after implementation and contains only the intended NVIDEA changes.
+- Re-read `progress.md`, current commits, staging guard, persistent-context factory and existing staging tests before changing code.
+- Re-read the changed staging guard/factory after writes; production startup now executes reclamation before Chromium is launched.
 - Re-checked the execution environment for `dotnet`, `msbuild`, `csc`, and `mcs`; none is available, so compilation/test/WPF/Chromium/DPAPI execution is NOT claimed.
 - No GitHub Actions workflow was rerun merely to obtain a green signal.
 
 Security / privacy review:
-- A hostile/accidental unknown-size transfer is no longer allowed to grow an NVIDEA `.partial` indefinitely before the final quota check.
-- Playwright's own pre-SaveAs browser storage is also placed under an explicit NVIDEA-owned path and monitored, rather than leaving only the copied `.partial` bounded.
-- Quota failure cancels the browser source before returning the failure and the quarantine's existing catch path deletes incomplete `.partial`/payload files and records Interrupted state.
-- Retained verified artifacts are unaffected and never auto-evicted to make room for a hostile transfer.
-- Transient browser bytes remain OS-user-profile protected rather than application-encrypted; they are untrusted and never exposed as approved user files.
+- Crash leftovers can no longer silently consume the next browser transfer's transient staging budget.
+- Cleanup authority is intentionally narrower than the owned state tree: only direct files in `browser-staging` are eligible; recursive deletion is refused.
+- Staging root/parent and child reparse points are rejected to reduce link/junction boundary attacks during cleanup.
+- Candidate validation happens before deletion, so malformed state does not result in a half-cleaned directory followed by browser startup.
+- Reclaim diagnostics expose only aggregate file/byte counts; no filename or page-origin data is persisted by the new path.
 
 ## Current Unverified / Risks
 - Highest risk remains executable validation: no real `dotnet build`, `dotnet test`, Windows WPF launch, persistent Chromium launch or DPAPI round-trip has run in this environment.
-- The new in-progress guard is polling-based, not a filesystem hard quota. Overshoot can occur between polls and while browser cancellation propagates; it is bounded operationally rather than byte-perfect.
+- The in-progress guard is polling-based, not a filesystem hard quota. Overshoot can occur between polls and while browser cancellation propagates; it is bounded operationally rather than byte-perfect.
 - Need a real Playwright integration test proving `DownloadsPath` file growth is observable during a large transfer and `CancelAsync()` stops that transfer on Windows/Chromium as expected.
-- Crash-leftover files in `browser-staging` should be explicitly reclaimed on next owned-browser startup; currently Playwright/context cleanup is relied upon for normal shutdown.
+- Startup reclamation has unit-level design coverage only; Windows junction/reparse behavior and Chromium crash leftovers remain unexecuted here.
 - WPF depends on .NET 8 `Microsoft.Win32.OpenFolderDialog`; compile on Windows before claiming compatibility.
 - Persistent Chromium profile contents and quarantined payload bytes rely on the OS user-profile boundary rather than application-level encryption.
 - Audit lifetime retention/byte quotas remain absent.
@@ -84,4 +92,4 @@ Security / privacy review:
 - WPF download polling can initialize the browser runtime at window render time even when browser work was not requested, which is safe but suboptimal for startup latency/resources.
 
 ## Single Best Next Task
-Obtain the first real Windows/.NET 8 build + unit tests + WPF launch + persistent Chromium + DPAPI signal and immediately repair compile/runtime issues. If executable validation remains unavailable, add safe startup reclamation for stale NVIDEA-owned Playwright staging bytes and a deterministic integration fixture that serves a throttled large download, proving cancellation/cleanup behavior once Chromium execution becomes available.
+Obtain the first real Windows/.NET 8 build + unit tests + WPF launch + persistent Chromium + DPAPI signal and immediately repair compile/runtime issues. If executable validation remains unavailable, add a deterministic opt-in browser integration fixture that serves a throttled large download and asserts staging growth, source cancellation, Interrupted quarantine state, and post-failure cleanup end-to-end once Chromium execution is available.

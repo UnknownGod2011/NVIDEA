@@ -97,7 +97,7 @@ public partial class MainWindow
         if (status.Stage == ResearchJobStage.Completed)
         {
             var report = await runtime.ReadCompletedReportAsync(jobId);
-            OutputBox.Text = report.Answer;
+            OutputBox.Text = report.AnswerMarkdown;
         }
     }
 
@@ -129,7 +129,7 @@ public partial class MainWindow
             if (active.Stage == ResearchJobStage.Completed)
             {
                 var report = await runtime.ReadCompletedReportAsync(active.JobId);
-                OutputBox.Text = report.Answer;
+                OutputBox.Text = report.AnswerMarkdown;
             }
         }
         catch (Exception)

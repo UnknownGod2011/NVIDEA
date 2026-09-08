@@ -176,17 +176,39 @@ public sealed class BrowserDownloadQuarantine
 
             for (var i = 0; i < records.Count; i++)
             {
-                if (records[i].State != BrowserDownloadState.Receiving)
-                    continue;
+                var record = records[i];
+                var payloadPath = GetPayloadPath(record.DownloadId);
+                var discardingPath = GetDiscardingPath(record.DownloadId);
 
-                records[i] = records[i] with
+                if (record.State == BrowserDownloadState.Receiving)
                 {
-                    State = BrowserDownloadState.Interrupted,
-                    UpdatedAt = DateTimeOffset.UtcNow,
-                    Failure = "Download was interrupted before verified quarantine completion."
-                };
-                TryDelete(GetPartialPath(records[i].DownloadId));
-                changed = true;
+                    records[i] = record with
+                    {
+                        State = BrowserDownloadState.Interrupted,
+                        UpdatedAt = DateTimeOffset.UtcNow,
+                        Failure = "Download was interrupted before verified quarantine completion."
+                    };
+                    TryDelete(GetPartialPath(record.DownloadId));
+                    changed = true;
+                    continue;
+                }
+
+                // Crash recovery for discard: before the Discarded tombstone is durable, the
+                // temporary rename is reversible and the retained payload remains authoritative.
+                if (record.State is BrowserDownloadState.Ready or BrowserDownloadState.Exported)
+                {
+                    if (!File.Exists(payloadPath) && File.Exists(discardingPath))
+                        File.Move(discardingPath, payloadPath, false);
+                    continue;
+                }
+
+                // Once the tombstone is durable, any leftover payload/discarding file is garbage.
+                if (record.State == BrowserDownloadState.Discarded)
+                {
+                    TryDelete(GetPartialPath(record.DownloadId));
+                    TryDelete(payloadPath);
+                    TryDelete(discardingPath);
+                }
             }
 
             if (changed)
@@ -307,11 +329,12 @@ public sealed class BrowserDownloadQuarantine
                 throw new InvalidDataException("Download metadata is incomplete and cannot authorize discard.");
 
             var payloadPath = GetPayloadPath(downloadId);
+            var discardingPath = GetDiscardingPath(downloadId);
             await VerifyPayloadAsync(payloadPath, record, cancellationToken).ConfigureAwait(false);
+            if (File.Exists(discardingPath))
+                throw new InvalidDataException("A stale discard transition exists for this download; refresh quarantine state before retrying.");
 
-            // Delete the verified payload before persisting the tombstone. If deletion fails, metadata
-            // remains retained so quota/accounting cannot falsely claim capacity was reclaimed.
-            File.Delete(payloadPath);
+            File.Move(payloadPath, discardingPath, false);
             var discardedAt = DateTimeOffset.UtcNow;
             records[index] = record with
             {
@@ -320,8 +343,22 @@ public sealed class BrowserDownloadQuarantine
                 Failure = null,
                 UpdatedAt = discardedAt
             };
-            await PersistUnlockedAsync(records, cancellationToken).ConfigureAwait(false);
 
+            try
+            {
+                await PersistUnlockedAsync(records, cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                // The tombstone never became durable, so restore the authoritative retained payload.
+                if (!File.Exists(payloadPath) && File.Exists(discardingPath))
+                    File.Move(discardingPath, payloadPath, false);
+                throw;
+            }
+
+            // Metadata now authoritatively says Discarded. Cleanup failure is non-authoritative and
+            // ListAsync will retry it on the next quarantine read.
+            TryDelete(discardingPath);
             return new BrowserDownloadDiscardReceipt(downloadId, record.State, discardedAt);
         }
         finally
@@ -512,6 +549,7 @@ public sealed class BrowserDownloadQuarantine
 
     private string GetPartialPath(Guid id) => Path.Combine(_payloadDirectory, id.ToString("N") + ".partial");
     private string GetPayloadPath(Guid id) => Path.Combine(_payloadDirectory, id.ToString("N") + ".payload");
+    private string GetDiscardingPath(Guid id) => Path.Combine(_payloadDirectory, id.ToString("N") + ".discarding");
 
     private static void ValidateSourceUri(Uri uri)
     {

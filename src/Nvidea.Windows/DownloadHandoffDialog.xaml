@@ -1,0 +1,53 @@
+<Window x:Class="Nvidea.Windows.DownloadHandoffDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Confirm download handoff" Height="430" Width="620"
+        ResizeMode="NoResize" WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Text="Release quarantined download?" FontSize="22" FontWeight="SemiBold"/>
+        <TextBlock Grid.Row="1" Margin="0,6,0,14" TextWrapping="Wrap" Opacity="0.72"
+                   Text="NVIDEA verified this file in quarantine. Exporting it writes the exact file shown below to the selected folder. This approval is single-use."/>
+
+        <Grid Grid.Row="2" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="110"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <TextBlock Text="File" FontWeight="SemiBold"/>
+            <TextBlock x:Name="FileNameText" Grid.Column="1" TextWrapping="Wrap"/>
+        </Grid>
+        <Grid Grid.Row="3" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="110"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <TextBlock Text="Source" FontWeight="SemiBold"/>
+            <TextBlock x:Name="SourceText" Grid.Column="1" TextWrapping="Wrap"/>
+        </Grid>
+        <Grid Grid.Row="4" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="110"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <TextBlock Text="Verified" FontWeight="SemiBold"/>
+            <TextBlock x:Name="VerifiedText" Grid.Column="1" TextWrapping="Wrap" FontFamily="Consolas" FontSize="11"/>
+        </Grid>
+        <Grid Grid.Row="5" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="110"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <TextBlock Text="Destination" FontWeight="SemiBold"/>
+            <TextBox x:Name="DestinationText" Grid.Column="1" IsReadOnly="True" TextWrapping="Wrap" BorderThickness="1" Padding="5"/>
+        </Grid>
+
+        <Border Grid.Row="6" Margin="0,10,0,14" Padding="10" BorderThickness="1" CornerRadius="5">
+            <TextBlock TextWrapping="Wrap" Opacity="0.72"
+                       Text="Only this exact quarantined download and destination are approved. If anything changes after this dialog was prepared, NVIDEA will reject the export and require a new approval."/>
+        </Border>
+
+        <StackPanel Grid.Row="7" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="Cancel" Width="90" Margin="0,0,8,0" IsCancel="True"/>
+            <Button Content="Export file" Width="110" IsDefault="True" Click="ConfirmButton_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

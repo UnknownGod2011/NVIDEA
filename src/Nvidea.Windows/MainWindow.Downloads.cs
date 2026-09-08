@@ -8,6 +8,7 @@ namespace Nvidea.Windows;
 public partial class MainWindow
 {
     private BrowserDownloadSnapshotItem? _downloadCandidate;
+    private int _pendingDownloadRecoveryCount;
     private DispatcherTimer? _downloadRefreshTimer;
 
     protected override async void OnContentRendered(EventArgs e)
@@ -30,21 +31,40 @@ public partial class MainWindow
         try
         {
             var snapshot = await _root.LocalState.GetBrowserDownloadSnapshotAsync();
-            _downloadCandidate = snapshot.RetainedDownloads.FirstOrDefault();
+            _pendingDownloadRecoveryCount = snapshot.PendingRecoveryCount;
 
+            // Recovery state always wins over stable retained artifacts. Passive polling never mutates
+            // Receiving records; the user must deliberately initialize the trusted browser runtime.
+            if (snapshot.HasPendingRecovery)
+            {
+                _downloadCandidate = null;
+                DownloadPanelTitleText.Text = "Download recovery needed";
+                DownloadSummaryText.Text =
+                    $"{snapshot.PendingRecoveryCount} interrupted/in-progress quarantine record(s) require trusted recovery. " +
+                    "No download bytes are exported or deleted by passive inspection.";
+                DownloadReviewButton.Content = "Recover safely";
+                DownloadPanel.Visibility = Visibility.Visible;
+                DownloadReviewButton.IsEnabled = !_running && !_browserRunning;
+                DownloadDiscardButton.IsEnabled = false;
+                return;
+            }
+
+            _downloadCandidate = snapshot.RetainedDownloads.FirstOrDefault();
             if (_downloadCandidate is null)
             {
                 DownloadPanel.Visibility = Visibility.Collapsed;
+                DownloadPanelTitleText.Text = "Verified download retained in quarantine";
                 DownloadSummaryText.Text = string.Empty;
+                DownloadReviewButton.Content = "Review & export";
                 DownloadReviewButton.IsEnabled = false;
                 DownloadDiscardButton.IsEnabled = false;
-                if (snapshot.HasPendingRecovery)
-                    StatusText.Text = $"Download quarantine has {snapshot.PendingRecoveryCount} interrupted/in-progress record(s) awaiting trusted browser recovery.";
                 return;
             }
 
             var size = $"{_downloadCandidate.LengthBytes:N0} bytes";
             var state = _downloadCandidate.State == BrowserDownloadState.Exported ? "exported copy retained" : "ready";
+            DownloadPanelTitleText.Text = "Verified download retained in quarantine";
+            DownloadReviewButton.Content = "Review & export";
             DownloadSummaryText.Text =
                 $"{_downloadCandidate.SuggestedFileName} · {_downloadCandidate.SourceHost} · {size} · {state} · " +
                 $"quarantine {snapshot.RetainedBytes:N0}/{snapshot.MaxRetainedBytes:N0} bytes";
@@ -55,6 +75,7 @@ public partial class MainWindow
         catch (Exception ex)
         {
             _downloadCandidate = null;
+            _pendingDownloadRecoveryCount = 0;
             DownloadPanel.Visibility = Visibility.Collapsed;
             DownloadReviewButton.IsEnabled = false;
             DownloadDiscardButton.IsEnabled = false;
@@ -81,9 +102,56 @@ public partial class MainWindow
         return record;
     }
 
+    private async Task RecoverPendingDownloadsAsync()
+    {
+        var expectedCount = _pendingDownloadRecoveryCount;
+        if (expectedCount <= 0)
+            return;
+
+        SetBrowserRunning(true);
+        StatusText.Text = "Download recovery — starting trusted local browser runtime";
+        OutputBox.Text = string.Empty;
+        try
+        {
+            _browserHost ??= await _root.GetBrowserAsync();
+            var records = await _browserHost.ListDownloadsAsync();
+            var interrupted = records.Count(static item => item.State == BrowserDownloadState.Interrupted);
+            OutputBox.Text =
+                $"Trusted quarantine recovery completed.\n\n" +
+                $"Records requiring recovery before launch: {expectedCount}\n" +
+                $"Interrupted records now recorded: {interrupted}\n\n" +
+                "Recovery did not export a file, approve a browser action, or replay a website side effect.";
+            StatusText.Text = "Download recovery — reconciled locally";
+        }
+        catch (OperationCanceledException)
+        {
+            OutputBox.Text = "Download recovery stopped. No file was exported and no website action was replayed.";
+            StatusText.Text = "Download recovery — cancelled safely";
+        }
+        catch (Exception ex)
+        {
+            OutputBox.Text = $"Download recovery failed safely. No file was exported and no website action was replayed.\n\n{ex.Message}";
+            StatusText.Text = "Download recovery — failed safely";
+        }
+        finally
+        {
+            SetBrowserRunning(false);
+            await RefreshDownloadsAsync();
+        }
+    }
+
     private async void DownloadReviewButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_running || _browserRunning || _downloadCandidate is null)
+        if (_running || _browserRunning)
+            return;
+
+        if (_pendingDownloadRecoveryCount > 0 && _downloadCandidate is null)
+        {
+            await RecoverPendingDownloadsAsync();
+            return;
+        }
+
+        if (_downloadCandidate is null)
             return;
 
         var picker = new OpenFolderDialog

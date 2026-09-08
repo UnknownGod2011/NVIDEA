@@ -71,7 +71,8 @@ public sealed class BrowserDownloadSnapshotReaderTests
                 "browser-downloads",
                 "quarantine",
                 created.DownloadId.ToString("N") + ".payload");
-            await File.AppendAllBytesAsync(payloadPath, new byte[] { 5 });
+            await using (var stream = new FileStream(payloadPath, FileMode.Append, FileAccess.Write, FileShare.None))
+                await stream.WriteAsync(new byte[] { 5 });
 
             var runtime = new LocalStateRuntime(
                 directory,

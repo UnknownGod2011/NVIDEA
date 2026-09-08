@@ -31,6 +31,26 @@ public sealed record BrowserDownloadExportReceipt(
     string Sha256,
     DateTimeOffset ExportedAt);
 
+public sealed record BrowserDownloadQuarantineOptions(
+    long MaxRetainedBytes = 512L * 1024L * 1024L,
+    long MaxSingleDownloadBytes = 128L * 1024L * 1024L)
+{
+    internal void Validate()
+    {
+        if (MaxRetainedBytes <= 0)
+            throw new ArgumentOutOfRangeException(nameof(MaxRetainedBytes), "Retained-byte quota must be positive.");
+        if (MaxSingleDownloadBytes <= 0)
+            throw new ArgumentOutOfRangeException(nameof(MaxSingleDownloadBytes), "Per-download quota must be positive.");
+        if (MaxSingleDownloadBytes > MaxRetainedBytes)
+            throw new ArgumentException("Per-download quota cannot exceed the total retained-byte quota.", nameof(MaxSingleDownloadBytes));
+    }
+}
+
+public sealed class BrowserDownloadQuotaExceededException : IOException
+{
+    public BrowserDownloadQuotaExceededException(string message) : base(message) { }
+}
+
 /// <summary>
 /// Durable download boundary for untrusted browser payloads. Browser bytes first land in an
 /// NVIDEA-owned quarantine directory and are not considered user-visible files until an explicit
@@ -48,17 +68,30 @@ public sealed class BrowserDownloadQuarantine
     private readonly string _payloadDirectory;
     private readonly string _metadataPath;
     private readonly ILocalStateProtector? _protector;
+    private readonly BrowserDownloadQuarantineOptions _options;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     public BrowserDownloadQuarantine(string stateDirectory, ILocalStateProtector? protector = null)
+        : this(stateDirectory, new BrowserDownloadQuarantineOptions(), protector)
+    {
+    }
+
+    public BrowserDownloadQuarantine(
+        string stateDirectory,
+        BrowserDownloadQuarantineOptions options,
+        ILocalStateProtector? protector = null)
     {
         if (string.IsNullOrWhiteSpace(stateDirectory))
             throw new ArgumentException("State directory is required.", nameof(stateDirectory));
+
+        ArgumentNullException.ThrowIfNull(options);
+        options.Validate();
 
         var stateRoot = Path.GetFullPath(stateDirectory);
         _root = Path.Combine(stateRoot, "browser-downloads");
         _payloadDirectory = Path.Combine(_root, "quarantine");
         _metadataPath = Path.Combine(_root, "downloads.json");
+        _options = options;
         _protector = protector ?? (OperatingSystem.IsWindows() ? new WindowsDpapiLocalStateProtector() : null);
     }
 
@@ -92,6 +125,9 @@ public sealed class BrowserDownloadQuarantine
         {
             Directory.CreateDirectory(_payloadDirectory);
             var records = (await LoadUnlockedAsync(cancellationToken).ConfigureAwait(false)).ToList();
+            if (GetRetainedBytes(records) >= _options.MaxRetainedBytes)
+                throw new BrowserDownloadQuotaExceededException("Browser download quarantine is full. Discard or export retained downloads before downloading another file.");
+
             records.Add(receiving);
             await PersistUnlockedAsync(records, cancellationToken).ConfigureAwait(false);
         }
@@ -109,21 +145,16 @@ public sealed class BrowserDownloadQuarantine
                 throw new InvalidDataException("Browser download did not produce a quarantine payload.");
 
             var length = new FileInfo(partialPath).Length;
-            var sha256 = await ComputeSha256Async(partialPath, cancellationToken).ConfigureAwait(false);
-            File.Move(partialPath, payloadPath, false);
+            if (length > _options.MaxSingleDownloadBytes)
+                throw new BrowserDownloadQuotaExceededException("Browser download exceeds the configured per-file quarantine limit.");
 
-            return await UpdateStateAsync(
-                id,
-                BrowserDownloadState.Ready,
-                length,
-                sha256,
-                exportedPath: null,
-                failure: null,
-                cancellationToken).ConfigureAwait(false);
+            var sha256 = await ComputeSha256Async(partialPath, cancellationToken).ConfigureAwait(false);
+            return await CompleteCaptureAsync(id, partialPath, payloadPath, length, sha256, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
         {
             TryDelete(partialPath);
+            TryDelete(payloadPath);
             await MarkInterruptedBestEffortAsync(id, ex, CancellationToken.None).ConfigureAwait(false);
             throw;
         }
@@ -137,8 +168,6 @@ public sealed class BrowserDownloadQuarantine
             var records = (await LoadUnlockedAsync(cancellationToken).ConfigureAwait(false)).ToList();
             var changed = false;
 
-            // A process can stop after durable Receiving metadata is written but before completion.
-            // On restart such entries are never promoted implicitly; they become interrupted.
             for (var i = 0; i < records.Count; i++)
             {
                 if (records[i].State != BrowserDownloadState.Receiving)
@@ -247,13 +276,12 @@ public sealed class BrowserDownloadQuarantine
         }
     }
 
-    private async Task<BrowserDownloadRecord> UpdateStateAsync(
+    private async Task<BrowserDownloadRecord> CompleteCaptureAsync(
         Guid id,
-        BrowserDownloadState state,
-        long? length,
-        string? sha256,
-        string? exportedPath,
-        string? failure,
+        string partialPath,
+        string payloadPath,
+        long length,
+        string sha256,
         CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -264,13 +292,18 @@ public sealed class BrowserDownloadQuarantine
             if (index < 0)
                 throw new InvalidDataException("Download metadata disappeared while the payload was being quarantined.");
 
+            var retainedBytes = GetRetainedBytes(records);
+            if (length > _options.MaxRetainedBytes - retainedBytes)
+                throw new BrowserDownloadQuotaExceededException("Browser download would exceed the configured total quarantine limit. No retained artifact was deleted.");
+
+            File.Move(partialPath, payloadPath, false);
             var updated = records[index] with
             {
-                State = state,
+                State = BrowserDownloadState.Ready,
                 LengthBytes = length,
                 Sha256 = sha256,
-                ExportedPath = exportedPath,
-                Failure = failure,
+                ExportedPath = null,
+                Failure = null,
                 UpdatedAt = DateTimeOffset.UtcNow
             };
             records[index] = updated;
@@ -298,7 +331,12 @@ public sealed class BrowserDownloadQuarantine
                 records[index] = records[index] with
                 {
                     State = BrowserDownloadState.Interrupted,
-                    Failure = error is OperationCanceledException ? "Download was cancelled." : "Download failed before verified quarantine completion.",
+                    Failure = error switch
+                    {
+                        OperationCanceledException => "Download was cancelled.",
+                        BrowserDownloadQuotaExceededException => "Download was rejected by the local quarantine storage quota.",
+                        _ => "Download failed before verified quarantine completion."
+                    },
                     UpdatedAt = DateTimeOffset.UtcNow
                 };
                 await PersistUnlockedAsync(records, cancellationToken).ConfigureAwait(false);
@@ -310,8 +348,6 @@ public sealed class BrowserDownloadQuarantine
         }
         catch
         {
-            // Preserve the original download failure. A leftover Receiving record is converted to
-            // Interrupted by List/Get after restart and can never be exported in that state.
         }
     }
 
@@ -374,6 +410,22 @@ public sealed class BrowserDownloadQuarantine
             if (record.Sha256 is not null && (record.Sha256.Length != 64 || record.Sha256.Any(c => !Uri.IsHexDigit(c))))
                 throw new InvalidDataException("Download metadata contains an invalid SHA-256 digest.");
         }
+    }
+
+    private static long GetRetainedBytes(IEnumerable<BrowserDownloadRecord> records)
+    {
+        long total = 0;
+        foreach (var record in records)
+        {
+            if (record.State is not (BrowserDownloadState.Ready or BrowserDownloadState.Exported) || record.LengthBytes is null)
+                continue;
+
+            checked
+            {
+                total += record.LengthBytes.Value;
+            }
+        }
+        return total;
     }
 
     private async Task VerifyPayloadAsync(string path, BrowserDownloadRecord record, CancellationToken cancellationToken)
@@ -444,7 +496,6 @@ public sealed class BrowserDownloadQuarantine
         }
         catch
         {
-            // Cleanup is best effort; durable metadata still prevents export of incomplete payloads.
         }
     }
 }

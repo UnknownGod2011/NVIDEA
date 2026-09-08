@@ -11,7 +11,7 @@ NVIDEA is the open-source hackathon edition of a Windows-first personal AI opera
 
 ## Current status
 
-The repository is being built in layers. `src/Nvidea.Core` now contains the NVIDIA/Nebius inference foundation, privacy-aware personal memory, and a Tavily-backed research core connected to Nemotron planning/synthesis.
+The repository is being built in layers. `src/Nvidea.Core` now contains the NVIDIA/Nebius inference foundation, privacy-aware personal memory, a Tavily-backed research core connected to Nemotron planning/synthesis, durable research checkpoints, and a safety-focused browser runtime. `src/Nvidea.Windows` exposes the trusted Windows shell, including restart-resumable research controls.
 
 Implemented now:
 
@@ -41,9 +41,17 @@ Implemented now:
 - An explicit untrusted-web-content envelope for prompt-injection resistance before evidence reaches Nemotron.
 - Nemotron-powered query planning through the existing Nebius structured-output path.
 - Nemotron research synthesis that receives deterministic quality metadata separately from untrusted web text, prefers extracted evidence, requires `[src:SOURCE_ID]` markers and validates referenced IDs against the collected evidence set.
+- Durable research checkpoints at remote-work boundaries: request -> Nemotron plan -> Tavily Search/Extract + ranking -> saved evidence -> Nemotron synthesis -> completed report.
+- Saved evidence includes exact ranked provenance, quality metadata, uncertainty warnings and Tavily credit usage so a normal resume does not re-search, re-extract or rerank evidence.
+- `ResearchJobRuntime` persists research jobs and audit records under the local application state directory; on Windows the existing stores use CurrentUser DPAPI protection by default.
+- The Windows shell can create durable research, recover the latest unfinished job after restart, run one explicit stage at a time, cancel work, and recover completed reports.
+- Research status UI is intentionally payload-free: it shows coarse Nemotron/Tavily stages, attempts and execution location without rendering saved questions, source contents/URLs, raw provider errors or checkpoint JSON.
+- Research execution is truthfully labeled **local** today. NVIDEA does not claim Nebius Serverless execution until an actual remote dispatcher is connected.
+- Emergency stop cancels an in-flight durable research stage as well as the existing desktop/browser work paths.
+- Persistent Playwright browser sessions with iterative post-action verification, permission gates, prompt-injection/tool-output trust boundaries, crash-safe download quarantine/recovery and single-owner durable browser state.
 - Contract-focused tests using in-memory HTTP/memory/inference/provider fakes; no real cloud credentials are required.
 
-Still under active development: a verified production embedding adapter, memory compaction/summarization, richer durable research checkpoints, browser automation polish, skills/permissions, desktop-shell integration, resumable jobs, security hardening, packaging and the final hackathon demo.
+Still under active development: a verified production embedding adapter, memory compaction/summarization, research-specific interrupted-running recovery, real Nebius Serverless dispatch, browser automation polish, broader skills, production Windows validation, packaging and the final hackathon demo.
 
 ## Why model routing is conservative
 
@@ -67,7 +75,7 @@ $env:NVIDEA_MODEL_FAST = "<verified-token-factory-model-id>"
 $env:NVIDEA_MODEL_DEEP = "<verified-token-factory-model-id>"
 ```
 
-Do not commit API keys. NVIDEA's future Windows shell will store user secrets using OS-backed encrypted storage rather than plaintext configuration.
+Do not commit API keys. Provider secrets stay outside durable research checkpoints. On Windows, durable research job/audit state uses the existing CurrentUser DPAPI-backed local-state protection path.
 
 ## Build and test
 
@@ -75,10 +83,23 @@ Prerequisite: .NET 8 SDK.
 
 ```powershell
 dotnet build .\src\Nvidea.Core\Nvidea.Core.csproj
+dotnet build .\src\Nvidea.Windows\Nvidea.Windows.csproj
 dotnet test .\tests\Nvidea.Core.Tests\Nvidea.Core.Tests.csproj
 ```
 
-The tests mock network/storage dependencies and cover request structure, model routing, bearer authentication, tool-call parsing, retry behavior, endpoint safety, memory privacy policy, session-only persistence, hybrid retrieval, embedding failure fallback, expiry, deduplicated updates, JSON round trips, Tavily Search/Extract request shapes, canonical URL deduplication, rate-limit retries, extraction fallback behavior, prompt-injection boundaries, research planning, deterministic authority/freshness/diversity ranking and citation-ID validation.
+The tests mock network/storage dependencies and cover request structure, model routing, bearer authentication, tool-call parsing, retry behavior, endpoint safety, memory privacy policy, session-only persistence, hybrid retrieval, embedding failure fallback, expiry, deduplicated updates, JSON round trips, Tavily Search/Extract request shapes, canonical URL deduplication, rate-limit retries, extraction fallback behavior, prompt-injection boundaries, research planning, deterministic authority/freshness/diversity ranking, citation-ID validation, durable research stage transitions, restart recovery from saved evidence, zero-repeat Tavily search after an evidence checkpoint, truthful local execution status and terminal cancellation behavior.
+
+## Durable research workflow
+
+The judging-visible long-running research path is deliberately staged rather than one opaque request:
+
+1. **Save request** — create a durable local job.
+2. **Nemotron plan** — persist the validated structured research plan.
+3. **Tavily evidence** — Search, Extract, deduplicate and rank evidence; persist exact provenance, warnings and credit usage.
+4. **Nemotron synthesis** — resume from the saved evidence checkpoint without repeating Tavily discovery/extraction.
+5. **Completed report** — persist and recover the final citation-validated report.
+
+The Windows panel executes one stage per explicit Start/Resume action and can rediscover an unfinished job after process restart. User cancellation is terminal. A process crash while a stage is durably marked `Running` remains fail-closed today instead of silently replaying a possibly costly remote call; a research-specific explicit recovery transition is planned.
 
 ## Personal memory contract
 
@@ -138,8 +159,9 @@ Windows interaction shell
                     v
           verified task outcome
 
-Long-running cloud-safe work -> Nebius Serverless
+Long-running cloud-safe work -> Nebius Serverless (target; remote dispatcher not yet wired)
 Private OS actions            -> local Windows runtime
+Durable research today        -> protected local Windows runtime
 ```
 
 ## Personal AI safety contract

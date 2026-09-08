@@ -79,19 +79,24 @@ public sealed class LocalStateRuntimeTests
     }
 
     [Fact]
-    public void SeparateAuditFacadesForSamePath_ShareProcessSynchronizationGate()
+    public void LocalStatusAndBrowserAuditForSamePath_ShareProcessSynchronizationGate()
     {
         var directory = CreateTempDirectory();
         try
         {
             var path = Path.Combine(directory, "audit.jsonl");
-            var first = new BoundedSegmentedAuditTrail(path, protector: new TestProtector());
-            var second = new BoundedSegmentedAuditTrail(path, protector: new TestProtector());
-            var gateField = typeof(BoundedSegmentedAuditTrail)
+            var protector = new TestProtector();
+            var audit = new BoundedSegmentedAuditTrail(path, protector: protector);
+            var local = new LocalStateRuntime(path, protector);
+
+            var auditGateField = typeof(BoundedSegmentedAuditTrail)
                 .GetField("_gate", BindingFlags.NonPublic | BindingFlags.Instance)
                 ?? throw new InvalidOperationException("Bounded audit gate field was not found.");
+            var localGateField = typeof(LocalStateRuntime)
+                .GetField("_auditGate", BindingFlags.NonPublic | BindingFlags.Instance)
+                ?? throw new InvalidOperationException("Local-state audit gate field was not found.");
 
-            Assert.Same(gateField.GetValue(first), gateField.GetValue(second));
+            Assert.Same(auditGateField.GetValue(audit), localGateField.GetValue(local));
         }
         finally
         {

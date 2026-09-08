@@ -95,10 +95,11 @@ public static class PersistentBrowserContextFactory
 
             // Tie state ownership to the actual Chromium context lifetime. Close is emitted for normal
             // shutdown, browser closure, and browser crashes; StateDirectoryLease.Dispose is idempotent.
+            // Keep the local reference as well so a later initialization failure releases ownership even
+            // if context shutdown itself fails before emitting Close.
             var ownedLease = stateLease
                 ?? throw new InvalidOperationException("Browser state lease was unexpectedly unavailable after context launch.");
             context.Close += (_, _) => ownedLease.Dispose();
-            stateLease = null;
 
             // Chromium may restore pages from a previous persistent-context run. Keep the useful
             // authenticated/profile state, but never trust restored tabs as current agent context.

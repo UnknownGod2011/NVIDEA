@@ -45,10 +45,45 @@ public static class PersistentBrowserContextFactory
         BrowserDownloadStagingOptions? stagingOptions,
         CancellationToken cancellationToken = default)
     {
+        if (string.IsNullOrWhiteSpace(stateDirectory))
+            throw new ArgumentException("State directory is required.", nameof(stateDirectory));
+
+        var fullStateDirectory = Path.GetFullPath(stateDirectory);
+        var stateLease = StateDirectoryLease.Acquire(fullStateDirectory);
+        return await LaunchOwnedAsync(
+            playwright,
+            fullStateDirectory,
+            startUri,
+            driverOptions,
+            headless,
+            quarantineOptions,
+            stagingOptions,
+            stateLease,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Takes ownership of an already-acquired state-directory lease. This seam lets higher-level
+    /// composition acquire single-owner state before starting the Playwright transport while keeping
+    /// exactly one lease for the persistent-context lifetime. The lease is always released on failed
+    /// initialization and otherwise remains attached to the Chromium context until Close.
+    /// </summary>
+    internal static async Task<PersistentBrowserContextSession> LaunchOwnedAsync(
+        IPlaywright playwright,
+        string stateDirectory,
+        Uri startUri,
+        PlaywrightBrowserDriverOptions driverOptions,
+        bool headless,
+        BrowserDownloadQuarantineOptions quarantineOptions,
+        BrowserDownloadStagingOptions? stagingOptions,
+        StateDirectoryLease stateLease,
+        CancellationToken cancellationToken = default)
+    {
         ArgumentNullException.ThrowIfNull(playwright);
         ArgumentNullException.ThrowIfNull(startUri);
         ArgumentNullException.ThrowIfNull(driverOptions);
         ArgumentNullException.ThrowIfNull(quarantineOptions);
+        ArgumentNullException.ThrowIfNull(stateLease);
         quarantineOptions.Validate();
 
         if (string.IsNullOrWhiteSpace(stateDirectory))
@@ -57,16 +92,18 @@ public static class PersistentBrowserContextFactory
             throw new ArgumentException("Browser start URI must be absolute HTTP(S).", nameof(startUri));
 
         var fullStateDirectory = Path.GetFullPath(stateDirectory);
-        StateDirectoryLease? stateLease = null;
         IBrowserContext? context = null;
         try
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            var normalizedRequested = Path.TrimEndingDirectorySeparator(fullStateDirectory);
+            var normalizedOwned = Path.TrimEndingDirectorySeparator(Path.GetFullPath(stateLease.StateDirectory));
+            if (!string.Equals(normalizedRequested, normalizedOwned, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "Transferred browser state lease does not own the requested NVIDEA state directory.");
+            }
 
-            // The durable-state lease belongs to the lowest browser boundary that can mutate the
-            // persistent profile/download/audit-owned directory. This prevents direct callers from
-            // bypassing single-owner protection merely by skipping NvideaCompositionRoot.
-            stateLease = StateDirectoryLease.Acquire(fullStateDirectory);
+            cancellationToken.ThrowIfCancellationRequested();
 
             var profileDirectory = BrowserProfileOwnership.PrepareOwnedProfile(fullStateDirectory);
             BrowserProfileOwnership.ValidateOwnedProfile(fullStateDirectory, profileDirectory);
@@ -97,9 +134,7 @@ public static class PersistentBrowserContextFactory
             // shutdown, browser closure, and browser crashes; StateDirectoryLease.Dispose is idempotent.
             // Keep the local reference as well so a later initialization failure releases ownership even
             // if context shutdown itself fails before emitting Close.
-            var ownedLease = stateLease
-                ?? throw new InvalidOperationException("Browser state lease was unexpectedly unavailable after context launch.");
-            context.Close += (_, _) => ownedLease.Dispose();
+            context.Close += (_, _) => stateLease.Dispose();
 
             // Chromium may restore pages from a previous persistent-context run. Keep the useful
             // authenticated/profile state, but never trust restored tabs as current agent context.
@@ -122,7 +157,7 @@ public static class PersistentBrowserContextFactory
         {
             if (context is not null)
                 await SafeCloseAsync(context).ConfigureAwait(false);
-            stateLease?.Dispose();
+            stateLease.Dispose();
             throw;
         }
     }

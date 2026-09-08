@@ -71,13 +71,17 @@
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <StackPanel>
-                    <TextBlock Text="Verified download ready in quarantine" FontWeight="SemiBold"/>
+                    <TextBlock Text="Verified download retained in quarantine" FontWeight="SemiBold"/>
                     <TextBlock x:Name="DownloadSummaryText" Margin="0,3,14,0" TextWrapping="Wrap" Opacity="0.72"/>
-                    <TextBlock Text="NVIDEA will not write this file outside quarantine until you choose a folder and explicitly confirm the exact destination."
+                    <TextBlock Text="Export requires an exact destination approval. Discard permanently removes only NVIDEA's retained quarantine copy after a separate exact approval."
                                Margin="0,3,14,0" TextWrapping="Wrap" FontSize="11" Opacity="0.58"/>
                 </StackPanel>
-                <Button x:Name="DownloadReviewButton" Grid.Column="1" Content="Review &amp; export" Padding="14,5"
-                        VerticalAlignment="Center" Click="DownloadReviewButton_Click"/>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <Button x:Name="DownloadReviewButton" Content="Review &amp; export" Padding="14,5"
+                            Click="DownloadReviewButton_Click"/>
+                    <Button x:Name="DownloadDiscardButton" Content="Discard copy" Padding="14,5" Margin="0,6,0,0"
+                            Click="DownloadDiscardButton_Click"/>
+                </StackPanel>
             </Grid>
         </Border>
 

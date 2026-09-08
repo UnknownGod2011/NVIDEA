@@ -30,7 +30,8 @@ Target: **Personal AI**. Secondary target: **Best Use of Tavily**. Ambition: top
 - Crash-leftover browser staging cleanup is bounded, top-level only and fail-closed around unexpected directories/reparse points.
 - Deterministic opt-in real-Chromium coverage exists for oversized download cancellation/cleanup using a throttled localhost fixture.
 - Protected segmented audit retention defaults to 32 archived segments / 64 MiB archived segment+seal bytes with crash-safe protected prune tombstones and exact pending-delete recovery.
-- **New:** `BoundedSegmentedAuditTrail` adds conservative logical payload limits (64 KiB/event, 4 MiB/current active segment by default) before any audit append side effect. It preserves the underlying segmented trail's protected chain/rotation/retention behavior and has regression coverage for oversized events, active-segment exhaustion, correct full-segment rollover accounting and invalid policy configuration.
+- `BoundedSegmentedAuditTrail` enforces conservative logical payload limits (64 KiB/event and 4 MiB/current active segment by default) before any audit append side effect.
+- **Production browser composition now uses `BoundedSegmentedAuditTrail` instead of constructing `SegmentedAuditTrail` directly**, so browser actions, download handoff/discard, capability execution and resumable-job auditing all share the bounded protected audit boundary.
 - Root README + MIT license.
 
 ## Persistent Progress History
@@ -53,33 +54,39 @@ Representative commits: `86ce7ccfdfd09ad27fdb129c6220fe4deff02633`, `74b1c00ea30
 - Commits: `467f6f1a4846fc1f88f76e59ee29111e5e070bb4`, `b74c884107056b175d9afbf773dc0bc5d7dc9125`.
 
 ### 2026-09-08 — Bounded active audit payloads
-Completed:
 - Added `AuditPayloadPolicy` with conservative defaults: 64 KiB maximum serialized logical payload per event and 4 MiB maximum logical payload in the mutable active segment.
 - Added `BoundedSegmentedAuditTrail`, a real `IAuditTrail` facade over `SegmentedAuditTrail`. It measures UTF-8 JSON before protected persistence and rejects oversized events before any audit side effect.
 - Active-segment accounting remains correct after retention because pruning removes complete full segments; retained-count modulo the configured segment size identifies the current active suffix. A full active segment is treated as rotating before the next event's byte budget is evaluated.
 - Added regression tests proving single-event rejection leaves no audit data file, active-segment exhaustion leaves the prior record intact, a full segment rotates and accepts the next bounded event, and invalid payload policy fails during construction.
 - Commits: `ab9285e84f13520fbce37ec9b8436371c568bf0e`, `933a0fa5455b47b7da14ae2fe375c9ecd9c8b243`.
 
+### 2026-09-08 — Production bounded-audit composition
+Completed:
+- Re-read the full progress source of truth, current repository tree, `BoundedSegmentedAuditTrail`, `SegmentedAuditTrail`, and `BrowserHostRuntime` before mutating production composition.
+- Replaced the direct `SegmentedAuditTrail` construction in `BrowserHostRuntime.CreateAsync` with `BoundedSegmentedAuditTrail`.
+- This is intentionally one shared instance: browser download handoff, browser download discard, capability-tool execution and `ResumableJobOrchestrator` all receive the same bounded audit object, preserving one protected ordering/retention boundary rather than creating per-subsystem logs.
+- No behavior or data permissions were removed; this closes the documented production escape hatch and makes the existing payload ceilings effective on the browser-runtime path.
+- Commit: `58ad476cba7059220f9fd0129a086a2a661deb7c`.
+
 Validation / evidence:
-- Repository identity was explicitly re-verified as exactly `UnknownGod2011/NVIDEA` before every GitHub mutation in this run.
-- Re-read `progress.md`, current repository tree, `AuditTrail.cs`, `SegmentedAuditTrail.cs`, existing segmented-audit retention tests and `BrowserHostRuntime` audit composition before implementing the new guard.
-- Static review confirms the facade does not alter audit cryptography, retention manifests, deletion authority or existing on-disk format; it gates only pre-append logical payload size.
+- Repository identity was explicitly re-verified as exactly `UnknownGod2011/NVIDEA` before each GitHub mutation.
+- Commit diff was re-read after mutation and confirms exactly one production code change: `new SegmentedAuditTrail(...)` -> `new BoundedSegmentedAuditTrail(...)` in `BrowserHostRuntime`.
+- Existing `BoundedSegmentedAuditTrailTests` cover oversized event rejection, active-segment exhaustion, rollover semantics and invalid policy configuration; those tests remain the relevant contract for the newly wired production type.
 - No GitHub Actions workflow was rerun merely to obtain a green signal.
 - This automation environment still does not provide a usable .NET build/test execution path, so compilation/unit-test/Windows DPAPI/WPF/Chromium execution is NOT claimed.
 
 Security / privacy review:
-- Oversized metadata/summary content is rejected before it can become a protected/base64 audit record, preventing attacker-controlled logical payload growth from bypassing archived retention simply by staying in the active segment.
-- The guard serializes only in memory for byte measurement; it does not create a second plaintext audit log or persist diagnostic payload content.
-- Failure is fail-closed: the oversized event is not partially appended and prior audit records remain intact.
-- Rotation semantics are preserved rather than silently dropping the event that would start a new segment.
-- Archived physical byte quotas, protected retention tombstones and crash-safe deletion remain owned by the existing `SegmentedAuditTrail`.
+- Browser-originated or tool-originated audit metadata can no longer bypass the logical payload ceiling through the production browser composition root.
+- Existing protected segmented hash chains, retention tombstones, DPAPI behavior, crash recovery and deletion authority are unchanged because `BoundedSegmentedAuditTrail` delegates persistence to `SegmentedAuditTrail` after pre-append validation.
+- All browser-runtime audit consumers share the same bounded object, avoiding inconsistent enforcement across approval, download and job paths.
+- Rejected oversized audit events fail before persistence; prior audit evidence remains intact.
 
 ## Current Unverified / Risks
 - Highest risk remains executable validation: no real `dotnet build`, `dotnet test`, Windows WPF launch, persistent Chromium launch or DPAPI round-trip has run in this environment.
-- The new bounded-audit facade/tests are statically reviewed but unexecuted; constructor overload resolution and test compilation require a real .NET 8 signal.
-- **Production composition still instantiates `SegmentedAuditTrail` directly in `BrowserHostRuntime`; `BoundedSegmentedAuditTrail` must replace that construction after/with compile validation so the new limits become the default browser-runtime boundary.** Until then this run provides the tested implementation layer but does not claim the production runtime is already protected by it.
+- The bounded-audit implementation/tests and the newly changed production composition are statically reviewed but unexecuted; constructor overload resolution and runtime behavior still require a real .NET 8 signal.
 - Audit protected-manifest bytes themselves are not quota-bounded, though their shape is small and bounded primarily by retained anchors/pending deletes.
 - Retention duplicate-event detection covers the retained window only; intentionally pruned random GUID event IDs are no longer available for historical duplicate checks.
+- Users currently cannot see retained/pruned audit status; deliberate retention pruning is cryptographically represented but not yet surfaced through a privacy-safe status API/UI.
 - The Chromium oversized-download fixture and Windows staging/reparse behavior remain unexecuted here.
 - Persistent Chromium profile contents and quarantined payload bytes rely on the OS user-profile boundary rather than application-level encryption.
 - Local voice/transcription is absent.
@@ -87,4 +94,4 @@ Security / privacy review:
 - WPF download polling can initialize the browser runtime at window render time even when browser work was not requested.
 
 ## Single Best Next Task
-Obtain the first real Windows/.NET 8 build + unit tests + WPF launch + persistent Chromium + DPAPI signal and repair any compile/runtime issues. If executable validation remains unavailable, wire `BoundedSegmentedAuditTrail` into `BrowserHostRuntime` (and other production composition roots using protected audit), add a retention-status API exposing pruned-through index/event count/digest plus current retained/active usage without leaking audit payloads, and then surface that status in the trusted Windows UI.
+Obtain the first real Windows/.NET 8 build + unit tests + WPF launch + persistent Chromium + DPAPI signal and repair any compile/runtime issues. If executable validation remains unavailable, add a privacy-safe audit retention-status API exposing only retained archived/active counts and bytes, configured quotas, pruned-through segment/event counts and the protected pruning digest (never audit payloads), delegate it through `BoundedSegmentedAuditTrail`, expose it from `BrowserHostRuntime`, add regression tests, and surface the status in the trusted Windows UI.

@@ -28,7 +28,10 @@ public sealed class ResearchEngineTests
         Assert.Equal("s1", report.UsedCitations[0].SourceId);
         Assert.Contains(report.Warnings, w => w.Contains("fake", StringComparison.OrdinalIgnoreCase));
         Assert.Equal(2, inference.Requests.Count);
-        Assert.Contains("UNTRUSTED WEB EVIDENCE", inference.Requests[1].Messages.Last().Content);
+        var synthesisEvidence = inference.Requests[1].Messages.Last().Content;
+        Assert.Contains("DETERMINISTIC EVIDENCE QUALITY METADATA", synthesisEvidence);
+        Assert.Contains("[QUALITY s1]", synthesisEvidence);
+        Assert.Contains("UNTRUSTED WEB EVIDENCE", synthesisEvidence);
     }
 
     [Fact]

@@ -99,6 +99,64 @@ public sealed class BrowserDownloadDiscardServiceTests
         }
     }
 
+    [Fact]
+    public async Task RestartRecoveryRestoresPayloadWhenDiscardTombstoneWasNotCommitted()
+    {
+        var root = CreateTemporaryDirectory();
+        try
+        {
+            var quarantine = new BrowserDownloadQuarantine(root);
+            var record = await CaptureTextAsync(quarantine, "resume.bin", "verified");
+            var payload = GetQuarantinePath(root, record.DownloadId, ".payload");
+            var discarding = GetQuarantinePath(root, record.DownloadId, ".discarding");
+
+            File.Move(payload, discarding);
+            Assert.False(File.Exists(payload));
+            Assert.True(File.Exists(discarding));
+
+            var restarted = new BrowserDownloadQuarantine(root);
+            var recovered = await restarted.GetAsync(record.DownloadId);
+
+            Assert.NotNull(recovered);
+            Assert.Equal(BrowserDownloadState.Ready, recovered!.State);
+            Assert.True(File.Exists(payload));
+            Assert.False(File.Exists(discarding));
+            Assert.Equal("verified", await File.ReadAllTextAsync(payload));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RestartRecoveryDeletesLeftoverDiscardingFileAfterDurableTombstone()
+    {
+        var root = CreateTemporaryDirectory();
+        try
+        {
+            var quarantine = new BrowserDownloadQuarantine(root);
+            var record = await CaptureTextAsync(quarantine, "discarded.bin", "verified");
+            await quarantine.DiscardAsync(record.DownloadId, userApproved: true);
+
+            var discarding = GetQuarantinePath(root, record.DownloadId, ".discarding");
+            await File.WriteAllTextAsync(discarding, "stale-cleanup-only");
+            Assert.True(File.Exists(discarding));
+
+            var restarted = new BrowserDownloadQuarantine(root);
+            var recovered = await restarted.GetAsync(record.DownloadId);
+
+            Assert.NotNull(recovered);
+            Assert.Equal(BrowserDownloadState.Discarded, recovered!.State);
+            Assert.False(File.Exists(discarding));
+            Assert.False(File.Exists(GetQuarantinePath(root, record.DownloadId, ".payload")));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     private static BrowserDownloadDiscardService CreateService(
         BrowserDownloadQuarantine quarantine,
         ScopedApprovalAuthorizer approvals,
@@ -130,6 +188,9 @@ public sealed class BrowserDownloadDiscardServiceTests
             new Uri("https://example.com/download"),
             fileName,
             (path, cancellationToken) => File.WriteAllTextAsync(path, content, cancellationToken));
+
+    private static string GetQuarantinePath(string root, Guid downloadId, string suffix) =>
+        Path.Combine(root, "browser-downloads", "quarantine", downloadId.ToString("N") + suffix);
 
     private static string CreateTemporaryDirectory()
     {

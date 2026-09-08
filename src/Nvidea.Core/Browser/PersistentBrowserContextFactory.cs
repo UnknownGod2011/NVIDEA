@@ -11,17 +11,44 @@ namespace Nvidea.Core.Browser;
 /// </summary>
 public static class PersistentBrowserContextFactory
 {
-    public static async Task<PersistentBrowserContextSession> LaunchAsync(
+    public static Task<PersistentBrowserContextSession> LaunchAsync(
         IPlaywright playwright,
         string stateDirectory,
         Uri startUri,
         PlaywrightBrowserDriverOptions driverOptions,
         bool headless,
+        CancellationToken cancellationToken = default) =>
+        LaunchAsync(
+            playwright,
+            stateDirectory,
+            startUri,
+            driverOptions,
+            headless,
+            new BrowserDownloadQuarantineOptions(),
+            stagingOptions: null,
+            cancellationToken);
+
+    /// <summary>
+    /// Internal configuration seam used by deterministic integration coverage and composition tests.
+    /// Production callers continue through the public overload and therefore retain conservative
+    /// default quotas. Keeping this overload internal prevents UI/model code from casually widening
+    /// transient or retained download limits at runtime.
+    /// </summary>
+    internal static async Task<PersistentBrowserContextSession> LaunchAsync(
+        IPlaywright playwright,
+        string stateDirectory,
+        Uri startUri,
+        PlaywrightBrowserDriverOptions driverOptions,
+        bool headless,
+        BrowserDownloadQuarantineOptions quarantineOptions,
+        BrowserDownloadStagingOptions? stagingOptions,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(playwright);
         ArgumentNullException.ThrowIfNull(startUri);
         ArgumentNullException.ThrowIfNull(driverOptions);
+        ArgumentNullException.ThrowIfNull(quarantineOptions);
+        quarantineOptions.Validate();
 
         if (!startUri.IsAbsoluteUri || startUri.Scheme is not ("http" or "https"))
             throw new ArgumentException("Browser start URI must be absolute HTTP(S).", nameof(startUri));
@@ -29,13 +56,12 @@ public static class PersistentBrowserContextFactory
         var profileDirectory = BrowserProfileOwnership.PrepareOwnedProfile(stateDirectory);
         BrowserProfileOwnership.ValidateOwnedProfile(stateDirectory, profileDirectory);
 
-        var quarantineOptions = new BrowserDownloadQuarantineOptions();
         var downloads = new BrowserDownloadQuarantine(stateDirectory, quarantineOptions);
-        var staging = new BrowserDownloadStagingGuard(
-            stateDirectory,
-            new BrowserDownloadStagingOptions(
-                MaxStagingBytes: quarantineOptions.MaxSingleDownloadBytes,
-                MaxPartialBytes: quarantineOptions.MaxSingleDownloadBytes));
+        var effectiveStagingOptions = stagingOptions ?? new BrowserDownloadStagingOptions(
+            MaxStagingBytes: quarantineOptions.MaxSingleDownloadBytes,
+            MaxPartialBytes: quarantineOptions.MaxSingleDownloadBytes);
+        effectiveStagingOptions.Validate();
+        var staging = new BrowserDownloadStagingGuard(stateDirectory, effectiveStagingOptions);
 
         // No browser context exists yet, so every file in NVIDEA's dedicated Playwright staging
         // directory is necessarily a crash/abnormal-shutdown leftover. Reclaim it before launch so

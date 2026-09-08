@@ -35,6 +35,7 @@ public sealed class BoundedSegmentedAuditTrail : IAuditTrail
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly SegmentedAuditTrail _inner;
+    private readonly AuditRetentionStatusReader _statusReader;
     private readonly int _maxEventsPerSegment;
     private readonly AuditPayloadPolicy _payloadPolicy;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -49,10 +50,13 @@ public sealed class BoundedSegmentedAuditTrail : IAuditTrail
         if (maxEventsPerSegment < 2)
             throw new ArgumentOutOfRangeException(nameof(maxEventsPerSegment), "Audit segments must allow at least two events.");
 
+        var effectiveRetention = retention ?? AuditRetentionPolicy.Default;
+        effectiveRetention.Validate();
         _payloadPolicy = payloadPolicy ?? AuditPayloadPolicy.Default;
         _payloadPolicy.Validate();
         _maxEventsPerSegment = maxEventsPerSegment;
-        _inner = new SegmentedAuditTrail(path, maxEventsPerSegment, protector, retention);
+        _inner = new SegmentedAuditTrail(path, maxEventsPerSegment, protector, effectiveRetention);
+        _statusReader = new AuditRetentionStatusReader(path, protector, effectiveRetention);
     }
 
     public async Task AppendAsync(AuditEvent auditEvent, CancellationToken cancellationToken = default)
@@ -101,8 +105,39 @@ public sealed class BoundedSegmentedAuditTrail : IAuditTrail
         }
     }
 
-    public Task<IReadOnlyList<AuditEvent>> ReadAllAsync(CancellationToken cancellationToken = default) =>
-        _inner.ReadAllAsync(cancellationToken);
+    public async Task<IReadOnlyList<AuditEvent>> ReadAllAsync(CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await _inner.ReadAllAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Returns privacy-safe storage and retention telemetry after forcing the inner trail through
+    /// its normal crash-recovery and retention-validation path. Audit event payloads are never
+    /// returned by this API.
+    /// </summary>
+    public async Task<AuditRetentionStatus> GetRetentionStatusAsync(CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            // ReadAllAsync validates protected anchors and completes pending retention cleanup.
+            // Discard its payload result; the status reader only observes validated accounting state.
+            _ = await _inner.ReadAllAsync(cancellationToken).ConfigureAwait(false);
+            return await _statusReader.ReadAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
 
     private static int MeasurePayloadBytes(AuditEvent auditEvent) =>
         JsonSerializer.SerializeToUtf8Bytes(auditEvent, JsonOptions).Length;

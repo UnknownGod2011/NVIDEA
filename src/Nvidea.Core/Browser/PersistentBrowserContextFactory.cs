@@ -36,7 +36,12 @@ public static class PersistentBrowserContextFactory
             new BrowserDownloadStagingOptions(
                 MaxStagingBytes: quarantineOptions.MaxSingleDownloadBytes,
                 MaxPartialBytes: quarantineOptions.MaxSingleDownloadBytes));
-        Directory.CreateDirectory(staging.StagingDirectory);
+
+        // No browser context exists yet, so every file in NVIDEA's dedicated Playwright staging
+        // directory is necessarily a crash/abnormal-shutdown leftover. Reclaim it before launch so
+        // stale bytes cannot consume the next transfer's transient quota. Reclamation itself is
+        // fail-closed and refuses recursive/reparse-point deletion.
+        staging.ReclaimStartupLeftovers();
 
         IBrowserContext? context = null;
         try

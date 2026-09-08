@@ -26,10 +26,11 @@ Target: **Personal AI**. Secondary target: **Best Use of Tavily**. Ambition: top
 - Production browser runtime uses an NVIDEA-owned persistent Chromium profile, popup/new-tab tracking and durable download quarantine.
 - Browser downloads are captured as Receiving -> Ready/Interrupted with verified length/SHA-256 and DPAPI-protected metadata on Windows.
 - `BrowserDownloadHandoffService` binds a specific download + exact canonical destination to a high-risk `FilesWrite` approval scope, revalidates immediately before export, consumes a short-lived single-use grant before side effects and audits the handoff without persisting the raw destination path.
-- `BrowserHostRuntime` exposes `ListDownloadsAsync`, `PrepareDownloadHandoffAsync`, and `ApproveAndExportDownloadAsync`; production browser code has no boolean export API.
-- Trusted WPF download handoff UI displays filename, source host, verified size/SHA-256 and exact destination, then requires a fresh explicit confirmation before exact-scope export.
-- The low-level `BrowserDownloadQuarantine.ExportAsync(..., bool)` storage primitive is assembly-internal. Tests retain access only through `InternalsVisibleTo("Nvidea.Core.Tests")`, and a reflection regression test guards against accidental public re-exposure.
-- Download quarantine now has fail-closed byte quotas: default 512 MiB retained total / 128 MiB per file. Quota checks never silently evict Ready or Exported artifacts.
+- `BrowserDownloadDiscardService` binds a specific retained payload identity (download id + verified SHA-256) to a separate high-risk `FilesWrite` approval scope. It revalidates immediately before deletion, consumes a single-use grant before the mutation and audits the result.
+- `BrowserHostRuntime` exposes trusted prepare/approve boundaries for both export and discard; WPF never receives or persists `ApprovalGrant`.
+- Trusted WPF download controls display sanitized filename, source host, verified size/SHA-256 and exact destination/operation before explicit human confirmation.
+- Low-level `BrowserDownloadQuarantine.ExportAsync(..., bool)` and `DiscardAsync(..., bool)` storage primitives are assembly-internal; reflection regression tests guard against accidental public exposure.
+- Download quarantine has fail-closed byte quotas: default 512 MiB retained total / 128 MiB per file. Quota checks never silently evict Ready or Exported artifacts.
 - Root README + MIT license.
 
 ## Persistent Progress History
@@ -45,56 +46,50 @@ Added owned browser-profile markers, persistent Playwright startup, popup/new-ta
 - Wired Playwright `Page.Download` correlation so a `Download` action cannot complete before verified quarantine capture.
 - Representative commits: `86ce7ccfdfd09ad27fdb129c6220fe4deff02633`, `588fdee148fca3c98c5ed90ac758aa899e689f69`, `58374c4126288b5bfffd62e343667f7d1ce746e9`, `2bd59d1aa21e2a246a36e2ea65e834d5db279ca0`.
 
-### 2026-09-08 — Exact-scope handoff and production wiring
-- Added `BrowserDownloadHandoffService`; scope binds download id + destination fingerprint to high-risk `FilesWrite`; fresh revalidation + single-use grant + audit.
-- Runtime registers `browser.download.handoff` and shares the same quarantine/policy/authorizer/audit as browser capture.
-- Removed `PlaywrightBrowserSessionDriver.ExportDownloadAsync(..., bool)`.
-- Representative commits: `74b1c00ea306a825486a32d55be26dfca8bbf3fd`, `ec2eca992d867d27193e527fb9667b77f817de71`, `6bbd177297126a237017cbea2435455472ec5870`, `e7dfbaac046d6fbd9f51cd3c8f1f6e3b1993b12c`, `bcca57e7c4577ac7bf118329fe3fd9ac4d2e20ab`.
+### 2026-09-08 — Exact-scope handoff, WPF approval and quota
+- Added `BrowserDownloadHandoffService`, exact destination binding, single-use grant consumption, audit, runtime wiring and trusted WPF confirmation.
+- Internalized the low-level boolean export primitive and added an API-surface regression guard.
+- Added `BrowserDownloadQuarantineOptions` with fail-closed 512 MiB retained / 128 MiB per-file defaults and concurrency-safe final promotion checks.
+- Representative commits: `74b1c00ea306a825486a32d55be26dfca8bbf3fd`, `bcca57e7c4577ac7bf118329fe3fd9ac4d2e20ab`, `3009d0702c5953bb3c3f4800ba627d93ad40c1c2`, `f1f85339558965c57f031368a855237dc6502001`, `5baf8569512ea91cbadaaa8d543a18dc18447878`, `eecad36143ca10d4687f9c36f0c5975afaf76c28`.
 
-### 2026-09-08 — Trusted WPF download approval flow
-- Added `DownloadHandoffDialog` trusted confirmation surface with filename, source host, verified byte count/SHA-256, exact destination and explicit single-use/exact-scope explanation.
-- Added Ready-download panel and `.NET 8` `OpenFolderDialog` destination picker.
-- UI prepares exact runtime scope before confirmation and never receives or persists `ApprovalGrant`.
-- Representative commits: `06af85bc690e7eecf4f640a7f74f272453a5325b`, `0042bc349ba6f3e582f31b597a0a3424b872ac63`, `d19278ed0e3e4b0d5089b71b61942f0f20a0f5f9`, `3009d0702c5953bb3c3f4800ba627d93ad40c1c2`.
-
-### 2026-09-08 — Low-level export API containment
-- Added test-only friend assembly access and internalized `BrowserDownloadQuarantine.ExportAsync(..., bool userApproved)`.
-- Added reflection guard preventing accidental public API re-exposure.
-- Representative commits: `49b8fea298a772f0345d05c9ef1072aeb32d22de`, `f1f85339558965c57f031368a855237dc6502001`, `277c175c0ebe6ed0c8a85a0aa35d7ddf5c9734eb`.
-
-### 2026-09-08 — Fail-closed browser-download quarantine quota
+### 2026-09-08 — Exact-scope audited quarantine discard
 Completed:
-- Added `BrowserDownloadQuarantineOptions` with explicit `MaxRetainedBytes` and `MaxSingleDownloadBytes`; defaults are 512 MiB retained total and 128 MiB per file.
-- Added `BrowserDownloadQuotaExceededException` for a typed fail-closed storage refusal.
-- Capture now refuses to start another browser save when retained quota is already full.
-- After transfer, per-file quota is checked before hashing/promotion. Final Ready promotion is serialized under the quarantine gate and atomically re-checks aggregate retained bytes, preventing concurrent captures from oversubscribing the configured retained quota.
-- Quota refusal deletes only the current `.partial`/uncommitted payload and records the current item as `Interrupted`; it never silently deletes or demotes an existing Ready/Exported artifact.
-- Added `BrowserDownloadQuotaTests` covering oversized single files, aggregate quota preservation, pre-save rejection at full capacity, and invalid quota configuration.
-- Commits: `5baf8569512ea91cbadaaa8d543a18dc18447878`, `eecad36143ca10d4687f9c36f0c5975afaf76c28`.
+- Added `BrowserDownloadDiscardService` and `BrowserDownloadDiscardPlan`; discard approval scope is bound to the exact download id + current verified SHA-256 identity and uses high-risk `FilesWrite` policy.
+- Added a durable `Discarded` state and assembly-internal `BrowserDownloadQuarantine.DiscardAsync(..., bool)` primitive.
+- Discard verifies the retained payload length/SHA-256 immediately before mutation.
+- Implemented a crash-recoverable two-phase local deletion transition: `.payload -> .discarding`, persist the `Discarded` tombstone, then delete `.discarding`. If metadata persistence fails, the payload is restored. On restart, Ready/Exported metadata restores a pre-tombstone `.discarding` file, while durable Discarded metadata removes leftover payload/discarding files.
+- `BrowserHostRuntime` now registers `browser.download.discard`, composes it against the same quarantine/policy/authorizer/segmented audit trail, and exposes `PrepareDownloadDiscardAsync` + `ApproveAndDiscardDownloadAsync`. Grants remain runtime-local, short-lived and single-use.
+- WPF now shows Ready and Exported retained quarantine entries, adds a separate `Discard copy` control, and displays sanitized filename, source host, verified size/SHA-256 plus a warning that already-exported user files are untouched.
+- Expanded API-surface protection so both low-level export and discard primitives must remain assembly-internal.
+- Added discard tests covering approval requirement, scope mutation rejection, quota reclamation, exported-copy preservation, restart recovery before tombstone commit, and cleanup after a durable tombstone.
+- Commits: `494fb682f42d445d0ef50aca6f9d07c33ce8ca9c`, `81fef085e8fc0d8986a7b68eb4c0a53b94cda97b`, `fcc554101e4838a6a3142ff48ae5bcda3c090b6b`, `81e1612c4ec33a10a197e648532975adc27d22dd`, `2a0bd1d556d26329b46b6043c31ee90ddc4111e2`, `a4c408196763e9ee33b831da0a1b98f3d29606ef`, `26d8275339db8a5bd18a6fc5eab52d743b682a66`, `64826c0dc6c29f768541024422bf62da287e4791`, `32217fcf12a7273927dcc8bb01bcf4d66231c6d8`, `4a18a2baa7ab562d23ba2364907c1e28402a7e28`.
 
 Validation / evidence:
-- Repository identity was explicitly re-verified as exactly `UnknownGod2011/NVIDEA` before every attempted GitHub mutation, including retry after a stale content SHA conflict.
-- Re-read `progress.md`, `BrowserDownloadQuarantine`, its existing tests, recent commits, and the exact-scope handoff service before implementation.
-- Source-level review confirms existing constructor call sites remain compatible because the original `(stateDirectory, protector?)` constructor is preserved and delegates to default quota options.
+- Repository identity was explicitly re-verified as exactly `UnknownGod2011/NVIDEA` before every GitHub mutation in this run.
+- Re-read `progress.md`, current quarantine implementation, exact-scope handoff service, capability policy, runtime composition, WPF download flow and existing tests before changing them.
+- Re-read the new discard service and recent commit chain after wiring it into production.
+- Source-level review caught and repaired a discard crash-consistency flaw before completion; the final implementation uses reversible `.discarding` state until the durable tombstone succeeds.
 - Re-checked the execution environment for `dotnet`, `msbuild`, `csc`, and `mcs`; none is available, so compilation/test/WPF/Chromium/DPAPI execution is NOT claimed.
 - No GitHub Actions workflow was rerun merely to obtain a green signal.
 
 Security / privacy review:
-- Quota exhaustion is fail-closed: no user-visible export occurs and no existing trusted Ready artifact is automatically destroyed to make space.
-- Concurrent completed downloads cannot both independently pass a stale aggregate quota check because final promotion and aggregate accounting happen while holding the quarantine gate.
-- Quota failure metadata uses a generic local-storage explanation and does not persist payload contents.
-- A file can temporarily occupy `.partial` space while its final size is unknown; once transfer completes, an oversized current partial is deleted rather than promoted. A streaming hard cap during Playwright transfer remains a possible future hardening step.
-- Export authorization, exact destination binding, SHA-256/length verification, no-overwrite semantics, and audit behavior remain unchanged.
+- Quota reclamation is never automatic and cannot be initiated by browser/model code through a public low-level API.
+- Export and discard are separate capabilities with separate exact scopes and separate fresh confirmations.
+- The UI does not receive `ApprovalGrant`; it only echoes the exact prepared scope after the human click.
+- Discarded quarantine bytes are removed without deleting any previously exported user file.
+- A stale or forged discard plan fails revalidation before a grant can authorize deletion.
+- Crash before tombstone durability restores the retained payload; crash after tombstone durability treats deletion as authoritative and finishes cleanup.
+- Audit records operation identity/verified hash/size but not payload contents.
 
 ## Current Unverified / Risks
 - Highest risk remains executable validation: no real `dotnet build`, `dotnet test`, Windows WPF launch, persistent Chromium launch or DPAPI round-trip has run in this environment.
 - The WPF flow depends on .NET 8 `Microsoft.Win32.OpenFolderDialog`; source-level compatibility is expected but must be compiled on Windows before claiming success.
 - Persistent Chromium profile contents and quarantined payload bytes rely on the OS user-profile boundary rather than application-level encryption.
 - Quota protects retained completed bytes, but an unknown-size in-progress `.partial` can transiently exceed the final per-file limit before Playwright finishes saving it.
-- Explicit audited discard controls are still absent, so a user currently cannot intentionally reclaim quarantine capacity through a trusted NVIDEA deletion flow.
 - Audit lifetime retention/byte quotas remain absent.
 - Local voice/transcription is absent.
 - Tavily Extract/richer authority/freshness work and a verified embedding adapter remain opportunities.
+- The WPF download polling path can initialize the browser runtime at window render time even when the user has not requested browser work, which is safe but suboptimal for startup latency/resources.
 
 ## Single Best Next Task
-Obtain the first real Windows/.NET 8 build + unit tests + WPF launch + persistent Chromium + DPAPI signal and immediately repair any compile/runtime issues. If executable validation remains unavailable, add explicit exact-scope/audited discard controls for quarantined downloads (with a trusted WPF confirmation surface) so users can reclaim quota intentionally without silent retention pruning or model-controlled deletion.
+Obtain the first real Windows/.NET 8 build + unit tests + WPF launch + persistent Chromium + DPAPI signal and immediately repair any compile/runtime issues. If executable validation remains unavailable, harden the remaining unbounded in-progress download path so a hostile/accidental large transfer cannot transiently consume arbitrary local disk before final quota rejection, while preserving Playwright cancellation and the existing quarantine verification model.

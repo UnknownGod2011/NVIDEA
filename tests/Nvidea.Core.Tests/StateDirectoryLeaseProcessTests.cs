@@ -41,11 +41,14 @@ public sealed class StateDirectoryLeaseProcessTests
                 ?? throw new InvalidOperationException("Failed to start the independent state-lease probe process.");
 
             await WaitForFileAsync(readyFile, child, TimeSpan.FromSeconds(15)).ConfigureAwait(false);
+            var childLeaseInstanceId = (await File.ReadAllTextAsync(readyFile).ConfigureAwait(false)).Trim();
+            Assert.False(string.IsNullOrWhiteSpace(childLeaseInstanceId));
 
             var contention = Assert.Throws<StateDirectoryLeaseUnavailableException>(() =>
                 StateDirectoryLease.Acquire(root));
             Assert.NotNull(contention.Owner);
-            Assert.Equal(child.Id, contention.Owner!.ProcessId);
+            Assert.Equal(childLeaseInstanceId, contention.Owner!.InstanceId);
+            Assert.NotEqual(Environment.ProcessId, contention.Owner.ProcessId);
 
             // Simulate an ungraceful process death. The persistent lock file must remain harmless;
             // ownership is the live kernel lock, not file existence or cooperative cleanup.

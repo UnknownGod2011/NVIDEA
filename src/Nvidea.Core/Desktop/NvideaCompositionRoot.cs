@@ -1,4 +1,5 @@
 using Nvidea.Core.Browser;
+using Nvidea.Core.Jobs;
 using Nvidea.Core.Memory;
 using Nvidea.Core.Nebius;
 using Nvidea.Core.Research;
@@ -31,6 +32,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         PersonalMemoryService memory,
         DesktopInvocationService desktop,
         DesktopSessionController session,
+        ResearchJobRuntime? researchJobs,
         string stateDirectory)
     {
         _nebiusHttp = nebiusHttp;
@@ -41,12 +43,19 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         _stateDirectory = stateDirectory;
         Desktop = desktop;
         Session = session;
+        ResearchJobs = researchJobs;
         LocalState = new LocalStateRuntime(Path.Combine(stateDirectory, "browser"));
     }
 
     public DesktopInvocationService Desktop { get; }
     public DesktopSessionController Session { get; }
     public PersonalMemoryService Memory => _memory;
+
+    /// <summary>
+    /// Trusted durable research runtime. It is available only when Tavily is configured and
+    /// executes locally until a real Nebius Serverless dispatcher is wired.
+    /// </summary>
+    public ResearchJobRuntime? ResearchJobs { get; }
 
     /// <summary>
     /// Read-only protected local-state inspection that never initializes Playwright/Chromium or
@@ -71,12 +80,14 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
 
         HttpClient? tavilyHttp = null;
         ResearchEngine? research = null;
+        ResearchJobRuntime? researchJobs = null;
         var tavilyKey = Environment.GetEnvironmentVariable("TAVILY_API_KEY");
         if (!string.IsNullOrWhiteSpace(tavilyKey))
         {
             tavilyHttp = new HttpClient();
             var tavily = new TavilyResearchClient(tavilyHttp, new TavilyOptions { ApiKey = tavilyKey });
             research = new ResearchEngine(inference, tavily);
+            researchJobs = new ResearchJobRuntime(Path.Combine(dataDirectory, "research"), research);
         }
 
         var desktop = new DesktopInvocationService(inference, memory, research);
@@ -89,6 +100,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
             memory,
             desktop,
             session,
+            researchJobs,
             dataDirectory);
     }
 

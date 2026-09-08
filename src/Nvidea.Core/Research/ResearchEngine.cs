@@ -111,18 +111,55 @@ public sealed class ResearchEngine
         return new ResearchPlan(queries);
     }
 
-    public async Task<ResearchReport> ResearchAsync(string question, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// Executes the externally visible evidence-gathering stages for an already validated plan.
+    /// This boundary exists so durable jobs can checkpoint the plan before consuming Tavily credits,
+    /// and checkpoint the gathered/ranked evidence before the final Nemotron synthesis call.
+    /// </summary>
+    public async Task<ResearchBatch> GatherEvidenceAsync(
+        string question,
+        ResearchPlan plan,
+        CancellationToken cancellationToken = default)
     {
-        var plan = await PlanAsync(question, cancellationToken).ConfigureAwait(false);
+        ValidateQuestionAndPlan(question, plan);
+
         var batch = await _provider.SearchAsync(plan.Queries.Select(q => new ResearchQuery(
             q.Query, q.Topic, q.MaxResults, q.StartDate, q.EndDate)).ToArray(), cancellationToken).ConfigureAwait(false);
 
         if (batch.Sources.Count == 0)
-            return new ResearchReport(question, "I could not find reliable web evidence for this question.", batch, [], [.. batch.Warnings, "No research sources were returned."]);
+            return batch;
 
         if (_provider is IResearchExtractionProvider extractionProvider)
             batch = await extractionProvider.EnrichAsync(batch, question, cancellationToken).ConfigureAwait(false);
 
+        return _evidenceRanker.Rank(batch, plan.Queries).Batch;
+    }
+
+    /// <summary>
+    /// Synthesizes a report exclusively from already gathered evidence. No Tavily request is made here,
+    /// allowing a durable research job to resume after interruption without re-spending search/extract credits.
+    /// </summary>
+    public async Task<ResearchReport> SynthesizeAsync(
+        string question,
+        ResearchPlan plan,
+        ResearchBatch batch,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateQuestionAndPlan(question, plan);
+        ArgumentNullException.ThrowIfNull(batch);
+
+        if (batch.Sources.Count == 0)
+        {
+            return new ResearchReport(
+                question,
+                "I could not find reliable web evidence for this question.",
+                batch,
+                [],
+                [.. batch.Warnings, "No research sources were returned."]);
+        }
+
+        // Recompute deterministic local quality metadata from the checkpointed evidence. This does not
+        // perform network I/O and preserves the same source ordering/citation identities on resume.
         var ranking = _evidenceRanker.Rank(batch, plan.Queries);
         batch = ranking.Batch;
         var evidence = BuildQualityMetadataBlock(ranking) + Environment.NewLine + TavilyResearchClient.BuildUntrustedEvidenceBlock(batch);
@@ -158,6 +195,24 @@ public sealed class ResearchEngine
             .ToArray();
 
         return new ResearchReport(question, answer, batch, used, warnings);
+    }
+
+    public async Task<ResearchReport> ResearchAsync(string question, CancellationToken cancellationToken = default)
+    {
+        var plan = await PlanAsync(question, cancellationToken).ConfigureAwait(false);
+        var batch = await GatherEvidenceAsync(question, plan, cancellationToken).ConfigureAwait(false);
+        return await SynthesizeAsync(question, plan, batch, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static void ValidateQuestionAndPlan(string question, ResearchPlan plan)
+    {
+        if (string.IsNullOrWhiteSpace(question))
+            throw new ArgumentException("Research question cannot be empty.", nameof(question));
+        if (question.Length > 4000)
+            throw new ArgumentException("Research question is too long.", nameof(question));
+        ArgumentNullException.ThrowIfNull(plan);
+        if (plan.Queries is null || plan.Queries.Count == 0 || plan.Queries.Count > 6)
+            throw new ArgumentException("Research plan query count is outside allowed bounds.", nameof(plan));
     }
 
     private static string BuildQualityMetadataBlock(ResearchEvidenceRanking ranking)

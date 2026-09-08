@@ -164,16 +164,17 @@ public sealed class ResearchEvidenceRanker
         var labels = host.Split('.', StringSplitOptions.RemoveEmptyEntries);
 
         if (host.EndsWith(".gov", StringComparison.OrdinalIgnoreCase)
-            || labels.Contains("gov", StringComparer.OrdinalIgnoreCase)
+            || HasCountryCodeInstitutionalSuffix(labels, "gov")
             || host.EndsWith(".mil", StringComparison.OrdinalIgnoreCase)
+            || HasCountryCodeInstitutionalSuffix(labels, "mil")
             || host.EndsWith(".int", StringComparison.OrdinalIgnoreCase))
         {
             return (0.95d, ResearchAuthorityBasis.GovernmentOrInternational);
         }
 
         if (host.EndsWith(".edu", StringComparison.OrdinalIgnoreCase)
-            || labels.Contains("edu", StringComparer.OrdinalIgnoreCase)
-            || labels.Contains("ac", StringComparer.OrdinalIgnoreCase))
+            || HasCountryCodeInstitutionalSuffix(labels, "edu")
+            || HasCountryCodeInstitutionalSuffix(labels, "ac"))
         {
             return (0.88d, ResearchAuthorityBasis.AcademicOrInstitutional);
         }
@@ -188,6 +189,13 @@ public sealed class ResearchEvidenceRanker
         }
 
         return (0.55d, ResearchAuthorityBasis.DefaultWeb);
+    }
+
+    private static bool HasCountryCodeInstitutionalSuffix(IReadOnlyList<string> labels, string institutionalLabel)
+    {
+        return labels.Count >= 3
+            && labels[^2].Equals(institutionalLabel, StringComparison.OrdinalIgnoreCase)
+            && labels[^1].Length == 2;
     }
 
     private static (double Score, ResearchFreshnessBasis Basis) ScoreFreshness(

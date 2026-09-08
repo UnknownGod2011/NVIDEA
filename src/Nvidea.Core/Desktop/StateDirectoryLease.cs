@@ -1,10 +1,10 @@
-using System.Text;
+using System.Collections.Concurrent;
 using System.Text.Json;
 
 namespace Nvidea.Core.Desktop;
 
 /// <summary>
-/// Owns an OS-backed, cross-process lease for the NVIDEA durable state directory.
+/// Owns a process-local plus OS-backed cross-process lease for the NVIDEA durable state directory.
 /// The lease file is intentionally persistent; process death releases the kernel lock,
 /// so a stale file cannot permanently block future startup.
 /// </summary>
@@ -15,15 +15,23 @@ public sealed class StateDirectoryLease : IDisposable
     private const int MaxOwnerMetadataBytes = 4096;
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly ConcurrentDictionary<string, byte> ProcessLeases = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly FileStream _stream;
+    private readonly string _processLeaseKey;
     private bool _disposed;
 
-    private StateDirectoryLease(string stateDirectory, string leasePath, FileStream stream, StateDirectoryLeaseOwner owner)
+    private StateDirectoryLease(
+        string stateDirectory,
+        string leasePath,
+        string processLeaseKey,
+        FileStream stream,
+        StateDirectoryLeaseOwner owner)
     {
         StateDirectory = stateDirectory;
         LeasePath = leasePath;
         Owner = owner;
+        _processLeaseKey = processLeaseKey;
         _stream = stream;
     }
 
@@ -41,6 +49,14 @@ public sealed class StateDirectoryLease : IDisposable
         var leasePath = Path.GetFullPath(Path.Combine(stateRoot, LeaseFileName));
         EnsureChildPath(stateRoot, leasePath);
         RejectReparsePointIfPresent(leasePath);
+
+        var processLeaseKey = Path.TrimEndingDirectorySeparator(stateRoot);
+        if (!ProcessLeases.TryAdd(processLeaseKey, 0))
+        {
+            throw CreateUnavailableException(
+                leasePath,
+                new IOException("The NVIDEA state directory is already leased in this process."));
+        }
 
         FileStream? stream = null;
         try
@@ -70,20 +86,23 @@ public sealed class StateDirectoryLease : IDisposable
                 Environment.ProcessId,
                 DateTimeOffset.UtcNow);
             WriteOwner(stream, owner);
-            return new StateDirectoryLease(stateRoot, leasePath, stream, owner);
+            return new StateDirectoryLease(stateRoot, leasePath, processLeaseKey, stream, owner);
         }
         catch (StateDirectoryLeaseUnavailableException)
         {
+            ProcessLeases.TryRemove(processLeaseKey, out _);
             throw;
         }
         catch (IOException ex)
         {
             stream?.Dispose();
+            ProcessLeases.TryRemove(processLeaseKey, out _);
             throw CreateUnavailableException(leasePath, ex);
         }
         catch
         {
             stream?.Dispose();
+            ProcessLeases.TryRemove(processLeaseKey, out _);
             throw;
         }
     }
@@ -96,15 +115,22 @@ public sealed class StateDirectoryLease : IDisposable
 
         try
         {
-            _stream.Unlock(0, 1);
-        }
-        catch (IOException)
-        {
-            // Disposing the handle still releases any OS lock. Preserve shutdown reliability.
+            try
+            {
+                _stream.Unlock(0, 1);
+            }
+            catch (IOException)
+            {
+                // Disposing the handle still releases any OS lock. Preserve shutdown reliability.
+            }
+            finally
+            {
+                _stream.Dispose();
+            }
         }
         finally
         {
-            _stream.Dispose();
+            ProcessLeases.TryRemove(_processLeaseKey, out _);
         }
     }
 

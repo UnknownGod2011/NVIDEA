@@ -7,7 +7,7 @@ namespace Nvidea.Core.Browser;
 /// Existing tabs are never adopted on startup: browser-managed authenticated/profile state such as
 /// cookies and local storage may persist, but every runtime begins on a fresh explicitly-permitted
 /// page so stale tabs cannot silently become agent-visible context. Browser downloads are accepted
-/// only into an NVIDEA-owned quarantine and require a separate explicit export handoff.
+/// only into NVIDEA-owned bounded staging/quarantine and require a separate explicit export handoff.
 /// </summary>
 public static class PersistentBrowserContextFactory
 {
@@ -28,7 +28,15 @@ public static class PersistentBrowserContextFactory
 
         var profileDirectory = BrowserProfileOwnership.PrepareOwnedProfile(stateDirectory);
         BrowserProfileOwnership.ValidateOwnedProfile(stateDirectory, profileDirectory);
-        var downloads = new BrowserDownloadQuarantine(stateDirectory);
+
+        var quarantineOptions = new BrowserDownloadQuarantineOptions();
+        var downloads = new BrowserDownloadQuarantine(stateDirectory, quarantineOptions);
+        var staging = new BrowserDownloadStagingGuard(
+            stateDirectory,
+            new BrowserDownloadStagingOptions(
+                MaxStagingBytes: quarantineOptions.MaxSingleDownloadBytes,
+                MaxPartialBytes: quarantineOptions.MaxSingleDownloadBytes));
+        Directory.CreateDirectory(staging.StagingDirectory);
 
         IBrowserContext? context = null;
         try
@@ -39,7 +47,8 @@ public static class PersistentBrowserContextFactory
                 new BrowserTypeLaunchPersistentContextOptions
                 {
                     Headless = headless,
-                    AcceptDownloads = true
+                    AcceptDownloads = true,
+                    DownloadsPath = staging.StagingDirectory
                 }).WaitAsync(cancellationToken).ConfigureAwait(false);
 
             // Chromium may restore pages from a previous persistent-context run. Keep the useful
@@ -56,8 +65,8 @@ public static class PersistentBrowserContextFactory
                 Timeout = driverOptions.ActionTimeoutMilliseconds
             }).WaitAsync(cancellationToken).ConfigureAwait(false);
 
-            var driver = new PlaywrightBrowserSessionDriver(context, page, driverOptions, downloads);
-            return new PersistentBrowserContextSession(profileDirectory, context, driver, downloads);
+            var driver = new PlaywrightBrowserSessionDriver(context, page, driverOptions, downloads, staging);
+            return new PersistentBrowserContextSession(profileDirectory, context, driver, downloads, staging);
         }
         catch
         {
@@ -84,4 +93,5 @@ public sealed record PersistentBrowserContextSession(
     string ProfileDirectory,
     IBrowserContext Context,
     PlaywrightBrowserSessionDriver Driver,
-    BrowserDownloadQuarantine Downloads);
+    BrowserDownloadQuarantine Downloads,
+    BrowserDownloadStagingGuard DownloadStaging);

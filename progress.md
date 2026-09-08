@@ -33,7 +33,8 @@ Target: **Personal AI**. Secondary target: **Best Use of Tavily**. Ambition: top
 - Browser-managed in-progress download bytes are routed to an NVIDEA-owned Playwright `DownloadsPath` and guarded during transfer. Both Playwright staging bytes and the quarantine `.partial` copy default to 128 MiB ceilings; exceeding either invokes Playwright `Download.CancelAsync()` and fails closed before final quarantine promotion.
 - Browser-managed temporary copies are explicitly deleted after quarantine capture/failure so they do not consume the next staging budget for the lifetime of the persistent context.
 - Crash-leftover files in the NVIDEA-owned Playwright staging directory are reclaimed before Chromium starts. Reclamation is bounded, top-level only, rejects unexpected directories/reparse points, and blocks browser startup rather than broadening the delete boundary.
-- **New:** deterministic opt-in real-Chromium coverage now exists for the oversized-download path. A throttled localhost fixture uses small assembly-internal test quotas to exercise real `DownloadsPath` growth, quota cancellation, durable `Interrupted` state and transient cleanup without weakening production defaults or moving 128 MiB during a test.
+- Deterministic opt-in real-Chromium coverage exists for the oversized-download path. A throttled localhost fixture uses small assembly-internal test quotas to exercise real `DownloadsPath` growth, quota cancellation, durable `Interrupted` state and transient cleanup without weakening production defaults or moving 128 MiB during a test.
+- **New:** protected segmented audit retention is now bounded by default to 32 archived segments and 64 MiB of archived segment+seal bytes. Retention pruning is represented by a protected cumulative tombstone (`PrunedThroughIndex`, pruned event count, and a SHA-256 digest chain over removed immutable anchors) before any evidence bytes are deleted. Exact pending-delete indices make pruning crash-recoverable and prevent retention from masquerading as unexplained history truncation.
 - Root README + MIT license.
 
 ## Persistent Progress History
@@ -77,32 +78,43 @@ Completed:
 - Re-verified current official Playwright .NET documentation on 2026-09-08: `Page.Download` fires when transfer begins, `SaveAsAsync` is safe while transfer is in progress, `CancelAsync` cancels downloads, and download files are browser-context-owned temporary artifacts.
 - Commits: `8d6fcd19cdf904c174d9a34a7047a1b13d6e5654`, `994234746644826d2f98a9ca3cd1974f85b1cce1`, `eb56c742605d1ce3b574fabe559125a57356c8ac`, `da392780c16bda6fa720328494c049882ccbecb7`, `3ea0254d5374ee13e0ef9b3e4afb223aaf1b26d9`.
 
+### 2026-09-08 — Crash-safe bounded audit retention
+Completed:
+- Added `AuditRetentionPolicy`, enabled by default for `SegmentedAuditTrail` at 32 archived segments / 64 MiB archived bytes while keeping the active segment under the existing 1,000-event rotation boundary.
+- Before a full active segment is rotated into immutable history, retention reserves one archive slot plus the segment's exact data+seal bytes. If that segment cannot fit the configured archived-byte budget on its own, the append fails closed before creating a new segment rather than silently deleting or partially recording audit evidence.
+- Oldest archived segments are pruned only at complete segment boundaries. The protected manifest records `PrunedThroughIndex`, cumulative pruned-event count, and a cumulative SHA-256 digest over every removed immutable anchor.
+- Retention uses a protected write-ahead delete set: the manifest commits the new pruned boundary and exact `PendingDeleteIndices` before deleting segment/seal files. A restart/read/append finishes only those exact pending deletions and then clears the list in a second protected manifest write.
+- Manifest validation now supports a contiguous retained window after the pruned boundary and rejects malformed retention tombstones, invalid digest state, duplicate/out-of-order pending deletes, and inconsistent committed/pending rollover shapes.
+- Added regression coverage for normal protected pruning, byte-quota fail-closed behavior before rotation, and simulated crash recovery from a manifest that committed pruning but had not yet deleted the old segment bytes.
+- Commits: `467f6f1a4846fc1f88f76e59ee29111e5e070bb4`, `b74c884107056b175d9afbf773dc0bc5d7dc9125`.
+
 Validation / evidence:
 - Repository identity was explicitly re-verified as exactly `UnknownGod2011/NVIDEA` before every GitHub mutation in this run.
-- Re-read `progress.md`, current tree, persistent-browser integration tests, staging guard, quarantine capture, session driver, factory, browser contracts and integration-harness docs before changing code.
-- Re-read the changed factory and new Chromium fixture after writes and corrected the overload call to use an explicit named cancellation argument.
-- Current official Playwright .NET docs were checked for `Download.CancelAsync`, `SaveAsAsync`, download-event timing and browser-owned download lifecycle; implementation assumptions still match documented behavior.
+- Re-read `progress.md`, recent commits, current repository tree, `AuditTrail.cs`, `SegmentedAuditTrail.cs`, `SegmentedAuditTrailTests.cs`, and the production `BrowserHostRuntime` audit composition before changing code.
+- Re-read the changed retention implementation and tests after writes for manifest/rotation compatibility and crash-recovery ordering.
 - Re-checked the execution environment for `dotnet`, `msbuild`, `csc`, and `mcs`; none is available, so compilation/test/WPF/Chromium/DPAPI execution is NOT claimed.
 - No GitHub Actions workflow was rerun merely to obtain a green signal.
 
 Security / privacy review:
-- Testability does not widen production quota policy: custom download limits are only available through an internal overload visible to the test friend assembly.
-- The integration fixture is localhost-only, credential-free and writes solely beneath a random temp NVIDEA test state directory.
-- The fixture validates that an oversized untrusted transfer does not become a Ready payload and that transient browser/quarantine bytes are removed after cancellation.
-- The live source-disconnect assertion provides stronger evidence than metadata alone that cancellation propagates back to Chromium's active network transfer.
-- No browser credentials, download contents, filenames from real browsing sessions, raw destination paths or approval grants are introduced into diagnostics.
+- Retention cannot silently rewrite or truncate a retained segment: pruning operates only on previously anchored immutable segments.
+- The protected retention tombstone preserves evidence that history was intentionally pruned, including how many events were removed and a digest chain over their immutable data/seal anchors, without retaining the events' sensitive plaintext metadata.
+- Deletion authority is restricted to exact deterministic segment/seal paths already represented by protected pending-delete indices; no recursive cleanup or user-supplied path is introduced.
+- Crash ordering is manifest-first, delete-second. If the process dies before the manifest commit, no segment is deleted. If it dies afterward, recovery can finish the exact committed deletions.
+- A failed retention-capacity reservation blocks a new rotation before the new event is appended, preserving fail-closed audit semantics.
 
 ## Current Unverified / Risks
 - Highest risk remains executable validation: no real `dotnet build`, `dotnet test`, Windows WPF launch, persistent Chromium launch or DPAPI round-trip has run in this environment.
-- The new Chromium fixture is implemented but unexecuted here; compile/runtime behavior, actual Windows `DownloadsPath` growth and source disconnect timing remain to be proven on a machine with .NET 8 + matching Playwright Chromium.
-- The in-progress guard is polling-based, not a filesystem hard quota. Overshoot can occur between polls and while browser cancellation propagates; it is bounded operationally rather than byte-perfect.
+- The new audit-retention code and tests are statically reviewed but unexecuted here; constructor compatibility, System.Text.Json optional manifest-field migration, Windows file-delete behavior and DPAPI-protected retention recovery still require a real .NET 8 run.
+- Audit byte retention currently bounds **archived segment + archived seal bytes**, not the current active segment or protected manifest itself. The active segment is event-count bounded, but an unusually large individual audit event could still make that segment large before rotation. A per-event logical payload ceiling / active-segment byte guard is a remaining hardening opportunity.
+- Retention makes duplicate-event detection apply to the retained window only; intentionally pruned event IDs are no longer available for global duplicate detection. IDs are random GUIDs today, but this behavior should remain documented if external event IDs are introduced.
+- The Chromium oversized-download fixture is implemented but unexecuted here; compile/runtime behavior, actual Windows `DownloadsPath` growth and source disconnect timing remain to be proven on a machine with .NET 8 + matching Playwright Chromium.
+- The in-progress download guard is polling-based, not a filesystem hard quota. Overshoot can occur between polls and while browser cancellation propagates; it is bounded operationally rather than byte-perfect.
 - Startup reclamation has unit-level design coverage only; Windows junction/reparse behavior and Chromium crash leftovers remain unexecuted here.
 - WPF depends on .NET 8 `Microsoft.Win32.OpenFolderDialog`; compile on Windows before claiming compatibility.
 - Persistent Chromium profile contents and quarantined payload bytes rely on the OS user-profile boundary rather than application-level encryption.
-- Audit lifetime retention/byte quotas remain absent.
 - Local voice/transcription is absent.
 - Tavily Extract/richer authority/freshness work and a verified embedding adapter remain opportunities.
 - WPF download polling can initialize the browser runtime at window render time even when browser work was not requested, which is safe but suboptimal for startup latency/resources.
 
 ## Single Best Next Task
-Obtain the first real Windows/.NET 8 build + unit tests + WPF launch + persistent Chromium + DPAPI signal and immediately repair compile/runtime issues, with the new throttled download fixture included in the opt-in Chromium run. If executable validation remains unavailable, shift from browser-download hardening to the highest-value remaining product gap: add bounded audit retention/byte quotas with crash-safe segment pruning and tests, so long-running Personal AI use cannot grow protected audit state indefinitely.
+Obtain the first real Windows/.NET 8 build + unit tests + WPF launch + persistent Chromium + DPAPI signal and immediately repair compile/runtime issues, including the new segmented-audit retention tests and throttled Chromium download fixture. If executable validation remains unavailable, add a conservative per-event audit payload ceiling plus active-segment byte guard and an explicit retention-status API/UI surface so long-running users can see that older protected audit history was deliberately pruned rather than infer it from a shortened event list.

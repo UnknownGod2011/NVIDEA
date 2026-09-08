@@ -5,6 +5,74 @@ namespace Nvidea.Core.Tests;
 public sealed class BrowserDownloadStagingGuardTests
 {
     [Fact]
+    public void StartupReclaimDeletesOnlyOwnedTopLevelStagingFiles()
+    {
+        var root = CreateTemporaryDirectory();
+        try
+        {
+            var guard = new BrowserDownloadStagingGuard(root);
+            Directory.CreateDirectory(guard.StagingDirectory);
+            var first = Path.Combine(guard.StagingDirectory, "one.tmp");
+            var second = Path.Combine(guard.StagingDirectory, "two.tmp");
+            File.WriteAllBytes(first, new byte[11]);
+            File.WriteAllBytes(second, new byte[17]);
+
+            var result = guard.ReclaimStartupLeftovers();
+
+            Assert.Equal(2, result.FilesDeleted);
+            Assert.Equal(28, result.BytesDeleted);
+            Assert.Empty(Directory.EnumerateFileSystemEntries(guard.StagingDirectory));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void StartupReclaimRefusesUnexpectedDirectoryWithoutDeletingSiblingFiles()
+    {
+        var root = CreateTemporaryDirectory();
+        try
+        {
+            var guard = new BrowserDownloadStagingGuard(root);
+            Directory.CreateDirectory(guard.StagingDirectory);
+            var retained = Path.Combine(guard.StagingDirectory, "retained.tmp");
+            File.WriteAllBytes(retained, new byte[8]);
+            Directory.CreateDirectory(Path.Combine(guard.StagingDirectory, "unexpected"));
+
+            Assert.Throws<InvalidOperationException>(() => guard.ReclaimStartupLeftovers());
+            Assert.True(File.Exists(retained));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void StartupReclaimRefusesOversizedEntryPopulationBeforeDeletion()
+    {
+        var root = CreateTemporaryDirectory();
+        try
+        {
+            var guard = new BrowserDownloadStagingGuard(
+                root,
+                new BrowserDownloadStagingOptions(MaxStartupReclaimEntries: 2));
+            Directory.CreateDirectory(guard.StagingDirectory);
+            for (var i = 0; i < 3; i++)
+                File.WriteAllText(Path.Combine(guard.StagingDirectory, $"{i}.tmp"), "x");
+
+            Assert.Throws<InvalidOperationException>(() => guard.ReclaimStartupLeftovers());
+            Assert.Equal(3, Directory.EnumerateFiles(guard.StagingDirectory).Count());
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task OversizedPartialCancelsSourceAndFailsClosed()
     {
         var root = CreateTemporaryDirectory();
@@ -173,6 +241,8 @@ public sealed class BrowserDownloadStagingGuardTests
                 new BrowserDownloadStagingGuard(root, new BrowserDownloadStagingOptions(MaxStagingBytes: 0)));
             Assert.Throws<ArgumentOutOfRangeException>(() =>
                 new BrowserDownloadStagingGuard(root, new BrowserDownloadStagingOptions(PollIntervalMilliseconds: 1)));
+            Assert.Throws<ArgumentOutOfRangeException>(() =>
+                new BrowserDownloadStagingGuard(root, new BrowserDownloadStagingOptions(MaxStartupReclaimEntries: 0)));
         }
         finally
         {

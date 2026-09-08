@@ -5,15 +5,17 @@ namespace Nvidea.Core.Tests;
 
 public sealed class BrowserDownloadApiSurfaceTests
 {
-    [Fact]
-    public void LowLevelExportPrimitiveIsNotPublicApi()
+    [Theory]
+    [InlineData("ExportAsync")]
+    [InlineData("DiscardAsync")]
+    public void LowLevelMutationPrimitivesAreNotPublicApi(string methodName)
     {
-        var export = typeof(BrowserDownloadQuarantine).GetMethod(
-            "ExportAsync",
+        var method = typeof(BrowserDownloadQuarantine).GetMethod(
+            methodName,
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
 
-        Assert.NotNull(export);
-        Assert.False(export!.IsPublic);
-        Assert.True(export.IsAssembly);
+        Assert.NotNull(method);
+        Assert.False(method!.IsPublic);
+        Assert.True(method.IsAssembly);
     }
 }

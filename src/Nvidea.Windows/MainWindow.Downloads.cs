@@ -7,7 +7,7 @@ namespace Nvidea.Windows;
 
 public partial class MainWindow
 {
-    private BrowserDownloadRecord? _downloadCandidate;
+    private BrowserDownloadSnapshotItem? _downloadCandidate;
     private DispatcherTimer? _downloadRefreshTimer;
 
     protected override async void OnContentRendered(EventArgs e)
@@ -29,12 +29,8 @@ public partial class MainWindow
     {
         try
         {
-            _browserHost ??= await _root.GetBrowserAsync();
-            var downloads = await _browserHost.ListDownloadsAsync();
-            _downloadCandidate = downloads
-                .Where(static item => item.State is BrowserDownloadState.Ready or BrowserDownloadState.Exported)
-                .OrderByDescending(static item => item.CreatedAt)
-                .FirstOrDefault();
+            var snapshot = await _root.LocalState.GetBrowserDownloadSnapshotAsync();
+            _downloadCandidate = snapshot.RetainedDownloads.FirstOrDefault();
 
             if (_downloadCandidate is null)
             {
@@ -42,13 +38,16 @@ public partial class MainWindow
                 DownloadSummaryText.Text = string.Empty;
                 DownloadReviewButton.IsEnabled = false;
                 DownloadDiscardButton.IsEnabled = false;
+                if (snapshot.HasPendingRecovery)
+                    StatusText.Text = $"Download quarantine has {snapshot.PendingRecoveryCount} interrupted/in-progress record(s) awaiting trusted browser recovery.";
                 return;
             }
 
-            var source = _downloadCandidate.SourceUri.IdnHost;
-            var size = _downloadCandidate.LengthBytes is long bytes ? $"{bytes:N0} bytes" : "size unavailable";
+            var size = $"{_downloadCandidate.LengthBytes:N0} bytes";
             var state = _downloadCandidate.State == BrowserDownloadState.Exported ? "exported copy retained" : "ready";
-            DownloadSummaryText.Text = $"{_downloadCandidate.SuggestedFileName} · {source} · {size} · {state}";
+            DownloadSummaryText.Text =
+                $"{_downloadCandidate.SuggestedFileName} · {_downloadCandidate.SourceHost} · {size} · {state} · " +
+                $"quarantine {snapshot.RetainedBytes:N0}/{snapshot.MaxRetainedBytes:N0} bytes";
             DownloadPanel.Visibility = Visibility.Visible;
             DownloadReviewButton.IsEnabled = !_running && !_browserRunning;
             DownloadDiscardButton.IsEnabled = !_running && !_browserRunning;
@@ -61,6 +60,25 @@ public partial class MainWindow
             DownloadDiscardButton.IsEnabled = false;
             StatusText.Text = $"Download quarantine unavailable — {ex.Message}";
         }
+    }
+
+    private async Task<BrowserDownloadRecord> ResolveTrustedDownloadAsync(BrowserDownloadSnapshotItem snapshot)
+    {
+        _browserHost ??= await _root.GetBrowserAsync();
+        var records = await _browserHost.ListDownloadsAsync();
+        var record = records.FirstOrDefault(item => item.DownloadId == snapshot.DownloadId)
+            ?? throw new InvalidOperationException("The selected quarantine download no longer exists after trusted runtime recovery.");
+
+        if (record.State is not (BrowserDownloadState.Ready or BrowserDownloadState.Exported) ||
+            record.LengthBytes != snapshot.LengthBytes ||
+            !string.Equals(record.Sha256, snapshot.Sha256, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(record.SuggestedFileName, snapshot.SuggestedFileName, StringComparison.Ordinal) ||
+            !string.Equals(record.SourceUri.IdnHost, snapshot.SourceHost, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("The quarantine download changed after the read-only snapshot. Refresh and review the current trusted state before approving any action.");
+        }
+
+        return record;
     }
 
     private async void DownloadReviewButton_Click(object sender, RoutedEventArgs e)
@@ -80,9 +98,9 @@ public partial class MainWindow
         StatusText.Text = "Download — preparing exact approval scope";
         try
         {
-            _browserHost ??= await _root.GetBrowserAsync();
-            var candidate = _downloadCandidate;
-            var plan = await _browserHost.PrepareDownloadHandoffAsync(candidate.DownloadId, picker.FolderName);
+            var snapshot = _downloadCandidate;
+            var candidate = await ResolveTrustedDownloadAsync(snapshot);
+            var plan = await _browserHost!.PrepareDownloadHandoffAsync(candidate.DownloadId, picker.FolderName);
 
             var dialog = new DownloadHandoffDialog(candidate, plan) { Owner = this };
             if (dialog.ShowDialog() != true)
@@ -123,9 +141,9 @@ public partial class MainWindow
         StatusText.Text = "Download — preparing exact discard approval";
         try
         {
-            _browserHost ??= await _root.GetBrowserAsync();
-            var candidate = _downloadCandidate;
-            var plan = await _browserHost.PrepareDownloadDiscardAsync(candidate.DownloadId);
+            var snapshot = _downloadCandidate;
+            var candidate = await ResolveTrustedDownloadAsync(snapshot);
+            var plan = await _browserHost!.PrepareDownloadDiscardAsync(candidate.DownloadId);
             var source = candidate.SourceUri.IdnHost;
             var size = candidate.LengthBytes is long bytes ? $"{bytes:N0} bytes" : "size unavailable";
             var hash = candidate.Sha256 ?? "unavailable";

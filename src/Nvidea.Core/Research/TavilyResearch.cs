@@ -55,6 +55,14 @@ public interface IResearchProvider
         CancellationToken cancellationToken = default);
 }
 
+public interface IResearchExtractionProvider
+{
+    Task<ResearchBatch> EnrichAsync(
+        ResearchBatch batch,
+        string researchIntent,
+        CancellationToken cancellationToken = default);
+}
+
 public sealed class TavilyOptions
 {
     public required string ApiKey { get; init; }
@@ -62,6 +70,8 @@ public sealed class TavilyOptions
     public TimeSpan RequestTimeout { get; init; } = TimeSpan.FromSeconds(30);
     public int MaxAttempts { get; init; } = 3;
     public int MaxQueriesPerBatch { get; init; } = 6;
+    public int MaxExtractSourcesPerBatch { get; init; } = 8;
+    public int ExtractChunksPerSource { get; init; } = 3;
 
     public static TavilyOptions FromEnvironment()
     {
@@ -84,10 +94,14 @@ public sealed class TavilyOptions
             throw new InvalidOperationException("MaxAttempts must be between 1 and 6.");
         if (MaxQueriesPerBatch is < 1 or > 12)
             throw new InvalidOperationException("MaxQueriesPerBatch must be between 1 and 12.");
+        if (MaxExtractSourcesPerBatch is < 1 or > 20)
+            throw new InvalidOperationException("MaxExtractSourcesPerBatch must be between 1 and 20.");
+        if (ExtractChunksPerSource is < 1 or > 5)
+            throw new InvalidOperationException("ExtractChunksPerSource must be between 1 and 5.");
     }
 }
 
-public sealed class TavilyResearchClient : IResearchProvider
+public sealed class TavilyResearchClient : IResearchProvider, IResearchExtractionProvider
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -164,6 +178,86 @@ public sealed class TavilyResearchClient : IResearchProvider
         return new ResearchBatch(sources, citations, credits, warnings);
     }
 
+    public async Task<ResearchBatch> EnrichAsync(
+        ResearchBatch batch,
+        string researchIntent,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(batch);
+        if (string.IsNullOrWhiteSpace(researchIntent))
+            throw new ArgumentException("Research intent cannot be empty.", nameof(researchIntent));
+        if (researchIntent.Length > 4000)
+            throw new ArgumentException("Research intent is too long.", nameof(researchIntent));
+        if (batch.Sources.Count == 0)
+            return batch;
+
+        var selected = batch.Sources
+            .OrderByDescending(source => source.ProviderScore)
+            .Take(_options.MaxExtractSourcesPerBatch)
+            .ToArray();
+
+        TavilyExtractResponse response;
+        try
+        {
+            response = await ExtractAsync(selected.Select(source => source.Url).ToArray(), researchIntent, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is ResearchProviderException or HttpRequestException or TimeoutException or OperationCanceledException)
+        {
+            return batch with
+            {
+                Warnings = [.. batch.Warnings, $"Tavily Extract enrichment was unavailable; retained search evidence. {ex.Message}"]
+            };
+        }
+
+        var extractedByCanonicalUrl = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var warnings = new List<string>(batch.Warnings);
+        foreach (var result in response.Results ?? [])
+        {
+            if (!Uri.TryCreate(result.Url, UriKind.Absolute, out var url) || url.Scheme is not ("http" or "https"))
+            {
+                warnings.Add("Tavily Extract returned an invalid result URL; ignored it.");
+                continue;
+            }
+
+            var content = result.RawContent?.Trim();
+            if (!string.IsNullOrWhiteSpace(content))
+                extractedByCanonicalUrl[Canonicalize(url)] = content;
+        }
+
+        foreach (var failed in response.FailedResults ?? [])
+        {
+            if (Uri.TryCreate(failed.Url, UriKind.Absolute, out var failedUrl))
+                warnings.Add($"Tavily Extract could not enrich {failedUrl.Host}; retained search evidence for that source.");
+            else
+                warnings.Add("Tavily Extract reported a failed source with an invalid URL.");
+        }
+
+        var enrichedSources = batch.Sources.Select(source =>
+        {
+            if (!extractedByCanonicalUrl.TryGetValue(source.CanonicalUrl, out var extracted))
+                return source;
+
+            return source with
+            {
+                Content = extracted,
+                RawContent = extracted,
+                RetrievedAt = _timeProvider.GetUtcNow()
+            };
+        }).ToArray();
+
+        return batch with
+        {
+            Sources = enrichedSources,
+            ProviderCreditsUsed = checked(batch.ProviderCreditsUsed + (response.Usage?.Credits ?? 0)),
+            Warnings = warnings
+        };
+    }
+
     public static string BuildUntrustedEvidenceBlock(ResearchBatch batch, int maxCharsPerSource = 4000)
     {
         ArgumentNullException.ThrowIfNull(batch);
@@ -205,6 +299,35 @@ public sealed class TavilyResearchClient : IResearchProvider
             ExcludeDomains = query.ExcludeDomains
         };
 
+        return await SendWithRetryAsync<TavilySearchRequest, TavilySearchResponse>("search", payload, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private Task<TavilyExtractResponse> ExtractAsync(
+        IReadOnlyList<Uri> urls,
+        string researchIntent,
+        CancellationToken cancellationToken)
+    {
+        var payload = new TavilyExtractRequest
+        {
+            Urls = urls.Select(url => url.AbsoluteUri).ToArray(),
+            Query = researchIntent,
+            ChunksPerSource = _options.ExtractChunksPerSource,
+            ExtractDepth = "advanced",
+            IncludeImages = false,
+            IncludeFavicon = false,
+            Format = "markdown",
+            IncludeUsage = true
+        };
+
+        return SendWithRetryAsync<TavilyExtractRequest, TavilyExtractResponse>("extract", payload, cancellationToken);
+    }
+
+    private async Task<TResponse> SendWithRetryAsync<TRequest, TResponse>(
+        string endpoint,
+        TRequest payload,
+        CancellationToken cancellationToken)
+    {
         var body = JsonSerializer.Serialize(payload, JsonOptions);
         Exception? lastError = null;
 
@@ -214,7 +337,7 @@ public sealed class TavilyResearchClient : IResearchProvider
             linkedCts.CancelAfter(_options.RequestTimeout);
             try
             {
-                using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(_options.BaseUri, "search"));
+                using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(_options.BaseUri, endpoint));
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey);
                 request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
                 request.Content = new StringContent(body, Encoding.UTF8, "application/json");
@@ -222,17 +345,17 @@ public sealed class TavilyResearchClient : IResearchProvider
                 using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, linkedCts.Token).ConfigureAwait(false);
                 var responseText = await response.Content.ReadAsStringAsync(linkedCts.Token).ConfigureAwait(false);
                 if (response.IsSuccessStatusCode)
-                    return JsonSerializer.Deserialize<TavilySearchResponse>(responseText, JsonOptions)
-                        ?? throw new InvalidOperationException("Tavily returned an empty response.");
+                    return JsonSerializer.Deserialize<TResponse>(responseText, JsonOptions)
+                        ?? throw new InvalidOperationException($"Tavily {endpoint} returned an empty response.");
 
-                var error = new ResearchProviderException($"Tavily search failed with HTTP {(int)response.StatusCode}.", response.StatusCode);
+                var error = new ResearchProviderException($"Tavily {endpoint} failed with HTTP {(int)response.StatusCode}.", response.StatusCode);
                 if (!IsRetryable(response.StatusCode) || attempt == _options.MaxAttempts)
                     throw error;
                 lastError = error;
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && attempt < _options.MaxAttempts)
             {
-                lastError = new TimeoutException("Tavily search timed out.");
+                lastError = new TimeoutException($"Tavily {endpoint} timed out.");
             }
             catch (HttpRequestException ex) when (attempt < _options.MaxAttempts)
             {
@@ -242,7 +365,7 @@ public sealed class TavilyResearchClient : IResearchProvider
             await Task.Delay(TimeSpan.FromMilliseconds(200 * Math.Pow(2, attempt - 1)), cancellationToken).ConfigureAwait(false);
         }
 
-        throw lastError ?? new InvalidOperationException("Tavily search failed without an error response.");
+        throw lastError ?? new InvalidOperationException($"Tavily {endpoint} failed without an error response.");
     }
 
     private static void ValidateQuery(ResearchQuery query)
@@ -313,9 +436,28 @@ public sealed class TavilyResearchClient : IResearchProvider
         public IReadOnlyList<string>? ExcludeDomains { get; init; }
     }
 
+    private sealed class TavilyExtractRequest
+    {
+        public required IReadOnlyList<string> Urls { get; init; }
+        public required string Query { get; init; }
+        public int ChunksPerSource { get; init; }
+        public string ExtractDepth { get; init; } = "advanced";
+        public bool IncludeImages { get; init; }
+        public bool IncludeFavicon { get; init; }
+        public string Format { get; init; } = "markdown";
+        public bool IncludeUsage { get; init; }
+    }
+
     private sealed class TavilySearchResponse
     {
         public List<TavilyResult>? Results { get; init; }
+        public TavilyUsage? Usage { get; init; }
+    }
+
+    private sealed class TavilyExtractResponse
+    {
+        public List<TavilyExtractResult>? Results { get; init; }
+        public List<TavilyExtractFailure>? FailedResults { get; init; }
         public TavilyUsage? Usage { get; init; }
     }
 
@@ -327,6 +469,18 @@ public sealed class TavilyResearchClient : IResearchProvider
         public string? RawContent { get; init; }
         public double Score { get; init; }
         public string? Id { get; init; }
+    }
+
+    private sealed class TavilyExtractResult
+    {
+        public string? Url { get; init; }
+        public string? RawContent { get; init; }
+    }
+
+    private sealed class TavilyExtractFailure
+    {
+        public string? Url { get; init; }
+        public string? Error { get; init; }
     }
 
     private sealed class TavilyUsage

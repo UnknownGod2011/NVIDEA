@@ -12,13 +12,7 @@ Target: **Personal AI**. Secondary target: **Best Use of Tavily**. Ambition: top
 - Before every GitHub mutation, verify the repository target is exactly `UnknownGod2011/NVIDEA`.
 - Do not remove working NVIDEA functionality merely to simplify implementation.
 
-## Target Architecture
-- Windows-first desktop shell with global invocation, voice/text, context capture, permissions and emergency stop.
-- Nemotron through Nebius as the primary reasoning runtime with structured tools, routing, retries, cancellation and bounded execution.
-- Layered privacy-aware memory, Tavily-backed research, safe browser automation, capability registry, single-use exact approvals, durable jobs and Nebius background execution.
-- Private OS actions remain local; high-sensitivity Windows durable state uses CurrentUser DPAPI where implemented.
-
-## Current State
+## Current Architecture / Product State
 - .NET 8 core at `src/Nvidea.Core`; WPF host at `src/Nvidea.Windows`.
 - Nebius/Nemotron inference abstraction with structured output/tools, retries, timeout/cancellation and conservative routing.
 - Layered personal memory, Tavily research engine, Playwright browser agent, deterministic verification, prompt-injection/safety boundaries, resumable browser-goal sessions and durable jobs.
@@ -35,7 +29,9 @@ Target: **Personal AI**. Secondary target: **Best Use of Tavily**. Ambition: top
 - `LocalStateRuntime` exposes browser-free read-only audit/download telemetry without browser actions, approval grants, audit append, export/discard, repair or delete methods.
 - WPF `Audit status` and passive browser-download polling use `NvideaCompositionRoot.LocalState`, so simply rendering local state does not initialize Playwright/Chromium.
 - Passive download snapshots omit full URLs/query strings, exported paths, failure strings, payload bytes and approval state; stable entries are fail-closed on malformed metadata/missing or wrong-length payloads.
-- Browser-download metadata mutation and passive snapshot reads now share one same-path in-process synchronization gate, removing the previous instance-lock race between `BrowserDownloadQuarantine` and `BrowserDownloadSnapshotReader`.
+- Browser-download metadata mutation and passive snapshot reads share one same-path in-process synchronization gate.
+- WPF now surfaces an explicit **Download recovery needed** state for passive `Receiving` records. Passive polling never recovers or deletes them; recovery occurs only after the user deliberately presses **Recover safely**, which initializes the trusted browser runtime and reconciles quarantine state without exporting files, issuing approvals, or replaying website side effects.
+- Download recovery owns a cancellable browser-operation token, so the existing Emergency stop control can cancel trusted browser startup/recovery.
 - Root README + MIT license.
 
 ## Persistent Progress History
@@ -48,36 +44,40 @@ Added owned persistent Chromium profile/session state, popup/new-tab tracking, d
 
 Representative commits: `86ce7ccfdfd09ad27fdb129c6220fe4deff02633`, `74b1c00ea306a825486a32d55be26dfca8bbf3fd`, `5baf8569512ea91cbadaaa8d543a18dc18447878`, `2a0bd1d556d26329b46b6043c31ee90ddc4111e2`, `96adbcf0b8d00257207d282a01aef9cf78f64e94`, `5ed0e2753ad9d46610200303fc7b3418158d0d52`, `994234746644826d2f98a9ca3cd1974f85b1cce1`.
 
-### 2026-09-08 — Bounded protected audit and browser-free local telemetry
-Added crash-safe archived retention, protected pruning tombstones/digests, per-event/active-segment audit ceilings, production bounded-audit composition, privacy-safe retention telemetry, browser-free read-only audit status, browser-free passive download snapshots, bounded snapshot metadata reads, and trusted snapshot-to-action revalidation.
+### 2026-09-08 — Bounded audit + browser-free telemetry
+Added crash-safe archived audit retention, protected pruning tombstones/digests, per-event/active-segment ceilings, production bounded-audit composition, privacy-safe retention telemetry, browser-free read-only audit status/download snapshots, bounded metadata reads, trusted snapshot-to-action revalidation, and same-path audit/download synchronization.
 
-Representative commits: `467f6f1a4846fc1f88f76e59ee29111e5e070bb4`, `ab9285e84f13520fbce37ec9b8436371c568bf0e`, `58ad476cba7059220f9fd0129a086a2a661deb7c`, `6d547d218e03da473e552d69cfb02765a91407f2`, `d55c87a4333bfa1a48aa2c1fe87398371d4b180f`, `00b11aebf3e099ab5c66fd6e4f5f99002c332c89`, `e09cdfe6c90db5e330abbc9b020a92ae642a72d7`, `44228a3ca42d3d06d9c0184a47a0d07efcdb56d9`, `537c3df7fdf10d46ccb7dde7b3bbed0615f4f32a`.
+Representative commits: `467f6f1a4846fc1f88f76e59ee29111e5e070bb4`, `ab9285e84f13520fbce37ec9b8436371c568bf0e`, `58ad476cba7059220f9fd0129a086a2a661deb7c`, `6d547d218e03da473e552d69cfb02765a91407f2`, `d55c87a4333bfa1a48aa2c1fe87398371d4b180f`, `e09cdfe6c90db5e330abbc9b020a92ae642a72d7`, `44228a3ca42d3d06d9c0184a47a0d07efcdb56d9`, `537c3df7fdf10d46ccb7dde7b3bbed0615f4f32a`, `148962033b88a4b54b58346e7c9ee0b89ebfafbf`, `5a4fe4ab5660679bf24bad889cdfcd83473fe693`.
 
-### 2026-09-08 — Unified download-state synchronization
+### 2026-09-08 — Explicit trusted download recovery UX
 Completed this run:
-- Re-read `progress.md`, `BrowserDownloadQuarantine`, `BrowserDownloadSnapshotReader`, and existing snapshot tests before changing behavior.
-- Replaced `BrowserDownloadQuarantine`'s instance-local semaphore with `BrowserDownloadStateSynchronization.GetGate(_metadataPath)`, the same same-path registry already used by `BrowserDownloadSnapshotReader`.
-- Added an internal `SynchronizationGate` test seam only; no new public browser, mutation, approval, export, discard, delete, recovery or repair authority was introduced.
-- Same-process passive snapshots can no longer read protected download metadata while a quarantine metadata transition owns the same-path gate. Different state roots still receive different gates.
-- Added `BrowserDownloadSynchronizationTests.cs` proving exact gate identity, isolation between different roots, deterministic passive-reader blocking while the quarantine gate is held, and stable Ready identity after capture.
-- Commits: `148962033b88a4b54b58346e7c9ee0b89ebfafbf`, `5a4fe4ab5660679bf24bad889cdfcd83473fe693`.
+- Re-read `progress.md`, `LocalStateRuntime`, `BrowserDownloadSnapshotReader`, `BrowserDownloadQuarantine`, `BrowserHostRuntime`, persistent browser composition, and WPF download UI before changing behavior.
+- Kept passive polling strictly read-only: a `Receiving` record is only counted, never mutated or deleted by `LocalStateRuntime`.
+- WPF now prioritizes pending recovery over stable-download actions and displays only a sanitized count/status plus a deliberate **Recover safely** action.
+- Recovery initializes `BrowserHostRuntime` only after that user action, then uses the trusted quarantine listing/recovery path to convert stale `Receiving` state to durable `Interrupted` state and clean its transient `.partial` copy.
+- Recovery does not export a file, prepare/issue an approval, replay a browser-side effect, or authorize a website action.
+- Added cancellation wiring so the global Emergency stop button can cancel browser startup/recovery.
+- Files changed: `src/Nvidea.Windows/MainWindow.Downloads.cs`, `src/Nvidea.Windows/MainWindow.xaml`, and this progress file.
+- Commits before this progress update: `ac374dee484eb51b8c92e96b48b5b6d58c0200a9`, `a3617ce95cb3a7e41f593dba5888cf8bb63d51d7`, `1d8a164add9606af5ae5640eaad36ffbdd2499db`.
 
 Validation / evidence:
 - Repository identity was explicitly verified as exactly `UnknownGod2011/NVIDEA` immediately before every GitHub mutation.
-- Reviewed the actual synchronization commit diff after mutation; intended semantic change is gate ownership plus the internal test seam. No authorization policy or public authority was widened.
-- `dotnet`, `msbuild`, `csc` and `mcs` are not present in this execution environment, so the new tests cannot truthfully be reported as executed here.
+- The implementation reuses existing trusted quarantine recovery semantics instead of introducing a second repair mechanism or broadening passive authority.
+- The recovery branch is fail-safe on cancellation/exception and refreshes passive state afterward.
+- `dotnet`, `msbuild`, `csc` and `mcs` remain unavailable in this execution environment, so compilation/WPF execution/unit tests cannot truthfully be reported as executed here.
 - No GitHub Actions workflow was triggered merely to manufacture a green signal.
+- No other repository was mutated.
 
 Security / privacy review:
-- Passive snapshots remain read-only and cannot perform Receiving recovery, delete `.partial` bytes, export/discard payloads, issue approvals or append audit events.
-- Export/discard still require the higher-authority browser runtime, exact trusted identity revalidation and single-use approval.
-- The shared gate narrows same-process TOCTOU exposure around metadata/payload state transitions without granting the passive reader mutation capability.
-- Full URL paths/query strings and exported destinations remain absent from passive snapshot output.
-- No other repository was mutated.
+- Passive polling still cannot initialize Chromium, mutate quarantine metadata, delete `.partial` bytes, export/discard payloads, issue approvals or append audit events.
+- Recovery is a deliberate user-triggered elevation to the already-trusted browser runtime.
+- Stable export/discard paths retain exact identity revalidation and separate single-use approvals after recovery.
+- Recovery UI exposes only aggregate pending count; no full URL, query string, exported path, failure detail, payload bytes or approval material is surfaced.
+- Emergency stop now has a real cancellation token for the recovery path.
 
 ## Current Unverified / Risks
 - Highest risk remains executable validation: no real `dotnet build`, `dotnet test`, Windows WPF launch, persistent Chromium launch or DPAPI round-trip has run in this environment.
-- New synchronization tests are statically reviewed but unexecuted; .NET 8/xUnit behavior still needs real evidence.
+- New recovery UX is statically reviewed but unexecuted; WPF binding/event behavior still needs real Windows evidence.
 - Cross-process synchronization is still absent for both audit and download state; a second NVIDEA process can access the same state directory concurrently.
 - Passive snapshots intentionally verify retained payload length, not SHA-256, on every four-second poll. Trusted export/discard performs full hash verification before consequential mutation.
 - Chromium oversized-download fixture and Windows staging/reparse behavior remain unexecuted here.
@@ -86,4 +86,4 @@ Security / privacy review:
 - Tavily Extract/richer source authority/freshness work and a verified embedding adapter remain opportunities.
 
 ## Single Best Next Task
-Obtain the first real Windows/.NET 8 build + unit tests + WPF launch + persistent Chromium + DPAPI signal and repair any compile/runtime issues. If executable validation remains unavailable, add a lightweight explicit **Recovery needed** UX for passive `Receiving` records: show only a sanitized count/status in `LocalStateRuntime`, require a deliberate user action to initialize the trusted browser runtime, and keep recovery/deletion authority out of passive polling. Then design a safe cross-process ownership/locking strategy for browser-download and audit durable state before allowing multiple NVIDEA processes to share one profile/state directory.
+Obtain the first real Windows/.NET 8 build + unit tests + WPF launch + persistent Chromium + DPAPI signal and repair any compile/runtime issues. If executable validation remains unavailable, design and implement a safe **single-owner cross-process state lease** for browser profile/download/audit durable state so a second NVIDEA process fails closed instead of concurrently mutating the same profile/state directory. The lease must avoid orphaned permanent locks, expose clear UX, and never bypass Chromium/profile locking or OS safeguards.

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Nvidea.Core.Security;
 
@@ -33,12 +34,14 @@ public sealed record AuditPayloadPolicy(
 public sealed class BoundedSegmentedAuditTrail : IAuditTrail
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> SharedGates =
+        new(StringComparer.OrdinalIgnoreCase);
 
     private readonly SegmentedAuditTrail _inner;
     private readonly AuditRetentionStatusReader _statusReader;
     private readonly int _maxEventsPerSegment;
     private readonly AuditPayloadPolicy _payloadPolicy;
-    private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly SemaphoreSlim _gate;
 
     public BoundedSegmentedAuditTrail(
         string path,
@@ -57,6 +60,12 @@ public sealed class BoundedSegmentedAuditTrail : IAuditTrail
         _maxEventsPerSegment = maxEventsPerSegment;
         _inner = new SegmentedAuditTrail(path, maxEventsPerSegment, protector, effectiveRetention);
         _statusReader = new AuditRetentionStatusReader(path, protector, effectiveRetention);
+
+        // Local-state status readers and the browser runtime may intentionally compose separate
+        // facades over the same protected audit path. Serialize them on one process-wide gate so a
+        // read-only status request cannot race an append/rotation/prune performed by the browser.
+        var synchronizationPath = Path.GetFullPath(path);
+        _gate = SharedGates.GetOrAdd(synchronizationPath, static _ => new SemaphoreSlim(1, 1));
     }
 
     public async Task AppendAsync(AuditEvent auditEvent, CancellationToken cancellationToken = default)

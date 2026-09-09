@@ -9,7 +9,7 @@ namespace Nvidea.Core.Tests;
 public sealed class NebiusServerlessJobClientTests
 {
     [Fact]
-    public async Task CreateAsync_UsesDocumentedEndpointBearerAuthAndPayloadShape()
+    public async Task CreateAsync_UsesCurrentRequiredPayloadShape()
     {
         HttpRequestMessage? captured = null;
         string? body = null;
@@ -17,23 +17,16 @@ public sealed class NebiusServerlessJobClientTests
         {
             captured = CloneRequestMetadata(request);
             body = request.Content is null ? null : await request.Content.ReadAsStringAsync();
-            return JsonResponse(HttpStatusCode.OK, "{\"metadata\":{\"id\":\"job-123\"}}");
+            return JsonResponse(HttpStatusCode.OK, "{\"resourceId\":\"aijob-123\"}");
         });
         var client = CreateClient(handler);
-        var spec = new NebiusServerlessJobSpec(
-            "nvidea-research",
-            "ghcr.io/example/nvidea-worker:1.0.0",
-            "dotnet",
-            "Nvidea.Worker.dll research",
-            "gpu-l40s-a",
-            "1gpu-8vcpu-32gb",
-            "3600s",
-            "vpcsubnet-test",
-            new Dictionary<string, string> { ["TASK_KIND"] = "research" });
+        var spec = ValidSpec(
+            environmentVariables: new Dictionary<string, string> { ["TASK_KIND"] = "research" });
 
         var response = await client.CreateAsync(spec);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("aijob-123", response.TryGetResourceId());
         Assert.NotNull(captured);
         Assert.Equal(HttpMethod.Post, captured!.Method);
         Assert.Equal("https://api.nebius.cloud/ai/v1/jobs", captured.RequestUri!.ToString());
@@ -51,6 +44,30 @@ public sealed class NebiusServerlessJobClientTests
         Assert.Equal(spec.Preset, payloadSpec.GetProperty("preset").GetString());
         Assert.Equal(spec.Timeout, payloadSpec.GetProperty("timeout").GetString());
         Assert.Equal(spec.SubnetId, payloadSpec.GetProperty("subnetId").GetString());
+        Assert.Equal("NETWORK_SSD", payloadSpec.GetProperty("disk").GetProperty("type").GetString());
+        Assert.Equal(268435456000, payloadSpec.GetProperty("disk").GetProperty("sizeBytes").GetInt64());
+    }
+
+    [Fact]
+    public async Task GetAsync_UsesDocumentedResourceEndpointAndReadsStateWithoutGuessing()
+    {
+        HttpRequestMessage? captured = null;
+        var handler = new StubHandler(request =>
+        {
+            captured = CloneRequestMetadata(request);
+            return Task.FromResult(JsonResponse(
+                HttpStatusCode.OK,
+                "{\"metadata\":{\"id\":\"aijob-123\"},\"status\":{\"state\":\"RUNNING\"}}"));
+        });
+        var client = CreateClient(handler);
+
+        var response = await client.GetAsync("aijob-123");
+
+        Assert.NotNull(captured);
+        Assert.Equal(HttpMethod.Get, captured!.Method);
+        Assert.Equal("https://api.nebius.cloud/ai/v1/jobs/aijob-123", captured.RequestUri!.ToString());
+        Assert.Equal("RUNNING", response.TryGetJobState());
+        Assert.Null(response.TryGetResourceId());
     }
 
     [Fact]
@@ -72,7 +89,7 @@ public sealed class NebiusServerlessJobClientTests
     }
 
     [Fact]
-    public async Task CancelAsync_UsesDocumentedCancelEndpointAndExactId()
+    public async Task CancelAsync_UsesCancelControlPlaneAndExactId()
     {
         HttpRequestMessage? captured = null;
         string? body = null;
@@ -84,12 +101,42 @@ public sealed class NebiusServerlessJobClientTests
         });
         var client = CreateClient(handler);
 
-        await client.CancelAsync("job-abc");
+        await client.CancelAsync("aijob-abc");
 
         Assert.Equal(HttpMethod.Post, captured!.Method);
         Assert.Equal("https://api.nebius.cloud/ai/v1/jobs/cancel", captured.RequestUri!.ToString());
         using var json = JsonDocument.Parse(body!);
-        Assert.Equal("job-abc", json.RootElement.GetProperty("id").GetString());
+        Assert.Equal("aijob-abc", json.RootElement.GetProperty("id").GetString());
+    }
+
+    [Fact]
+    public async Task CreateAsync_SerializesMysteryBoxReferencesWithoutPlaintextSecretValue()
+    {
+        string? body = null;
+        var handler = new StubHandler(async request =>
+        {
+            body = await request.Content!.ReadAsStringAsync();
+            return JsonResponse(HttpStatusCode.OK, "{\"resourceId\":\"aijob-secret\"}");
+        });
+        var client = CreateClient(handler);
+        var spec = ValidSpec(
+            secretEnvironmentVariables: new Dictionary<string, NebiusMysteryBoxSecretRef>
+            {
+                ["TAVILY_API_KEY"] = new(VersionId: "mbsecver-tavily"),
+                ["NEBIUS_TOKEN"] = new(SecretId: "mbsec-nebius")
+            });
+
+        await client.CreateAsync(spec);
+
+        using var json = JsonDocument.Parse(body!);
+        var environment = json.RootElement.GetProperty("spec").GetProperty("environmentVariables");
+        Assert.Equal(2, environment.GetArrayLength());
+        Assert.Equal("TAVILY_API_KEY", environment[0].GetProperty("name").GetString());
+        Assert.False(environment[0].TryGetProperty("value", out _));
+        Assert.Equal("mbsecver-tavily", environment[0].GetProperty("mysteryboxSecret").GetProperty("versionId").GetString());
+        Assert.Equal("NEBIUS_TOKEN", environment[1].GetProperty("name").GetString());
+        Assert.Equal("mbsec-nebius", environment[1].GetProperty("mysteryboxSecret").GetProperty("secretId").GetString());
+        Assert.DoesNotContain("must-not-be-sent", body, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -102,17 +149,47 @@ public sealed class NebiusServerlessJobClientTests
             return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{}"));
         });
         var client = CreateClient(handler);
-        var spec = new NebiusServerlessJobSpec(
-            "unsafe",
-            "public/image:latest",
-            "bash",
-            "-c echo safe",
-            "gpu-l40s-a",
-            "1gpu-8vcpu-32gb",
-            "3600s",
-            EnvironmentVariables: new Dictionary<string, string> { ["TAVILY_API_KEY"] = "must-not-be-sent" });
+        var spec = ValidSpec(
+            environmentVariables: new Dictionary<string, string> { ["TAVILY_API_KEY"] = "must-not-be-sent" });
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => client.CreateAsync(spec));
+        Assert.Equal(0, calls);
+    }
+
+    [Fact]
+    public async Task CreateAsync_RejectsMissingSubnetOrDiskBeforeNetworkCall()
+    {
+        var calls = 0;
+        var handler = new StubHandler(request =>
+        {
+            calls++;
+            return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{}"));
+        });
+        var client = CreateClient(handler);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => client.CreateAsync(ValidSpec(subnetId: null)));
+        await Assert.ThrowsAsync<ArgumentException>(() => client.CreateAsync(ValidSpec(disk: null)));
+        Assert.Equal(0, calls);
+    }
+
+    [Fact]
+    public async Task CreateAsync_RejectsDuplicatePlaintextAndSecretEnvironmentVariable()
+    {
+        var calls = 0;
+        var handler = new StubHandler(request =>
+        {
+            calls++;
+            return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{}"));
+        });
+        var client = CreateClient(handler);
+        var spec = ValidSpec(
+            environmentVariables: new Dictionary<string, string> { ["MODE"] = "safe" },
+            secretEnvironmentVariables: new Dictionary<string, NebiusMysteryBoxSecretRef>
+            {
+                ["MODE"] = new(SecretId: "mbsec-mode")
+            });
+
+        await Assert.ThrowsAsync<ArgumentException>(() => client.CreateAsync(spec));
         Assert.Equal(0, calls);
     }
 
@@ -156,6 +233,26 @@ public sealed class NebiusServerlessJobClientTests
                 "token",
                 "project",
                 new Uri("https://attacker.example/"))));
+    }
+
+    private static NebiusServerlessJobSpec ValidSpec(
+        string? subnetId = "vpcsubnet-test",
+        NebiusServerlessDiskSpec? disk = null,
+        IReadOnlyDictionary<string, string>? environmentVariables = null,
+        IReadOnlyDictionary<string, NebiusMysteryBoxSecretRef>? secretEnvironmentVariables = null)
+    {
+        return new NebiusServerlessJobSpec(
+            "nvidea-research",
+            "ghcr.io/example/nvidea-worker:1.0.0",
+            "dotnet",
+            "Nvidea.Worker.dll research",
+            "gpu-l40s-a",
+            "1gpu-8vcpu-32gb",
+            "3600s",
+            subnetId,
+            environmentVariables,
+            disk ?? new NebiusServerlessDiskSpec("NETWORK_SSD", 268435456000),
+            secretEnvironmentVariables);
     }
 
     private static NebiusServerlessJobClient CreateClient(HttpMessageHandler handler, int maxRetries = 0)

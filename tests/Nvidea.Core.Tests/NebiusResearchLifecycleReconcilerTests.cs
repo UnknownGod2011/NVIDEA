@@ -9,7 +9,7 @@ namespace Nvidea.Core.Tests;
 public sealed class NebiusResearchLifecycleReconcilerTests
 {
     [Fact]
-    public async Task ReconcileReservedAsync_AttachesOnlyUniqueExactRecognizedMatch()
+    public async Task ReconcileReservedAsync_AttachesOnlyUniqueExactRecognizedAndVerifiedMatch()
     {
         var root = CreateTempDirectory();
         try
@@ -28,7 +28,9 @@ public sealed class NebiusResearchLifecycleReconcilerTests
             var client = new FakeServerlessClient
             {
                 ListResponse = new NebiusServerlessResponse(HttpStatusCode.OK,
-                    $$"{\"items\":[{\"metadata\":{\"id\":\"job-123\",\"name\":\"{{expectedName}}\"},\"status\":{\"state\":\"RUNNING\"}},{\"metadata\":{\"id\":\"job-other\",\"name\":\"other\"},\"status\":{\"state\":\"RUNNING\"}}]}")
+                    $$"""{"items":[{"metadata":{"id":"job-123","name":"{{expectedName}}"},"status":{"state":"RUNNING"}},{"metadata":{"id":"job-other","name":"other"},"status":{"state":"RUNNING"}}]}"""),
+                GetResponse = new NebiusServerlessResponse(HttpStatusCode.OK,
+                    $$"""{"metadata":{"id":"job-123","name":"{{expectedName}}"},"status":{"state":"RUNNING"}}""")
             };
             var reconciler = new NebiusResearchLifecycleReconciler(store, client, ingestor, audit);
 
@@ -38,6 +40,7 @@ public sealed class NebiusResearchLifecycleReconcilerTests
             Assert.Equal(RemoteResearchProvenanceState.Dispatched, attached.RemoteResearch!.State);
             Assert.Equal("job-123", attached.RemoteResearch.RemoteJobId);
             Assert.Equal(1, attached.Attempt);
+            Assert.Equal("job-123", client.LastGetId);
         }
         finally
         {
@@ -46,7 +49,7 @@ public sealed class NebiusResearchLifecycleReconcilerTests
     }
 
     [Fact]
-    public async Task ReconcileReservedAsync_RejectsUnknownOrAmbiguousMatches()
+    public async Task ReconcileReservedAsync_RejectsUnknownAmbiguousOrPaginatedMatches()
     {
         var root = CreateTempDirectory();
         try
@@ -65,11 +68,15 @@ public sealed class NebiusResearchLifecycleReconcilerTests
             var reconciler = new NebiusResearchLifecycleReconciler(store, client, ingestor, audit);
 
             client.ListResponse = new NebiusServerlessResponse(HttpStatusCode.OK,
-                $$"{\"items\":[{\"metadata\":{\"id\":\"job-123\",\"name\":\"{{expectedName}}\"},\"status\":{\"state\":\"NEW_FUTURE_STATE\"}}]}");
+                $$"""{"items":[{"metadata":{"id":"job-123","name":"{{expectedName}}"},"status":{"state":"NEW_FUTURE_STATE"}}]}""");
             await Assert.ThrowsAsync<InvalidOperationException>(() => reconciler.ReconcileReservedAsync(original.JobId));
 
             client.ListResponse = new NebiusServerlessResponse(HttpStatusCode.OK,
-                $$"{\"items\":[{\"metadata\":{\"id\":\"job-1\",\"name\":\"{{expectedName}}\"},\"status\":{\"state\":\"RUNNING\"}},{\"metadata\":{\"id\":\"job-2\",\"name\":\"{{expectedName}}\"},\"status\":{\"state\":\"RUNNING\"}}]}");
+                $$"""{"items":[{"metadata":{"id":"job-1","name":"{{expectedName}}"},"status":{"state":"RUNNING"}},{"metadata":{"id":"job-2","name":"{{expectedName}}"},"status":{"state":"RUNNING"}}]}""");
+            await Assert.ThrowsAsync<InvalidOperationException>(() => reconciler.ReconcileReservedAsync(original.JobId));
+
+            client.ListResponse = new NebiusServerlessResponse(HttpStatusCode.OK,
+                $$"""{"items":[{"metadata":{"id":"job-1","name":"{{expectedName}}"},"status":{"state":"RUNNING"}}],"nextPageToken":"more"}""");
             await Assert.ThrowsAsync<InvalidOperationException>(() => reconciler.ReconcileReservedAsync(original.JobId));
 
             var unchanged = await store.GetAsync(original.JobId);
@@ -127,15 +134,17 @@ public sealed class NebiusResearchLifecycleReconcilerTests
     }
 
     [Fact]
-    public void SnapshotParser_UsesDocumentedMetadataAndFailsClosedOnUnknownState()
+    public void SnapshotParser_UsesCurrentNebiusStatesAndFailsClosedOnUnknownState()
     {
-        var parsed = NebiusServerlessJobSnapshotParser.ParseList(new NebiusServerlessResponse(
-            HttpStatusCode.OK,
-            "{\"items\":[{\"metadata\":{\"id\":\"job-1\",\"name\":\"demo\"},\"status\":{\"state\":\"RUNNING\"}},{\"metadata\":{\"id\":\"job-2\",\"name\":\"future\"},\"status\":{\"state\":\"SOMETHING_NEW\"}}]}"));
-
-        Assert.Equal(2, parsed.Count);
-        Assert.Equal(NebiusRemoteJobState.Running, parsed[0].State);
-        Assert.Equal(NebiusRemoteJobState.Unknown, parsed[1].State);
+        Assert.Equal(NebiusRemoteJobState.Pending, NebiusServerlessJobSnapshotParser.ParseState("PROVISIONING"));
+        Assert.Equal(NebiusRemoteJobState.Pending, NebiusServerlessJobSnapshotParser.ParseState("STARTING"));
+        Assert.Equal(NebiusRemoteJobState.Running, NebiusServerlessJobSnapshotParser.ParseState("RUNNING"));
+        Assert.Equal(NebiusRemoteJobState.Cancelling, NebiusServerlessJobSnapshotParser.ParseState("CANCELLING"));
+        Assert.Equal(NebiusRemoteJobState.Completed, NebiusServerlessJobSnapshotParser.ParseState("COMPLETED"));
+        Assert.Equal(NebiusRemoteJobState.Failed, NebiusServerlessJobSnapshotParser.ParseState("FAILED"));
+        Assert.Equal(NebiusRemoteJobState.Failed, NebiusServerlessJobSnapshotParser.ParseState("ERROR"));
+        Assert.Equal(NebiusRemoteJobState.Cancelled, NebiusServerlessJobSnapshotParser.ParseState("CANCELLED"));
+        Assert.Equal(NebiusRemoteJobState.Unknown, NebiusServerlessJobSnapshotParser.ParseState("SOMETHING_NEW"));
     }
 
     private static AgentJobRecord CreatePendingJob(DateTimeOffset now) => new(
@@ -169,12 +178,16 @@ public sealed class NebiusResearchLifecycleReconcilerTests
         public NebiusServerlessResponse ListResponse { get; set; } = new(HttpStatusCode.OK, "{\"items\":[]}");
         public NebiusServerlessResponse GetResponse { get; set; } = new(HttpStatusCode.OK, "{}");
         public Func<Task>? OnCancel { get; set; }
+        public string? LastGetId { get; private set; }
 
         public Task<NebiusServerlessResponse> CreateAsync(NebiusServerlessJobSpec spec, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
 
-        public Task<NebiusServerlessResponse> GetAsync(string remoteJobId, CancellationToken cancellationToken = default) =>
-            Task.FromResult(GetResponse);
+        public Task<NebiusServerlessResponse> GetAsync(string remoteJobId, CancellationToken cancellationToken = default)
+        {
+            LastGetId = remoteJobId;
+            return Task.FromResult(GetResponse);
+        }
 
         public Task<NebiusServerlessResponse> ListAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(ListResponse);

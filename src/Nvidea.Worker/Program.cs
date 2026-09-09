@@ -18,16 +18,24 @@ internal static class Program
             var engine = new ResearchEngine(inference, tavily);
             var handler = new ResearchJobHandler(engine);
             var transport = new DirectoryProtectedResearchTransport(GetRequiredEnvironment("NVIDEA_TRANSPORT_ROOT"));
+            var clientPublicKey = GetRequiredEnvironment("NVIDEA_CLIENT_PUBLIC_KEY_PEM");
+            var bindingWaiter = new ResearchDispatchBindingWaiter(
+                transport,
+                clientPublicKey,
+                pollInterval: GetOptionalDurationSeconds("NVIDEA_BINDING_POLL_SECONDS", TimeSpan.FromSeconds(2)),
+                maxWait: GetOptionalDurationSeconds("NVIDEA_BINDING_WAIT_SECONDS", TimeSpan.FromMinutes(5)));
+            var binding = await bindingWaiter.WaitAsync(options.OpaqueWorkItemId, CancellationToken.None).ConfigureAwait(false);
+
             var worker = new NebiusResearchWorker(
                 transport,
                 transport,
                 handler,
                 GetRequiredEnvironment("NVIDEA_WORKER_PRIVATE_KEY_PEM"),
-                GetRequiredEnvironment("NVIDEA_CLIENT_PUBLIC_KEY_PEM"));
+                clientPublicKey);
 
             await worker.ExecuteOneStageAsync(
                 options.OpaqueWorkItemId,
-                GetRequiredEnvironment("NVIDEA_REMOTE_JOB_ID"),
+                binding.RemoteJobId,
                 CancellationToken.None).ConfigureAwait(false);
 
             Console.WriteLine("nvidea_worker_completed stage=research");
@@ -46,6 +54,20 @@ internal static class Program
         return string.IsNullOrWhiteSpace(value)
             ? throw new InvalidOperationException($"Required worker environment variable '{name}' is missing.")
             : value;
+    }
+
+    private static TimeSpan GetOptionalDurationSeconds(string name, TimeSpan fallback)
+    {
+        var raw = Environment.GetEnvironmentVariable(name);
+        if (string.IsNullOrWhiteSpace(raw))
+            return fallback;
+        if (!double.TryParse(raw, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var seconds)
+            || !double.IsFinite(seconds)
+            || seconds <= 0)
+        {
+            throw new InvalidOperationException($"Worker environment variable '{name}' must be a positive number of seconds.");
+        }
+        return TimeSpan.FromSeconds(seconds);
     }
 }
 

@@ -46,19 +46,25 @@ The worker deliberately logs only `nvidea_worker_completed stage=research` or `n
 
 Nebius job creation returns the authoritative resource ID only after the job has been created. NVIDEA does not guess this value and does not substitute the deterministic job name.
 
-The handoff protocol is now implemented in `ResearchDispatchBinding.cs`:
+The handoff protocol is implemented in `ResearchDispatchBinding.cs` and is wired into the durable client lifecycle:
 
-1. The Windows side obtains the authoritative remote resource ID from normal two-phase dispatch attachment or crash reconciliation.
-2. `ResearchDispatchBindingPublisher` signs `opaque-id + remote resource id + deterministic job name + timestamps` with the originating client's RSA private key using RSA-PSS/SHA-256.
-3. The signed binding is create-once published to `dispatch-bindings/<opaque-id>.json`.
-4. The worker waits boundedly for that exact opaque ID, verifies the protocol version, opaque ID, deterministic name, expiry, and client signature using the already-pinned client public key, then passes only the verified resource ID into `NebiusResearchWorker`.
-5. The returned encrypted result remains authenticated to that exact remote resource ID by `ResearchResultProtector`.
+1. The Windows side encrypts/uploads a work item and persists `DispatchReserved` before Nebius creation.
+2. Nebius returns an authoritative remote resource ID.
+3. `RemoteResearchResultIngestor.AttachDispatchAsync` CAS-attaches that ID to the exact durable reservation.
+4. Only after attachment succeeds, `TwoPhaseNebiusResearchDispatcher` invokes `ResearchDispatchBindingPublisher`.
+5. The publisher signs `opaque-id + remote resource id + deterministic job name + timestamps` with the originating client's RSA private key using RSA-PSS/SHA-256 and create-once publishes it to `dispatch-bindings/<opaque-id>.json`.
+6. If a process dies after Nebius accepted creation but before binding publication, `NebiusResearchLifecycleReconciler.ReconcileReservedAsync` recovers and directly verifies the authoritative resource, attaches it durably, then publishes the binding.
+7. `ReconcileDispatchedAsync` idempotently ensures the exact signed binding exists before reading provider lifecycle state. An existing valid binding for the same resource is accepted; a conflicting binding fails closed before provider-state mutation.
+8. The worker waits boundedly for that exact opaque ID, verifies protocol version, opaque ID, deterministic name, expiry, and client signature using the pinned client public key, then passes only the verified resource ID into `NebiusResearchWorker`.
+9. The returned encrypted result remains authenticated to that exact remote resource ID by `ResearchResultProtector`.
 
-Publication is idempotent only when an existing binding is validly signed and targets the same authoritative resource ID. A conflicting binding fails closed rather than being overwritten.
+Publication is intentionally impossible before authoritative attachment. A binding conflict never triggers overwrite or fallback to the deterministic job name.
 
 ### Remaining integration boundary
 
-The binding protocol, mounted transport implementation, publisher, bounded worker waiter, and worker consumption path now exist. The next integration step is to invoke `ResearchDispatchBindingPublisher` automatically immediately after `AttachDispatchAsync`, and from lifecycle reconciliation after recovering a crash-window reservation. Reconciliation should also republish idempotently for an already attached dispatch when the binding is missing. Until that producer wiring and a live Serverless end-to-end probe succeed, WPF must not advertise Serverless research as production-ready.
+The producer and consumer sides of the authoritative-ID handoff are now connected in the durable dispatch and reconciliation paths when a `ResearchDispatchBindingPublisher` is supplied by local composition. WPF still does not expose Serverless research because a live Nebius/Object Storage/MysteryBox/container contract probe has not yet succeeded in this environment.
+
+One cleanup item also remains: terminal result/work-item cleanup does not yet delete the corresponding signed dispatch-binding object. Provider-side Object Storage lifecycle rules and binding expiry bound retention, but the local lifecycle should explicitly delete the binding after terminal success/failure/cancellation once worker/result races are proven safe.
 
 ## Container build
 

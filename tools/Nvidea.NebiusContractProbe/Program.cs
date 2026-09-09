@@ -119,7 +119,8 @@ static async Task<int> RunLiveResearchProbeAsync()
     var diskSizeBytes = RequiredPositiveInt64("NVIDEA_LIVE_DISK_SIZE_BYTES");
     var transportSource = RequiredEnvironment("NVIDEA_LIVE_TRANSPORT_SOURCE");
     var workerTransportRoot = OptionalEnvironment("NVIDEA_LIVE_WORKER_TRANSPORT_ROOT") ?? "/mnt/nvidea-research";
-    var hostTransportRoot = Path.GetFullPath(RequiredEnvironment("NVIDEA_LIVE_CLIENT_TRANSPORT_ROOT"));
+    var objectStoragePrefix = OptionalEnvironment("NVIDEA_LIVE_OBJECT_STORAGE_PREFIX") ?? "nvidea-research";
+    var transportSourcePath = OptionalEnvironment("NVIDEA_LIVE_TRANSPORT_SOURCE_PATH") ?? objectStoragePrefix;
     var workerPublicKeyPem = ReadRequiredPemFile("NVIDEA_LIVE_WORKER_PUBLIC_KEY_PEM_FILE");
     var clientPrivateKeyPem = ReadRequiredPemFile("NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE");
     var pollSeconds = BoundedInt32("NVIDEA_LIVE_POLL_SECONDS", 5, 1, 30);
@@ -128,6 +129,16 @@ static async Task<int> RunLiveResearchProbeAsync()
         ?? "What are the current official capabilities of NVIDIA Nemotron models served through Nebius for agentic research? Use authoritative sources and state uncertainty.";
     if (question.Length > 2000)
         throw new InvalidOperationException("NVIDEA_LIVE_RESEARCH_QUESTION exceeds the live-probe limit.");
+
+    var objectStorageOptions = new NebiusObjectStorageClientOptions(
+        Endpoint: RequiredEnvironment("NVIDEA_LIVE_OBJECT_STORAGE_ENDPOINT"),
+        Region: RequiredEnvironment("NVIDEA_LIVE_OBJECT_STORAGE_REGION"),
+        Bucket: RequiredEnvironment("NVIDEA_LIVE_OBJECT_STORAGE_BUCKET"),
+        AccessKeyId: RequiredEnvironment("NVIDEA_LIVE_OBJECT_STORAGE_ACCESS_KEY_ID"),
+        SecretAccessKey: RequiredEnvironment("NVIDEA_LIVE_OBJECT_STORAGE_SECRET_ACCESS_KEY"),
+        Prefix: objectStoragePrefix,
+        OperationTimeout: TimeSpan.FromSeconds(30),
+        MaxRetries: 2);
 
     using var clientRsa = RSA.Create();
     clientRsa.ImportFromPem(clientPrivateKeyPem);
@@ -162,14 +173,19 @@ static async Task<int> RunLiveResearchProbeAsync()
                 transportSource,
                 workerTransportRoot,
                 "READ_WRITE",
-                OptionalEnvironment("NVIDEA_LIVE_TRANSPORT_SOURCE_PATH"))
+                transportSourcePath)
         });
+
+    // Fail before any Serverless submission when the S3 client and mounted worker would resolve
+    // protected namespaces to different bucket objects.
+    NebiusResearchDeploymentPreflight.ValidateObjectStorageAlignment(dispatchOptions, objectStorageOptions);
 
     var stateRoot = Path.Combine(Path.GetTempPath(), "nvidea-nebius-live-probe", Guid.NewGuid().ToString("N"));
     Directory.CreateDirectory(stateRoot);
     var store = new JsonAgentJobStore(Path.Combine(stateRoot, "jobs.json"));
     IAuditTrail auditTrail = new JsonLinesAuditTrail(Path.Combine(stateRoot, "audit.jsonl"));
-    var transport = new DirectoryProtectedResearchTransport(hostTransportRoot);
+    using var objectStorage = new NebiusObjectStorageClient(objectStorageOptions);
+    var transport = new S3ProtectedResearchTransport(objectStorage);
 
     using var serverlessHttp = new HttpClient();
     var serverless = new NebiusServerlessJobClient(
@@ -274,7 +290,8 @@ static async Task<int> RunLiveResearchProbeAsync()
     Console.WriteLine($"Remote durable stages: {remoteStages}");
     Console.WriteLine($"Evidence items: {report.Evidence.Sources.Count}");
     Console.WriteLine($"Validated citations: {report.UsedCitations.Count}");
-    Console.WriteLine("Encrypted shared transport: accepted");
+    Console.WriteLine("Native encrypted Object Storage transport: accepted");
+    Console.WriteLine("Object Storage mount/prefix alignment: accepted");
     Console.WriteLine("Authoritative dispatch binding: accepted");
     Console.WriteLine("Exact-once local ingestion: accepted");
     Console.WriteLine("Secret values and protected payloads: not printed");

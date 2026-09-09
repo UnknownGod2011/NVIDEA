@@ -19,7 +19,8 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Protected local state uses Windows CurrentUser DPAPI by default, job-store CAS, hash-chained/segmented audit, and OS-backed single-owner mutation leases.
 - Safe browser agent includes persistent Chromium state, popup/new-tab tracking, iterative verification, prompt-injection/tool-output trust boundaries, permission gates, durable download quarantine, emergency stop, and explicit crash recovery.
 - Remote research has bidirectional encrypted payload transport, one-stage `NebiusResearchWorker`, two-phase `DispatchReserved -> Nebius Create -> remote-id attachment`, exact-once result ingestion, deterministic lifecycle reconciliation across bounded complete job listings, durable cancellation, terminal/result-expiry handling, mounted encrypted transport, non-root worker image, and a signed authoritative remote-ID binding protocol.
-- The signed binding producer is now wired into normal two-phase dispatch, crash-window reservation recovery, and dispatched reconciliation when local composition supplies `ResearchDispatchBindingPublisher`.
+- Signed binding publication is wired into normal two-phase dispatch, crash-window reservation recovery, and dispatched reconciliation.
+- `NebiusResearchClientRuntime` now provides a single client-only composition boundary that constructs dispatcher, reconciler, ingestor, and binding publisher from one signing identity and performs race-safe post-terminal binding cleanup.
 - Production remains truthfully local until a live Nebius/Object Storage/MysteryBox/container end-to-end probe succeeds.
 
 ## Persistent Progress History
@@ -31,47 +32,44 @@ Added Nebius/Nemotron inference, layered memory, Tavily research, capability/app
 Added Tavily Extract enrichment, deterministic evidence quality/staleness/diversity handling, staged research boundaries, restart-safe synthesis, privacy-safe status, WPF durable-research UX, emergency stop, explicit interrupted-stage recovery, generic non-research fail-closed behavior, and mutation-scoped cross-process research ownership.
 
 ### 2026-09-09 — Nebius Serverless privacy/control plane
-Refreshed the Jobs client to current subnet/disk requirements, MysteryBox secret refs, secret rejection, List/Get/Create/Cancel, retries and endpoint allow-listing. Added encrypted opaque-ID dispatch, protected result return, one-stage worker primitive, durable remote provenance, exact CAS result ingestion, two-phase dispatch reservation, deterministic crash reconciliation, typed provider lifecycle parsing, durable `CancelRequested -> Cancelled` handling, bounded pagination, explicit terminal/result-expiry reconciliation, mounted encrypted transport, deployable non-root worker image, and signed authoritative resource-ID bindings.
+Refreshed the Jobs client to current subnet/disk requirements, MysteryBox secret refs, secret rejection, List/Get/Create/Cancel, retries and endpoint allow-listing. Added encrypted opaque-ID dispatch, protected result return, one-stage worker primitive, durable remote provenance, exact CAS result ingestion, two-phase dispatch reservation, deterministic crash reconciliation, typed provider lifecycle parsing, durable `CancelRequested -> Cancelled` handling, bounded pagination, explicit terminal/result-expiry reconciliation, mounted encrypted transport, deployable non-root worker image, signed authoritative resource-ID bindings, and automatic binding publication after durable remote-ID attachment.
 
-### 2026-09-09 — Current run: durable authoritative binding publication
+### 2026-09-09 — Current run: client composition + terminal binding cleanup
 Completed:
-- Re-read `progress.md` fully, inspected the current NVIDEA repo state and relevant dispatch/reconciliation/tests, and verified the repository identity before every GitHub mutation.
-- Updated `TwoPhaseNebiusResearchDispatcher` so a configured `ResearchDispatchBindingPublisher` is invoked only after `RemoteResearchResultIngestor.AttachDispatchAsync` has durably CAS-attached the authoritative Nebius resource ID.
-- Reused `ResearchDispatchBindingProtector.GetDeterministicRemoteJobName` from the dispatcher/lifecycle paths to reduce duplicate naming logic.
-- Updated `NebiusResearchLifecycleReconciler.ReconcileReservedAsync` so crash-window recovery attaches the uniquely recovered/direct-GET-verified resource ID first, then publishes the exact signed binding.
-- Updated `ReconcileDispatchedAsync` to idempotently ensure the binding exists before provider lifecycle reads. A conflicting validly signed binding for another resource therefore blocks reconciliation before provider-state mutation.
-- Added `ResearchDispatchBindingLifecycleIntegrationTests.cs` covering: publication only after durable attachment; crash recovery publishing exactly the recovered resource ID; repeated dispatched reconciliation producing one create-once binding; and conflicting bindings blocking provider reads.
-- Updated `docs/nebius-research-worker.md` so the documented control-plane sequence matches the implemented producer/consumer lifecycle.
+- Re-read `progress.md` completely, inspected current NVIDEA repo state/recent commits and the relevant transport, dispatcher, reconciler, result-ingestion, and binding implementations.
+- Added `ResearchDispatchBindingCleanup`, which only deletes a signed dispatch binding after the durable local record proves the remote stage is no longer executable: `ResultApplied` with local Pending/Completed, `Cancelled` with local Cancelled, or `RemoteFailed`/`Expired` with local Failed.
+- Cleanup occurs after the existing CAS-protected state transition and is best-effort. A shared-storage deletion failure therefore cannot roll back, corrupt, or falsify durable job state.
+- Added `NebiusResearchClientRuntime`, a client-only composition root that creates exactly one `ResearchDispatchBindingPublisher` from the client private key and passes that same publisher instance to both `TwoPhaseNebiusResearchDispatcher` and `NebiusResearchLifecycleReconciler`.
+- The runtime also owns the matching `RemoteResearchResultIngestor` and exposes dispatch, reserved reconciliation, dispatched reconciliation, cancellation, cancellation reconciliation, and direct exact-once ingestion operations.
+- Runtime wrappers perform signed-binding cleanup only after successful durable result application or terminal reconciliation. No cleanup occurs for `DispatchReserved`, `Dispatched`, or `CancelRequested` states, preserving worker/control-plane recovery races.
+- Added `ResearchDispatchBindingCleanupTests.cs` covering successful result-applied cleanup, provider failure/cancellation/expiry cleanup, refusal to clean active states, refusal when execution remains remote, and cleanup-failure tolerance.
 
 Commits this run:
-- `6624fa198a9e3a3c5281be733695a0bf5b9f0926` — wire binding publication after authoritative dispatch attachment.
-- `96bf0f75a1f12204a44de32517e7846bf6434273` — publish/re-publish authoritative bindings during lifecycle reconciliation.
-- `803be06fcf9fbc31138acfe5c2c42013d9d006ee` — add binding lifecycle integration regression tests.
-- `6f2195ff489bcf86516c8d74e129eb55995de597` — document automatic authoritative-ID handoff.
+- `a62d95afa678295bb2db0aee9ed94d2c8bd8bd4a` — add safe client runtime and binding cleanup boundary.
+- `bc98e7d40f5766426cb5ff34a122382dde76cdfb` — add terminal binding cleanup regression tests.
 
 Validation / evidence:
-- Repository metadata reported `full_name = UnknownGod2011/NVIDEA` immediately before every mutation; no other repository was mutated.
-- Static review confirms normal dispatch cannot publish a binding before the authoritative remote ID is durably attached.
-- Static review confirms crash recovery publishes only the ID that passed bounded exact-name search plus direct GET identity/state verification.
-- Static review confirms repeated reconciliation uses publisher idempotency instead of overwriting create-once bindings.
-- Static review confirms a conflicting binding fails before the lifecycle reconciler performs a provider GET.
-- `dotnet` is not present in the execution environment, so compilation and unit-test execution are **not claimed**.
+- Repository metadata reported `repository_full_name = UnknownGod2011/NVIDEA` immediately before every GitHub mutation; no other repository was mutated.
+- Static review confirms binding deletion is post-CAS and gated by both local execution location and a terminal/result-applied provenance combination.
+- Static review confirms active `DispatchReserved`, `Dispatched`, and `CancelRequested` stages retain the binding and therefore preserve worker/reconciliation safety.
+- Static review confirms dispatcher and reconciler receive the exact same `ResearchDispatchBindingPublisher` instance from the new client composition boundary; the client private signing key is not added to worker options or Serverless environment variables.
+- `dotnet`/Windows/container execution is not available in this automation environment, so compilation and unit-test execution are **not claimed**.
 - No GitHub Actions workflow was triggered merely to manufacture a green signal.
 
 Security / privacy / failure review:
-- The client RSA private signing key is still accepted only by local `ResearchDispatchBindingPublisher`; it is not written into job records, Nebius job specs, worker config, or shared transport.
-- Bindings contain opaque/control-plane identity only, not research questions, evidence, selected text, clipboard context, Tavily/Nebius keys, or OS-private data.
-- Publication happens after durable attachment. If publication then fails, the durable `Dispatched` provenance remains recoverable and later reconciliation can retry idempotently.
-- A pre-existing conflicting signed binding is never overwritten or ignored.
-- One cleanup gap remains: terminal cleanup currently deletes protected work-item/result objects but does not explicitly delete the corresponding dispatch-binding object. Binding expiry and provider bucket lifecycle can bound retention, but explicit terminal deletion should be added after checking worker/result race semantics.
+- Dispatch bindings still contain only opaque/control-plane identity and bounded timestamps; they contain no research question, evidence, selected text, clipboard content, API key, or OS-private payload.
+- Cleanup is deliberately delayed until durable local state proves the remote stage is terminal or its verified result is already applied.
+- If cleanup fails, the signed binding remains cryptographically time-bounded and can be removed by Object Storage lifecycle policy; job correctness does not depend on deletion succeeding.
+- The new composition root keeps the private signing key client-side and prevents normal production wiring from accidentally creating separate publisher identities for dispatch versus reconciliation.
+- Existing lower-level constructors remain available for tests/backward compatibility, so production callers must deliberately use `NebiusResearchClientRuntime` when Serverless is eventually enabled.
 
 ## Known Blockers / Risks
 - No verified .NET 8/Windows/container execution signal is available here; new code/tests are statically reviewed but not compiled/executed.
 - No live Object Storage bucket, registry image, MysteryBox keys, subnet, or Serverless job has been provisioned/validated in this environment.
 - WPF/`ResearchJobRuntime` still deliberately avoid claiming production Serverless execution until the live contract succeeds.
-- Local composition must supply the same client-side `ResearchDispatchBindingPublisher` to dispatcher/reconciler; constructors remain backward-compatible with no publisher for existing local/test call sites.
-- Terminal cleanup does not yet delete signed dispatch bindings.
+- The new client runtime is not yet wired into WPF, intentionally, because the cloud path has not passed the live end-to-end probe.
+- Cleanup is best-effort by design and still relies on bucket lifecycle policy as a retention backstop if transport deletion fails.
 - Local voice/transcription and a verified production embedding adapter remain absent.
 
 ## Single Best Next Task
-Close the remaining remote transport lifecycle and prove the cloud path: add explicit safe dispatch-binding cleanup after terminal success/failure/cancellation with race-aware tests, add a small local composition boundary that constructs dispatcher + reconciler + publisher from one client-only signing key without exposing that key to Serverless configuration, then run the narrow container/Nebius contract probe when credentials/tooling are available (`opaque dispatch -> signed authoritative binding -> worker -> one Nemotron/Tavily stage -> encrypted result -> exact-once local ingestion`). Only after that succeeds should WPF expose Nebius Serverless research.
+Prove the real cloud boundary instead of adding more speculative abstraction: extend the existing Nebius contract probe into a narrow end-to-end research probe that uses the deployable worker image plus mounted Object Storage transport and MysteryBox-injected Nemotron/Tavily/worker secrets, then validate `encrypted opaque dispatch -> durable remote-id attachment -> signed binding -> worker one-stage Nemotron/Tavily execution -> encrypted result -> exact-once local ingestion -> terminal binding cleanup`. Capture exact API/container mismatches and fix only those verified gaps. WPF Serverless controls should remain hidden until this succeeds.

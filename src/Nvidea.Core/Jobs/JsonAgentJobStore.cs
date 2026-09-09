@@ -171,6 +171,10 @@ public sealed class JsonAgentJobStore : IAgentJobStore
             || actual.ExecutionLocation != expected.ExecutionLocation
             || actual.Attempt != expected.Attempt
             || actual.UpdatedAt != expected.UpdatedAt
+            || actual.NextAttemptAt != expected.NextAttemptAt
+            || !string.Equals(actual.ApprovalScope, expected.ApprovalScope, StringComparison.Ordinal)
+            || !string.Equals(actual.LastError, expected.LastError, StringComparison.Ordinal)
+            || !DefinitionEquivalent(actual.Definition, expected.Definition)
             || !CheckpointVersionEquivalent(actual.Checkpoint, expected.Checkpoint))
         {
             return false;
@@ -190,11 +194,21 @@ public sealed class JsonAgentJobStore : IAgentJobStore
             && a.ResultAppliedAt == e.ResultAppliedAt;
     }
 
+    private static bool DefinitionEquivalent(AgentJobDefinition actual, AgentJobDefinition expected) =>
+        string.Equals(actual.JobType, expected.JobType, StringComparison.Ordinal)
+        && string.Equals(actual.CapabilityId, expected.CapabilityId, StringComparison.Ordinal)
+        && actual.Risk == expected.Risk
+        && actual.ContainsPrivateOsData == expected.ContainsPrivateOsData
+        && actual.BenefitsFromBackgroundExecution == expected.BenefitsFromBackgroundExecution
+        && actual.MaxAttempts == expected.MaxAttempts
+        && actual.RequiredPermissions.SetEquals(expected.RequiredPermissions);
+
     private static bool CheckpointVersionEquivalent(AgentJobCheckpoint? actual, AgentJobCheckpoint? expected)
     {
         if (ReferenceEquals(actual, expected)) return true;
         if (actual is null || expected is null) return false;
         return string.Equals(actual.Step, expected.Step, StringComparison.Ordinal)
+            && string.Equals(actual.Payload, expected.Payload, StringComparison.Ordinal)
             && actual.SavedAt == expected.SavedAt;
     }
 }

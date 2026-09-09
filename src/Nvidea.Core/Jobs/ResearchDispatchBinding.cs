@@ -53,12 +53,7 @@ public static class ResearchDispatchBindingProtector
             throw new ArgumentException("Client private key is required.", nameof(clientPrivateKeyPem));
 
         var remoteJobName = GetDeterministicRemoteJobName(opaqueWorkItemId);
-        var payload = BuildSignedPayload(
-            opaqueWorkItemId,
-            remoteJobId,
-            remoteJobName,
-            publishedAt,
-            expiresAt);
+        var payload = BuildSignedPayload(opaqueWorkItemId, remoteJobId, remoteJobName, publishedAt, expiresAt);
 
         using var rsa = RSA.Create();
         rsa.ImportFromPem(clientPrivateKeyPem);
@@ -105,12 +100,7 @@ public static class ResearchDispatchBindingProtector
             throw new InvalidOperationException("Remote research dispatch binding signature is malformed.", ex);
         }
 
-        var payload = BuildSignedPayload(
-            binding.OpaqueWorkItemId,
-            binding.RemoteJobId,
-            binding.RemoteJobName,
-            binding.PublishedAt,
-            binding.ExpiresAt);
+        var payload = BuildSignedPayload(binding.OpaqueWorkItemId, binding.RemoteJobId, binding.RemoteJobName, binding.PublishedAt, binding.ExpiresAt);
         using var rsa = RSA.Create();
         rsa.ImportFromPem(clientPublicKeyPem);
         if (!rsa.VerifyData(payload, signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pss))
@@ -161,6 +151,85 @@ public static class ResearchDispatchBindingProtector
     {
         if (string.IsNullOrWhiteSpace(value) || value.Length > 256 || value.Any(char.IsControl))
             throw new InvalidOperationException("Remote research job id is invalid.");
+    }
+}
+
+/// <summary>
+/// Client-side publication boundary. Re-publication is idempotent only when the existing binding is
+/// validly signed by this client and points to the same authoritative resource id. A conflicting
+/// create-once object fails closed rather than being overwritten.
+/// </summary>
+public sealed class ResearchDispatchBindingPublisher
+{
+    private readonly IProtectedResearchDispatchBindingTransport _transport;
+    private readonly string _clientPrivateKeyPem;
+    private readonly string _clientPublicKeyPem;
+
+    public ResearchDispatchBindingPublisher(
+        IProtectedResearchDispatchBindingTransport transport,
+        string clientPrivateKeyPem)
+    {
+        _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+        _clientPrivateKeyPem = string.IsNullOrWhiteSpace(clientPrivateKeyPem)
+            ? throw new ArgumentException("Client private key is required.", nameof(clientPrivateKeyPem))
+            : clientPrivateKeyPem;
+
+        using var rsa = RSA.Create();
+        rsa.ImportFromPem(_clientPrivateKeyPem);
+        _clientPublicKeyPem = rsa.ExportSubjectPublicKeyInfoPem();
+    }
+
+    public async Task<ProtectedResearchDispatchBinding> PublishAsync(
+        string opaqueWorkItemId,
+        string remoteJobId,
+        DateTimeOffset expiresAt,
+        DateTimeOffset? now = null,
+        CancellationToken cancellationToken = default)
+    {
+        var current = now ?? DateTimeOffset.UtcNow;
+        if (expiresAt <= current)
+            throw new InvalidOperationException("Cannot publish an already-expired remote research dispatch binding.");
+
+        var existing = await _transport.GetAsync(opaqueWorkItemId, cancellationToken).ConfigureAwait(false);
+        if (existing is not null)
+            return VerifyIdempotent(existing, opaqueWorkItemId, remoteJobId, current);
+
+        var boundedExpiry = expiresAt - current > ResearchDispatchBindingProtector.MaxLifetime
+            ? current.Add(ResearchDispatchBindingProtector.MaxLifetime)
+            : expiresAt;
+        var binding = ResearchDispatchBindingProtector.Sign(
+            opaqueWorkItemId,
+            remoteJobId,
+            current,
+            boundedExpiry,
+            _clientPrivateKeyPem);
+
+        try
+        {
+            await _transport.PutAsync(binding, cancellationToken).ConfigureAwait(false);
+            return binding;
+        }
+        catch (InvalidOperationException)
+        {
+            // Another local owner/recovery path may have won the create-once race. Accept that race
+            // only if the published object authenticates and names the same authoritative resource.
+            var raced = await _transport.GetAsync(opaqueWorkItemId, cancellationToken).ConfigureAwait(false);
+            if (raced is null)
+                throw;
+            return VerifyIdempotent(raced, opaqueWorkItemId, remoteJobId, current);
+        }
+    }
+
+    private ProtectedResearchDispatchBinding VerifyIdempotent(
+        ProtectedResearchDispatchBinding binding,
+        string opaqueWorkItemId,
+        string remoteJobId,
+        DateTimeOffset now)
+    {
+        var verified = ResearchDispatchBindingProtector.Verify(binding, opaqueWorkItemId, _clientPublicKeyPem, now);
+        if (!string.Equals(verified.RemoteJobId, remoteJobId, StringComparison.Ordinal))
+            throw new CryptographicException("Existing remote research dispatch binding targets a different Nebius resource id.");
+        return verified;
     }
 }
 

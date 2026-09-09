@@ -44,7 +44,8 @@ public sealed record AgentJobRecord(
     string? LastError,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    DateTimeOffset? NextAttemptAt = null);
+    DateTimeOffset? NextAttemptAt = null,
+    RemoteResearchProvenance? RemoteResearch = null);
 
 public sealed record JobStepResult(
     bool Completed,

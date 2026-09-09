@@ -69,6 +69,35 @@ public sealed class NebiusResearchDeploymentManifestTests
         Assert.DoesNotContain("serverless-access-token", json, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Reporter_ReportsFullyPinnedConfigurationAndFingerprintStillRedactsVersionIds()
+    {
+        using var worker = RSA.Create(2048);
+        using var client = RSA.Create(2048);
+        var dispatch = CreateDispatch(worker.ExportSubjectPublicKeyInfoPem(), client.ExportSubjectPublicKeyInfoPem());
+        var pinnedSecrets = dispatch.SecretEnvironmentVariables!.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        pinnedSecrets["NEBIUS_API_KEY"] = new NebiusMysteryBoxSecretRef(
+            SecretId: "mbsec-nebius-sensitive",
+            VersionId: "mbsecver-nebius-sensitive");
+        var fullyPinned = dispatch with { SecretEnvironmentVariables = pinnedSecrets };
+
+        var report = NebiusResearchLivePreflightReporter.ValidateAndBuild(
+            fullyPinned,
+            CreateStorage(),
+            "serverless-access-token",
+            "project-sensitive",
+            client.ExportPkcs8PrivateKeyPem());
+        var json = NebiusResearchDeploymentManifestBuilder.ToJson(report.Manifest);
+
+        Assert.Equal(3, report.VersionPinnedSecretCount);
+        Assert.Equal(0, report.PrimaryVersionSecretCount);
+        Assert.True(report.AllWorkerSecretsVersionPinned);
+        Assert.Equal(64, report.Manifest.DeploymentFingerprintSha256.Length);
+        Assert.DoesNotContain("mbsecver-nebius-sensitive", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("mbsecver-tavily-sensitive", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("mbsecver-worker-sensitive", json, StringComparison.Ordinal);
+    }
+
     private static NebiusResearchDispatchOptions CreateDispatch(string workerPublicKeyPem, string clientPublicKeyPem) =>
         new(
             WorkerImage: $"cr.eu-north1.nebius.cloud/nvidea/worker@sha256:{new string('a', 64)}",

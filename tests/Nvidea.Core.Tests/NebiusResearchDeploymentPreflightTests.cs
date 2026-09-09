@@ -84,6 +84,118 @@ public sealed class NebiusResearchDeploymentPreflightTests
         Assert.Contains("NVIDEA_CLIENT_PUBLIC_KEY_PEM", error.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void ValidateObjectStorageAlignment_AcceptsExactBucketAndPrefixMapping()
+    {
+        var dispatch = CreateValidOptions() with
+        {
+            Volumes = new[]
+            {
+                new NebiusServerlessVolumeMount(
+                    "nvidea-live-bucket",
+                    "/mnt/nvidea-research",
+                    "READ_WRITE",
+                    "nvidea-research")
+            }
+        };
+        var storage = CreateObjectStorageOptions("nvidea-live-bucket", "nvidea-research");
+
+        NebiusResearchDeploymentPreflight.ValidateObjectStorageAlignment(dispatch, storage);
+    }
+
+    [Fact]
+    public void ValidateObjectStorageAlignment_AcceptsBucketRootWhenBothPrefixesAreEmpty()
+    {
+        var dispatch = CreateValidOptions() with
+        {
+            Volumes = new[]
+            {
+                new NebiusServerlessVolumeMount(
+                    "nvidea-live-bucket",
+                    "/mnt/nvidea-research",
+                    "READ_WRITE",
+                    null)
+            }
+        };
+        var storage = CreateObjectStorageOptions("nvidea-live-bucket", string.Empty);
+
+        NebiusResearchDeploymentPreflight.ValidateObjectStorageAlignment(dispatch, storage);
+    }
+
+    [Fact]
+    public void ValidateObjectStorageAlignment_RejectsBucketMismatch()
+    {
+        var dispatch = CreateValidOptions() with
+        {
+            Volumes = new[]
+            {
+                new NebiusServerlessVolumeMount(
+                    "worker-bucket",
+                    "/mnt/nvidea-research",
+                    "READ_WRITE",
+                    "nvidea-research")
+            }
+        };
+        var storage = CreateObjectStorageOptions("client-bucket", "nvidea-research");
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            NebiusResearchDeploymentPreflight.ValidateObjectStorageAlignment(dispatch, storage));
+        Assert.Contains("bucket", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("volume source", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ValidateObjectStorageAlignment_RejectsPrefixMismatch()
+    {
+        var dispatch = CreateValidOptions() with
+        {
+            Volumes = new[]
+            {
+                new NebiusServerlessVolumeMount(
+                    "nvidea-live-bucket",
+                    "/mnt/nvidea-research",
+                    "READ_WRITE",
+                    "worker-prefix")
+            }
+        };
+        var storage = CreateObjectStorageOptions("nvidea-live-bucket", "client-prefix");
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            NebiusResearchDeploymentPreflight.ValidateObjectStorageAlignment(dispatch, storage));
+        Assert.Contains("prefix", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("SourcePath", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ValidateObjectStorageAlignment_RejectsPathLikeVolumeSource()
+    {
+        var dispatch = CreateValidOptions() with
+        {
+            Volumes = new[]
+            {
+                new NebiusServerlessVolumeMount(
+                    "s3://nvidea-live-bucket",
+                    "/mnt/nvidea-research",
+                    "READ_WRITE",
+                    "nvidea-research")
+            }
+        };
+        var storage = CreateObjectStorageOptions("nvidea-live-bucket", "nvidea-research");
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            NebiusResearchDeploymentPreflight.ValidateObjectStorageAlignment(dispatch, storage));
+        Assert.Contains("bucket/source", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static NebiusObjectStorageClientOptions CreateObjectStorageOptions(string bucket, string prefix) =>
+        new(
+            Endpoint: "https://storage.eu-north1.nebius.cloud",
+            Region: "eu-north1",
+            Bucket: bucket,
+            AccessKeyId: "test-access-key",
+            SecretAccessKey: "test-secret-key",
+            Prefix: prefix);
+
     private static NebiusResearchDispatchOptions CreateValidOptions() =>
         new(
             WorkerImage: "registry.example/nvidea-worker:immutable-test",

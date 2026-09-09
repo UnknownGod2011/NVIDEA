@@ -309,9 +309,9 @@ public sealed class NebiusServerlessJobClient : INebiusServerlessJobClient
         if (string.IsNullOrWhiteSpace(name))
             throw new ArgumentException("Environment variable names cannot be blank.", parameterName);
 
-        var span = name.AsSpan();
-        if (!(char.IsLetter(span[0]) || span[0] == '_')
-            || span[1..].IndexOfAnyExceptInRange('0', '9') >= -1 && !span[1..].ToString().All(static ch => char.IsLetterOrDigit(ch) || ch == '_'))
+        var trimmed = name.Trim();
+        if (!(char.IsLetter(trimmed[0]) || trimmed[0] == '_')
+            || !trimmed.Skip(1).All(static ch => char.IsLetterOrDigit(ch) || ch == '_'))
         {
             throw new ArgumentException($"Environment variable '{name}' is not a valid container environment-variable name.", parameterName);
         }

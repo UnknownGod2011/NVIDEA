@@ -13,92 +13,92 @@ Build a competition-grade, open-source Personal AI operating layer for Windows f
 ## Current Architecture / Product State
 - .NET 8 core in `src/Nvidea.Core`; WPF host in `src/Nvidea.Windows`.
 - Nebius Token Factory / NVIDIA Nemotron inference abstraction with structured output/tool handling, retry/timeout/cancellation, and conservative routing.
-- Layered personal memory with privacy-aware writes and retrieval.
-- Tavily Search + query-focused advanced Extract research pipeline with canonical URL deduplication, bounded extraction, credit accounting, deterministic authority/freshness/diversity ranking, uncertainty warnings, and Nemotron synthesis.
-- Source text remains untrusted data; source-quality metadata is separate and explicitly heuristic; `[src:SOURCE_ID]` citations are machine-validated.
+- Layered personal memory with privacy-aware writes and hybrid retrieval.
+- Tavily Search + advanced Extract research with canonical deduplication, credit accounting, authority/freshness/diversity ranking, uncertainty warnings, provenance, untrusted-evidence boundaries, and machine-validated `[src:SOURCE_ID]` citations.
 - Durable research is staged at remote-work boundaries: request -> Nemotron plan -> Tavily Search/Extract + ranking -> prepared evidence -> Nemotron synthesis -> completed report.
-- `ResearchJobHandler` persists versioned checkpoints. Prepared evidence includes exact ranked provenance, quality metadata, warnings, and cumulative Tavily credits so normal resume does not repeat Search/Extract or rerank evidence.
-- Research checkpoint payloads are bounded to 2 MiB UTF-8. `JsonAgentJobStore` and `JsonLinesAuditTrail` use Windows CurrentUser DPAPI by default on Windows.
-- `ResearchJobRuntime` is the trusted production host for durable local research. Every durable research mutation runs under an OS-backed `StateDirectoryLease` spanning the full remote provider stage and checkpoint persistence; read-only status/report access remains lease-free.
-- Research has explicit interrupted-Running recovery. A stale local `Running` research record with a known checkpoint can be explicitly re-armed to `Pending`; re-arm performs no provider call, preserves the checkpoint, emits audit evidence, warns about possible duplicate cost, and requires a second deliberate action before retry.
-- Generic `ResumableJobOrchestrator` behavior remains fail-closed for `Running` jobs; browser/consequential jobs are not auto-replayed.
+- `ResearchJobHandler` persists versioned checkpoints up to 2 MiB UTF-8. Prepared evidence includes exact ranked provenance, quality metadata, warnings, and cumulative Tavily credits so resume does not repeat Search/Extract or rerank evidence.
+- `JsonAgentJobStore` and `JsonLinesAuditTrail` use Windows CurrentUser DPAPI by default on Windows.
+- `ResearchJobRuntime` is the trusted production host for durable local research. Every mutation runs under an OS-backed `StateDirectoryLease` spanning provider work plus checkpoint persistence; read-only status/report access remains lease-free.
+- Research has explicit interrupted-Running recovery: stale local research can be explicitly re-armed without provider work, then requires a second deliberate action before retry. Generic non-research `Running` jobs remain fail-closed.
 - WPF surfaces durable research create/resume/cancel/recovery/report flows with privacy-safe stage telemetry and emergency-stop integration.
-- Playwright browser agent includes persistent Chromium profile, popup/new-tab tracking, iterative verification, prompt-injection/tool-output trust boundaries, permission gates, durable download quarantine, explicit download recovery, emergency stop, and crash recovery.
-- `StateDirectoryLease` provides process-local plus OS-backed file locking with bounded owner metadata, stale-file recovery, and reparse-point rejection. Browser ownership begins before Playwright transport startup.
+- Playwright browser agent includes persistent Chromium state, popup/new-tab tracking, iterative verification, prompt-injection/tool-output trust boundaries, permission gates, durable download quarantine, explicit recovery, emergency stop, and crash recovery.
+- `StateDirectoryLease` provides process-local plus OS-backed file locking with bounded owner metadata, stale-file recovery, reparse-point rejection, and pre-Playwright ownership.
 - Capability registry, least-privilege permission policy, exact single-use approvals, protected hash-chained/segmented audit trail, durable jobs, and Nebius Serverless contracts exist.
-- **Nebius Serverless Jobs control plane is now refreshed against the current API contract:** create requires explicit subnet and disk, GET-by-job-id is supported for status polling, create-operation `resourceId` and direct `status.state` have conservative parsers, and secret-bearing environment variables can be supplied through Nebius MysteryBox references instead of plaintext values.
-- Research execution is still truthfully displayed as local. A real remote worker/dispatcher is not yet connected and no serverless execution claim is made.
+- Nebius Serverless Jobs control-plane support is refreshed to the current API shape: required subnet/disk, direct job GET/status polling, conservative `resourceId`/state parsing, MysteryBox-backed secret environment references, retry/timeout/cancellation, and endpoint allow-listing.
+- **New remote research boundary:** `NebiusResearchDispatcher` and `ResearchWorkItemProtector` now define an explicit privacy-aware Serverless dispatch protocol. Research checkpoints are hybrid-encrypted with AES-256-GCM and a random per-item data key wrapped to a pinned worker RSA public key via OAEP-SHA256. Nebius job arguments receive only a random opaque work-item ID and non-secret protocol metadata; user questions/checkpoint payloads are not placed in args or plaintext environment variables.
+- Remote dispatch requires exact per-job/per-checkpoint cloud authorization and rejects private OS-local data even when approval is supplied.
+- Serverless credentials remain expected through MysteryBox references. There is still no production shared transport adapter or built/published worker image, so `ResearchJobRuntime` remains truthfully local and the WPF UI does not yet claim Serverless execution.
 
 ## Persistent Progress History
 
 ### 2026-09-06 to 2026-09-08 — Core platform and safe browser state
-Added Nebius/Nemotron inference, layered memory, Tavily research, capability/approval/audit infrastructure, durable jobs, initial Nebius Serverless contracts, Playwright execution, Windows shell, DPAPI state protection, persistent Chromium sessions, durable verified downloads, crash recovery, and OS-backed single-owner browser state. Representative commits include `2de5457b0ad514aa46cc0a0e645a3e8bcd0bcdbf`, `f32619c68f06d1fbc99eb69cea7af8948dba4c1f`, `15d905c52a472face95fdce4dc7f91e88f171a7e`, and `2f3f1f33423f5bfbd33abcc174fafa0052278355`.
+Added Nebius/Nemotron inference, layered memory, Tavily research, capability/approval/audit infrastructure, durable jobs, initial Nebius Serverless contracts, Playwright execution, Windows shell, DPAPI state protection, persistent Chromium sessions, durable verified downloads, crash recovery, and OS-backed single-owner browser state. Representative commits: `2de5457b0ad514aa46cc0a0e645a3e8bcd0bcdbf`, `f32619c68f06d1fbc99eb69cea7af8948dba4c1f`, `15d905c52a472face95fdce4dc7f91e88f171a7e`, `2f3f1f33423f5bfbd33abcc174fafa0052278355`.
 
 ### 2026-09-09 — Tavily evidence quality and resumable research
 Added advanced Tavily Extract enrichment, fail-soft fallback, exact credit accounting, deterministic authority/freshness/diversity ranking, stale/unknown-current-event warnings, deceptive-subdomain hardening, staged `ResearchEngine` boundaries, exact prepared-evidence checkpoints, and resume-from-evidence without repeated Search/Extract/reranking. Representative commits: `9b45da151dedd946625962f485713a4543543cd6`, `9f16c1fb658394c0718d391f7fbead07d9166d45`, `067c3b94b83fd9eebe48a39c4b7aa47dcec922af`, `5affb9d37266b3d137fe2adb4c84dc367bdfcadb`, `d72172bc6e7377df90ec4ab7e9536ac02334afdc`.
 
-### 2026-09-09 — Production durable research UX and crash recovery
-Added privacy-safe `ResearchJobStatus`, trusted `ResearchJobRuntime`, composition-root/WPF wiring, restart recovery from saved evidence, Windows create/resume/cancel/report UI, emergency-stop participation, explicit interrupted-stage recovery, and generic non-research fail-closed regression coverage. Representative commits: `e6409e2260deb7f9938596d372e89adc7bee5978`, `ac305dd8158518274de5779c681f6f29c6ed5b71`, `7dc10b7293769ff4b89c3886a8a0ca13d4e47a86`, `6c3d86d8637f5dae55784b140ba046a0dc5a0d2b`, `93cd4c84faa5c7aee528357dca0ee702b9f17907`, `8227c91c4affceb0333f525f6da571a1347c1441`.
+### 2026-09-09 — Production durable research UX, recovery, and ownership
+Added privacy-safe `ResearchJobStatus`, trusted `ResearchJobRuntime`, composition-root/WPF wiring, restart recovery from saved evidence, Windows create/resume/cancel/report UI, emergency-stop participation, explicit interrupted-stage recovery, generic non-research fail-closed regression coverage, and mutation-scoped OS-backed single-owner research state. Representative commits: `e6409e2260deb7f9938596d372e89adc7bee5978`, `ac305dd8158518274de5779c681f6f29c6ed5b71`, `7dc10b7293769ff4b89c3886a8a0ca13d4e47a86`, `6c3d86d8637f5dae55784b140ba046a0dc5a0d2b`, `93cd4c84faa5c7aee528357dca0ee702b9f17907`, `69e3b9fc5ac4ba09439c62766e82d4110305c0bf`.
 
-### 2026-09-09 — Cross-process research mutation ownership
-Added mutation-scoped `StateDirectoryLease` ownership around research creation, stage execution, re-arm, and cancellation. The lease spans remote provider work plus persistence. A concurrency fixture verifies a second runtime can read status but cannot mutate while the first owns the research state. Representative commits: `43712cf72dc673775620f8b93046cba9ff01c54d`, `98d3d4355028f0bc541b75aca1905bcbb456f661`, `771656a5c8300707cdbd45ad82809a0bdde59875`, `69e3b9fc5ac4ba09439c62766e82d4110305c0bf`.
+### 2026-09-09 — Nebius Serverless control-plane hardening
+Refreshed the client against current Nebius Serverless Jobs requirements: explicit subnet/disk, direct status GET, conservative `resourceId`/state parsing, MysteryBox references, plaintext-secret rejection, duplicate-env rejection, endpoint allow-listing, and contract tests. Representative commits: `60a5f58b4ec414e400ac2ed88a614c18c34f57ac`, `5c1ab2457cc42254c5ff7c592334d533baeff347`, `efbc75a953fe94875779c0a990ebc7435125b121`, `1e7dff5ce05567567f08523e14860d1da42704c7`.
 
-### 2026-09-09 — Current run: harden Nebius Serverless Jobs control plane
+### 2026-09-09 — Current run: privacy-safe Nebius remote research protocol
 Completed:
-- Re-read this file completely at run start and inspected recent commits, the repository tree, `ResearchJobRuntime`, `JobContracts`, the existing `NebiusServerlessJobClient`, its tests, and the current public Nebius API definitions before changing code.
-- Re-verified current Nebius Serverless documentation and the official `nebius/api` `JobSpec`/`JobService` definitions rather than relying on the older local client assumptions.
-- Found a material contract drift: current `JobSpec` requires `disk` and `subnet_id`; the local client treated subnet as optional and did not send a disk at all. The official API also supports MysteryBox secret references for environment variables and exposes direct job GET/status states.
-- Updated `src/Nvidea.Core/Jobs/NebiusServerlessJobClient.cs`:
-  - added explicit `NebiusServerlessDiskSpec`;
-  - requires non-empty `SubnetId` and positive explicit disk size before any network call;
-  - serializes the required `disk` object;
-  - added `GetAsync(remoteJobId)` against `/ai/v1/jobs/{job_ID}` for status polling;
-  - added conservative response helpers for create-operation `resourceId` and direct `status.state`, returning unknown instead of guessing when absent;
-  - added `NebiusMysteryBoxSecretRef` and `SecretEnvironmentVariables`, serialized as `mysteryboxSecret` references;
-  - plaintext secret-like environment names remain rejected before network I/O;
-  - duplicate plaintext+secret definitions for the same variable fail closed;
-  - retained endpoint allow-listing, bearer auth, retry, timeout, cancellation, and JSON validation behavior.
-- Updated `tests/Nvidea.Core.Tests/NebiusServerlessJobClientTests.cs`:
-  - current required create payload including disk/subnet;
-  - create `resourceId` parsing;
-  - direct GET endpoint and `RUNNING` state parsing;
-  - MysteryBox reference serialization with no plaintext secret value;
-  - rejection of missing disk/subnet before network I/O;
-  - rejection of plaintext secret-like variables and duplicate plaintext/secret definitions;
-  - existing retry/permanent-error and endpoint allow-list behavior retained.
-- Static review caught and corrected an overcomplicated environment-variable validator and a nullable test assertion before finalizing.
+- Re-read this file completely at run start and inspected the current `NVIDEA` head, recent commits, `ResearchJobRuntime`, `JobContracts`, `ResearchJobHandler`, `NebiusServerlessJobClient`, Serverless contract tests, README status, and current Nebius/NVIDIA-related public material before implementation.
+- Added `src/Nvidea.Core/Jobs/NebiusResearchDispatch.cs` with:
+  - `RemoteResearchWorkItem`, `ProtectedResearchWorkItemEnvelope`, exact `ResearchCloudAuthorization`, Serverless dispatch options/receipt, and `IProtectedResearchWorkItemTransport`;
+  - hybrid payload protection: random 256-bit AES-GCM data key, 96-bit nonce, 128-bit tag, worker RSA public-key wrapping via OAEP-SHA256, bounded 2 MiB plaintext, 24-hour maximum lifetime, random URL/CLI-safe opaque work-item IDs, and authenticated lifecycle metadata;
+  - worker-side `Unprotect` path with protocol/version, expiry, cryptographic-dimension, opaque-ID, metadata-integrity, and private-key validation;
+  - cloud authorization validation scoped to the exact local job id + checkpoint step + disclosure version, with explicit approval required;
+  - hard rejection of `ContainsPrivateOsData` for remote research even when approval is supplied;
+  - `NebiusResearchDispatcher` that uploads only the encrypted envelope to an injected transport, then creates a Serverless Job whose args contain only `--work-item-id=<opaque-id>` plus non-secret protocol metadata;
+  - existing MysteryBox secret references flow through to the Serverless job spec, so Tavily/Nebius/worker private-key secrets need not appear as plaintext env values;
+  - failed Serverless creation performs best-effort encrypted-work-item cleanup; a successful/2xx create that does not expose `resourceId` intentionally retains the encrypted payload until expiry because remote creation is ambiguous and deleting it could break a job that actually started.
+- Added `tests/Nvidea.Core.Tests/NebiusResearchDispatchTests.cs` covering:
+  - encrypt/decrypt round trip and absence of plaintext question/evidence from the envelope representation;
+  - authenticated metadata tamper detection;
+  - exact per-job/per-stage cloud authorization before any upload/control-plane call;
+  - private OS-data rejection before upload;
+  - opaque-ID-only Serverless args and protocol metadata;
+  - worker decryption recovering the exact original checkpoint;
+  - encrypted payload cleanup when create fails;
+  - encrypted payload retention when create succeeds but the resource id is ambiguous.
+- No `ResearchJobRuntime` or WPF execution-location switch was made. This is intentional: the protocol exists, but a real shared transport adapter, worker executable/image, result-ingestion channel, and live Nebius validation are still missing.
 
 Commits this run:
-- `60a5f58b4ec414e400ac2ed88a614c18c34f57ac` — refresh Serverless Jobs contract and MysteryBox support.
-- `2e6dfcf114737080ef1ba08dae04a6b8c02ed63b` — simplify environment-name validation.
-- `5c1ab2457cc42254c5ff7c592334d533baeff347` — update current Serverless contract tests.
-- `3b177a8438cbb6b1c6081dc8e2340a44e42ae8ff` — correct missing-disk regression fixture.
-- `efbc75a953fe94875779c0a990ebc7435125b121` — nullable warnings-as-errors hardening.
+- `59aab5d2258adb61e0e25dd04fd86365fad32f34` — add privacy-safe Nebius research dispatch protocol.
+- `feb410eeb2ee7af6b2e664bc7bb234f9e8a262e7` — add privacy-safe research dispatch regression tests.
 
 Validation / evidence:
 - Repository identity was explicitly verified as exactly `UnknownGod2011/NVIDEA` before every GitHub mutation.
-- Official Nebius quickstart currently documents REST create at `POST https://api.nebius.cloud/ai/v1/jobs`, direct status retrieval at `GET /ai/v1/jobs/<job_ID>`, required subnet/disk examples, and create `resourceId`.
-- Official `nebius/api` `JobSpec` marks `disk` and `subnet_id` required and defines MysteryBox-backed environment variables; `JobStatus.State` includes PROVISIONING/STARTING/IMAGE_PULLING/RUNNING/CANCELLING/COMPLETED/FAILED/CANCELLED/ERROR.
+- Current Nebius ecosystem material continues to distinguish Token Factory credentials from Nebius IAM credentials and recommends non-committed secret configuration; the existing client already models MysteryBox references rather than plaintext secret-like environment values.
+- Tests were written against pure cryptographic and contract fakes; no real cloud credentials are required.
 - No GitHub Actions workflow was triggered merely to obtain a green result.
-- This execution environment still exposes no verified .NET SDK/compiler signal, so compilation and test execution are **not claimed**.
+- This execution environment still exposes no usable `dotnet`, `msbuild`, or `csc` signal; source and tests were statically reviewed but **compilation/test execution are not claimed**.
 - No other repository was mutated.
 
 Security / privacy / permissions / cost review:
-- Serverless job specs no longer silently omit required infrastructure fields; callers must make disk/subnet allocation explicit.
-- Disk size must be positive and explicit, avoiding a hidden default storage allocation/cost choice inside NVIDEA.
-- Secret-like environment values cannot be supplied plaintext through this client; MysteryBox references provide the intended control-plane path for Tavily/Nebius credentials in a future worker.
-- The remote control plane still must not receive private OS context by default. No serverless research dispatcher was enabled in this run, so local execution-location claims remain truthful.
-- Create/cancel operation JSON remains opaque except for narrowly parsed fields; no speculative success state is inferred.
+- User questions and research checkpoint JSON are encrypted before entering the remote work-item transport and are never placed in Nebius job arguments or plaintext env variables by the dispatcher.
+- Per-stage authorization is explicit and narrowly scoped; approval for one job/checkpoint cannot authorize another.
+- OS-private data remains local by policy even if a caller tries to provide cloud approval.
+- Envelope metadata is authenticated with AES-GCM associated data, making opaque-ID/lifecycle tampering fail decryption.
+- Per-item encryption keys are random and zeroed after use; payload plaintext is zeroed after protection/decryption where practical in managed memory.
+- Encrypted payload lifetime is bounded to 24 hours and plaintext size to 2 MiB to constrain accidental retention/cost.
+- Failed create attempts clean up encrypted work items best-effort. Ambiguous successful creates retain ciphertext until expiry to avoid breaking a potentially running remote job.
+- The transport abstraction is intentionally not presented as a finished cloud integration; production must supply a real authenticated shared transport and worker image.
 
 ## Known Blockers / Risks
 - This environment still lacks a verified .NET 8/Windows execution signal. Source/tests are not substitutes for `dotnet build`, `dotnet test`, XAML load, DPAPI execution, and real WPF interaction.
-- The refreshed Serverless client and tests are statically reviewed but have not been compiled/executed here.
-- The local REST cancel path (`POST /ai/v1/jobs/cancel`) is retained from the existing contract and CLI/proto cancellation support, but the current public quickstart exposes REST create/get/delete more explicitly than the cancel REST transcoding path. It should be verified with a real Nebius account or generated client before relying on cancellation in a demo.
-- There is still no NVIDEA Serverless research worker image, protected remote payload transport, remote-result/checkpoint ingestion, or production dispatcher. Therefore durable research remains correctly local.
-- Passing a user's research question directly in container args/environment would make it control-plane-visible and is not acceptable as the default privacy design. A remote dispatcher needs explicit cloud disclosure plus a bounded protected payload channel.
-- A stale local `Running` stage may already have reached a remote provider before a crash; explicit retry can duplicate Nemotron/Tavily cost/latency.
+- New dispatch/protector tests are statically reviewed but have not been compiled/executed here.
+- There is no production `IProtectedResearchWorkItemTransport` adapter accessible from both Windows and Nebius Serverless yet.
+- There is no built/published NVIDEA remote worker image that retrieves an opaque item, reads its private key via MysteryBox, decrypts/validates the checkpoint, executes exactly one research stage, encrypts a result, and publishes it back.
+- There is no result-envelope/result-ingestion protocol yet, so remote checkpoints cannot safely flow back into the local durable store.
+- Remote job polling/cancellation provenance is not yet attached to `AgentJobRecord`; `ResearchJobRuntime` therefore correctly remains local.
+- The retained REST cancel path should still be verified with a real Nebius account/generated client before a judged live cancellation demo.
+- A stale local/remote stage may already have reached a provider before a crash; explicit retry can duplicate Nemotron/Tavily cost/latency.
 - WPF research currently favors the newest nonterminal job rather than a polished multi-job selector/history.
 - Local voice/transcription and a verified production embedding adapter remain absent.
 
 ## Single Best Next Task
-First obtain a real Windows/.NET 8 build + tests + WPF launch signal and repair every issue found. If that execution signal remains unavailable, continue the Serverless path **without faking completion**: implement the privacy/permission-aware Nebius research-dispatch contract and worker protocol around an explicit cloud-disclosure decision, opaque job/work-item identifiers, MysteryBox credential references, typed remote state polling/cancellation, and durable remote-job provenance. Do not send private OS context or silently place user questions/secrets in job args/environment. Only after that protocol exists should `ResearchJobRuntime` create records with `JobExecutionLocation.NebiusServerless` and the WPF UI expose serverless execution.
+First obtain a real Windows/.NET 8 build + tests + WPF launch signal and repair every issue found. If that execution signal remains unavailable, continue the remote path without overstating completion: implement the **bidirectional protected worker/result protocol** and a real shared transport adapter, then add a minimal NVIDEA worker entry point that accepts only an opaque work-item id, retrieves/decrypts one bounded checkpoint using a MysteryBox-supplied private key, executes exactly one `ResearchJobHandler` stage, protects the result for the originating Windows client, and publishes it back with TTL/idempotency/provenance. Only after that is live-tested should `ResearchJobRuntime` persist `JobExecutionLocation.NebiusServerless` and the WPF UI expose real Serverless execution.

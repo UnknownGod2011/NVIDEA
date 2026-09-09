@@ -182,7 +182,8 @@ public sealed class TwoPhaseNebiusResearchDispatcher
             SubnetId: _options.SubnetId,
             EnvironmentVariables: environment,
             Disk: _options.Disk,
-            SecretEnvironmentVariables: _options.SecretEnvironmentVariables);
+            SecretEnvironmentVariables: _options.SecretEnvironmentVariables,
+            Volumes: _options.Volumes);
     }
 
     private async Task TryDeleteAsync(string opaqueWorkItemId)

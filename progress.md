@@ -11,15 +11,16 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Do not remove working functionality merely to simplify implementation.
 
 ## Current Product / Architecture State
-- .NET 8 core in `src/Nvidea.Core`; WPF host in `src/Nvidea.Windows`.
+- .NET 8 core in `src/Nvidea.Core`; WPF host in `src/Nvidea.Windows`; deployable remote worker project in `src/Nvidea.Worker`.
 - NVIDIA Nemotron through Nebius Token Factory with structured reasoning/tool boundaries, retries, timeout/cancellation, and conservative routing.
 - Layered personal memory with privacy-aware writes and hybrid retrieval.
 - Tavily Search + Extract research with canonical deduplication, exact credit accounting, evidence quality/freshness/diversity, provenance, untrusted-evidence handling, and validated citations.
 - Durable staged research checkpoints prepared evidence so restart-safe synthesis does not repeat Tavily retrieval work.
 - Protected local state uses Windows CurrentUser DPAPI by default, job-store CAS, hash-chained/segmented audit, and OS-backed single-owner mutation leases.
 - Safe browser agent includes persistent Chromium state, popup/new-tab tracking, iterative verification, injection/tool-output trust boundaries, permission gates, durable download quarantine, emergency stop, and explicit crash recovery.
-- Remote research has bidirectional protected transport primitives, one-stage `NebiusResearchWorker`, two-phase `DispatchReserved -> Nebius Create -> remote-id attachment`, exact-once result ingestion, deterministic lifecycle reconciliation across bounded complete job listings, durable remote cancellation, persisted encrypted-work-item expiry, and explicit provider terminal/delayed-result handling.
-- Production remains truthfully local until a concrete shared transport, deployable worker image, and live Nebius validation exist.
+- Remote research has bidirectional protected transport primitives, one-stage `NebiusResearchWorker`, two-phase `DispatchReserved -> Nebius Create -> remote-id attachment`, exact-once result ingestion, deterministic lifecycle reconciliation across bounded complete job listings, durable remote cancellation, persisted encrypted-work-item expiry, explicit provider terminal/delayed-result handling, and a directory-backed encrypted transport suitable for a Nebius Object Storage mounted volume.
+- `src/Nvidea.Worker/Dockerfile` now defines a non-root .NET 8 worker image that composes the real Nemotron + Tavily stage execution path.
+- Production remains truthfully local until the authoritative Nebius remote-job-ID handoff into the running worker and live end-to-end Serverless validation exist.
 
 ## Persistent Progress History
 
@@ -30,59 +31,55 @@ Added Nebius/Nemotron inference, layered memory, Tavily research, capability/app
 Added Tavily Extract enrichment, deterministic evidence quality/staleness/diversity handling, staged research boundaries, restart-safe synthesis, privacy-safe status, WPF durable-research UX, emergency stop, explicit interrupted-stage recovery, generic non-research fail-closed behavior, and mutation-scoped cross-process research ownership.
 
 ### 2026-09-09 — Nebius Serverless privacy/control plane
-Refreshed the Jobs client to current subnet/disk requirements, MysteryBox secret refs, secret rejection, List/Get/Create/Cancel, retries and endpoint allow-listing. Added encrypted opaque-ID dispatch, protected result return, one-stage worker primitive, durable remote provenance, exact CAS result ingestion, two-phase dispatch reservation, deterministic crash reconciliation, typed provider lifecycle parsing, durable `CancelRequested -> Cancelled` handling, and bounded pagination.
+Refreshed the Jobs client to current subnet/disk requirements, MysteryBox secret refs, secret rejection, List/Get/Create/Cancel, retries and endpoint allow-listing. Added encrypted opaque-ID dispatch, protected result return, one-stage worker primitive, durable remote provenance, exact CAS result ingestion, two-phase dispatch reservation, deterministic crash reconciliation, typed provider lifecycle parsing, durable `CancelRequested -> Cancelled` handling, bounded pagination, and explicit terminal/result-expiry reconciliation.
 
-### 2026-09-09 — Current run: durable terminal/expiry reconciliation
+### 2026-09-09 — Current run: deployable worker + mounted encrypted transport
 Completed:
-- Re-read this file completely and inspected current recent commits, `RemoteResearchResultIngestor`, `TwoPhaseNebiusResearchDispatcher`, `NebiusResearchLifecycleReconciler`, job contracts, and lifecycle tests before changing code.
-- Extended durable remote provenance with the encrypted work item's exact expiry and terminal timestamp while preserving backward-compatible optional record parameters.
-- Extended `RemoteResearchDispatchReservation` with optional exact expiry; legacy callers conservatively default to the protocol's 24-hour maximum lifetime.
-- `TwoPhaseNebiusResearchDispatcher` now persists the authenticated `ProtectedResearchWorkItemEnvelope.ExpiresAt` into the reservation before Nebius creation.
-- Added typed `RemoteResearchResultNotAvailableException` so lifecycle code no longer relies on matching exception strings to distinguish a delayed result from malformed/substituted/cryptographically invalid results.
-- Added `RemoteResearchProvenanceState.RemoteFailed` and `Expired`.
-- Added `NebiusResearchLifecycleReconciler.ReconcileDispatchedAsync`:
-  - direct-GET verifies exact remote id and deterministic opaque-id-derived name before any durable mutation;
-  - `PROVISIONING` / `STARTING` / `RUNNING` / `CANCELLING` remain nonterminal;
-  - `FAILED` / `ERROR` become CAS-protected local `Failed` + `RemoteFailed` with audit evidence;
-  - unexpected provider `CANCELLED` becomes a truthful local cancelled terminal state;
-  - `COMPLETED` attempts protected exact-once result ingestion;
-  - a missing result before persisted expiry remains retryable rather than being treated as failure;
-  - a missing result after persisted expiry becomes local `Failed` + `Expired`, with an explicit non-secret error/audit event rather than hanging indefinitely.
-- Terminal reconciliation performs best-effort cleanup of protected result/work-item transports only after durable CAS succeeds.
-- Hardened cancellation reconciliation to verify both exact remote id and deterministic job name through the same direct-GET identity boundary.
-- Added regression coverage for remote terminal failure, delayed completed result before expiry, result-missing terminal expiry, exact persisted expiry, terminal audit evidence, and stricter cancellation identity verification.
+- Re-read `progress.md` completely and inspected current recent commits, remote dispatch/result protocol, `ResearchJobHandler`, `ResearchEngine`, Nemotron/Tavily constructors, and the current project layout before changing code.
+- Verified current official Nebius Serverless documentation still supports persistent Object Storage bucket mounts for jobs and MysteryBox-backed secret injection; used those native primitives as the deployment target rather than introducing an unrelated cloud database.
+- Added `DirectoryProtectedResearchTransport`, implementing both protected work-item and protected result transports over an explicitly shared absolute directory. It stores only encrypted protocol envelopes under separate `work-items/` and `results/` namespaces.
+- Transport enforces bounded envelope size, strict opaque-ID validation/path traversal rejection, create-once semantics, temp-file write + move, bounded reads, and explicit deletion.
+- Added `src/Nvidea.Worker/Nvidea.Worker.csproj` and `Program.cs` as a real .NET 8 executable entry point. It composes `NebiusTokenFactoryClient`, `TavilyResearchClient`, `ResearchEngine`, `ResearchJobHandler`, `DirectoryProtectedResearchTransport`, and `NebiusResearchWorker` to execute exactly one research checkpoint stage.
+- Worker requires the Nebius/Tavily keys, worker private key, client public key, transport root, and exact remote job ID from environment. It logs only a generic success marker or exception type, never user research content/evidence/provider bodies/secrets.
+- Added `src/Nvidea.Worker/Dockerfile`: multi-stage .NET 8 publish, runtime-only final image, non-root UID/GID `65532`, no baked credentials.
+- Added `DirectoryProtectedResearchTransportTests` covering protected work-item round-trip/delete, duplicate result write refusal, and traversal/invalid opaque-ID rejection.
+- Added `docs/nebius-research-worker.md` with the storage mount, MysteryBox secret contract, container build command, non-secret environment contract, and the unresolved authoritative remote-job-ID handoff documented explicitly.
+- Identified a real architecture issue rather than hiding it: Nebius returns the authoritative job resource ID after create, while current official Serverless Jobs documentation does not document an automatically injected current-job-ID variable inside the container. The existing result protocol correctly authenticates the resource ID, so NVIDEA must not replace it with the deterministic job name.
 
 Commits this run:
-- `3f72aa62290c797c9bd542136f14698bcbd9faa5` — persist remote expiry and typed missing-result state.
-- `ee247ff485317b9ac8949229f745f3077982a527` — persist exact protected work-item expiry during two-phase reservation.
-- `17d39a23936656dbb1d6376f3bd91a9716ee1be4` — add durable provider terminal and delayed-result reconciliation.
-- `3befe98afabb6639b807d12525874bd764e00632` — cover remote failure and delayed-result expiry semantics.
+- `db33cd4684bbdca9f8ab7abb03ae227e9ac8444b` — add mounted encrypted research transport.
+- `b702c85bb50ba280d749a4882f70dfe1a3af914c` — add deployable worker project.
+- `d0081196772fb8118136e3cec06190fda7e53f34` — wire one-stage Nemotron/Tavily worker entry point.
+- `77470cb6ddbc9619885e3d25f64a56235a77d1bb` — containerize worker with non-root runtime image.
+- `93369493b0bd313027603271b531a668239be467` — add mounted transport safety regression tests.
+- `9e1594ca2505b9c276184577a5a7bf7c6cb3efa3` — document Nebius worker deployment/provenance boundary.
 
 Validation / evidence:
 - Repository identity was explicitly verified as exactly `UnknownGod2011/NVIDEA` before every mutation.
 - No mutation was made to keyboard.wtf or any other repository.
-- Static review confirms terminal mutations remain behind the existing JSON job-store compare-and-swap boundary.
-- Direct GET now verifies both resource id and deterministic name for dispatched reconciliation and cancellation reconciliation.
-- Delayed result handling distinguishes only the typed absence condition; malformed, substituted, expired, or cryptographically invalid result envelopes are not downgraded to "not ready".
-- Existing constructors remain source-compatible because added record fields are optional/defaulted.
+- Current official Nebius docs state that Serverless Jobs can mount Object Storage buckets as `--volume` paths and can inject `--env-secret` values from MysteryBox; Object Storage is S3-compatible and intended for persisted files/checkpoints.
+- Static review confirms the worker invokes the genuine existing Nemotron + Tavily research stage rather than a fake/demo stub.
+- Static review confirms only already-encrypted envelopes are written by the new shared-directory transport.
+- The Docker image does not contain keys and runs the published worker as a non-root user.
 - No GitHub Actions workflow was triggered merely to obtain a green signal.
-- This environment still lacks a verified usable .NET/Windows toolchain, so **compilation and test execution are not claimed**.
+- This environment still lacks a verified usable .NET/Windows/container toolchain, so **compilation, test execution, Docker build, and live Nebius execution are not claimed**.
 
 Security / privacy / cost review:
-- Persisted expiry/terminal provenance contains only timestamps and opaque identifiers; no research question, Tavily evidence, checkpoint payload, approval scope, or secret is added.
-- Provider terminal errors intentionally use generic local text instead of storing remote raw response bodies that could later contain unexpected provider data.
-- A temporarily delayed completed result does not cause repeated Nemotron/Tavily work; reconciliation only polls control-plane/result transport state.
-- Cleanup occurs only after a terminal CAS succeeds, preventing cleanup from racing a state that failed to become authoritative.
-- Unknown provider states and identity substitution remain fail-closed.
+- The shared transport stores protected work/result envelopes only; question/evidence/checkpoint plaintext remains inside authenticated encryption.
+- Opaque IDs are constrained to the existing URL-safe alphabet before being used as filenames, blocking path traversal through transport keys.
+- Create-once result/work-item semantics avoid silently replacing encrypted evidence for an existing opaque dispatch.
+- Worker errors intentionally omit exception messages to reduce the chance of API/provider data entering Serverless logs.
+- Worker private RSA key, Token Factory key, and Tavily key are intended for MysteryBox injection and are not committed.
+- A dedicated Standard Object Storage bucket is sufficient for these small bounded encrypted envelopes; expensive enhanced-throughput storage is unnecessary for the demo path.
 
 ## Known Blockers / Risks
-- No verified .NET 8/Windows execution signal is available here; `dotnet build`, `dotnet test`, XAML load, DPAPI, crypto runtime, and live WPF behavior remain unverified.
-- The new terminal/expiry paths and tests are statically reviewed but not compiled/executed.
-- A `DispatchReserved` record with no attached remote id still remains deliberately ambiguous when bounded listing returns zero; expiry alone is not used to claim that a remote job never existed.
-- A provider job that remains nonterminal beyond encrypted input expiry still requires an explicit policy (likely durable cancellation) rather than silently declaring the remote process stopped.
-- No production transport is accessible by both Windows and Nebius Serverless, and no built/published worker executable/image exists yet.
+- No verified .NET 8/Windows execution signal is available here; `dotnet build`, `dotnet test`, XAML load, DPAPI, crypto runtime, Docker build, and live WPF behavior remain unverified.
+- The new worker/transport/tests are statically reviewed but not compiled/executed.
+- The worker currently requires `NVIDEA_REMOTE_JOB_ID`, but `TwoPhaseNebiusResearchDispatcher` cannot know that ID until after Nebius `Create` returns. Current official docs do not establish an automatic in-container job-ID variable, so automatic production dispatch is not yet wired.
+- A `DispatchReserved` record with no attached remote id remains deliberately ambiguous when bounded listing returns zero; expiry alone is not used to claim that a remote job never existed.
+- No live Object Storage bucket, registry image, MysteryBox keys, subnet, or Serverless job has been provisioned/validated in this environment.
 - `ResearchJobRuntime` still deliberately rejects non-local records; WPF Serverless controls remain intentionally absent until cloud execution is real and validated.
 - Local voice/transcription and a verified production embedding adapter remain absent.
 
 ## Single Best Next Task
-First obtain a real Windows/.NET 8 build + tests + WPF launch signal and repair every issue found. If that remains unavailable, implement the deployable NVIDEA research worker entry point/image plus an authenticated TTL-backed shared transport adapter, then wire a narrow end-to-end Serverless contract probe that exercises opaque dispatch -> one Nemotron/Tavily stage -> protected result -> exact-once ingestion without exposing WPF controls until live Nebius validation succeeds.
+Implement the durable **remote dispatch-binding handoff** keyed by opaque work-item ID: after `AttachDispatchAsync` (or crash reconciliation) authoritatively obtains the Nebius resource ID, publish a bounded binding into the shared encrypted/mounted transport; make the worker wait with timeout/cancellation for that exact binding before executing; verify opaque ID + deterministic job name/resource ID consistency; add duplicate/substitution/expiry tests; then run a narrow container/Serverless contract probe when credentials/tooling are available. Only after that end-to-end path succeeds should WPF expose Nebius Serverless research.

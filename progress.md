@@ -18,7 +18,7 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Durable staged research checkpoints prepared evidence so restart-safe synthesis does not repeat Tavily retrieval work.
 - Protected local state uses Windows CurrentUser DPAPI by default, job-store CAS, hash-chained/segmented audit, and OS-backed single-owner mutation leases.
 - Safe browser agent includes persistent Chromium state, popup/new-tab tracking, iterative verification, injection/tool-output trust boundaries, permission gates, durable download quarantine, emergency stop, and explicit crash recovery.
-- Remote research has bidirectional protected transport primitives, one-stage `NebiusResearchWorker`, two-phase `DispatchReserved -> Nebius Create -> remote-id attachment`, exact-once result ingestion, deterministic lifecycle reconciliation across bounded complete job listings, and durable remote cancellation.
+- Remote research has bidirectional protected transport primitives, one-stage `NebiusResearchWorker`, two-phase `DispatchReserved -> Nebius Create -> remote-id attachment`, exact-once result ingestion, deterministic lifecycle reconciliation across bounded complete job listings, durable remote cancellation, persisted encrypted-work-item expiry, and explicit provider terminal/delayed-result handling.
 - Production remains truthfully local until a concrete shared transport, deployable worker image, and live Nebius validation exist.
 
 ## Persistent Progress History
@@ -30,48 +30,59 @@ Added Nebius/Nemotron inference, layered memory, Tavily research, capability/app
 Added Tavily Extract enrichment, deterministic evidence quality/staleness/diversity handling, staged research boundaries, restart-safe synthesis, privacy-safe status, WPF durable-research UX, emergency stop, explicit interrupted-stage recovery, generic non-research fail-closed behavior, and mutation-scoped cross-process research ownership.
 
 ### 2026-09-09 — Nebius Serverless privacy/control plane
-Refreshed the Jobs client to current subnet/disk requirements, MysteryBox secret refs, secret rejection, List/Get/Create/Cancel, retries and endpoint allow-listing. Added encrypted opaque-ID dispatch, protected result return, one-stage worker primitive, durable remote provenance, exact CAS result ingestion, two-phase dispatch reservation, deterministic crash reconciliation, typed provider lifecycle parsing, and durable `CancelRequested -> Cancelled` handling.
+Refreshed the Jobs client to current subnet/disk requirements, MysteryBox secret refs, secret rejection, List/Get/Create/Cancel, retries and endpoint allow-listing. Added encrypted opaque-ID dispatch, protected result return, one-stage worker primitive, durable remote provenance, exact CAS result ingestion, two-phase dispatch reservation, deterministic crash reconciliation, typed provider lifecycle parsing, durable `CancelRequested -> Cancelled` handling, and bounded pagination.
 
-### 2026-09-09 — Bounded Nebius pagination
-Added explicit continuation-page support, URL-escaped bounded page tokens, and `NebiusBoundedJobListReader` with maximum page/item ceilings, repeated-token detection, and no partial-list success on safety-bound violations.
-
-### 2026-09-09 — Current run: production paginated reconciliation
+### 2026-09-09 — Current run: durable terminal/expiry reconciliation
 Completed:
-- Re-read this file completely and inspected the current lifecycle reconciler, bounded list reader, Nebius client contract, recent commits, and lifecycle regression tests before changing code.
-- Replaced the production reconciler's first-page-only/pagination-refusal path with `NebiusBoundedJobListReader.ReadAllAsync`.
-- `ReconcileReservedAsync` now proves deterministic-name uniqueness across the complete bounded listing before considering attachment.
-- Preserved the second direct `Get` verification step, so a uniquely listed resource must still return the same id + deterministic name and a recognized lifecycle state before CAS attachment.
-- Added regression coverage where the only valid job appears on page 2; reconciliation now follows the continuation token and attaches only after direct GET verification.
-- Added regression coverage where two same-name resources are split across separate pages; reconciliation detects the ambiguity and leaves the durable `DispatchReserved` state unchanged.
-- Updated the fake lifecycle client with explicit continuation-page behavior and token tracing so the test checks the production paging contract rather than bypassing it.
+- Re-read this file completely and inspected current recent commits, `RemoteResearchResultIngestor`, `TwoPhaseNebiusResearchDispatcher`, `NebiusResearchLifecycleReconciler`, job contracts, and lifecycle tests before changing code.
+- Extended durable remote provenance with the encrypted work item's exact expiry and terminal timestamp while preserving backward-compatible optional record parameters.
+- Extended `RemoteResearchDispatchReservation` with optional exact expiry; legacy callers conservatively default to the protocol's 24-hour maximum lifetime.
+- `TwoPhaseNebiusResearchDispatcher` now persists the authenticated `ProtectedResearchWorkItemEnvelope.ExpiresAt` into the reservation before Nebius creation.
+- Added typed `RemoteResearchResultNotAvailableException` so lifecycle code no longer relies on matching exception strings to distinguish a delayed result from malformed/substituted/cryptographically invalid results.
+- Added `RemoteResearchProvenanceState.RemoteFailed` and `Expired`.
+- Added `NebiusResearchLifecycleReconciler.ReconcileDispatchedAsync`:
+  - direct-GET verifies exact remote id and deterministic opaque-id-derived name before any durable mutation;
+  - `PROVISIONING` / `STARTING` / `RUNNING` / `CANCELLING` remain nonterminal;
+  - `FAILED` / `ERROR` become CAS-protected local `Failed` + `RemoteFailed` with audit evidence;
+  - unexpected provider `CANCELLED` becomes a truthful local cancelled terminal state;
+  - `COMPLETED` attempts protected exact-once result ingestion;
+  - a missing result before persisted expiry remains retryable rather than being treated as failure;
+  - a missing result after persisted expiry becomes local `Failed` + `Expired`, with an explicit non-secret error/audit event rather than hanging indefinitely.
+- Terminal reconciliation performs best-effort cleanup of protected result/work-item transports only after durable CAS succeeds.
+- Hardened cancellation reconciliation to verify both exact remote id and deterministic job name through the same direct-GET identity boundary.
+- Added regression coverage for remote terminal failure, delayed completed result before expiry, result-missing terminal expiry, exact persisted expiry, terminal audit evidence, and stricter cancellation identity verification.
 
 Commits this run:
-- `eb51e23774ceb0aef8622bb50a1c60c89b72a24d` — use bounded pagination in production research reconciliation.
-- `e9990130bcc3eb2f25cbaab6ee7d238a926544b2` — cover page-2 success and cross-page ambiguity.
+- `3f72aa62290c797c9bd542136f14698bcbd9faa5` — persist remote expiry and typed missing-result state.
+- `ee247ff485317b9ac8949229f745f3077982a527` — persist exact protected work-item expiry during two-phase reservation.
+- `17d39a23936656dbb1d6376f3bd91a9716ee1be4` — add durable provider terminal and delayed-result reconciliation.
+- `3befe98afabb6639b807d12525874bd764e00632` — cover remote failure and delayed-result expiry semantics.
 
 Validation / evidence:
-- Repository identity was explicitly verified as exactly `UnknownGod2011/NVIDEA` immediately before every mutation.
+- Repository identity was explicitly verified as exactly `UnknownGod2011/NVIDEA` before every mutation.
 - No mutation was made to keyboard.wtf or any other repository.
-- Static review confirms production reconciliation now inherits the pagination reader's 8-page / 2,000-item defaults, repeated-token detection, and fail-closed bound behavior.
-- Direct GET identity verification and existing CAS-protected dispatch attachment remain intact after pagination integration.
+- Static review confirms terminal mutations remain behind the existing JSON job-store compare-and-swap boundary.
+- Direct GET now verifies both resource id and deterministic name for dispatched reconciliation and cancellation reconciliation.
+- Delayed result handling distinguishes only the typed absence condition; malformed, substituted, expired, or cryptographically invalid result envelopes are not downgraded to "not ready".
+- Existing constructors remain source-compatible because added record fields are optional/defaulted.
 - No GitHub Actions workflow was triggered merely to obtain a green signal.
 - This environment still lacks a verified usable .NET/Windows toolchain, so **compilation and test execution are not claimed**.
 
 Security / privacy / cost review:
-- Pagination and reconciliation operate only on Nebius control-plane job ids/names/states and opaque continuation tokens; user questions, Tavily evidence, checkpoints, approval scopes, and secrets are not exposed by this change.
-- Provider-controlled continuation tokens remain in-memory only and are bounded against loops/excessive calls.
-- Cross-page duplicate deterministic names fail closed before any remote id is attached.
-- An unknown lifecycle state still fails closed even when the match is otherwise unique.
-- The provider listing is bounded, so reconciliation cannot silently turn into an unbounded cost/latency loop.
+- Persisted expiry/terminal provenance contains only timestamps and opaque identifiers; no research question, Tavily evidence, checkpoint payload, approval scope, or secret is added.
+- Provider terminal errors intentionally use generic local text instead of storing remote raw response bodies that could later contain unexpected provider data.
+- A temporarily delayed completed result does not cause repeated Nemotron/Tavily work; reconciliation only polls control-plane/result transport state.
+- Cleanup occurs only after a terminal CAS succeeds, preventing cleanup from racing a state that failed to become authoritative.
+- Unknown provider states and identity substitution remain fail-closed.
 
 ## Known Blockers / Risks
 - No verified .NET 8/Windows execution signal is available here; `dotnet build`, `dotnet test`, XAML load, DPAPI, crypto runtime, and live WPF behavior remain unverified.
-- The new paginated reconciliation path and tests are statically reviewed but not compiled/executed.
-- Reserved encrypted work-item expiry is not durably represented in local provenance.
-- Remote terminal failure (`FAILED`/`ERROR`) and delayed/missing result handling still need explicit durable state transitions.
+- The new terminal/expiry paths and tests are statically reviewed but not compiled/executed.
+- A `DispatchReserved` record with no attached remote id still remains deliberately ambiguous when bounded listing returns zero; expiry alone is not used to claim that a remote job never existed.
+- A provider job that remains nonterminal beyond encrypted input expiry still requires an explicit policy (likely durable cancellation) rather than silently declaring the remote process stopped.
 - No production transport is accessible by both Windows and Nebius Serverless, and no built/published worker executable/image exists yet.
 - `ResearchJobRuntime` still deliberately rejects non-local records; WPF Serverless controls remain intentionally absent until cloud execution is real and validated.
 - Local voice/transcription and a verified production embedding adapter remain absent.
 
 ## Single Best Next Task
-First obtain a real Windows/.NET 8 build + tests + WPF launch signal and repair every issue found. If that remains unavailable, add durable encrypted-work-item expiry plus explicit remote `FAILED`/`ERROR` and delayed/missing-result terminal handling, with CAS/audit coverage and conservative cleanup semantics. After that, build the deployable worker entry point/image + authenticated shared transport and perform live Nebius validation before advertising Serverless in WPF.
+First obtain a real Windows/.NET 8 build + tests + WPF launch signal and repair every issue found. If that remains unavailable, implement the deployable NVIDEA research worker entry point/image plus an authenticated TTL-backed shared transport adapter, then wire a narrow end-to-end Serverless contract probe that exercises opaque dispatch -> one Nemotron/Tavily stage -> protected result -> exact-once ingestion without exposing WPF controls until live Nebius validation succeeds.

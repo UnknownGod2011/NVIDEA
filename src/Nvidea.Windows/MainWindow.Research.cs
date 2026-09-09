@@ -68,6 +68,16 @@ public partial class MainWindow
         SetResearchRunning(true);
         try
         {
+            var current = await runtime.GetStatusAsync(jobId);
+            if (current.CanRecoverInterrupted)
+            {
+                // Recovery itself never calls Nemotron/Tavily. Re-arming and retrying are two
+                // separate deliberate clicks so the duplicate provider-work/cost warning is visible.
+                var rearmed = await runtime.RecoverInterruptedAsync(jobId);
+                ApplyResearchStatus(rearmed);
+                return;
+            }
+
             await RunResearchStepAsync(runtime, jobId);
         }
         catch (Exception)
@@ -193,7 +203,10 @@ public partial class MainWindow
         }
 
         ResearchStartButton.IsEnabled = true;
-        ResearchResumeButton.IsEnabled = status?.CanRunNextStep == true;
+        ResearchResumeButton.IsEnabled = status?.CanRunNextStep == true || status?.CanRecoverInterrupted == true;
+        ResearchResumeButton.Content = status?.CanRecoverInterrupted == true
+            ? "Re-arm interrupted stage"
+            : "Resume next stage";
         ResearchCancelButton.IsEnabled = status?.CanCancel == true;
     }
 }

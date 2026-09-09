@@ -136,7 +136,7 @@ public sealed class NebiusServerlessJobClientTests
         Assert.Equal("mbsecver-tavily", environment[0].GetProperty("mysteryboxSecret").GetProperty("versionId").GetString());
         Assert.Equal("NEBIUS_TOKEN", environment[1].GetProperty("name").GetString());
         Assert.Equal("mbsec-nebius", environment[1].GetProperty("mysteryboxSecret").GetProperty("secretId").GetString());
-        Assert.DoesNotContain("must-not-be-sent", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("must-not-be-sent", body!, StringComparison.Ordinal);
     }
 
     [Fact]

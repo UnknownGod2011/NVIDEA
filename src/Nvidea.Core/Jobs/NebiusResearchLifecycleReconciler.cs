@@ -110,8 +110,8 @@ public static class NebiusServerlessJobSnapshotParser
 /// Reconciles the narrow crash window where a deterministic Nebius job may have been accepted
 /// after local DispatchReserved persistence but before the remote id was attached. Reconciliation
 /// never re-creates work: it only attaches one uniquely matching, recognized Nebius job resource
-/// and verifies that resource again through a direct GET. It also implements durable remote
-/// cancellation as a two-step CancelRequested -> Cancelled flow.
+/// discovered across a bounded complete listing and verifies that resource again through a direct
+/// GET. It also implements durable remote cancellation as a two-step CancelRequested -> Cancelled flow.
 /// </summary>
 public sealed class NebiusResearchLifecycleReconciler
 {
@@ -146,14 +146,8 @@ public sealed class NebiusResearchLifecycleReconciler
         }
 
         var expectedName = GetDeterministicRemoteJobName(provenance.OpaqueWorkItemId);
-        var response = await _serverless.ListAsync(cancellationToken).ConfigureAwait(false);
-        if (!string.IsNullOrWhiteSpace(NebiusServerlessJobSnapshotParser.TryGetNextPageToken(response)))
-        {
-            throw new InvalidOperationException(
-                "Nebius returned a paginated job list. Reconciliation refuses a partial list because a same-name job could exist on another page.");
-        }
-
-        var matches = NebiusServerlessJobSnapshotParser.ParseList(response)
+        var jobs = await NebiusBoundedJobListReader.ReadAllAsync(_serverless, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var matches = jobs
             .Where(job => string.Equals(job.Name, expectedName, StringComparison.Ordinal))
             .ToArray();
 

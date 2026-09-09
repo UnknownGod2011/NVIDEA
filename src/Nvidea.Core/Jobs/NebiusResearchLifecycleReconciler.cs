@@ -8,6 +8,7 @@ public enum NebiusRemoteJobState
     Unknown,
     Pending,
     Running,
+    Cancelling,
     Completed,
     Failed,
     Cancelled
@@ -19,8 +20,10 @@ public sealed record NebiusRemoteJobSnapshot(
     NebiusRemoteJobState State);
 
 /// <summary>
-/// Conservative parser for Nebius job resources. Unknown or malformed status values are preserved
-/// as Unknown and must never be treated as proof that work started, completed, or was cancelled.
+/// Conservative parser for Nebius AI job resources. Unknown or malformed status values are
+/// preserved as Unknown and must never be treated as proof that work started, completed, failed,
+/// or was cancelled. The state mapping intentionally mirrors the current Nebius AI v1 JobStatus
+/// enum rather than guessing provider states.
 /// </summary>
 public static class NebiusServerlessJobSnapshotParser
 {
@@ -54,6 +57,16 @@ public static class NebiusServerlessJobSnapshotParser
         return result;
     }
 
+    public static string? TryGetNextPageToken(NebiusServerlessResponse response)
+    {
+        ArgumentNullException.ThrowIfNull(response);
+        if (string.IsNullOrWhiteSpace(response.RawJson))
+            return null;
+
+        using var document = JsonDocument.Parse(response.RawJson);
+        return TryReadString(document.RootElement, "nextPageToken");
+    }
+
     public static NebiusRemoteJobSnapshot ParseGet(NebiusServerlessResponse response)
     {
         ArgumentNullException.ThrowIfNull(response);
@@ -78,11 +91,12 @@ public static class NebiusServerlessJobSnapshotParser
 
     public static NebiusRemoteJobState ParseState(string? state) => state?.Trim().ToUpperInvariant() switch
     {
-        "PENDING" or "QUEUED" or "STARTING" => NebiusRemoteJobState.Pending,
+        "PROVISIONING" or "STARTING" => NebiusRemoteJobState.Pending,
         "RUNNING" => NebiusRemoteJobState.Running,
-        "COMPLETED" or "SUCCEEDED" => NebiusRemoteJobState.Completed,
-        "FAILED" => NebiusRemoteJobState.Failed,
-        "CANCELLED" or "CANCELED" => NebiusRemoteJobState.Cancelled,
+        "CANCELLING" => NebiusRemoteJobState.Cancelling,
+        "COMPLETED" => NebiusRemoteJobState.Completed,
+        "FAILED" or "ERROR" => NebiusRemoteJobState.Failed,
+        "CANCELLED" => NebiusRemoteJobState.Cancelled,
         _ => NebiusRemoteJobState.Unknown
     };
 
@@ -95,8 +109,9 @@ public static class NebiusServerlessJobSnapshotParser
 /// <summary>
 /// Reconciles the narrow crash window where a deterministic Nebius job may have been accepted
 /// after local DispatchReserved persistence but before the remote id was attached. Reconciliation
-/// never re-creates work: it only attaches one uniquely matching, recognized Nebius job resource.
-/// It also implements durable remote cancellation as a two-step CancelRequested -> Cancelled flow.
+/// never re-creates work: it only attaches one uniquely matching, recognized Nebius job resource
+/// and verifies that resource again through a direct GET. It also implements durable remote
+/// cancellation as a two-step CancelRequested -> Cancelled flow.
 /// </summary>
 public sealed class NebiusResearchLifecycleReconciler
 {
@@ -132,6 +147,12 @@ public sealed class NebiusResearchLifecycleReconciler
 
         var expectedName = GetDeterministicRemoteJobName(provenance.OpaqueWorkItemId);
         var response = await _serverless.ListAsync(cancellationToken).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(NebiusServerlessJobSnapshotParser.TryGetNextPageToken(response)))
+        {
+            throw new InvalidOperationException(
+                "Nebius returned a paginated job list. Reconciliation refuses a partial list because a same-name job could exist on another page.");
+        }
+
         var matches = NebiusServerlessJobSnapshotParser.ParseList(response)
             .Where(job => string.Equals(job.Name, expectedName, StringComparison.Ordinal))
             .ToArray();
@@ -141,17 +162,27 @@ public sealed class NebiusResearchLifecycleReconciler
         if (matches.Length > 1)
             throw new InvalidOperationException("Multiple Nebius jobs match the reserved deterministic research job name; refusing ambiguous attachment.");
 
-        var match = matches[0];
-        if (match.State == NebiusRemoteJobState.Unknown)
+        var listMatch = matches[0];
+        if (listMatch.State == NebiusRemoteJobState.Unknown)
             throw new InvalidOperationException("Matching Nebius job has an unknown lifecycle state; refusing attachment.");
+
+        var verified = NebiusServerlessJobSnapshotParser.ParseGet(
+            await _serverless.GetAsync(listMatch.Id, cancellationToken).ConfigureAwait(false));
+        if (!string.Equals(verified.Id, listMatch.Id, StringComparison.Ordinal)
+            || !string.Equals(verified.Name, expectedName, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("Nebius direct job verification did not match the uniquely listed research resource.");
+        }
+        if (verified.State == NebiusRemoteJobState.Unknown)
+            throw new InvalidOperationException("Verified Nebius job has an unknown lifecycle state; refusing attachment.");
 
         return await _ingestor.AttachDispatchAsync(
             new NebiusResearchDispatchReceipt(
                 current.JobId,
                 provenance.InputCheckpointStep,
                 provenance.OpaqueWorkItemId,
-                match.Id,
-                DateTimeOffset.UtcNow),
+                verified.Id,
+                provenance.DispatchedAt),
             cancellationToken).ConfigureAwait(false);
     }
 

@@ -67,10 +67,15 @@ public sealed class RemoteResearchResultIngestor
             throw new InvalidOperationException("Only a pending research stage can be attached to a remote dispatch.");
         if (current.ExecutionLocation != JobExecutionLocation.Local)
             throw new InvalidOperationException("Research dispatch can only attach from trusted local state.");
-        if (current.RemoteResearch is not null)
-            throw new InvalidOperationException("Research job already carries remote execution provenance.");
+        if (current.RemoteResearch is { State: not RemoteResearchProvenanceState.ResultApplied })
+            throw new InvalidOperationException("Research job already carries unfinished remote execution provenance.");
         if (current.ApprovalScope is not null)
             throw new InvalidOperationException("Approval-bearing research cannot be dispatched remotely.");
+        if (string.IsNullOrWhiteSpace(receipt.OpaqueWorkItemId)
+            || string.IsNullOrWhiteSpace(receipt.RemoteJobId))
+        {
+            throw new InvalidOperationException("Dispatch receipt is missing remote provenance identifiers.");
+        }
 
         var checkpoint = current.Checkpoint
             ?? throw new InvalidOperationException("Research dispatch requires a durable input checkpoint.");

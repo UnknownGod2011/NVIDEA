@@ -40,7 +40,8 @@ public sealed record NebiusResearchDispatchOptions(
     string SubnetId,
     NebiusServerlessDiskSpec Disk,
     IReadOnlyDictionary<string, string>? EnvironmentVariables = null,
-    IReadOnlyDictionary<string, NebiusMysteryBoxSecretRef>? SecretEnvironmentVariables = null);
+    IReadOnlyDictionary<string, NebiusMysteryBoxSecretRef>? SecretEnvironmentVariables = null,
+    IReadOnlyList<NebiusServerlessVolumeMount>? Volumes = null);
 
 public sealed record NebiusResearchDispatchReceipt(
     Guid LocalJobId,
@@ -275,8 +276,7 @@ public static class ResearchWorkItemProtector
 /// Dispatches an already-staged research checkpoint to Nebius Serverless without placing the
 /// checkpoint payload, question, or API secrets in job arguments/environment. A protected payload
 /// is written to a dedicated transport first; the Serverless control plane receives only a random
-/// opaque work-item id plus non-secret protocol metadata. This class does not claim that a transport
-/// adapter or worker image exists; production wiring must provide both explicitly.
+/// opaque work-item id plus non-secret protocol metadata.
 /// </summary>
 public sealed class NebiusResearchDispatcher
 {
@@ -327,7 +327,8 @@ public sealed class NebiusResearchDispatcher
                 SubnetId: _options.SubnetId,
                 EnvironmentVariables: environment,
                 Disk: _options.Disk,
-                SecretEnvironmentVariables: _options.SecretEnvironmentVariables);
+                SecretEnvironmentVariables: _options.SecretEnvironmentVariables,
+                Volumes: _options.Volumes);
 
             var response = await _serverless.CreateAsync(spec, cancellationToken).ConfigureAwait(false);
             var remoteJobId = response.TryGetResourceId();

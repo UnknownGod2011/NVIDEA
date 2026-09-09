@@ -20,8 +20,9 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Safe browser agent includes persistent Chromium state, popup/new-tab tracking, iterative verification, prompt-injection/tool-output trust boundaries, permission gates, durable download quarantine, emergency stop, and explicit crash recovery.
 - Remote research has bidirectional encrypted payload transport, one-stage `NebiusResearchWorker`, two-phase `DispatchReserved -> Nebius Create -> remote-id attachment`, exact-once result ingestion, deterministic lifecycle reconciliation across bounded complete job listings, durable cancellation, terminal/result-expiry handling, mounted encrypted transport, non-root worker image, and a signed authoritative remote-ID binding protocol.
 - Signed binding publication is wired into normal two-phase dispatch, crash-window reservation recovery, and dispatched reconciliation.
-- `NebiusResearchClientRuntime` now provides a single client-only composition boundary that constructs dispatcher, reconciler, ingestor, and binding publisher from one signing identity and performs race-safe post-terminal binding cleanup.
-- Production remains truthfully local until a live Nebius/Object Storage/MysteryBox/container end-to-end probe succeeds.
+- `NebiusResearchClientRuntime` provides a single client-only composition boundary that constructs dispatcher, reconciler, ingestor, and binding publisher from one signing identity and performs race-safe post-terminal binding cleanup.
+- Nebius Serverless job creation now models the documented `spec.volumes[]` contract and research dispatch passes configured shared transport mounts through to the worker, closing the previous control-plane gap that made `DirectoryProtectedResearchTransport` undeployable on a real job.
+- Production remains truthfully local until a live Nebius/Object Storage/SecretStash-or-MysteryBox/container end-to-end probe succeeds.
 
 ## Persistent Progress History
 
@@ -32,44 +33,53 @@ Added Nebius/Nemotron inference, layered memory, Tavily research, capability/app
 Added Tavily Extract enrichment, deterministic evidence quality/staleness/diversity handling, staged research boundaries, restart-safe synthesis, privacy-safe status, WPF durable-research UX, emergency stop, explicit interrupted-stage recovery, generic non-research fail-closed behavior, and mutation-scoped cross-process research ownership.
 
 ### 2026-09-09 — Nebius Serverless privacy/control plane
-Refreshed the Jobs client to current subnet/disk requirements, MysteryBox secret refs, secret rejection, List/Get/Create/Cancel, retries and endpoint allow-listing. Added encrypted opaque-ID dispatch, protected result return, one-stage worker primitive, durable remote provenance, exact CAS result ingestion, two-phase dispatch reservation, deterministic crash reconciliation, typed provider lifecycle parsing, durable `CancelRequested -> Cancelled` handling, bounded pagination, explicit terminal/result-expiry reconciliation, mounted encrypted transport, deployable non-root worker image, signed authoritative resource-ID bindings, and automatic binding publication after durable remote-ID attachment.
+Refreshed the Jobs client to current subnet/disk requirements, secret refs, secret rejection, List/Get/Create/Cancel, retries and endpoint allow-listing. Added encrypted opaque-ID dispatch, protected result return, one-stage worker primitive, durable remote provenance, exact CAS result ingestion, two-phase dispatch reservation, deterministic crash reconciliation, typed provider lifecycle parsing, durable `CancelRequested -> Cancelled` handling, bounded pagination, explicit terminal/result-expiry reconciliation, mounted encrypted transport, deployable non-root worker image, signed authoritative resource-ID bindings, automatic binding publication after durable remote-ID attachment, and terminal binding cleanup.
 
-### 2026-09-09 — Current run: client composition + terminal binding cleanup
+### 2026-09-09 — Current run: verified Serverless transport mount contract
 Completed:
-- Re-read `progress.md` completely, inspected current NVIDEA repo state/recent commits and the relevant transport, dispatcher, reconciler, result-ingestion, and binding implementations.
-- Added `ResearchDispatchBindingCleanup`, which only deletes a signed dispatch binding after the durable local record proves the remote stage is no longer executable: `ResultApplied` with local Pending/Completed, `Cancelled` with local Cancelled, or `RemoteFailed`/`Expired` with local Failed.
-- Cleanup occurs after the existing CAS-protected state transition and is best-effort. A shared-storage deletion failure therefore cannot roll back, corrupt, or falsify durable job state.
-- Added `NebiusResearchClientRuntime`, a client-only composition root that creates exactly one `ResearchDispatchBindingPublisher` from the client private key and passes that same publisher instance to both `TwoPhaseNebiusResearchDispatcher` and `NebiusResearchLifecycleReconciler`.
-- The runtime also owns the matching `RemoteResearchResultIngestor` and exposes dispatch, reserved reconciliation, dispatched reconciliation, cancellation, cancellation reconciliation, and direct exact-once ingestion operations.
-- Runtime wrappers perform signed-binding cleanup only after successful durable result application or terminal reconciliation. No cleanup occurs for `DispatchReserved`, `Dispatched`, or `CancelRequested` states, preserving worker/control-plane recovery races.
-- Added `ResearchDispatchBindingCleanupTests.cs` covering successful result-applied cleanup, provider failure/cancellation/expiry cleanup, refusal to clean active states, refusal when execution remains remote, and cleanup-failure tolerance.
+- Re-read `progress.md` completely and inspected current NVIDEA repo state, recent commits, the existing Nebius contract probe, Serverless REST client, two-phase dispatcher, worker, and relevant tests.
+- Re-checked current official Nebius Serverless documentation and the current official Nebius Go SDK protobuf before changing API assumptions.
+- Found a verified deployment blocker: Nebius Jobs support mounted buckets/shared filesystems through `spec.volumes[]`, but `NebiusServerlessJobSpec` did not model or serialize volumes, while `Nvidea.Worker` requires a shared `NVIDEA_TRANSPORT_ROOT` for work items, signed bindings, and encrypted results.
+- Added `NebiusServerlessVolumeMount` with `Source`, optional `SourcePath`, absolute `ContainerPath`, and provider mode `READ_WRITE`/`READ_ONLY`.
+- `NebiusServerlessJobClient.CreateAsync` now serializes configured mounts under the documented `spec.volumes[]` shape and omits the property when no mounts are configured, preserving existing non-volume job payloads.
+- Added pre-network validation for blank/oversized/control-character sources, non-absolute container paths, duplicate mount points, unsupported modes, and malformed source paths.
+- Extended `NebiusResearchDispatchOptions` with optional volume mounts without breaking existing positional callers, and passed those mounts through both `NebiusResearchDispatcher` and the crash-safe `TwoPhaseNebiusResearchDispatcher`.
+- Added `NebiusServerlessVolumeMountTests.cs` covering exact REST JSON shape, omission when unused, relative-path/unsupported-mode rejection, and duplicate-container-path rejection.
+- Added `TwoPhaseNebiusVolumeMountTests.cs` proving configured shared transport mount plus `NVIDEA_TRANSPORT_ROOT` survive the research dispatcher boundary into the exact Nebius job specification.
+- Updated `docs/nebius-research-worker.md` with the now-explicit shared mount contract and removed the stale statement that dispatch-binding cleanup was still missing.
 
 Commits this run:
-- `a62d95afa678295bb2db0aee9ed94d2c8bd8bd4a` — add safe client runtime and binding cleanup boundary.
-- `bc98e7d40f5766426cb5ff34a122382dde76cdfb` — add terminal binding cleanup regression tests.
+- `93870a913c04bd4f0cc8cbda0126eff9f97ab824` — add Nebius Serverless volume mount support.
+- `14bc6e1fd83e58d10df8f5bad99b2221ef3a4bd7` — harden optional volume serialization and absolute-path validation.
+- `fecd8635d4523c78b59fdb023e38c57f342f0dd6` — wire shared transport volumes into research dispatch options/legacy path.
+- `dfac05c7e1fc71e8a8896e21bbdc989d646c5c4f` — pass mounted volumes through the two-phase dispatcher.
+- `b098acdcdea52399d959b10165606d17e58aaece` — add Serverless volume REST contract tests.
+- `d17bcbcfcd39feab5d08525d9ee8eac8adb3db66` — add two-phase transport mount passthrough regression test.
+- `791fcbc27f34d23e58ce7b03085d972d25b1c19c` — document verified Nebius transport mount contract.
 
 Validation / evidence:
 - Repository metadata reported `repository_full_name = UnknownGod2011/NVIDEA` immediately before every GitHub mutation; no other repository was mutated.
-- Static review confirms binding deletion is post-CAS and gated by both local execution location and a terminal/result-applied provenance combination.
-- Static review confirms active `DispatchReserved`, `Dispatched`, and `CancelRequested` stages retain the binding and therefore preserve worker/reconciliation safety.
-- Static review confirms dispatcher and reconciler receive the exact same `ResearchDispatchBindingPublisher` instance from the new client composition boundary; the client private signing key is not added to worker options or Serverless environment variables.
+- Current Nebius Serverless REST documentation explicitly documents `spec.volumes[].source`, absolute `containerPath`, and `mode = READ_ONLY|READ_WRITE`, and recommends mounted volumes for job results/checkpoints.
+- Current official Nebius SDK protobuf independently confirms `JobSpec.volumes` and the same volume field/mode names.
+- Static review confirms research dispatch now carries the mount without placing research payloads or API keys into arguments/environment.
+- Static review confirms the worker's plaintext `NVIDEA_TRANSPORT_ROOT` can point to the same non-secret absolute container mount path while API/RSA secrets remain secret-injected.
 - `dotnet`/Windows/container execution is not available in this automation environment, so compilation and unit-test execution are **not claimed**.
 - No GitHub Actions workflow was triggered merely to manufacture a green signal.
 
 Security / privacy / failure review:
-- Dispatch bindings still contain only opaque/control-plane identity and bounded timestamps; they contain no research question, evidence, selected text, clipboard content, API key, or OS-private payload.
-- Cleanup is deliberately delayed until durable local state proves the remote stage is terminal or its verified result is already applied.
-- If cleanup fails, the signed binding remains cryptographically time-bounded and can be removed by Object Storage lifecycle policy; job correctness does not depend on deletion succeeding.
-- The new composition root keeps the private signing key client-side and prevents normal production wiring from accidentally creating separate publisher identities for dispatch versus reconciliation.
-- Existing lower-level constructors remain available for tests/backward compatibility, so production callers must deliberately use `NebiusResearchClientRuntime` when Serverless is eventually enabled.
+- Volume configuration contains infrastructure identity/path metadata only; encrypted research payloads remain in the protected transport objects.
+- The research worker needs `READ_WRITE` because it must publish encrypted results and consume/create-once control-plane artifacts; no secret is introduced into the new volume model.
+- Optional volumes are omitted entirely for jobs that do not use them.
+- Invalid volume paths/modes fail before any network request, reducing accidental host-path assumptions and ambiguous provider behavior.
+- Shared transport remains protected by encryption/signatures, bounded opaque IDs, create-once publication, TTLs, terminal cleanup, and provider lifecycle retention as defense in depth.
 
 ## Known Blockers / Risks
 - No verified .NET 8/Windows/container execution signal is available here; new code/tests are statically reviewed but not compiled/executed.
-- No live Object Storage bucket, registry image, MysteryBox keys, subnet, or Serverless job has been provisioned/validated in this environment.
-- WPF/`ResearchJobRuntime` still deliberately avoid claiming production Serverless execution until the live contract succeeds.
-- The new client runtime is not yet wired into WPF, intentionally, because the cloud path has not passed the live end-to-end probe.
-- Cleanup is best-effort by design and still relies on bucket lifecycle policy as a retention backstop if transport deletion fails.
+- No live Object Storage bucket/filesystem, registry image, SecretStash/MysteryBox keys, subnet, or Serverless job has been provisioned/validated in this environment.
+- WPF/`ResearchJobRuntime` still deliberately avoid claiming production Serverless execution until the live end-to-end contract succeeds.
+- Current official Nebius protobuf exposes additional legitimate job states `IMAGE_PULLING` and `DELETING`; NVIDEA's lifecycle parser still maps those to `Unknown`. This now needs a small verified parser/test refresh before live reconciliation to avoid false fail-closed handling during normal provider transitions.
+- The code does not yet enforce that a configured `NVIDEA_TRANSPORT_ROOT` exactly equals one configured volume's `ContainerPath`; deployment docs specify the invariant, but production composition should validate it automatically.
 - Local voice/transcription and a verified production embedding adapter remain absent.
 
 ## Single Best Next Task
-Prove the real cloud boundary instead of adding more speculative abstraction: extend the existing Nebius contract probe into a narrow end-to-end research probe that uses the deployable worker image plus mounted Object Storage transport and MysteryBox-injected Nemotron/Tavily/worker secrets, then validate `encrypted opaque dispatch -> durable remote-id attachment -> signed binding -> worker one-stage Nemotron/Tavily execution -> encrypted result -> exact-once local ingestion -> terminal binding cleanup`. Capture exact API/container mismatches and fix only those verified gaps. WPF Serverless controls should remain hidden until this succeeds.
+Finish the live-deployment preflight instead of adding unrelated abstraction: refresh lifecycle parsing/tests for current Nebius `IMAGE_PULLING`/`DELETING` states, add a fail-fast research deployment validator that proves `NVIDEA_TRANSPORT_ROOT` matches a `READ_WRITE` volume and all required worker secrets are secret references, then extend the existing contract probe to create/reconcile one real mounted worker job when credentials/resources are supplied. The proof target remains `encrypted opaque dispatch -> mounted shared transport -> durable remote-id attachment -> signed binding -> worker one-stage Nemotron/Tavily execution -> encrypted result -> exact-once local ingestion -> terminal binding cleanup`. WPF Serverless controls stay hidden until that succeeds.

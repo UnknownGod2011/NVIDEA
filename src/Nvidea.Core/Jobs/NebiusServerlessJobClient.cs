@@ -15,6 +15,16 @@ public sealed record NebiusServerlessOptions(
 public sealed record NebiusServerlessDiskSpec(string Type, long SizeBytes);
 public sealed record NebiusMysteryBoxSecretRef(string? SecretId = null, string? VersionId = null);
 
+/// <summary>
+/// A Nebius Serverless container volume mount. Source is a Nebius bucket/filesystem name or id,
+/// or an s3:// source supported by Nebius. Mode uses the provider enum names READ_WRITE/READ_ONLY.
+/// </summary>
+public sealed record NebiusServerlessVolumeMount(
+    string Source,
+    string ContainerPath,
+    string Mode = "READ_WRITE",
+    string? SourcePath = null);
+
 public sealed record NebiusServerlessJobSpec(
     string Name,
     string Image,
@@ -26,7 +36,8 @@ public sealed record NebiusServerlessJobSpec(
     string? SubnetId = null,
     IReadOnlyDictionary<string, string>? EnvironmentVariables = null,
     NebiusServerlessDiskSpec? Disk = null,
-    IReadOnlyDictionary<string, NebiusMysteryBoxSecretRef>? SecretEnvironmentVariables = null);
+    IReadOnlyDictionary<string, NebiusMysteryBoxSecretRef>? SecretEnvironmentVariables = null,
+    IReadOnlyList<NebiusServerlessVolumeMount>? Volumes = null);
 
 public sealed record NebiusServerlessResponse(HttpStatusCode StatusCode, string RawJson)
 {
@@ -91,6 +102,9 @@ public sealed class NebiusServerlessJobClient : INebiusServerlessJobClient
         var plaintextEnvironment = (spec.EnvironmentVariables ?? new Dictionary<string, string>()).Select(pair => new NebiusEnvironmentVariablePayload(pair.Key, pair.Value, null));
         var secretEnvironment = (spec.SecretEnvironmentVariables ?? new Dictionary<string, NebiusMysteryBoxSecretRef>()).Select(pair => new NebiusEnvironmentVariablePayload(pair.Key, null, new NebiusMysteryBoxSecretPayload(pair.Value.SecretId, pair.Value.VersionId)));
         var environmentVariables = plaintextEnvironment.Concat(secretEnvironment).ToArray();
+        var volumes = (spec.Volumes ?? Array.Empty<NebiusServerlessVolumeMount>())
+            .Select(volume => new NebiusVolumeMountPayload(volume.Source, volume.SourcePath, volume.ContainerPath, volume.Mode))
+            .ToArray();
         var payload = new
         {
             metadata = new { parentId = _options.ProjectId, name = spec.Name },
@@ -100,6 +114,7 @@ public sealed class NebiusServerlessJobClient : INebiusServerlessJobClient
                 containerCommand = spec.ContainerCommand,
                 args = spec.Arguments,
                 environmentVariables,
+                volumes,
                 timeout = spec.Timeout,
                 platform = spec.Platform,
                 preset = spec.Preset,
@@ -191,6 +206,34 @@ public sealed class NebiusServerlessJobClient : INebiusServerlessJobClient
             ArgumentNullException.ThrowIfNull(pair.Value);
             if (string.IsNullOrWhiteSpace(pair.Value.SecretId) && string.IsNullOrWhiteSpace(pair.Value.VersionId)) throw new ArgumentException($"MysteryBox reference for '{pair.Key}' must provide secretId or versionId.", nameof(spec));
         }
+
+        var volumes = spec.Volumes ?? Array.Empty<NebiusServerlessVolumeMount>();
+        var seenContainerPaths = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var volume in volumes)
+        {
+            ArgumentNullException.ThrowIfNull(volume);
+            if (string.IsNullOrWhiteSpace(volume.Source) || volume.Source.Length > 1024 || volume.Source.Any(char.IsControl))
+                throw new ArgumentException("Nebius volume source must be a bounded non-empty bucket/filesystem source.", nameof(spec));
+            if (string.IsNullOrWhiteSpace(volume.ContainerPath)
+                || volume.ContainerPath.Length > 1024
+                || volume.ContainerPath.Any(char.IsControl)
+                || !volume.ContainerPath.StartsWith('/', StringComparison.Ordinal))
+            {
+                throw new ArgumentException("Nebius volume container path must be a bounded absolute Linux path.", nameof(spec));
+            }
+            if (!seenContainerPaths.Add(volume.ContainerPath))
+                throw new ArgumentException($"Nebius volume container path '{volume.ContainerPath}' is mounted more than once.", nameof(spec));
+            if (!string.Equals(volume.Mode, "READ_WRITE", StringComparison.Ordinal)
+                && !string.Equals(volume.Mode, "READ_ONLY", StringComparison.Ordinal))
+            {
+                throw new ArgumentException("Nebius volume mode must be READ_WRITE or READ_ONLY.", nameof(spec));
+            }
+            if (volume.SourcePath is { } sourcePath
+                && (sourcePath.Length > 1024 || sourcePath.Any(char.IsControl)))
+            {
+                throw new ArgumentException("Nebius volume source path is invalid.", nameof(spec));
+            }
+        }
     }
 
     private static void ValidateEnvironmentVariableName(string name, string parameterName)
@@ -220,4 +263,5 @@ public sealed class NebiusServerlessJobClient : INebiusServerlessJobClient
     private static void EnsureJsonIfPresent(string body) { if (!string.IsNullOrWhiteSpace(body)) using var _ = JsonDocument.Parse(body); }
     private sealed record NebiusEnvironmentVariablePayload(string Name, string? Value, NebiusMysteryBoxSecretPayload? MysteryboxSecret);
     private sealed record NebiusMysteryBoxSecretPayload(string? SecretId, string? VersionId);
+    private sealed record NebiusVolumeMountPayload(string Source, string? SourcePath, string ContainerPath, string Mode);
 }

@@ -108,8 +108,6 @@ static async Task<int> RunPlannerProbeAsync()
 
 static async Task<int> RunLiveResearchProbeAsync()
 {
-    // This mode is deliberately explicit and expensive. The host transport root must be a mounted
-    // view of the same backing storage configured as the worker's Nebius READ_WRITE volume.
     var serverlessAccessToken = RequiredEnvironment("NVIDEA_LIVE_SERVERLESS_ACCESS_TOKEN");
     var projectId = RequiredEnvironment("NVIDEA_LIVE_SERVERLESS_PROJECT_ID");
     var workerImage = RequiredEnvironment("NVIDEA_LIVE_WORKER_IMAGE");
@@ -267,14 +265,14 @@ static async Task<int> RunLiveResearchProbeAsync()
     }
 
     var report = ResearchJobHandler.ReadCompletedReport(current);
-    if (report.Evidence.Items.Count == 0)
+    if (report.Evidence.Sources.Count == 0)
         return Fail("live-research", "Completed report contained no research evidence.");
     if (report.UsedCitations.Count == 0)
         return Fail("live-research", "Completed report contained no validated citations.");
 
     Console.WriteLine("NVIDEA live Nebius research contract probe: PASS");
     Console.WriteLine($"Remote durable stages: {remoteStages}");
-    Console.WriteLine($"Evidence items: {report.Evidence.Items.Count}");
+    Console.WriteLine($"Evidence items: {report.Evidence.Sources.Count}");
     Console.WriteLine($"Validated citations: {report.UsedCitations.Count}");
     Console.WriteLine("Encrypted shared transport: accepted");
     Console.WriteLine("Authoritative dispatch binding: accepted");

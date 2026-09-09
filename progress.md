@@ -23,10 +23,11 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - `NebiusResearchClientRuntime` provides one client-only composition boundary from a single signing identity.
 - Nebius Serverless job creation models `spec.volumes[]`; research dispatch carries configured shared transport mounts to the worker.
 - `NebiusResearchDeploymentPreflight` verifies the live worker topology without resolving secret values: exact `NVIDEA_TRANSPORT_ROOT`/volume-path match, `READ_WRITE` transport, MysteryBox-backed Nebius/Tavily/worker-private-key credentials, and the client public key required for signed binding verification.
+- `NebiusResearchDeploymentPreflight.ValidateObjectStorageAlignment` additionally proves that the native client bucket/prefix and the Serverless mounted bucket/SourcePath resolve to the same protected research objects before any job is submitted.
 - `NebiusResearchLiveRuntimeFactory` is the explicit production composition gate and runs deployment preflight before constructing the live remote runtime.
 - Current Nebius Serverless lifecycle parsing recognizes preparation states `PROVISIONING`, `IMAGE_PULLING`, `STARTING`; active `RUNNING`; teardown states `CANCELLING`, `DELETING`; terminal `COMPLETED`, `FAILED`, `ERROR`, and `CANCELLED`. Unknown future states remain fail-closed.
-- `tools/Nvidea.NebiusContractProbe` has an explicit opt-in `--live-research` mode that constructs through the production live factory and can exercise all three durable research stages remotely. The cheap Token Factory planner probe remains the default.
-- Native Windows-side S3-compatible protected transport now exists: `NebiusObjectStorageClient` + `S3ProtectedResearchTransport` allow the client to publish/read encrypted work items, signed bindings, and encrypted results directly through Nebius Object Storage instead of requiring an external bucket mount.
+- Native Windows-side S3-compatible protected transport exists: `NebiusObjectStorageClient` + `S3ProtectedResearchTransport` publish/read encrypted work items, signed bindings, and encrypted results directly through Nebius Object Storage.
+- `tools/Nvidea.NebiusContractProbe --live-research` now uses that native Object Storage transport on the client and the Serverless-mounted directory transport in the worker, with explicit bucket/prefix/mount alignment preflight. The cheap Token Factory planner probe remains the default.
 - Production remains truthfully local until the live Nebius/Object Storage/MysteryBox/container end-to-end probe actually succeeds.
 
 ## Persistent Progress History
@@ -43,55 +44,54 @@ Added current Jobs REST contracts, MysteryBox secret refs, encrypted opaque-ID d
 ### 2026-09-09 — Live deployment preflight + probe
 Added `NebiusServerlessVolumeMount`, strict mount validation, dispatcher passthrough, `NebiusResearchDeploymentPreflight`, `NebiusResearchLiveRuntimeFactory`, current provider-state handling, and `Nvidea.NebiusContractProbe --live-research` for the complete three-stage durable research workflow. The probe remains opt-in and no live PASS is claimed without real infrastructure.
 
-### 2026-09-10 — Current run: native Nebius Object Storage protected transport
+### 2026-09-10 — Native Nebius Object Storage transport
+Added `IProtectedResearchObjectStoreClient`, `NebiusObjectStorageClient`, and `S3ProtectedResearchTransport`; preserved independent `work-items/`, `dispatch-bindings/`, and `results/` namespaces; added create-once conditional S3 writes, 4 MiB bounds, explicit retries/timeouts, sanitized errors, and regression coverage. Added AWS SDK for .NET v4 and documented the least-privilege Object Storage security boundary.
+
+### 2026-09-10 — Current run: native S3 live-probe integration
 Completed:
-- Re-read `progress.md` completely and inspected the existing mounted-directory transport, protected work-item/result/binding interfaces, live probe, test style, and current project dependencies.
-- Refreshed current Nebius Object Storage/Serverless documentation. Nebius Object Storage is S3-compatible, uses static service-account keys for S3 clients, and Serverless Jobs support read/write Object Storage bucket mounts. AWS SDK for .NET v4 supports conditional `PutObject` with `If-None-Match: *`.
-- Added `src/Nvidea.Core/Jobs/NebiusObjectStorageProtectedResearchTransport.cs`.
-- Added `IProtectedResearchObjectStoreClient`, a narrow object-store boundary with create-once put, bounded get, and idempotent delete.
-- Added `NebiusObjectStorageClient`, a production S3-compatible client using AWS SDK for .NET v4 and static Object Storage credentials.
-- Added `S3ProtectedResearchTransport`, implementing all three existing protected research transport interfaces without changing the cryptographic protocols.
-- Preserved namespace isolation: `work-items/`, `dispatch-bindings/`, `results/`.
-- Added create-once S3 writes using `IfNoneMatch = "*"`; 412 duplicate writes fail closed, 409 conflicts use a small bounded retry budget, and exhausted conflicts never overwrite.
-- Added strict 4 MiB transport bounds on writes and reads, including streaming byte-count enforcement after the provider content-length check.
-- Added per-call cancellation-backed deadlines, explicit retry bounds, object-key/prefix validation, and sanitized provider failures that do not include bucket names, object keys, endpoints, access-key IDs, response bodies, or secrets.
-- Disabled opaque SDK retry behavior (`MaxErrorRetry = 0`) so retry behavior remains explicit in NVIDEA.
-- Added `AWSSDK.S3` v4 dependency (`4.0.102.5`), chosen from the current supported v4 line rather than EOL v3.
-- Added `tests/Nvidea.Core.Tests/S3ProtectedResearchTransportTests.cs` covering round-trip behavior, namespace isolation, duplicate-write fail-closed behavior, idempotent delete, invalid opaque IDs, non-HTTPS endpoint rejection, escaping-prefix rejection, and retry-bound validation.
-- Added `docs/nebius-object-storage-transport.md` describing the security model, credentials boundary, deployment topology, and validation needed before UI exposure.
+- Re-read `progress.md` completely and inspected the existing live research probe, deployment preflight, Serverless volume model, S3 protected transport, and preflight tests before changing anything.
+- Refreshed current official Nebius documentation: Serverless Jobs remain finite container workloads, Object Storage remains S3-compatible, and Object Storage client access uses static service-account keys.
+- Added `NebiusResearchDeploymentPreflight.ValidateObjectStorageAlignment`.
+- The alignment preflight first runs the existing live deployment validation, then requires the native Object Storage bucket to exactly match the mounted Serverless volume source.
+- It also requires the native client prefix to exactly match the mounted volume `SourcePath`, after conservative slash normalization. Path traversal, backslashes, control characters, path-like volume sources, and ambiguous mismatches fail before Serverless submission.
+- Added regression tests covering exact bucket/prefix mapping, bucket-root mapping, bucket mismatch, prefix mismatch, and path-like volume-source rejection.
+- Replaced `DirectoryProtectedResearchTransport` in `Nvidea.NebiusContractProbe --live-research` with `NebiusObjectStorageClient` + `S3ProtectedResearchTransport`.
+- The live client now accepts explicit Object Storage endpoint, region, bucket, static access key id/secret, and prefix configuration. The worker remains directory-backed against the same Serverless-mounted bucket prefix.
+- `NVIDEA_LIVE_TRANSPORT_SOURCE_PATH` defaults to the native S3 prefix, and any explicit mismatch is rejected by preflight.
+- Removed the architectural need for `NVIDEA_LIVE_CLIENT_TRANSPORT_ROOT`; the probe host no longer needs to mount the worker's bucket locally.
+- Updated `docs/nebius-contract-probe.md` with the exact object-key-to-worker-path mapping, required native S3 variables, credential handling, and fail-closed topology rules.
 
 Commits this run:
-- `6e0a0675916892caee87220d8214fccd9b827733` — add native Nebius Object Storage research transport.
-- `cd9805429d1f210afd671fe4ced5f6f2410becec` — add AWS S3 SDK v4 dependency.
-- `213ca5b4eb11d3fd4b0033c8a5ea39078d7cca70` — add native S3 transport regression tests.
-- `d5637c270b6253f0b454461ee2a97d221c2d95e2` — document native Object Storage transport.
+- `c9dc06cdf899eaaaedb31d870573912371256294` — validate native Object Storage / Serverless mount alignment.
+- `a6440ce34deb2d941b4eacc3eb3d6f54d9a618f2` — add alignment regression tests.
+- `380f5fa0bbf260a3d69cea954dde8c144ede6590` — switch live research probe to native Object Storage transport.
+- `5a229bd2c85aaa6dd9587fdd4977e003dd5765fa` — document native Object Storage live-probe topology.
 
 Validation / evidence:
 - Repository identity was explicitly re-verified before every GitHub mutation and every write targeted exactly `UnknownGod2011/NVIDEA`; no other repository was mutated.
-- Current official Nebius documentation confirms Object Storage S3-compatible access and read/write Object Storage mounts for Serverless Jobs.
-- Current AWS SDK for .NET v4 documentation confirms `PutObjectRequest.IfNoneMatch` supports atomic create-if-absent behavior.
-- Static review confirmed `S3ProtectedResearchTransport` reuses the existing protected envelope interfaces, so two-phase dispatch, signed binding publication, lifecycle reconciliation, exact-once ingestion, and cleanup can consume it without protocol changes.
-- Static review confirmed the object-store abstraction keeps AWS-specific behavior out of the protected-envelope codec and makes the transport regression-testable without network credentials.
-- This runtime has no .NET SDK (`dotnet` is unavailable) and cannot resolve GitHub from the container, so compilation/test execution is **not claimed**.
+- Official Nebius documentation checked during this run confirms Serverless Jobs are bounded run-to-completion container workloads and Object Storage is the S3-compatible storage service.
+- Static review confirms the client and worker now share one deterministic namespace mapping: client `<prefix>/work-items/...` corresponds to worker `<transport-root>/work-items/...` when `volume.SourcePath == prefix`; the same holds for bindings/results.
+- Static review confirms alignment validation happens before `NebiusResearchLiveRuntimeFactory` can submit a job in the live probe.
+- Static review confirms S3 credentials are local constructor/environment inputs only; values are not printed by the probe or storage error paths.
+- This runtime still has no .NET SDK (`dotnet: command not found`), so compilation and test execution are **not claimed**.
 - No live Nebius Object Storage credentials/bucket or Serverless resources are available here, so no real S3 or Serverless PASS is claimed.
 - No GitHub Actions workflow was triggered merely to manufacture a green signal.
 
 Security / privacy / failure review:
-- Object Storage receives the same encrypted work-item/result envelopes and signed control-plane binding already used by the mounted transport; research plaintext is not newly exposed.
-- Static Object Storage credentials are constructor inputs only and are never formatted into NVIDEA error messages or logs.
-- The production client requires HTTPS and rejects path-like namespace escapes/control characters.
-- Writes never replace an existing protected object. Ambiguous provider conflicts fail closed after bounded retries.
-- Reads trust neither declared object length nor stream length alone; both are bounded.
-- Client cancellation and local timeouts remain distinguishable so user cancellation is not misreported as provider timeout.
-- A dedicated least-privilege Object Storage service account/bucket is still required for production deployment.
+- Object Storage continues to receive encrypted work/result envelopes and signed control-plane bindings rather than research plaintext.
+- Native Object Storage bucket and mounted worker source must be exactly the same dedicated bucket; path-like/ambiguous source forms fail closed in the live alignment gate.
+- Prefix mismatch cannot degrade into a silent remote timeout because submission is rejected before job creation.
+- Static S3 credentials are not injected into the worker. Worker Nebius/Tavily/RSA credentials remain MysteryBox-backed.
+- The client RSA private key remains local; only its public verification key enters the worker environment.
+- Live mode remains opt-in, bounded by polling and overall timeout, uses synthetic non-private research, and avoids logging provider/protected bodies.
 
 ## Known Blockers / Risks
-- No verified .NET 8/Windows/container execution signal is available here; new Object Storage code is statically reviewed but not compiled/executed.
-- No live Object Storage bucket, static Object Storage service-account key, immutable registry image, MysteryBox refs, subnet, Serverless access token, or Serverless job has been provisioned/validated in this environment.
-- `--live-research` still constructs `DirectoryProtectedResearchTransport` for the client. The new native S3 transport is not yet wired into the probe because the exact bucket-root/prefix-to-Serverless-mounted-path mapping must be made explicit and tested rather than guessed.
-- The worker still appropriately uses `DirectoryProtectedResearchTransport` against its mounted bucket; the Windows/client path should switch to `S3ProtectedResearchTransport` only after mount-prefix alignment is encoded in live configuration/preflight.
+- No verified .NET 8/Windows/container execution signal is available here; the new alignment/live-probe code is statically reviewed but not compiled/executed.
+- No live Object Storage bucket/static key, immutable registry image, MysteryBox refs, subnet, Serverless access token, or Serverless job has been provisioned/validated in this environment.
+- The exact provider acceptance of the configured Serverless Object Storage `Source`/`SourcePath` must still be proven by a real job; NVIDEA now fails locally on client/worker mismatch but does not claim provider-side mount success without the live contract.
+- Live Object Storage static credentials currently enter the probe via environment variables; this is suitable only for an explicit local contract run with a least-privilege short-lived shell/secret-injection mechanism, not a future polished end-user credential UX.
 - WPF/`ResearchJobRuntime` still deliberately avoid claiming production Serverless execution until the live end-to-end contract succeeds.
 - Local voice/transcription and a verified production embedding adapter remain absent.
 
 ## Single Best Next Task
-Wire `S3ProtectedResearchTransport` into `Nvidea.NebiusContractProbe --live-research` with an explicit dedicated-bucket/prefix mapping that is proven to resolve to the worker's mounted directory, add preflight tests preventing bucket/prefix/mount mismatches, then run the first real credential/resource-supplied end-to-end contract when infrastructure is available: encrypted S3 dispatch -> authoritative Nebius ID -> signed binding -> mounted worker -> Nemotron/Tavily stage -> encrypted S3 result -> exact-once local ingestion -> cleanup.
+Run or make maximally easy to run the first credential/resource-supplied end-to-end contract: add a zero-cost `--live-research-preflight`/dry-run mode that validates every live variable, RSA material, S3 endpoint/bucket/prefix mapping, MysteryBox reference shape, worker image immutability, and Serverless spec without creating a job or performing model calls; then, when infrastructure is supplied, execute `encrypted S3 dispatch -> authoritative Nebius ID -> signed binding -> mounted worker -> Nemotron/Tavily stage -> encrypted S3 result -> exact-once local ingestion -> cleanup` and persist the real PASS/failure evidence without exposing secrets.

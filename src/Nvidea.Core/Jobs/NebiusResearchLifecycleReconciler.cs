@@ -19,12 +19,6 @@ public sealed record NebiusRemoteJobSnapshot(
     string Name,
     NebiusRemoteJobState State);
 
-/// <summary>
-/// Conservative parser for Nebius AI job resources. Unknown or malformed status values are
-/// preserved as Unknown and must never be treated as proof that work started, completed, failed,
-/// or was cancelled. The state mapping intentionally mirrors the current Nebius AI v1 JobStatus
-/// enum rather than guessing provider states.
-/// </summary>
 public static class NebiusServerlessJobSnapshotParser
 {
     public static IReadOnlyList<NebiusRemoteJobSnapshot> ParseList(NebiusServerlessResponse response)
@@ -107,11 +101,10 @@ public static class NebiusServerlessJobSnapshotParser
 }
 
 /// <summary>
-/// Reconciles the narrow crash window where a deterministic Nebius job may have been accepted
-/// after local DispatchReserved persistence but before the remote id was attached. Reconciliation
-/// never re-creates work: it only attaches one uniquely matching, recognized Nebius job resource
-/// discovered across a bounded complete listing and verifies that resource again through a direct
-/// GET. It also implements durable remote cancellation as a two-step CancelRequested -> Cancelled flow.
+/// Conservative lifecycle controller for remote research. It recovers crash-window reservations,
+/// reconciles explicit cancellation, and turns provider terminal states into CAS-protected local
+/// terminal states without treating a temporarily missing encrypted result as failure before its
+/// authenticated transport lifetime has elapsed.
 /// </summary>
 public sealed class NebiusResearchLifecycleReconciler
 {
@@ -141,15 +134,11 @@ public sealed class NebiusResearchLifecycleReconciler
             || current.ExecutionLocation != JobExecutionLocation.Local
             || provenance.State != RemoteResearchProvenanceState.DispatchReserved
             || !string.IsNullOrWhiteSpace(provenance.RemoteJobId))
-        {
             throw new InvalidOperationException("Only an unresolved DispatchReserved research stage can be reconciled.");
-        }
 
         var expectedName = GetDeterministicRemoteJobName(provenance.OpaqueWorkItemId);
         var jobs = await NebiusBoundedJobListReader.ReadAllAsync(_serverless, cancellationToken: cancellationToken).ConfigureAwait(false);
-        var matches = jobs
-            .Where(job => string.Equals(job.Name, expectedName, StringComparison.Ordinal))
-            .ToArray();
+        var matches = jobs.Where(job => string.Equals(job.Name, expectedName, StringComparison.Ordinal)).ToArray();
 
         if (matches.Length == 0)
             throw new InvalidOperationException("No Nebius job exactly matches the reserved deterministic research job name; reservation remains unchanged.");
@@ -160,16 +149,7 @@ public sealed class NebiusResearchLifecycleReconciler
         if (listMatch.State == NebiusRemoteJobState.Unknown)
             throw new InvalidOperationException("Matching Nebius job has an unknown lifecycle state; refusing attachment.");
 
-        var verified = NebiusServerlessJobSnapshotParser.ParseGet(
-            await _serverless.GetAsync(listMatch.Id, cancellationToken).ConfigureAwait(false));
-        if (!string.Equals(verified.Id, listMatch.Id, StringComparison.Ordinal)
-            || !string.Equals(verified.Name, expectedName, StringComparison.Ordinal))
-        {
-            throw new InvalidOperationException("Nebius direct job verification did not match the uniquely listed research resource.");
-        }
-        if (verified.State == NebiusRemoteJobState.Unknown)
-            throw new InvalidOperationException("Verified Nebius job has an unknown lifecycle state; refusing attachment.");
-
+        var verified = await GetVerifiedRemoteAsync(provenance, listMatch.Id, cancellationToken).ConfigureAwait(false);
         return await _ingestor.AttachDispatchAsync(
             new NebiusResearchDispatchReceipt(
                 current.JobId,
@@ -178,6 +158,89 @@ public sealed class NebiusResearchLifecycleReconciler
                 verified.Id,
                 provenance.DispatchedAt),
             cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Reconciles an attached remote stage. RUNNING/PENDING remain nonterminal. FAILED/ERROR and
+    /// unexpected provider cancellation become durable local terminal states. COMPLETED attempts
+    /// protected result ingestion; a missing result remains retryable until the persisted encrypted
+    /// work-item lifetime expires, after which it becomes a truthful terminal failure.
+    /// </summary>
+    public async Task<AgentJobRecord> ReconcileDispatchedAsync(
+        Guid jobId,
+        DateTimeOffset? now = null,
+        CancellationToken cancellationToken = default)
+    {
+        var current = await GetRequiredResearchAsync(jobId, cancellationToken).ConfigureAwait(false);
+        var provenance = current.RemoteResearch
+            ?? throw new InvalidOperationException("Research job has no remote execution provenance.");
+        if (current.State != AgentJobState.Running
+            || current.ExecutionLocation != JobExecutionLocation.NebiusServerless
+            || provenance.State != RemoteResearchProvenanceState.Dispatched
+            || string.IsNullOrWhiteSpace(provenance.RemoteJobId))
+            throw new InvalidOperationException("Only an actively dispatched Nebius research stage can be reconciled.");
+
+        var currentTime = now ?? DateTimeOffset.UtcNow;
+        var remote = await GetVerifiedRemoteAsync(provenance, provenance.RemoteJobId, cancellationToken).ConfigureAwait(false);
+
+        switch (remote.State)
+        {
+            case NebiusRemoteJobState.Pending:
+            case NebiusRemoteJobState.Running:
+            case NebiusRemoteJobState.Cancelling:
+                return current;
+
+            case NebiusRemoteJobState.Failed:
+                return await FinalizeTerminalAsync(
+                    current,
+                    provenance,
+                    AgentJobState.Failed,
+                    RemoteResearchProvenanceState.RemoteFailed,
+                    "Nebius remote research stage failed.",
+                    "research.remote_failed",
+                    "Nebius reported a terminal failure for the remote research stage.",
+                    currentTime,
+                    cancellationToken).ConfigureAwait(false);
+
+            case NebiusRemoteJobState.Cancelled:
+                return await FinalizeTerminalAsync(
+                    current,
+                    provenance,
+                    AgentJobState.Cancelled,
+                    RemoteResearchProvenanceState.Cancelled,
+                    lastError: null,
+                    "research.remote_cancelled",
+                    "Nebius reported the remote research stage as cancelled.",
+                    currentTime,
+                    cancellationToken).ConfigureAwait(false);
+
+            case NebiusRemoteJobState.Completed:
+                try
+                {
+                    return await _ingestor.IngestAsync(jobId, currentTime, cancellationToken).ConfigureAwait(false);
+                }
+                catch (RemoteResearchResultNotAvailableException)
+                {
+                    var expiresAt = provenance.WorkItemExpiresAt
+                        ?? provenance.DispatchedAt + ResearchWorkItemProtector.MaxLifetime;
+                    if (currentTime < expiresAt)
+                        return current;
+
+                    return await FinalizeTerminalAsync(
+                        current,
+                        provenance,
+                        AgentJobState.Failed,
+                        RemoteResearchProvenanceState.Expired,
+                        "Nebius completed the research stage, but its protected result was unavailable before the durable transport lifetime expired.",
+                        "research.remote_result_expired",
+                        "Nebius completed remote research but no protected result was available before expiry.",
+                        currentTime,
+                        cancellationToken).ConfigureAwait(false);
+                }
+
+            default:
+                throw new InvalidOperationException("Nebius remote research lifecycle is unknown; refusing to mutate durable state.");
+        }
     }
 
     public async Task<AgentJobRecord> RequestCancellationAsync(Guid jobId, CancellationToken cancellationToken = default)
@@ -189,9 +252,7 @@ public sealed class NebiusResearchLifecycleReconciler
             || current.ExecutionLocation != JobExecutionLocation.NebiusServerless
             || provenance.State != RemoteResearchProvenanceState.Dispatched
             || string.IsNullOrWhiteSpace(provenance.RemoteJobId))
-        {
             throw new InvalidOperationException("Only an actively dispatched Nebius research stage can request remote cancellation.");
-        }
 
         var replacement = current with
         {
@@ -209,8 +270,6 @@ public sealed class NebiusResearchLifecycleReconciler
         }
         catch
         {
-            // Keep CancelRequested durable. A retry may safely re-issue the provider cancellation,
-            // while local execution remains blocked until remote state is reconciled.
             throw;
         }
 
@@ -226,34 +285,24 @@ public sealed class NebiusResearchLifecycleReconciler
             || current.ExecutionLocation != JobExecutionLocation.NebiusServerless
             || provenance.State != RemoteResearchProvenanceState.CancelRequested
             || string.IsNullOrWhiteSpace(provenance.RemoteJobId))
-        {
             throw new InvalidOperationException("Only a durable CancelRequested research stage can reconcile cancellation.");
-        }
 
-        var remote = NebiusServerlessJobSnapshotParser.ParseGet(
-            await _serverless.GetAsync(provenance.RemoteJobId, cancellationToken).ConfigureAwait(false));
-        if (!string.Equals(remote.Id, provenance.RemoteJobId, StringComparison.Ordinal))
-            throw new InvalidOperationException("Nebius cancellation status returned a substituted resource id.");
+        var remote = await GetVerifiedRemoteAsync(provenance, provenance.RemoteJobId, cancellationToken).ConfigureAwait(false);
         if (remote.State == NebiusRemoteJobState.Unknown)
             throw new InvalidOperationException("Nebius cancellation status is unknown; durable cancellation remains pending.");
         if (remote.State != NebiusRemoteJobState.Cancelled)
             return current;
 
-        var now = DateTimeOffset.UtcNow;
-        var replacement = current with
-        {
-            State = AgentJobState.Cancelled,
-            ExecutionLocation = JobExecutionLocation.Local,
-            LastError = null,
-            NextAttemptAt = null,
-            RemoteResearch = provenance with { State = RemoteResearchProvenanceState.Cancelled },
-            UpdatedAt = now
-        };
-        if (!await _store.CompareExchangeAsync(current, replacement, cancellationToken).ConfigureAwait(false))
-            throw new InvalidOperationException("Research state changed while remote cancellation was being finalized.");
-
-        await AppendAuditAsync(replacement, "research.remote_cancelled", "Nebius confirmed remote research cancellation.", cancellationToken).ConfigureAwait(false);
-        return replacement;
+        return await FinalizeTerminalAsync(
+            current,
+            provenance,
+            AgentJobState.Cancelled,
+            RemoteResearchProvenanceState.Cancelled,
+            lastError: null,
+            "research.remote_cancelled",
+            "Nebius confirmed remote research cancellation.",
+            DateTimeOffset.UtcNow,
+            cancellationToken).ConfigureAwait(false);
     }
 
     public static string GetDeterministicRemoteJobName(string opaqueWorkItemId)
@@ -261,6 +310,50 @@ public sealed class NebiusResearchLifecycleReconciler
         if (string.IsNullOrWhiteSpace(opaqueWorkItemId) || opaqueWorkItemId.Length < 12)
             throw new ArgumentException("A valid opaque work-item id is required.", nameof(opaqueWorkItemId));
         return $"nvidea-research-{opaqueWorkItemId[..12].ToLowerInvariant()}";
+    }
+
+    private async Task<NebiusRemoteJobSnapshot> GetVerifiedRemoteAsync(
+        RemoteResearchProvenance provenance,
+        string remoteJobId,
+        CancellationToken cancellationToken)
+    {
+        var remote = NebiusServerlessJobSnapshotParser.ParseGet(
+            await _serverless.GetAsync(remoteJobId, cancellationToken).ConfigureAwait(false));
+        var expectedName = GetDeterministicRemoteJobName(provenance.OpaqueWorkItemId);
+        if (!string.Equals(remote.Id, remoteJobId, StringComparison.Ordinal)
+            || !string.Equals(remote.Name, expectedName, StringComparison.Ordinal))
+            throw new InvalidOperationException("Nebius direct job verification returned substituted remote provenance.");
+        if (remote.State == NebiusRemoteJobState.Unknown)
+            throw new InvalidOperationException("Verified Nebius job has an unknown lifecycle state; refusing durable mutation.");
+        return remote;
+    }
+
+    private async Task<AgentJobRecord> FinalizeTerminalAsync(
+        AgentJobRecord current,
+        RemoteResearchProvenance provenance,
+        AgentJobState localState,
+        RemoteResearchProvenanceState provenanceState,
+        string? lastError,
+        string eventType,
+        string summary,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var replacement = current with
+        {
+            State = localState,
+            ExecutionLocation = JobExecutionLocation.Local,
+            LastError = lastError,
+            NextAttemptAt = null,
+            RemoteResearch = provenance with { State = provenanceState, TerminalAt = now },
+            UpdatedAt = now
+        };
+        if (!await _store.CompareExchangeAsync(current, replacement, cancellationToken).ConfigureAwait(false))
+            throw new InvalidOperationException("Research state changed while remote terminal state was being finalized.");
+
+        await AppendAuditAsync(replacement, eventType, summary, cancellationToken).ConfigureAwait(false);
+        await _ingestor.CleanupProtectedPayloadsAsync(provenance.OpaqueWorkItemId).ConfigureAwait(false);
+        return replacement;
     }
 
     private async Task<AgentJobRecord> GetRequiredResearchAsync(Guid jobId, CancellationToken cancellationToken)

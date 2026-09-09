@@ -85,9 +85,9 @@ public static class NebiusServerlessJobSnapshotParser
 
     public static NebiusRemoteJobState ParseState(string? state) => state?.Trim().ToUpperInvariant() switch
     {
-        "PROVISIONING" or "STARTING" => NebiusRemoteJobState.Pending,
+        "PROVISIONING" or "IMAGE_PULLING" or "STARTING" => NebiusRemoteJobState.Pending,
         "RUNNING" => NebiusRemoteJobState.Running,
-        "CANCELLING" => NebiusRemoteJobState.Cancelling,
+        "CANCELLING" or "DELETING" => NebiusRemoteJobState.Cancelling,
         "COMPLETED" => NebiusRemoteJobState.Completed,
         "FAILED" or "ERROR" => NebiusRemoteJobState.Failed,
         "CANCELLED" => NebiusRemoteJobState.Cancelled,

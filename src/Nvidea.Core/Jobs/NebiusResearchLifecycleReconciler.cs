@@ -104,7 +104,8 @@ public static class NebiusServerlessJobSnapshotParser
 /// Conservative lifecycle controller for remote research. It recovers crash-window reservations,
 /// reconciles explicit cancellation, and turns provider terminal states into CAS-protected local
 /// terminal states without treating a temporarily missing encrypted result as failure before its
-/// authenticated transport lifetime has elapsed.
+/// authenticated transport lifetime has elapsed. When a dispatch-binding publisher is configured,
+/// reconciliation also idempotently guarantees that workers can resolve the authoritative Nebius id.
 /// </summary>
 public sealed class NebiusResearchLifecycleReconciler
 {
@@ -112,17 +113,20 @@ public sealed class NebiusResearchLifecycleReconciler
     private readonly INebiusServerlessJobClient _serverless;
     private readonly RemoteResearchResultIngestor _ingestor;
     private readonly IAuditTrail _auditTrail;
+    private readonly ResearchDispatchBindingPublisher? _bindingPublisher;
 
     public NebiusResearchLifecycleReconciler(
         JsonAgentJobStore store,
         INebiusServerlessJobClient serverless,
         RemoteResearchResultIngestor ingestor,
-        IAuditTrail auditTrail)
+        IAuditTrail auditTrail,
+        ResearchDispatchBindingPublisher? bindingPublisher = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _serverless = serverless ?? throw new ArgumentNullException(nameof(serverless));
         _ingestor = ingestor ?? throw new ArgumentNullException(nameof(ingestor));
         _auditTrail = auditTrail ?? throw new ArgumentNullException(nameof(auditTrail));
+        _bindingPublisher = bindingPublisher;
     }
 
     public async Task<AgentJobRecord> ReconcileReservedAsync(Guid jobId, CancellationToken cancellationToken = default)
@@ -150,7 +154,7 @@ public sealed class NebiusResearchLifecycleReconciler
             throw new InvalidOperationException("Matching Nebius job has an unknown lifecycle state; refusing attachment.");
 
         var verified = await GetVerifiedRemoteAsync(provenance, listMatch.Id, cancellationToken).ConfigureAwait(false);
-        return await _ingestor.AttachDispatchAsync(
+        var attached = await _ingestor.AttachDispatchAsync(
             new NebiusResearchDispatchReceipt(
                 current.JobId,
                 provenance.InputCheckpointStep,
@@ -158,6 +162,8 @@ public sealed class NebiusResearchLifecycleReconciler
                 verified.Id,
                 provenance.DispatchedAt),
             cancellationToken).ConfigureAwait(false);
+        await EnsureDispatchBindingAsync(attached, cancellationToken).ConfigureAwait(false);
+        return attached;
     }
 
     /// <summary>
@@ -179,6 +185,8 @@ public sealed class NebiusResearchLifecycleReconciler
             || provenance.State != RemoteResearchProvenanceState.Dispatched
             || string.IsNullOrWhiteSpace(provenance.RemoteJobId))
             throw new InvalidOperationException("Only an actively dispatched Nebius research stage can be reconciled.");
+
+        await EnsureDispatchBindingAsync(current, cancellationToken).ConfigureAwait(false);
 
         var currentTime = now ?? DateTimeOffset.UtcNow;
         var remote = await GetVerifiedRemoteAsync(provenance, provenance.RemoteJobId, cancellationToken).ConfigureAwait(false);
@@ -305,11 +313,30 @@ public sealed class NebiusResearchLifecycleReconciler
             cancellationToken).ConfigureAwait(false);
     }
 
-    public static string GetDeterministicRemoteJobName(string opaqueWorkItemId)
+    public static string GetDeterministicRemoteJobName(string opaqueWorkItemId) =>
+        ResearchDispatchBindingProtector.GetDeterministicRemoteJobName(opaqueWorkItemId);
+
+    private async Task EnsureDispatchBindingAsync(AgentJobRecord job, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(opaqueWorkItemId) || opaqueWorkItemId.Length < 12)
-            throw new ArgumentException("A valid opaque work-item id is required.", nameof(opaqueWorkItemId));
-        return $"nvidea-research-{opaqueWorkItemId[..12].ToLowerInvariant()}";
+        if (_bindingPublisher is null)
+            return;
+
+        var provenance = job.RemoteResearch
+            ?? throw new InvalidOperationException("Remote research job is missing provenance required for binding publication.");
+        if (job.ExecutionLocation != JobExecutionLocation.NebiusServerless
+            || provenance.State != RemoteResearchProvenanceState.Dispatched
+            || string.IsNullOrWhiteSpace(provenance.RemoteJobId))
+        {
+            throw new InvalidOperationException("Authoritative dispatch binding can only be published for a durably attached remote stage.");
+        }
+
+        var expiresAt = provenance.WorkItemExpiresAt
+            ?? provenance.DispatchedAt + ResearchWorkItemProtector.MaxLifetime;
+        await _bindingPublisher.PublishAsync(
+            provenance.OpaqueWorkItemId,
+            provenance.RemoteJobId,
+            expiresAt,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<NebiusRemoteJobSnapshot> GetVerifiedRemoteAsync(

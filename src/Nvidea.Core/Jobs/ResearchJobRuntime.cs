@@ -127,11 +127,11 @@ public sealed class ResearchJobRuntime
                     pending.JobId.ToString("N"),
                     "research.interrupted_rearmed",
                     pending.Definition.Risk,
-                    allowed: true,
-                    approved: false,
-                    approvalScope: string.Empty,
-                    summary: "User explicitly re-armed an interrupted research stage; retry may repeat provider work and cost.",
-                    metadata: new Dictionary<string, string>
+                    true,
+                    false,
+                    string.Empty,
+                    "User explicitly re-armed an interrupted research stage; retry may repeat provider work and cost.",
+                    new Dictionary<string, string>
                     {
                         ["jobType"] = pending.Definition.JobType,
                         ["state"] = pending.State.ToString(),

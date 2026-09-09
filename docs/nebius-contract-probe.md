@@ -16,7 +16,7 @@ Optional existing model/base-URL environment variables remain supported: `NVIDEA
 
 ## Explicit live research probe
 
-`--live-research` is intentionally opt-in because it creates real Nebius Serverless Jobs and can consume Nebius, Token Factory, and Tavily resources. It constructs the production path through `NebiusResearchLiveRuntimeFactory`, therefore the existing deployment preflight remains mandatory.
+`--live-research` is intentionally opt-in because it creates real Nebius Serverless Jobs and can consume Nebius, Token Factory, Tavily, and Object Storage resources. It constructs the production path through `NebiusResearchLiveRuntimeFactory`, therefore the existing deployment preflight remains mandatory.
 
 The probe creates a synthetic non-private research job and executes the complete three-stage durable research workflow remotely:
 
@@ -26,11 +26,19 @@ The probe creates a synthetic non-private research job and executes the complete
 
 Each stage uses the production two-phase dispatch path: encrypted work-item publication, durable `DispatchReserved`, Nebius create, authoritative remote-ID attachment, signed dispatch binding, worker execution, encrypted result return, exact-once local ingestion, and terminal binding cleanup. The run fails unless the final report contains both evidence and validated citations.
 
-### Shared-storage requirement
+### Native Object Storage topology
 
-The worker uses a Nebius `READ_WRITE` volume mounted at `NVIDEA_LIVE_WORKER_TRANSPORT_ROOT` (default `/mnt/nvidea-research`). The machine running the probe must also expose a host filesystem path backed by the **same storage** via `NVIDEA_LIVE_CLIENT_TRANSPORT_ROOT`. `DirectoryProtectedResearchTransport` is then used on both sides of that shared backing store.
+The client no longer needs a host-mounted copy of the worker's storage. It uses `NebiusObjectStorageClient` + `S3ProtectedResearchTransport` to access the dedicated Nebius Object Storage bucket directly through the S3-compatible API. The worker still uses `DirectoryProtectedResearchTransport` against the same bucket mounted `READ_WRITE` by Serverless.
 
-This requirement is explicit: a normal unrelated local directory is not equivalent to the worker mount and will cause the probe to time out waiting for protected results. Mount the same dedicated Object Storage/filesystem backing store on the probe host before running the live mode.
+The live probe fails before any Serverless submission unless the mapping is exact:
+
+- `NVIDEA_LIVE_OBJECT_STORAGE_BUCKET` must exactly equal `NVIDEA_LIVE_TRANSPORT_SOURCE`.
+- `NVIDEA_LIVE_OBJECT_STORAGE_PREFIX` must exactly equal `NVIDEA_LIVE_TRANSPORT_SOURCE_PATH` after conservative slash normalization.
+- `NVIDEA_LIVE_WORKER_TRANSPORT_ROOT` must exactly equal the `READ_WRITE` volume `ContainerPath` through the production deployment preflight.
+
+For the default prefix `nvidea-research`, the client writes objects such as `nvidea-research/work-items/<opaque-id>.json`. The Serverless volume mounts `SourcePath=nvidea-research` at `/mnt/nvidea-research`, so the worker sees that same object as `/mnt/nvidea-research/work-items/<opaque-id>.json`. The same mapping applies independently to `dispatch-bindings/` and `results/`.
+
+Do not configure a broader bucket root on one side and a nested prefix on the other. NVIDEA deliberately rejects that ambiguity instead of waiting for a remote timeout.
 
 ### Required live configuration
 
@@ -44,8 +52,12 @@ The probe fails before submission when any required setting is absent or malform
 - `NVIDEA_LIVE_PRESET` — provider compute preset.
 - `NVIDEA_LIVE_TIMEOUT` — provider job timeout value.
 - `NVIDEA_LIVE_DISK_TYPE` and `NVIDEA_LIVE_DISK_SIZE_BYTES` — explicit positive Serverless disk configuration.
-- `NVIDEA_LIVE_TRANSPORT_SOURCE` — Nebius volume source for the dedicated shared research transport.
-- `NVIDEA_LIVE_CLIENT_TRANSPORT_ROOT` — host-mounted path for the exact same backing storage.
+- `NVIDEA_LIVE_TRANSPORT_SOURCE` — dedicated Nebius Object Storage bucket name mounted by Serverless. It must equal `NVIDEA_LIVE_OBJECT_STORAGE_BUCKET`.
+- `NVIDEA_LIVE_OBJECT_STORAGE_ENDPOINT` — HTTPS S3-compatible Nebius Object Storage endpoint for the bucket's region.
+- `NVIDEA_LIVE_OBJECT_STORAGE_REGION` — region used for S3 request signing.
+- `NVIDEA_LIVE_OBJECT_STORAGE_BUCKET` — dedicated research bucket used by the native client. It must equal the Serverless volume source.
+- `NVIDEA_LIVE_OBJECT_STORAGE_ACCESS_KEY_ID` — local static Object Storage access key id for a least-privilege service account.
+- `NVIDEA_LIVE_OBJECT_STORAGE_SECRET_ACCESS_KEY` — matching local static Object Storage secret key. Never commit it or place it in command-line arguments.
 - `NVIDEA_LIVE_WORKER_PUBLIC_KEY_PEM_FILE` — local file containing the worker public key corresponding to the worker private key stored in MysteryBox.
 - `NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE` — local client signing/decryption private key. The probe derives the public verification key in memory; it never injects this private key into Serverless.
 - `NVIDEA_LIVE_SECRET_NEBIUS_API_KEY_ID` — MysteryBox secret id injected as worker `NEBIUS_API_KEY`.
@@ -55,7 +67,8 @@ The probe fails before submission when any required setting is absent or malform
 Optional settings:
 
 - `NVIDEA_LIVE_WORKER_TRANSPORT_ROOT` (default `/mnt/nvidea-research`).
-- `NVIDEA_LIVE_TRANSPORT_SOURCE_PATH`.
+- `NVIDEA_LIVE_OBJECT_STORAGE_PREFIX` (default `nvidea-research`).
+- `NVIDEA_LIVE_TRANSPORT_SOURCE_PATH` (defaults to `NVIDEA_LIVE_OBJECT_STORAGE_PREFIX`; an explicit different value is rejected).
 - `NVIDEA_LIVE_POLL_SECONDS` (1-30, default 5).
 - `NVIDEA_LIVE_TOTAL_TIMEOUT_MINUTES` (2-60, default 20).
 - `NVIDEA_LIVE_RESEARCH_QUESTION` (synthetic/default question is used when omitted).
@@ -68,8 +81,14 @@ dotnet run --project tools/Nvidea.NebiusContractProbe/Nvidea.NebiusContractProbe
 
 Use `--help` to list modes. The cheap planner probe remains the default, so CI or accidental local invocations do not create Serverless jobs.
 
+## Credential and data handling
+
+The Object Storage static key is a local client credential, not a Serverless worker credential. Give it only the bucket permissions required for protected work-item/binding/result create, read, and delete operations. Keep it in a short-lived local environment or OS secret store for the probe; never commit it. NVIDEA's storage errors are sanitized and do not print the bucket, object key, endpoint, access-key id, provider response body, protected payload, or secret value.
+
+Worker `NEBIUS_API_KEY`, `TAVILY_API_KEY`, and `NVIDEA_WORKER_PRIVATE_KEY_PEM` remain MysteryBox-backed references and are validated by `NebiusResearchDeploymentPreflight`. The client RSA private key remains local. Object Storage contains encrypted work/result envelopes and signed binding metadata rather than research plaintext.
+
 ## Safety and evidence
 
-The live mode rejects private-OS-data dispatch, uses an explicit cloud authorization scoped to each synthetic stage, bounds polling and total runtime, requires MysteryBox references for worker credentials through the production preflight, and does not print secret values, protected research payloads, research evidence bodies, binding contents, or provider response bodies.
+The live mode rejects private-OS-data dispatch, uses an explicit cloud authorization scoped to each synthetic stage, bounds polling and total runtime, requires MysteryBox references for worker credentials through the production preflight, validates native-S3/mounted-volume alignment before submission, and does not print secret values, protected research payloads, research evidence bodies, binding contents, or provider response bodies.
 
-A live PASS is materially stronger than source-level tests: it proves that the mounted shared transport, authoritative Nebius ID handoff, deployed worker, Nemotron, Tavily, encrypted result protocol, lifecycle reconciliation, exact-once ingestion, and final citation-bearing report all cooperated in one bounded real run. Until such a PASS is observed, WPF should continue to avoid claiming production Serverless research readiness.
+A live PASS is materially stronger than source-level tests: it proves that native client Object Storage access, Serverless mounted-prefix resolution, authoritative Nebius ID handoff, deployed worker, Nemotron, Tavily, encrypted result protocol, lifecycle reconciliation, exact-once ingestion, and final citation-bearing report all cooperated in one bounded real run. Until such a PASS is observed, WPF should continue to avoid claiming production Serverless research readiness.

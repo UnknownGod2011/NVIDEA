@@ -12,6 +12,14 @@ public sealed record NebiusServerlessOptions(
     TimeSpan? RequestTimeout = null,
     int MaxRetries = 2);
 
+public sealed record NebiusServerlessDiskSpec(
+    string Type,
+    long SizeBytes);
+
+public sealed record NebiusMysteryBoxSecretRef(
+    string? SecretId = null,
+    string? VersionId = null);
+
 public sealed record NebiusServerlessJobSpec(
     string Name,
     string Image,
@@ -21,23 +29,68 @@ public sealed record NebiusServerlessJobSpec(
     string Preset,
     string Timeout,
     string? SubnetId = null,
-    IReadOnlyDictionary<string, string>? EnvironmentVariables = null);
+    IReadOnlyDictionary<string, string>? EnvironmentVariables = null,
+    NebiusServerlessDiskSpec? Disk = null,
+    IReadOnlyDictionary<string, NebiusMysteryBoxSecretRef>? SecretEnvironmentVariables = null);
 
 public sealed record NebiusServerlessResponse(
     HttpStatusCode StatusCode,
-    string RawJson);
+    string RawJson)
+{
+    /// <summary>
+    /// Create operations currently return the created resource id in resourceId.
+    /// This helper is intentionally tolerant of an operation response that has not
+    /// exposed the resource yet and never guesses an id from unrelated JSON fields.
+    /// </summary>
+    public string? TryGetResourceId()
+    {
+        if (string.IsNullOrWhiteSpace(RawJson))
+            return null;
+
+        using var json = JsonDocument.Parse(RawJson);
+        return json.RootElement.TryGetProperty("resourceId", out var resourceId)
+            && resourceId.ValueKind == JsonValueKind.String
+            ? resourceId.GetString()
+            : null;
+    }
+
+    /// <summary>
+    /// Returns status.state for a direct Job GET response. Unknown/missing states
+    /// remain unknown rather than being mapped optimistically.
+    /// </summary>
+    public string? TryGetJobState()
+    {
+        if (string.IsNullOrWhiteSpace(RawJson))
+            return null;
+
+        using var json = JsonDocument.Parse(RawJson);
+        if (!json.RootElement.TryGetProperty("status", out var status)
+            || status.ValueKind != JsonValueKind.Object
+            || !status.TryGetProperty("state", out var state)
+            || state.ValueKind != JsonValueKind.String)
+        {
+            return null;
+        }
+
+        return state.GetString();
+    }
+}
 
 public interface INebiusServerlessJobClient
 {
     Task<NebiusServerlessResponse> CreateAsync(NebiusServerlessJobSpec spec, CancellationToken cancellationToken = default);
+    Task<NebiusServerlessResponse> GetAsync(string remoteJobId, CancellationToken cancellationToken = default);
     Task<NebiusServerlessResponse> ListAsync(CancellationToken cancellationToken = default);
     Task<NebiusServerlessResponse> CancelAsync(string remoteJobId, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
-/// Minimal credential-injected REST client for the documented Nebius Serverless AI
-/// Jobs API. It deliberately returns raw JSON because the public API can surface
-/// long-running-operation/job representations that should not be guessed locally.
+/// Credential-injected REST client for Nebius Serverless AI Jobs. The control plane
+/// keeps raw JSON at its boundary because create/cancel may return long-running
+/// operations whose representation can evolve independently of the job resource.
+/// It does, however, validate the currently required job inputs and supports
+/// MysteryBox secret references so API keys never need to be committed or supplied
+/// as plaintext secret-like environment variables.
 /// </summary>
 public sealed class NebiusServerlessJobClient : INebiusServerlessJobClient
 {
@@ -74,9 +127,14 @@ public sealed class NebiusServerlessJobClient : INebiusServerlessJobClient
         ArgumentNullException.ThrowIfNull(spec);
         ValidateSpec(spec);
 
-        var env = (spec.EnvironmentVariables ?? new Dictionary<string, string>())
-            .Select(pair => new { name = pair.Key, value = pair.Value })
-            .ToArray();
+        var plaintextEnvironment = (spec.EnvironmentVariables ?? new Dictionary<string, string>())
+            .Select(pair => new NebiusEnvironmentVariablePayload(pair.Key, pair.Value, null));
+        var secretEnvironment = (spec.SecretEnvironmentVariables ?? new Dictionary<string, NebiusMysteryBoxSecretRef>())
+            .Select(pair => new NebiusEnvironmentVariablePayload(
+                pair.Key,
+                null,
+                new NebiusMysteryBoxSecretPayload(pair.Value.SecretId, pair.Value.VersionId)));
+        var environmentVariables = plaintextEnvironment.Concat(secretEnvironment).ToArray();
 
         var payload = new
         {
@@ -90,15 +148,28 @@ public sealed class NebiusServerlessJobClient : INebiusServerlessJobClient
                 image = spec.Image,
                 containerCommand = spec.ContainerCommand,
                 args = spec.Arguments,
-                environmentVariables = env,
+                environmentVariables,
                 timeout = spec.Timeout,
                 platform = spec.Platform,
                 preset = spec.Preset,
-                subnetId = spec.SubnetId
+                subnetId = spec.SubnetId,
+                disk = new
+                {
+                    type = spec.Disk!.Type,
+                    sizeBytes = spec.Disk.SizeBytes
+                }
             }
         };
 
         return SendJsonAsync(HttpMethod.Post, "ai/v1/jobs", payload, cancellationToken);
+    }
+
+    public Task<NebiusServerlessResponse> GetAsync(
+        string remoteJobId,
+        CancellationToken cancellationToken = default)
+    {
+        var id = ValidateAndEscapeRemoteJobId(remoteJobId);
+        return SendAsync(HttpMethod.Get, $"ai/v1/jobs/{id}", null, cancellationToken);
     }
 
     public Task<NebiusServerlessResponse> ListAsync(CancellationToken cancellationToken = default)
@@ -111,10 +182,8 @@ public sealed class NebiusServerlessJobClient : INebiusServerlessJobClient
         string remoteJobId,
         CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(remoteJobId))
-            throw new ArgumentException("Remote job id is required.", nameof(remoteJobId));
-
-        return SendJsonAsync(HttpMethod.Post, "ai/v1/jobs/cancel", new { id = remoteJobId.Trim() }, cancellationToken);
+        var id = ValidateRemoteJobId(remoteJobId);
+        return SendJsonAsync(HttpMethod.Post, "ai/v1/jobs/cancel", new { id }, cancellationToken);
     }
 
     private Task<NebiusServerlessResponse> SendJsonAsync(
@@ -197,18 +266,69 @@ public sealed class NebiusServerlessJobClient : INebiusServerlessJobClient
             throw new ArgumentException("Name, image, command, platform, preset and timeout are required.", nameof(spec));
         }
 
-        foreach (var pair in spec.EnvironmentVariables ?? new Dictionary<string, string>())
-        {
-            if (string.IsNullOrWhiteSpace(pair.Key))
-                throw new ArgumentException("Environment variable names cannot be blank.", nameof(spec));
+        if (string.IsNullOrWhiteSpace(spec.SubnetId))
+            throw new ArgumentException("SubnetId is required by the current Nebius Serverless Jobs API.", nameof(spec));
 
+        if (spec.Disk is null
+            || string.IsNullOrWhiteSpace(spec.Disk.Type)
+            || spec.Disk.SizeBytes <= 0)
+        {
+            throw new ArgumentException("An explicit positive-size disk specification is required by the current Nebius Serverless Jobs API.", nameof(spec));
+        }
+
+        var plaintext = spec.EnvironmentVariables ?? new Dictionary<string, string>();
+        var secrets = spec.SecretEnvironmentVariables ?? new Dictionary<string, NebiusMysteryBoxSecretRef>();
+        var duplicate = plaintext.Keys.Intersect(secrets.Keys, StringComparer.Ordinal).FirstOrDefault();
+        if (duplicate is not null)
+            throw new ArgumentException($"Environment variable '{duplicate}' cannot have both a plaintext value and a MysteryBox secret reference.", nameof(spec));
+
+        foreach (var pair in plaintext)
+        {
+            ValidateEnvironmentVariableName(pair.Key, nameof(spec));
             var normalized = pair.Key.Trim().ToUpperInvariant();
             if (SensitiveNameMarkers.Any(normalized.Contains))
             {
                 throw new InvalidOperationException(
-                    $"Environment variable '{pair.Key}' looks secret-bearing. Use Nebius SecretStash/env-secret rather than plaintext job environment variables.");
+                    $"Environment variable '{pair.Key}' looks secret-bearing. Use a Nebius MysteryBox secret reference rather than a plaintext job environment variable.");
             }
         }
+
+        foreach (var pair in secrets)
+        {
+            ValidateEnvironmentVariableName(pair.Key, nameof(spec));
+            ArgumentNullException.ThrowIfNull(pair.Value);
+            var hasSecretId = !string.IsNullOrWhiteSpace(pair.Value.SecretId);
+            var hasVersionId = !string.IsNullOrWhiteSpace(pair.Value.VersionId);
+            if (!hasSecretId && !hasVersionId)
+                throw new ArgumentException($"MysteryBox reference for '{pair.Key}' must provide secretId or versionId.", nameof(spec));
+        }
+    }
+
+    private static void ValidateEnvironmentVariableName(string name, string parameterName)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            throw new ArgumentException("Environment variable names cannot be blank.", parameterName);
+
+        var span = name.AsSpan();
+        if (!(char.IsLetter(span[0]) || span[0] == '_')
+            || span[1..].IndexOfAnyExceptInRange('0', '9') >= -1 && !span[1..].ToString().All(static ch => char.IsLetterOrDigit(ch) || ch == '_'))
+        {
+            throw new ArgumentException($"Environment variable '{name}' is not a valid container environment-variable name.", parameterName);
+        }
+    }
+
+    private static string ValidateAndEscapeRemoteJobId(string remoteJobId) =>
+        Uri.EscapeDataString(ValidateRemoteJobId(remoteJobId));
+
+    private static string ValidateRemoteJobId(string remoteJobId)
+    {
+        if (string.IsNullOrWhiteSpace(remoteJobId))
+            throw new ArgumentException("Remote job id is required.", nameof(remoteJobId));
+
+        var id = remoteJobId.Trim();
+        if (id.Length > 256 || id.Any(char.IsControl))
+            throw new ArgumentException("Remote job id is invalid.", nameof(remoteJobId));
+        return id;
     }
 
     private static void ValidateBaseUri(Uri uri)
@@ -237,4 +357,13 @@ public sealed class NebiusServerlessJobClient : INebiusServerlessJobClient
 
         using var _ = JsonDocument.Parse(body);
     }
+
+    private sealed record NebiusEnvironmentVariablePayload(
+        string Name,
+        string? Value,
+        NebiusMysteryBoxSecretPayload? MysteryboxSecret);
+
+    private sealed record NebiusMysteryBoxSecretPayload(
+        string? SecretId,
+        string? VersionId);
 }

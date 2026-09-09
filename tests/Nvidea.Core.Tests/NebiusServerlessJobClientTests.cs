@@ -167,8 +167,8 @@ public sealed class NebiusServerlessJobClientTests
         });
         var client = CreateClient(handler);
 
-        await Assert.ThrowsAsync<ArgumentException>(() => client.CreateAsync(ValidSpec(subnetId: null)));
-        await Assert.ThrowsAsync<ArgumentException>(() => client.CreateAsync(ValidSpec(disk: null)));
+        await Assert.ThrowsAsync<ArgumentException>(() => client.CreateAsync(ValidSpec() with { SubnetId = null }));
+        await Assert.ThrowsAsync<ArgumentException>(() => client.CreateAsync(ValidSpec() with { Disk = null }));
         Assert.Equal(0, calls);
     }
 
@@ -236,8 +236,6 @@ public sealed class NebiusServerlessJobClientTests
     }
 
     private static NebiusServerlessJobSpec ValidSpec(
-        string? subnetId = "vpcsubnet-test",
-        NebiusServerlessDiskSpec? disk = null,
         IReadOnlyDictionary<string, string>? environmentVariables = null,
         IReadOnlyDictionary<string, NebiusMysteryBoxSecretRef>? secretEnvironmentVariables = null)
     {
@@ -249,9 +247,9 @@ public sealed class NebiusServerlessJobClientTests
             "gpu-l40s-a",
             "1gpu-8vcpu-32gb",
             "3600s",
-            subnetId,
+            "vpcsubnet-test",
             environmentVariables,
-            disk ?? new NebiusServerlessDiskSpec("NETWORK_SSD", 268435456000),
+            new NebiusServerlessDiskSpec("NETWORK_SSD", 268435456000),
             secretEnvironmentVariables);
     }
 

@@ -49,7 +49,47 @@ public sealed class NebiusResearchLifecycleReconcilerTests
     }
 
     [Fact]
-    public async Task ReconcileReservedAsync_RejectsUnknownAmbiguousOrPaginatedMatches()
+    public async Task ReconcileReservedAsync_SearchesAllBoundedPagesBeforeAttachingUniqueMatch()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            using var rsa = RSA.Create(2048);
+            var store = new JsonAgentJobStore(Path.Combine(root, "jobs.json"), new PassThroughProtector());
+            var audit = new MemoryAuditTrail();
+            var ingestor = new RemoteResearchResultIngestor(store, new NullResultTransport(), rsa.ExportPkcs8PrivateKeyPem(), audit);
+            var now = DateTimeOffset.UtcNow;
+            var original = CreatePendingJob(now);
+            await store.SaveAsync(original);
+            const string opaqueId = "mY7FhPlAdtPz9xL4b8gU1cKqN3sW6vRt";
+            await ingestor.ReserveDispatchAsync(new RemoteResearchDispatchReservation(original.JobId, original.Checkpoint!.Step, opaqueId, now));
+            var expectedName = NebiusResearchLifecycleReconciler.GetDeterministicRemoteJobName(opaqueId);
+
+            var client = new FakeServerlessClient
+            {
+                ListResponse = new NebiusServerlessResponse(HttpStatusCode.OK,
+                    "{\"items\":[{\"metadata\":{\"id\":\"job-other\",\"name\":\"other\"},\"status\":{\"state\":\"RUNNING\"}}],\"nextPageToken\":\"page-2\"}"),
+                GetResponse = new NebiusServerlessResponse(HttpStatusCode.OK,
+                    $$"""{"metadata":{"id":"job-123","name":"{{expectedName}}"},"status":{"state":"RUNNING"}}""")
+            };
+            client.PageResponses["page-2"] = new NebiusServerlessResponse(HttpStatusCode.OK,
+                $$"""{"items":[{"metadata":{"id":"job-123","name":"{{expectedName}}"},"status":{"state":"RUNNING"}}]}""");
+            var reconciler = new NebiusResearchLifecycleReconciler(store, client, ingestor, audit);
+
+            var attached = await reconciler.ReconcileReservedAsync(original.JobId);
+
+            Assert.Equal("job-123", attached.RemoteResearch!.RemoteJobId);
+            Assert.Equal(new string?[] { null, "page-2" }, client.ListTokens);
+            Assert.Equal("job-123", client.LastGetId);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ReconcileReservedAsync_RejectsUnknownOrAmbiguousMatchesAcrossPages()
     {
         var root = CreateTempDirectory();
         try
@@ -72,11 +112,9 @@ public sealed class NebiusResearchLifecycleReconcilerTests
             await Assert.ThrowsAsync<InvalidOperationException>(() => reconciler.ReconcileReservedAsync(original.JobId));
 
             client.ListResponse = new NebiusServerlessResponse(HttpStatusCode.OK,
-                $$"""{"items":[{"metadata":{"id":"job-1","name":"{{expectedName}}"},"status":{"state":"RUNNING"}},{"metadata":{"id":"job-2","name":"{{expectedName}}"},"status":{"state":"RUNNING"}}]}""");
-            await Assert.ThrowsAsync<InvalidOperationException>(() => reconciler.ReconcileReservedAsync(original.JobId));
-
-            client.ListResponse = new NebiusServerlessResponse(HttpStatusCode.OK,
                 $$"""{"items":[{"metadata":{"id":"job-1","name":"{{expectedName}}"},"status":{"state":"RUNNING"}}],"nextPageToken":"more"}""");
+            client.PageResponses["more"] = new NebiusServerlessResponse(HttpStatusCode.OK,
+                $$"""{"items":[{"metadata":{"id":"job-2","name":"{{expectedName}}"},"status":{"state":"RUNNING"}}]}""");
             await Assert.ThrowsAsync<InvalidOperationException>(() => reconciler.ReconcileReservedAsync(original.JobId));
 
             var unchanged = await store.GetAsync(original.JobId);
@@ -176,6 +214,8 @@ public sealed class NebiusResearchLifecycleReconcilerTests
     private sealed class FakeServerlessClient : INebiusServerlessJobClient
     {
         public NebiusServerlessResponse ListResponse { get; set; } = new(HttpStatusCode.OK, "{\"items\":[]}");
+        public Dictionary<string, NebiusServerlessResponse> PageResponses { get; } = new(StringComparer.Ordinal);
+        public List<string?> ListTokens { get; } = new();
         public NebiusServerlessResponse GetResponse { get; set; } = new(HttpStatusCode.OK, "{}");
         public Func<Task>? OnCancel { get; set; }
         public string? LastGetId { get; private set; }
@@ -190,7 +230,17 @@ public sealed class NebiusResearchLifecycleReconcilerTests
         }
 
         public Task<NebiusServerlessResponse> ListAsync(CancellationToken cancellationToken = default) =>
-            Task.FromResult(ListResponse);
+            ListAsync(null, cancellationToken);
+
+        public Task<NebiusServerlessResponse> ListAsync(string? pageToken, CancellationToken cancellationToken = default)
+        {
+            ListTokens.Add(pageToken);
+            if (string.IsNullOrWhiteSpace(pageToken))
+                return Task.FromResult(ListResponse);
+            return PageResponses.TryGetValue(pageToken, out var response)
+                ? Task.FromResult(response)
+                : throw new InvalidOperationException($"Unexpected test page token '{pageToken}'.");
+        }
 
         public async Task<NebiusServerlessResponse> CancelAsync(string remoteJobId, CancellationToken cancellationToken = default)
         {

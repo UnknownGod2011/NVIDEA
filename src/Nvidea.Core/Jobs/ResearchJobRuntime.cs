@@ -1,4 +1,5 @@
 using Nvidea.Core.Capabilities;
+using Nvidea.Core.Desktop;
 using Nvidea.Core.Research;
 
 namespace Nvidea.Core.Jobs;
@@ -8,8 +9,13 @@ namespace Nvidea.Core.Jobs;
 /// in-process today; it does not claim Nebius Serverless execution until a real remote dispatcher
 /// owns that boundary. Durable checkpoints are stored by <see cref="JsonAgentJobStore"/> and are
 /// protected by Windows DPAPI when running on Windows.
+///
+/// The runtime owns an OS-backed lease for the research state directory for its entire lifetime.
+/// This prevents two NVIDEA processes from concurrently mutating the same durable research jobs,
+/// including interrupted-stage recovery. Dispose the runtime before another process/runtime is
+/// allowed to take ownership of the same research state.
 /// </summary>
-public sealed class ResearchJobRuntime
+public sealed class ResearchJobRuntime : IDisposable
 {
     public const string CapabilityId = "research.deep";
 
@@ -22,6 +28,8 @@ public sealed class ResearchJobRuntime
     private readonly IAuditTrail _auditTrail;
     private readonly ResumableJobOrchestrator _orchestrator;
     private readonly SemaphoreSlim _recoveryGate = new(1, 1);
+    private readonly StateDirectoryLease _stateLease;
+    private bool _disposed;
 
     public ResearchJobRuntime(
         string stateDirectory,
@@ -33,20 +41,30 @@ public sealed class ResearchJobRuntime
         ArgumentNullException.ThrowIfNull(engine);
 
         var root = Path.GetFullPath(stateDirectory);
-        Directory.CreateDirectory(root);
-        _store = new JsonAgentJobStore(Path.Combine(root, "research-jobs.json"));
-        _auditTrail = auditTrail ?? new JsonLinesAuditTrail(Path.Combine(root, "research-audit.jsonl"));
-        _orchestrator = new ResumableJobOrchestrator(
-            _store,
-            new LocalResearchExecutionPolicy(),
-            _auditTrail,
-            new IAgentJobHandler[] { new ResearchJobHandler(engine) });
+        var lease = StateDirectoryLease.Acquire(root);
+        try
+        {
+            _store = new JsonAgentJobStore(Path.Combine(root, "research-jobs.json"));
+            _auditTrail = auditTrail ?? new JsonLinesAuditTrail(Path.Combine(root, "research-audit.jsonl"));
+            _orchestrator = new ResumableJobOrchestrator(
+                _store,
+                new LocalResearchExecutionPolicy(),
+                _auditTrail,
+                new IAgentJobHandler[] { new ResearchJobHandler(engine) });
+            _stateLease = lease;
+        }
+        catch
+        {
+            lease.Dispose();
+            throw;
+        }
     }
 
     public async Task<ResearchJobStatus> CreateAsync(
         string question,
         CancellationToken cancellationToken = default)
     {
+        ThrowIfDisposed();
         var definition = new AgentJobDefinition(
             ResearchJobHandler.Type,
             CapabilityId,
@@ -66,6 +84,7 @@ public sealed class ResearchJobRuntime
     public async Task<IReadOnlyList<ResearchJobStatus>> ListAsync(
         CancellationToken cancellationToken = default)
     {
+        ThrowIfDisposed();
         var jobs = await _store.ListAsync(cancellationToken).ConfigureAwait(false);
         return jobs
             .Where(static job => string.Equals(job.Definition.JobType, ResearchJobHandler.Type, StringComparison.Ordinal))
@@ -78,6 +97,7 @@ public sealed class ResearchJobRuntime
         Guid jobId,
         CancellationToken cancellationToken = default)
     {
+        ThrowIfDisposed();
         var job = await _orchestrator.RunNextStepAsync(jobId, cancellationToken).ConfigureAwait(false);
         EnsureResearch(job);
         return ResearchJobStatus.FromRecord(job);
@@ -93,9 +113,11 @@ public sealed class ResearchJobRuntime
         Guid jobId,
         CancellationToken cancellationToken = default)
     {
+        ThrowIfDisposed();
         await _recoveryGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            ThrowIfDisposed();
             var job = await GetRequiredResearchAsync(jobId, cancellationToken).ConfigureAwait(false);
             var now = DateTimeOffset.UtcNow;
             if (job.State != AgentJobState.Running)
@@ -151,6 +173,7 @@ public sealed class ResearchJobRuntime
         Guid jobId,
         CancellationToken cancellationToken = default)
     {
+        ThrowIfDisposed();
         var existing = await GetRequiredResearchAsync(jobId, cancellationToken).ConfigureAwait(false);
         var job = await _orchestrator.CancelAsync(existing.JobId, cancellationToken).ConfigureAwait(false);
         return ResearchJobStatus.FromRecord(job);
@@ -160,6 +183,7 @@ public sealed class ResearchJobRuntime
         Guid jobId,
         CancellationToken cancellationToken = default)
     {
+        ThrowIfDisposed();
         var job = await GetRequiredResearchAsync(jobId, cancellationToken).ConfigureAwait(false);
         return ResearchJobHandler.ReadCompletedReport(job);
     }
@@ -168,8 +192,19 @@ public sealed class ResearchJobRuntime
         Guid jobId,
         CancellationToken cancellationToken = default)
     {
+        ThrowIfDisposed();
         var job = await GetRequiredResearchAsync(jobId, cancellationToken).ConfigureAwait(false);
         return ResearchJobStatus.FromRecord(job);
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+            return;
+
+        _disposed = true;
+        _stateLease.Dispose();
+        _recoveryGate.Dispose();
     }
 
     private async Task<AgentJobRecord> GetRequiredResearchAsync(Guid jobId, CancellationToken cancellationToken)
@@ -182,6 +217,8 @@ public sealed class ResearchJobRuntime
         EnsureResearch(job);
         return job;
     }
+
+    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);
 
     private static void EnsureResearch(AgentJobRecord job)
     {

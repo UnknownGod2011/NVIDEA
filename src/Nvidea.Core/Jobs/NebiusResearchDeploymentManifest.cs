@@ -6,7 +6,8 @@ namespace Nvidea.Core.Jobs;
 
 public sealed record NebiusResearchSecretReferenceSummary(
     string EnvironmentVariable,
-    string ReferenceType);
+    string ReferenceType,
+    string ReferenceSha256);
 
 public sealed record NebiusResearchStorageMappingSummary(
     string EndpointHost,
@@ -38,10 +39,11 @@ public sealed record NebiusResearchDeploymentManifest(
 }
 
 /// <summary>
-/// Produces a deterministic, redacted description of the live research deployment. The manifest
-/// intentionally excludes access tokens, Object Storage credentials, MysteryBox ids/version ids,
-/// project/subnet ids, PEM text, and payload data. It is suitable for attaching to contract-run
-/// evidence so a later run can prove that the immutable worker and non-secret topology were unchanged.
+/// Produces a deterministic, redacted description of the live research deployment. Access tokens,
+/// Object Storage credentials, raw MysteryBox ids/version ids, project/subnet ids, PEM text and
+/// payload data are excluded. Secret references are represented only by their type and a SHA-256
+/// commitment to the provider reference, so contract evidence can detect secret rotation without
+/// disclosing the MysteryBox identifier itself.
 /// </summary>
 public static class NebiusResearchDeploymentManifestBuilder
 {
@@ -52,7 +54,6 @@ public static class NebiusResearchDeploymentManifestBuilder
         ArgumentNullException.ThrowIfNull(dispatchOptions);
         ArgumentNullException.ThrowIfNull(objectStorageOptions);
 
-        // Reuse the same topology validation as the production/live composition boundary.
         NebiusResearchDeploymentPreflight.ValidateObjectStorageAlignment(dispatchOptions, objectStorageOptions);
 
         var workerDigest = ExtractWorkerDigest(dispatchOptions.WorkerImage);
@@ -69,9 +70,7 @@ public static class NebiusResearchDeploymentManifestBuilder
 
         var secrets = (dispatchOptions.SecretEnvironmentVariables ?? new Dictionary<string, NebiusMysteryBoxSecretRef>())
             .OrderBy(static pair => pair.Key, StringComparer.Ordinal)
-            .Select(static pair => new NebiusResearchSecretReferenceSummary(
-                pair.Key,
-                string.IsNullOrWhiteSpace(pair.Value.VersionId) ? "primary-version" : "version-pinned"))
+            .Select(static pair => BuildSecretSummary(pair.Key, pair.Value))
             .ToArray();
 
         var compute = new NebiusResearchComputeSummary(
@@ -125,6 +124,21 @@ public static class NebiusResearchDeploymentManifestBuilder
         {
             WriteIndented = indented
         });
+    }
+
+    private static NebiusResearchSecretReferenceSummary BuildSecretSummary(string environmentVariable, NebiusMysteryBoxSecretRef secret)
+    {
+        ArgumentNullException.ThrowIfNull(secret);
+        var version = secret.VersionId?.Trim();
+        var id = secret.SecretId?.Trim();
+        var pinned = !string.IsNullOrWhiteSpace(version);
+        var committedReference = pinned
+            ? $"version:{version}"
+            : $"secret:{id}";
+        return new NebiusResearchSecretReferenceSummary(
+            environmentVariable,
+            pinned ? "version-pinned" : "primary-version",
+            Sha256Hex(committedReference));
     }
 
     private static string ExtractWorkerDigest(string image)

@@ -56,6 +56,41 @@ public sealed class JsonAgentJobStore : IAgentJobStore
         }
     }
 
+    /// <summary>
+    /// Atomically replaces one job only while its durable identity/version still matches the
+    /// caller's previously-read record. This is intentionally stronger than a blind SaveAsync
+    /// and is used when ingesting remote results so stale or duplicate cloud work cannot overwrite
+    /// a newer local checkpoint.
+    /// </summary>
+    public async Task<bool> CompareExchangeAsync(
+        AgentJobRecord expected,
+        AgentJobRecord replacement,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(expected);
+        ArgumentNullException.ThrowIfNull(replacement);
+        if (expected.JobId == Guid.Empty || replacement.JobId == Guid.Empty || expected.JobId != replacement.JobId)
+            throw new ArgumentException("Compare-exchange requires the same non-empty job id.");
+
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var records = (await LoadUnlockedAsync(cancellationToken).ConfigureAwait(false)).ToList();
+            var index = records.FindIndex(x => x.JobId == expected.JobId);
+            if (index < 0 || !VersionEquivalent(records[index], expected))
+                return false;
+
+            records[index] = replacement;
+            records.Sort(static (a, b) => a.CreatedAt.CompareTo(b.CreatedAt));
+            await PersistUnlockedAsync(records, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     private async Task<IReadOnlyList<AgentJobRecord>> LoadAsync(CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -127,5 +162,39 @@ public sealed class JsonAgentJobStore : IAgentJobStore
         var temp = _path + ".tmp";
         await File.WriteAllBytesAsync(temp, persisted, cancellationToken).ConfigureAwait(false);
         File.Move(temp, _path, true);
+    }
+
+    private static bool VersionEquivalent(AgentJobRecord actual, AgentJobRecord expected)
+    {
+        if (actual.JobId != expected.JobId
+            || actual.State != expected.State
+            || actual.ExecutionLocation != expected.ExecutionLocation
+            || actual.Attempt != expected.Attempt
+            || actual.UpdatedAt != expected.UpdatedAt
+            || !CheckpointVersionEquivalent(actual.Checkpoint, expected.Checkpoint))
+        {
+            return false;
+        }
+
+        var a = actual.RemoteResearch;
+        var e = expected.RemoteResearch;
+        if (ReferenceEquals(a, e)) return true;
+        if (a is null || e is null) return false;
+        return string.Equals(a.ProtocolVersion, e.ProtocolVersion, StringComparison.Ordinal)
+            && string.Equals(a.OpaqueWorkItemId, e.OpaqueWorkItemId, StringComparison.Ordinal)
+            && string.Equals(a.RemoteJobId, e.RemoteJobId, StringComparison.Ordinal)
+            && string.Equals(a.InputCheckpointStep, e.InputCheckpointStep, StringComparison.Ordinal)
+            && a.InputCheckpointSavedAt == e.InputCheckpointSavedAt
+            && a.DispatchedAt == e.DispatchedAt
+            && a.State == e.State
+            && a.ResultAppliedAt == e.ResultAppliedAt;
+    }
+
+    private static bool CheckpointVersionEquivalent(AgentJobCheckpoint? actual, AgentJobCheckpoint? expected)
+    {
+        if (ReferenceEquals(actual, expected)) return true;
+        if (actual is null || expected is null) return false;
+        return string.Equals(actual.Step, expected.Step, StringComparison.Ordinal)
+            && actual.SavedAt == expected.SavedAt;
     }
 }

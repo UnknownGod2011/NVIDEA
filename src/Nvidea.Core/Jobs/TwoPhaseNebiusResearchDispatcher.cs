@@ -15,21 +15,26 @@ public sealed record PreparedNebiusResearchDispatch(
 /// Coordinates the crash-sensitive Serverless dispatch boundary in two phases:
 /// 1) encrypt/upload the work item and durably reserve its exact opaque id/checkpoint/expiry locally;
 /// 2) only after that CAS succeeds, create the Nebius job and attach the returned remote id.
+/// When a binding publisher is configured, the authoritative remote-id binding is published only
+/// after durable attachment succeeds, so a worker can never observe an unauthoritative pre-create id.
 /// </summary>
 public sealed class TwoPhaseNebiusResearchDispatcher
 {
     private readonly INebiusServerlessJobClient _serverless;
     private readonly IProtectedResearchWorkItemTransport _transport;
     private readonly NebiusResearchDispatchOptions _options;
+    private readonly ResearchDispatchBindingPublisher? _bindingPublisher;
 
     public TwoPhaseNebiusResearchDispatcher(
         INebiusServerlessJobClient serverless,
         IProtectedResearchWorkItemTransport transport,
-        NebiusResearchDispatchOptions options)
+        NebiusResearchDispatchOptions options,
+        ResearchDispatchBindingPublisher? bindingPublisher = null)
     {
         _serverless = serverless ?? throw new ArgumentNullException(nameof(serverless));
         _transport = transport ?? throw new ArgumentNullException(nameof(transport));
         _options = options ?? throw new ArgumentNullException(nameof(options));
+        _bindingPublisher = bindingPublisher;
         ValidateOptions(options);
     }
 
@@ -123,14 +128,35 @@ public sealed class TwoPhaseNebiusResearchDispatcher
         }
 
         var receipt = await StartPreparedAsync(prepared, cancellationToken).ConfigureAwait(false);
-        return await ingestor.AttachDispatchAsync(receipt, cancellationToken).ConfigureAwait(false);
+        var attached = await ingestor.AttachDispatchAsync(receipt, cancellationToken).ConfigureAwait(false);
+        await PublishBindingIfConfiguredAsync(attached, cancellationToken).ConfigureAwait(false);
+        return attached;
     }
 
-    public string GetDeterministicRemoteJobName(string opaqueWorkItemId)
+    public string GetDeterministicRemoteJobName(string opaqueWorkItemId) =>
+        ResearchDispatchBindingProtector.GetDeterministicRemoteJobName(opaqueWorkItemId);
+
+    private async Task PublishBindingIfConfiguredAsync(AgentJobRecord attached, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(opaqueWorkItemId) || opaqueWorkItemId.Length < 12)
-            throw new ArgumentException("A valid opaque work-item id is required.", nameof(opaqueWorkItemId));
-        return $"nvidea-research-{opaqueWorkItemId[..12].ToLowerInvariant()}";
+        if (_bindingPublisher is null)
+            return;
+
+        var provenance = attached.RemoteResearch
+            ?? throw new InvalidOperationException("Attached remote research job is missing provenance.");
+        if (attached.ExecutionLocation != JobExecutionLocation.NebiusServerless
+            || provenance.State != RemoteResearchProvenanceState.Dispatched
+            || string.IsNullOrWhiteSpace(provenance.RemoteJobId))
+        {
+            throw new InvalidOperationException("Authoritative dispatch binding can only be published after durable remote-id attachment.");
+        }
+
+        var expiresAt = provenance.WorkItemExpiresAt
+            ?? provenance.DispatchedAt + ResearchWorkItemProtector.MaxLifetime;
+        await _bindingPublisher.PublishAsync(
+            provenance.OpaqueWorkItemId,
+            provenance.RemoteJobId,
+            expiresAt,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     private NebiusServerlessJobSpec BuildSpec(string opaqueWorkItemId)

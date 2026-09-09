@@ -102,7 +102,7 @@ public sealed class NebiusServerlessJobClient : INebiusServerlessJobClient
         var plaintextEnvironment = (spec.EnvironmentVariables ?? new Dictionary<string, string>()).Select(pair => new NebiusEnvironmentVariablePayload(pair.Key, pair.Value, null));
         var secretEnvironment = (spec.SecretEnvironmentVariables ?? new Dictionary<string, NebiusMysteryBoxSecretRef>()).Select(pair => new NebiusEnvironmentVariablePayload(pair.Key, null, new NebiusMysteryBoxSecretPayload(pair.Value.SecretId, pair.Value.VersionId)));
         var environmentVariables = plaintextEnvironment.Concat(secretEnvironment).ToArray();
-        var volumes = (spec.Volumes ?? Array.Empty<NebiusServerlessVolumeMount>())
+        var volumes = spec.Volumes?
             .Select(volume => new NebiusVolumeMountPayload(volume.Source, volume.SourcePath, volume.ContainerPath, volume.Mode))
             .ToArray();
         var payload = new
@@ -217,7 +217,7 @@ public sealed class NebiusServerlessJobClient : INebiusServerlessJobClient
             if (string.IsNullOrWhiteSpace(volume.ContainerPath)
                 || volume.ContainerPath.Length > 1024
                 || volume.ContainerPath.Any(char.IsControl)
-                || !volume.ContainerPath.StartsWith('/', StringComparison.Ordinal))
+                || !volume.ContainerPath.StartsWith("/", StringComparison.Ordinal))
             {
                 throw new ArgumentException("Nebius volume container path must be a bounded absolute Linux path.", nameof(spec));
             }

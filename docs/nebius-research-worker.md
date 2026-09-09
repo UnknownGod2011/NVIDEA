@@ -10,7 +10,11 @@ NVIDEA's remote research worker is a real `.NET 8` executable at `src/Nvidea.Wor
 - `<root>/dispatch-bindings/<opaque-id>.json` — client-signed Nebius resource-ID binding with no research payload.
 - `<root>/results/<opaque-id>.json` — encrypted result envelope.
 
-For Nebius Serverless, mount a dedicated Object Storage bucket read/write at a path such as `/nvidea-transport` and set `NVIDEA_TRANSPORT_ROOT=/nvidea-transport`. Keep this bucket dedicated to the research transport and configure a provider-side lifecycle rule as defense in depth in addition to NVIDEA's protocol TTL.
+For Nebius Serverless, mount a dedicated Object Storage bucket or supported filesystem read/write at a path such as `/mnt/nvidea-research` and set `NVIDEA_TRANSPORT_ROOT` to the exact same container path. Keep the backing storage dedicated to the research transport and configure a provider-side lifecycle rule as defense in depth in addition to NVIDEA's protocol TTL.
+
+The client now models the current Nebius `spec.volumes[]` contract explicitly with `NebiusServerlessVolumeMount`: `source`, optional `sourcePath`, absolute `containerPath`, and provider mode `READ_WRITE` or `READ_ONLY`. `NebiusResearchDispatchOptions.Volumes` is passed through both the legacy dispatcher and the crash-safe `TwoPhaseNebiusResearchDispatcher`. Invalid relative paths, duplicate container paths, unsupported modes, oversized/control-character values, and malformed sources are rejected before network I/O.
+
+For the production research worker the transport mount must be `READ_WRITE`, because the worker consumes the encrypted work item and signed binding and then publishes the encrypted result. A read-only mount is useful only for workloads that never publish transport state.
 
 All three transport namespaces use create-once publication and temp-file + move semantics. Opaque IDs are constrained before becoming filenames. Work-item/result bodies remain encrypted; dispatch bindings contain control-plane identity only and are RSA-PSS/SHA-256 signed by the originating client.
 
@@ -27,7 +31,7 @@ The corresponding client private key stays on the originating Windows client. It
 
 Non-secret worker configuration:
 
-- `NVIDEA_TRANSPORT_ROOT` — absolute mounted transport directory.
+- `NVIDEA_TRANSPORT_ROOT` — absolute mounted transport directory; this must equal the configured `NebiusServerlessVolumeMount.ContainerPath`.
 - optional `NVIDEA_BINDING_POLL_SECONDS` — bounded binding poll interval; defaults to 2 seconds and is constrained to 100 ms–30 seconds.
 - optional `NVIDEA_BINDING_WAIT_SECONDS` — bounded total handoff wait; defaults to 5 minutes and is capped at 15 minutes.
 - optional `NVIDEA_MODEL_STANDARD`, `NVIDEA_MODEL_FAST`, `NVIDEA_MODEL_DEEP`.
@@ -57,14 +61,28 @@ The handoff protocol is implemented in `ResearchDispatchBinding.cs` and is wired
 7. `ReconcileDispatchedAsync` idempotently ensures the exact signed binding exists before reading provider lifecycle state. An existing valid binding for the same resource is accepted; a conflicting binding fails closed before provider-state mutation.
 8. The worker waits boundedly for that exact opaque ID, verifies protocol version, opaque ID, deterministic name, expiry, and client signature using the pinned client public key, then passes only the verified resource ID into `NebiusResearchWorker`.
 9. The returned encrypted result remains authenticated to that exact remote resource ID by `ResearchResultProtector`.
+10. `NebiusResearchClientRuntime` performs best-effort signed-binding cleanup only after durable local state proves the stage terminal or its verified result applied; active dispatch/cancellation states retain the binding.
 
 Publication is intentionally impossible before authoritative attachment. A binding conflict never triggers overwrite or fallback to the deterministic job name.
 
+## Serverless job mount example
+
+Conceptually, the job submitted by NVIDEA must contain the equivalent of:
+
+```text
+volume source=<dedicated-bucket-or-filesystem>
+       containerPath=/mnt/nvidea-research
+       mode=READ_WRITE
+NVIDEA_TRANSPORT_ROOT=/mnt/nvidea-research
+```
+
+The exact JSON is emitted under `spec.volumes[]`; storage credentials, when required, belong in Nebius-managed secret configuration rather than plaintext NVIDEA job environment variables.
+
 ### Remaining integration boundary
 
-The producer and consumer sides of the authoritative-ID handoff are now connected in the durable dispatch and reconciliation paths when a `ResearchDispatchBindingPublisher` is supplied by local composition. WPF still does not expose Serverless research because a live Nebius/Object Storage/MysteryBox/container contract probe has not yet succeeded in this environment.
+The client and worker now share an explicit mount contract in code, so the earlier control-plane gap where `NebiusServerlessJobSpec` could not express any Object Storage/filesystem volume is closed. WPF still does not expose Serverless research because a live Nebius/Object Storage/MysteryBox/container contract probe has not yet succeeded in this environment.
 
-One cleanup item also remains: terminal result/work-item cleanup does not yet delete the corresponding signed dispatch-binding object. Provider-side Object Storage lifecycle rules and binding expiry bound retention, but the local lifecycle should explicitly delete the binding after terminal success/failure/cancellation once worker/result races are proven safe.
+The next proof must use a real mounted transport and immutable worker image to validate the complete path rather than assuming that provider-side storage/auth configuration is correct.
 
 ## Container build
 

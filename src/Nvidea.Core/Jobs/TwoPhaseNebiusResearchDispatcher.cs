@@ -13,14 +13,8 @@ public sealed record PreparedNebiusResearchDispatch(
 
 /// <summary>
 /// Coordinates the crash-sensitive Serverless dispatch boundary in two phases:
-/// 1) encrypt/upload the work item and durably reserve its exact opaque id/checkpoint locally;
+/// 1) encrypt/upload the work item and durably reserve its exact opaque id/checkpoint/expiry locally;
 /// 2) only after that CAS succeeds, create the Nebius job and attach the returned remote id.
-///
-/// This closes the previous window where Nebius could accept a job before the client had any
-/// durable provenance. A crash after reservation remains explicitly visible as DispatchReserved;
-/// it is never silently replayed. A crash after remote creation but before receipt attachment is
-/// still ambiguous, but the durable opaque id and deterministic Nebius job name are retained for
-/// later reconciliation rather than losing all provenance.
 /// </summary>
 public sealed class TwoPhaseNebiusResearchDispatcher
 {
@@ -118,7 +112,8 @@ public sealed class TwoPhaseNebiusResearchDispatcher
                     prepared.LocalJobId,
                     prepared.CheckpointStep,
                     prepared.OpaqueWorkItemId,
-                    prepared.PreparedAt),
+                    prepared.PreparedAt,
+                    prepared.Envelope.ExpiresAt),
                 cancellationToken).ConfigureAwait(false);
         }
         catch

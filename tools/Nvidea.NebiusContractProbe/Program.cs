@@ -106,8 +106,105 @@ static async Task<int> RunPlannerProbeAsync()
     return 0;
 }
 
+static int RunLiveResearchPreflight()
+{
+    var serverlessAccessToken = RequiredEnvironment("NVIDEA_LIVE_SERVERLESS_ACCESS_TOKEN");
+    var projectId = RequiredEnvironment("NVIDEA_LIVE_SERVERLESS_PROJECT_ID");
+    var workerImage = RequiredEnvironment("NVIDEA_LIVE_WORKER_IMAGE");
+    var subnetId = RequiredEnvironment("NVIDEA_LIVE_SUBNET_ID");
+    var platform = RequiredEnvironment("NVIDEA_LIVE_PLATFORM");
+    var preset = RequiredEnvironment("NVIDEA_LIVE_PRESET");
+    var timeout = RequiredEnvironment("NVIDEA_LIVE_TIMEOUT");
+    var diskType = RequiredEnvironment("NVIDEA_LIVE_DISK_TYPE");
+    var diskSizeBytes = RequiredPositiveInt64("NVIDEA_LIVE_DISK_SIZE_BYTES");
+    var transportSource = RequiredEnvironment("NVIDEA_LIVE_TRANSPORT_SOURCE");
+    var workerTransportRoot = OptionalEnvironment("NVIDEA_LIVE_WORKER_TRANSPORT_ROOT") ?? "/mnt/nvidea-research";
+    var objectStoragePrefix = OptionalEnvironment("NVIDEA_LIVE_OBJECT_STORAGE_PREFIX") ?? "nvidea-research";
+    var transportSourcePath = OptionalEnvironment("NVIDEA_LIVE_TRANSPORT_SOURCE_PATH") ?? objectStoragePrefix;
+    var workerPublicKeyPem = ReadRequiredPemFile("NVIDEA_LIVE_WORKER_PUBLIC_KEY_PEM_FILE");
+    var clientPrivateKeyPem = ReadRequiredPemFile("NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE");
+
+    var objectStorageOptions = new NebiusObjectStorageClientOptions(
+        Endpoint: RequiredEnvironment("NVIDEA_LIVE_OBJECT_STORAGE_ENDPOINT"),
+        Region: RequiredEnvironment("NVIDEA_LIVE_OBJECT_STORAGE_REGION"),
+        Bucket: RequiredEnvironment("NVIDEA_LIVE_OBJECT_STORAGE_BUCKET"),
+        AccessKeyId: RequiredEnvironment("NVIDEA_LIVE_OBJECT_STORAGE_ACCESS_KEY_ID"),
+        SecretAccessKey: RequiredEnvironment("NVIDEA_LIVE_OBJECT_STORAGE_SECRET_ACCESS_KEY"),
+        Prefix: objectStoragePrefix,
+        OperationTimeout: TimeSpan.FromSeconds(30),
+        MaxRetries: 2);
+
+    using var clientRsa = RSA.Create();
+    try
+    {
+        clientRsa.ImportFromPem(clientPrivateKeyPem);
+    }
+    catch (CryptographicException)
+    {
+        throw new InvalidOperationException("NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE does not contain a valid RSA private key.");
+    }
+    catch (ArgumentException)
+    {
+        throw new InvalidOperationException("NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE does not contain a valid RSA private key.");
+    }
+    var clientPublicKeyPem = clientRsa.ExportSubjectPublicKeyInfoPem();
+
+    var secretEnvironment = new Dictionary<string, NebiusMysteryBoxSecretRef>(StringComparer.Ordinal)
+    {
+        ["NEBIUS_API_KEY"] = RequiredSecretRef("NVIDEA_LIVE_SECRET_NEBIUS_API_KEY_ID"),
+        ["TAVILY_API_KEY"] = RequiredSecretRef("NVIDEA_LIVE_SECRET_TAVILY_API_KEY_ID"),
+        ["NVIDEA_WORKER_PRIVATE_KEY_PEM"] = RequiredSecretRef("NVIDEA_LIVE_SECRET_WORKER_PRIVATE_KEY_ID")
+    };
+    var plainEnvironment = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        [NebiusResearchDeploymentPreflight.TransportRootEnvironmentVariable] = workerTransportRoot,
+        [NebiusResearchDeploymentPreflight.ClientPublicKeyEnvironmentVariable] = clientPublicKeyPem
+    };
+
+    var dispatchOptions = new NebiusResearchDispatchOptions(
+        WorkerImage: workerImage,
+        WorkerPublicKeyPem: workerPublicKeyPem,
+        ContainerCommand: "dotnet",
+        Platform: platform,
+        Preset: preset,
+        Timeout: timeout,
+        SubnetId: subnetId,
+        Disk: new NebiusServerlessDiskSpec(diskType, diskSizeBytes),
+        EnvironmentVariables: plainEnvironment,
+        SecretEnvironmentVariables: secretEnvironment,
+        Volumes: new[]
+        {
+            new NebiusServerlessVolumeMount(
+                transportSource,
+                workerTransportRoot,
+                "READ_WRITE",
+                transportSourcePath)
+        });
+
+    NebiusResearchLiveDryRunPreflight.Validate(
+        dispatchOptions,
+        objectStorageOptions,
+        serverlessAccessToken,
+        projectId,
+        clientPrivateKeyPem);
+
+    Console.WriteLine("NVIDEA live research deployment preflight: PASS");
+    Console.WriteLine("Cloud jobs/model calls/Object Storage requests: not performed");
+    Console.WriteLine("Worker image: digest-pinned");
+    Console.WriteLine("Worker/client RSA material: parseable and signing identity consistent");
+    Console.WriteLine("MysteryBox-backed worker credentials: configured");
+    Console.WriteLine("Object Storage bucket/prefix and Serverless mount: aligned");
+    Console.WriteLine("Serverless compute/disk/subnet fields: structurally valid");
+    Console.WriteLine("Secret values and PEM contents: not printed");
+    return 0;
+}
+
 static async Task<int> RunLiveResearchProbeAsync()
 {
+    // The real run shares the exact same zero-cost fail-closed deployment gate. No provider call
+    // happens until all local configuration, RSA, image immutability and storage/mount checks pass.
+    RunLiveResearchPreflight();
+
     var serverlessAccessToken = RequiredEnvironment("NVIDEA_LIVE_SERVERLESS_ACCESS_TOKEN");
     var projectId = RequiredEnvironment("NVIDEA_LIVE_SERVERLESS_PROJECT_ID");
     var workerImage = RequiredEnvironment("NVIDEA_LIVE_WORKER_IMAGE");
@@ -301,16 +398,23 @@ static async Task<int> RunLiveResearchProbeAsync()
 try
 {
     var liveResearch = args.Any(arg => string.Equals(arg, "--live-research", StringComparison.Ordinal));
+    var liveResearchPreflight = args.Any(arg => string.Equals(arg, "--live-research-preflight", StringComparison.Ordinal));
     if (args.Any(arg => string.Equals(arg, "--help", StringComparison.Ordinal) || string.Equals(arg, "-h", StringComparison.Ordinal)))
     {
-        Console.WriteLine("Usage: Nvidea.NebiusContractProbe [--live-research]");
+        Console.WriteLine("Usage: Nvidea.NebiusContractProbe [--live-research | --live-research-preflight]");
         Console.WriteLine("Default: cheap Token Factory structured-planner probe.");
+        Console.WriteLine("--live-research-preflight: zero-cost local validation of the complete live deployment configuration; performs no provider calls.");
         Console.WriteLine("--live-research: explicit live Nebius Serverless research probe; see docs/nebius-contract-probe.md.");
         return 0;
     }
-    if (args.Any(arg => !string.Equals(arg, "--live-research", StringComparison.Ordinal)))
+    if (liveResearch && liveResearchPreflight)
+        return Fail("arguments", "Choose exactly one live mode.");
+    if (args.Any(arg => !string.Equals(arg, "--live-research", StringComparison.Ordinal)
+                        && !string.Equals(arg, "--live-research-preflight", StringComparison.Ordinal)))
         return Fail("arguments", "Unsupported argument. Use --help for supported modes.");
 
+    if (liveResearchPreflight)
+        return RunLiveResearchPreflight();
     return liveResearch
         ? await RunLiveResearchProbeAsync()
         : await RunPlannerProbeAsync();

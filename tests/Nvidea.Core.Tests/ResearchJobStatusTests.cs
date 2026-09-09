@@ -24,6 +24,50 @@ public sealed class ResearchJobStatusTests
     }
 
     [Fact]
+    public void Stale_local_running_research_is_explicitly_recoverable_without_exposing_payload()
+    {
+        var secretPayload = "{\"question\":\"private acquisition target\",\"source\":\"https://secret.example\"}";
+        var record = CreateRecord(
+            AgentJobState.Running,
+            new AgentJobCheckpoint(ResearchJobHandler.PlannedStep, secretPayload, DateTimeOffset.UtcNow.AddMinutes(-2))) with
+        {
+            ExecutionLocation = JobExecutionLocation.Local,
+            UpdatedAt = DateTimeOffset.UtcNow.Subtract(ResearchJobStatus.InterruptedRecoveryDelay).AddSeconds(-1),
+            Attempt = 1
+        };
+
+        var status = ResearchJobStatus.FromRecord(record);
+
+        Assert.Equal(ResearchJobStage.Interrupted, status.Stage);
+        Assert.True(status.CanRecoverInterrupted);
+        Assert.False(status.CanRunNextStep);
+        Assert.True(status.CanCancel);
+        Assert.Contains("Tavily evidence gathering", status.DisplayText, StringComparison.Ordinal);
+        Assert.Contains("repeat provider work/cost", status.DisplayText, StringComparison.Ordinal);
+        Assert.DoesNotContain("private acquisition", status.DisplayText, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("secret.example", status.DisplayText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Fresh_running_research_is_not_recoverable_during_grace_period()
+    {
+        var record = CreateRecord(
+            AgentJobState.Running,
+            new AgentJobCheckpoint(ResearchJobHandler.RequestedStep, "{}", DateTimeOffset.UtcNow)) with
+        {
+            ExecutionLocation = JobExecutionLocation.Local,
+            UpdatedAt = DateTimeOffset.UtcNow,
+            Attempt = 1
+        };
+
+        var status = ResearchJobStatus.FromRecord(record);
+
+        Assert.Equal(ResearchJobStage.Interrupted, status.Stage);
+        Assert.False(status.CanRecoverInterrupted);
+        Assert.False(status.CanRunNextStep);
+    }
+
+    [Fact]
     public void Retry_is_not_resumable_before_due_time()
     {
         var record = CreateRecord(

@@ -3,19 +3,22 @@ using System.Text.Json;
 namespace Nvidea.Core.Jobs;
 
 /// <summary>
-/// File-backed implementation for protected remote-research envelopes. It is intended for a
-/// directory backed by a Nebius Serverless mounted Object Storage bucket or other explicitly shared
-/// durable volume. Only already-encrypted protocol envelopes are stored here.
+/// File-backed implementation for protected remote-research envelopes and signed dispatch bindings.
+/// It is intended for a directory backed by a Nebius Serverless mounted Object Storage bucket or
+/// other explicitly shared durable volume. Research payloads remain encrypted; dispatch bindings
+/// contain only opaque/control-plane identity and are client-signed before publication.
 /// </summary>
 public sealed class DirectoryProtectedResearchTransport :
     IProtectedResearchWorkItemTransport,
-    IProtectedResearchResultTransport
+    IProtectedResearchResultTransport,
+    IProtectedResearchDispatchBindingTransport
 {
     private const int MaxEnvelopeBytes = 4 * 1024 * 1024;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly string _workItemsDirectory;
     private readonly string _resultsDirectory;
+    private readonly string _bindingsDirectory;
 
     public DirectoryProtectedResearchTransport(string rootDirectory)
     {
@@ -28,8 +31,10 @@ public sealed class DirectoryProtectedResearchTransport :
 
         _workItemsDirectory = Path.Combine(fullRoot, "work-items");
         _resultsDirectory = Path.Combine(fullRoot, "results");
+        _bindingsDirectory = Path.Combine(fullRoot, "dispatch-bindings");
         Directory.CreateDirectory(_workItemsDirectory);
         Directory.CreateDirectory(_resultsDirectory);
+        Directory.CreateDirectory(_bindingsDirectory);
     }
 
     Task IProtectedResearchWorkItemTransport.PutAsync(
@@ -61,6 +66,21 @@ public sealed class DirectoryProtectedResearchTransport :
         string opaqueWorkItemId,
         CancellationToken cancellationToken) =>
         DeleteEnvelopeAsync(_resultsDirectory, opaqueWorkItemId, cancellationToken);
+
+    Task IProtectedResearchDispatchBindingTransport.PutAsync(
+        ProtectedResearchDispatchBinding binding,
+        CancellationToken cancellationToken) =>
+        PutEnvelopeAsync(_bindingsDirectory, binding.OpaqueWorkItemId, binding, cancellationToken);
+
+    Task<ProtectedResearchDispatchBinding?> IProtectedResearchDispatchBindingTransport.GetAsync(
+        string opaqueWorkItemId,
+        CancellationToken cancellationToken) =>
+        GetEnvelopeAsync<ProtectedResearchDispatchBinding>(_bindingsDirectory, opaqueWorkItemId, cancellationToken);
+
+    Task IProtectedResearchDispatchBindingTransport.DeleteAsync(
+        string opaqueWorkItemId,
+        CancellationToken cancellationToken) =>
+        DeleteEnvelopeAsync(_bindingsDirectory, opaqueWorkItemId, cancellationToken);
 
     private static async Task PutEnvelopeAsync<T>(
         string directory,

@@ -128,6 +128,86 @@ public sealed class NebiusResearchLifecycleReconcilerTests
     }
 
     [Fact]
+    public async Task ReconcileDispatchedAsync_PersistsRemoteFailureAsTerminalLocalFailure()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            using var rsa = RSA.Create(2048);
+            var store = new JsonAgentJobStore(Path.Combine(root, "jobs.json"), new PassThroughProtector());
+            var audit = new MemoryAuditTrail();
+            var ingestor = new RemoteResearchResultIngestor(store, new NullResultTransport(), rsa.ExportPkcs8PrivateKeyPem(), audit);
+            var now = DateTimeOffset.UtcNow;
+            var original = CreatePendingJob(now);
+            await store.SaveAsync(original);
+            const string opaqueId = "mY7FhPlAdtPz9xL4b8gU1cKqN3sW6vRt";
+            await ingestor.ReserveDispatchAsync(new RemoteResearchDispatchReservation(original.JobId, original.Checkpoint!.Step, opaqueId, now, now.AddMinutes(20)));
+            await ingestor.AttachDispatchAsync(new NebiusResearchDispatchReceipt(original.JobId, original.Checkpoint.Step, opaqueId, "job-123", now));
+            var expectedName = NebiusResearchLifecycleReconciler.GetDeterministicRemoteJobName(opaqueId);
+            var client = new FakeServerlessClient
+            {
+                GetResponse = new NebiusServerlessResponse(HttpStatusCode.OK,
+                    $$"""{"metadata":{"id":"job-123","name":"{{expectedName}}"},"status":{"state":"FAILED"}}""")
+            };
+            var reconciler = new NebiusResearchLifecycleReconciler(store, client, ingestor, audit);
+
+            var failed = await reconciler.ReconcileDispatchedAsync(original.JobId, now.AddMinutes(1));
+
+            Assert.Equal(AgentJobState.Failed, failed.State);
+            Assert.Equal(JobExecutionLocation.Local, failed.ExecutionLocation);
+            Assert.Equal(RemoteResearchProvenanceState.RemoteFailed, failed.RemoteResearch!.State);
+            Assert.NotNull(failed.RemoteResearch.TerminalAt);
+            Assert.Contains(audit.Events, e => e.EventType == "research.remote_failed");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ReconcileDispatchedAsync_WaitsForDelayedCompletedResultUntilPersistedExpiry()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            using var rsa = RSA.Create(2048);
+            var store = new JsonAgentJobStore(Path.Combine(root, "jobs.json"), new PassThroughProtector());
+            var audit = new MemoryAuditTrail();
+            var ingestor = new RemoteResearchResultIngestor(store, new NullResultTransport(), rsa.ExportPkcs8PrivateKeyPem(), audit);
+            var now = DateTimeOffset.UtcNow;
+            var expiresAt = now.AddMinutes(10);
+            var original = CreatePendingJob(now);
+            await store.SaveAsync(original);
+            const string opaqueId = "mY7FhPlAdtPz9xL4b8gU1cKqN3sW6vRt";
+            await ingestor.ReserveDispatchAsync(new RemoteResearchDispatchReservation(original.JobId, original.Checkpoint!.Step, opaqueId, now, expiresAt));
+            await ingestor.AttachDispatchAsync(new NebiusResearchDispatchReceipt(original.JobId, original.Checkpoint.Step, opaqueId, "job-123", now));
+            var expectedName = NebiusResearchLifecycleReconciler.GetDeterministicRemoteJobName(opaqueId);
+            var client = new FakeServerlessClient
+            {
+                GetResponse = new NebiusServerlessResponse(HttpStatusCode.OK,
+                    $$"""{"metadata":{"id":"job-123","name":"{{expectedName}}"},"status":{"state":"COMPLETED"}}""")
+            };
+            var reconciler = new NebiusResearchLifecycleReconciler(store, client, ingestor, audit);
+
+            var waiting = await reconciler.ReconcileDispatchedAsync(original.JobId, now.AddMinutes(5));
+            Assert.Equal(AgentJobState.Running, waiting.State);
+            Assert.Equal(RemoteResearchProvenanceState.Dispatched, waiting.RemoteResearch!.State);
+            Assert.Equal(expiresAt, waiting.RemoteResearch.WorkItemExpiresAt);
+
+            var expired = await reconciler.ReconcileDispatchedAsync(original.JobId, now.AddMinutes(11));
+            Assert.Equal(AgentJobState.Failed, expired.State);
+            Assert.Equal(JobExecutionLocation.Local, expired.ExecutionLocation);
+            Assert.Equal(RemoteResearchProvenanceState.Expired, expired.RemoteResearch!.State);
+            Assert.Contains(audit.Events, e => e.EventType == "research.remote_result_expired");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Cancellation_PersistsIntentBeforeProviderCall_ThenFinalizesOnlyOnConfirmedCancelled()
     {
         var root = CreateTempDirectory();
@@ -143,6 +223,7 @@ public sealed class NebiusResearchLifecycleReconcilerTests
             const string opaqueId = "mY7FhPlAdtPz9xL4b8gU1cKqN3sW6vRt";
             await ingestor.ReserveDispatchAsync(new RemoteResearchDispatchReservation(original.JobId, original.Checkpoint!.Step, opaqueId, now));
             await ingestor.AttachDispatchAsync(new NebiusResearchDispatchReceipt(original.JobId, original.Checkpoint.Step, opaqueId, "job-123", now));
+            var expectedName = NebiusResearchLifecycleReconciler.GetDeterministicRemoteJobName(opaqueId);
 
             var client = new FakeServerlessClient();
             client.OnCancel = async () =>
@@ -151,7 +232,7 @@ public sealed class NebiusResearchLifecycleReconcilerTests
                 Assert.Equal(RemoteResearchProvenanceState.CancelRequested, durable!.RemoteResearch!.State);
             };
             client.GetResponse = new NebiusServerlessResponse(HttpStatusCode.OK,
-                "{\"metadata\":{\"id\":\"job-123\",\"name\":\"nvidea-research-test\"},\"status\":{\"state\":\"CANCELLED\"}}");
+                $$"""{"metadata":{"id":"job-123","name":"{{expectedName}}"},"status":{"state":"CANCELLED"}}""");
             var reconciler = new NebiusResearchLifecycleReconciler(store, client, ingestor, audit);
 
             var requested = await reconciler.RequestCancellationAsync(original.JobId);

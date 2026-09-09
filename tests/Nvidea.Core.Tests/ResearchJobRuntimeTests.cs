@@ -59,6 +59,86 @@ public sealed class ResearchJobRuntimeTests
     }
 
     [Fact]
+    public async Task Explicit_recovery_rearms_only_stale_running_research_without_provider_work()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "nvidea-research-runtime-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var audit = new MemoryAuditTrail();
+            var provider = new CountingProvider(CreateBatch());
+            var runtime = new ResearchJobRuntime(
+                directory,
+                new ResearchEngine(new QueueInferenceClient([]), provider),
+                audit);
+            var created = await runtime.CreateAsync("Recover me");
+
+            var store = new JsonAgentJobStore(Path.Combine(directory, "research-jobs.json"));
+            var persisted = await store.GetAsync(created.JobId) ?? throw new InvalidOperationException("Expected persisted research job.");
+            var interrupted = persisted with
+            {
+                State = AgentJobState.Running,
+                Attempt = 1,
+                UpdatedAt = DateTimeOffset.UtcNow.Subtract(ResearchJobStatus.InterruptedRecoveryDelay).AddSeconds(-1)
+            };
+            await store.SaveAsync(interrupted);
+
+            var status = await runtime.GetStatusAsync(created.JobId);
+            Assert.Equal(ResearchJobStage.Interrupted, status.Stage);
+            Assert.True(status.CanRecoverInterrupted);
+
+            var rearmed = await runtime.RecoverInterruptedAsync(created.JobId);
+
+            Assert.Equal(AgentJobState.Pending, rearmed.State);
+            Assert.Equal(ResearchJobStage.Planning, rearmed.Stage);
+            Assert.True(rearmed.CanRunNextStep);
+            Assert.False(rearmed.CanRecoverInterrupted);
+            Assert.Equal(0, provider.SearchCalls);
+            Assert.Contains(audit.Events, e => e.EventType == "research.interrupted_rearmed");
+
+            var after = await store.GetAsync(created.JobId) ?? throw new InvalidOperationException("Expected recovered research job.");
+            Assert.Equal(AgentJobState.Pending, after.State);
+            Assert.Equal(ResearchJobHandler.RequestedStep, after.Checkpoint?.Step);
+            Assert.Equal(1, after.Attempt);
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Fresh_running_research_cannot_be_rearmed()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "nvidea-research-runtime-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var runtime = new ResearchJobRuntime(
+                directory,
+                new ResearchEngine(new QueueInferenceClient([]), new CountingProvider(CreateBatch())),
+                new MemoryAuditTrail());
+            var created = await runtime.CreateAsync("Do not race me");
+            var store = new JsonAgentJobStore(Path.Combine(directory, "research-jobs.json"));
+            var persisted = await store.GetAsync(created.JobId) ?? throw new InvalidOperationException("Expected persisted research job.");
+            await store.SaveAsync(persisted with
+            {
+                State = AgentJobState.Running,
+                Attempt = 1,
+                UpdatedAt = DateTimeOffset.UtcNow
+            });
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() => runtime.RecoverInterruptedAsync(created.JobId));
+            var after = await store.GetAsync(created.JobId) ?? throw new InvalidOperationException("Expected research job after rejected recovery.");
+            Assert.Equal(AgentJobState.Running, after.State);
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Cancelled_job_is_terminal_and_cannot_advertise_resume()
     {
         var directory = Path.Combine(Path.GetTempPath(), "nvidea-research-runtime-" + Guid.NewGuid().ToString("N"));
@@ -125,6 +205,8 @@ public sealed class ResearchJobRuntimeTests
     private sealed class MemoryAuditTrail : IAuditTrail
     {
         private readonly List<AuditEvent> _events = [];
+        public IReadOnlyList<AuditEvent> Events => _events;
+
         public Task AppendAsync(AuditEvent auditEvent, CancellationToken cancellationToken = default)
         {
             _events.Add(auditEvent);

@@ -25,7 +25,7 @@ Inject worker secrets with Nebius MysteryBox rather than plaintext job environme
 - `NEBIUS_API_KEY` — Token Factory key.
 - `TAVILY_API_KEY` — Tavily key.
 - `NVIDEA_WORKER_PRIVATE_KEY_PEM` — RSA private key used only to unwrap incoming protected work items.
-- `NVIDEA_CLIENT_PUBLIC_KEY_PEM` — pinned client public key used both to verify signed dispatch bindings and to protect returned results.
+- `NVIDEA_CLIENT_PUBLIC_KEY_PEM` — pinned client public key used both to verify signed dispatch bindings and to protect returned results. It is public material and may be supplied as non-secret configuration, although secret-backed injection is also accepted by the deployment preflight.
 
 The corresponding client private key stays on the originating Windows client. It is used by `ResearchDispatchBindingPublisher` to sign the authoritative Nebius resource-ID handoff and must never be injected into the Serverless worker.
 
@@ -45,6 +45,18 @@ Nvidea.Worker.dll research --work-item-id=<opaque-id>
 ```
 
 The worker deliberately logs only `nvidea_worker_completed stage=research` or `nvidea_worker_failed error_type=<type>`; it does not print the research question, evidence, secret values, binding contents, or provider response bodies.
+
+## Live deployment preflight
+
+Production composition should use `NebiusResearchLiveRuntimeFactory.Create`, not the lower-level fixture-oriented `NebiusResearchClientRuntime.Create`. The live factory runs `NebiusResearchDeploymentPreflight` before constructing the remote runtime and fails before Serverless submission unless all of these invariants hold:
+
+1. `NVIDEA_TRANSPORT_ROOT` is a bounded absolute Linux path.
+2. Exactly one configured volume has a `ContainerPath` equal to that transport root.
+3. That matching research transport volume is `READ_WRITE`.
+4. `NEBIUS_API_KEY`, `TAVILY_API_KEY`, and `NVIDEA_WORKER_PRIVATE_KEY_PEM` are present as Nebius MysteryBox secret references, never plaintext environment values.
+5. `NVIDEA_CLIENT_PUBLIC_KEY_PEM` is supplied either as bounded plaintext public configuration or through a secret reference so the worker can verify the authoritative dispatch binding.
+
+The validator checks only secret references and topology; it never resolves or logs secret values. This is intentionally separate from generic Serverless request validation: unit/contract fixtures can continue testing lower-level serialization without pretending to be production-ready, while the live runtime has a single fail-fast gate.
 
 ## Authoritative job-ID handoff
 
@@ -80,7 +92,9 @@ The exact JSON is emitted under `spec.volumes[]`; storage credentials, when requ
 
 ### Remaining integration boundary
 
-The client and worker now share an explicit mount contract in code, so the earlier control-plane gap where `NebiusServerlessJobSpec` could not express any Object Storage/filesystem volume is closed. WPF still does not expose Serverless research because a live Nebius/Object Storage/MysteryBox/container contract probe has not yet succeeded in this environment.
+The client and worker now share an explicit mount contract in code, and live runtime construction has a fail-fast topology/secret-reference gate. WPF still does not expose Serverless research because a live Nebius/Object Storage/MysteryBox/container contract probe has not yet succeeded in this environment.
+
+Current Nebius lifecycle metadata also includes legitimate provider transition states beyond NVIDEA's current parser set (`IMAGE_PULLING` and `DELETING`). Those must be mapped conservatively before live reconciliation is considered ready; unknown future states should continue to fail closed.
 
 The next proof must use a real mounted transport and immutable worker image to validate the complete path rather than assuming that provider-side storage/auth configuration is correct.
 

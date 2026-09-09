@@ -4,6 +4,7 @@ namespace Nvidea.Core.Jobs;
 
 public enum RemoteResearchProvenanceState
 {
+    DispatchReserved,
     Dispatched,
     ResultApplied,
     CancelRequested,
@@ -12,24 +13,32 @@ public enum RemoteResearchProvenanceState
 
 /// <summary>
 /// Durable client-side provenance for exactly one remotely executed research stage.
-/// It deliberately stores opaque identifiers and checkpoint identity only; user research
-/// content remains inside the protected checkpoint and encrypted transport envelopes.
+/// RemoteJobId is intentionally nullable only while State == DispatchReserved: this lets the
+/// client durably freeze the exact local checkpoint before contacting Nebius, closing the
+/// previous pre-provenance dispatch crash window without inventing a remote job id.
 /// </summary>
 public sealed record RemoteResearchProvenance(
     string ProtocolVersion,
     string OpaqueWorkItemId,
-    string RemoteJobId,
+    string? RemoteJobId,
     string InputCheckpointStep,
     DateTimeOffset InputCheckpointSavedAt,
     DateTimeOffset DispatchedAt,
     RemoteResearchProvenanceState State,
     DateTimeOffset? ResultAppliedAt = null);
 
+public sealed record RemoteResearchDispatchReservation(
+    Guid LocalJobId,
+    string CheckpointStep,
+    string OpaqueWorkItemId,
+    DateTimeOffset ReservedAt);
+
 /// <summary>
 /// Applies one protected Nebius research result to the local durable job using a compare-and-swap
-/// boundary. Exact local job id, remote job id, opaque work-item id, input checkpoint step and
-/// input checkpoint timestamp must still match. Duplicate, stale, substituted and approval-bearing
-/// results fail closed instead of overwriting newer local state.
+/// boundary. Remote dispatch is two-phase: ReserveDispatchAsync first freezes the exact local
+/// checkpoint and opaque work-item id durably, then AttachDispatchAsync records the Nebius job id.
+/// A crash after reservation therefore cannot silently replay the local stage. A reservation with
+/// no remote job id remains explicitly ambiguous and must not be auto-retried.
 /// </summary>
 public sealed class RemoteResearchResultIngestor
 {
@@ -57,42 +66,90 @@ public sealed class RemoteResearchResultIngestor
             : clientPrivateKeyPem;
     }
 
+    public async Task<AgentJobRecord> ReserveDispatchAsync(
+        RemoteResearchDispatchReservation reservation,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(reservation);
+        if (string.IsNullOrWhiteSpace(reservation.OpaqueWorkItemId))
+            throw new InvalidOperationException("Dispatch reservation is missing the opaque work-item id.");
+
+        var current = await GetRequiredResearchAsync(reservation.LocalJobId, cancellationToken).ConfigureAwait(false);
+        if (current.State != AgentJobState.Pending || current.ExecutionLocation != JobExecutionLocation.Local)
+            throw new InvalidOperationException("Only a pending local research stage can be reserved for remote dispatch.");
+        if (current.RemoteResearch is { State: not RemoteResearchProvenanceState.ResultApplied })
+            throw new InvalidOperationException("Research job already carries unfinished remote execution provenance.");
+        if (current.ApprovalScope is not null)
+            throw new InvalidOperationException("Approval-bearing research cannot be dispatched remotely.");
+
+        var checkpoint = current.Checkpoint
+            ?? throw new InvalidOperationException("Research dispatch requires a durable input checkpoint.");
+        if (!string.Equals(checkpoint.Step, reservation.CheckpointStep, StringComparison.Ordinal))
+            throw new InvalidOperationException("Dispatch reservation does not match the current research checkpoint.");
+
+        var provenance = new RemoteResearchProvenance(
+            ResearchWorkItemProtector.ProtocolVersion,
+            reservation.OpaqueWorkItemId,
+            RemoteJobId: null,
+            checkpoint.Step,
+            checkpoint.SavedAt,
+            reservation.ReservedAt,
+            RemoteResearchProvenanceState.DispatchReserved);
+        var replacement = current with
+        {
+            State = AgentJobState.Running,
+            ExecutionLocation = JobExecutionLocation.Local,
+            LastError = null,
+            NextAttemptAt = null,
+            RemoteResearch = provenance,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+
+        var applied = await _store.CompareExchangeAsync(current, replacement, cancellationToken).ConfigureAwait(false);
+        if (!applied)
+            throw new InvalidOperationException("Research state changed while remote dispatch was being reserved.");
+
+        await AppendAuditAsync(replacement, "research.remote_dispatch_reserved", "Encrypted research stage reserved before Nebius job creation.", cancellationToken).ConfigureAwait(false);
+        return replacement;
+    }
+
     public async Task<AgentJobRecord> AttachDispatchAsync(
         NebiusResearchDispatchReceipt receipt,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(receipt);
         var current = await GetRequiredResearchAsync(receipt.LocalJobId, cancellationToken).ConfigureAwait(false);
-        if (current.State != AgentJobState.Pending)
-            throw new InvalidOperationException("Only a pending research stage can be attached to a remote dispatch.");
-        if (current.ExecutionLocation != JobExecutionLocation.Local)
-            throw new InvalidOperationException("Research dispatch can only attach from trusted local state.");
-        if (current.RemoteResearch is { State: not RemoteResearchProvenanceState.ResultApplied })
-            throw new InvalidOperationException("Research job already carries unfinished remote execution provenance.");
+        var reserved = current.RemoteResearch
+            ?? throw new InvalidOperationException("Remote dispatch must be durably reserved before Nebius creation.");
+        if (current.State != AgentJobState.Running
+            || current.ExecutionLocation != JobExecutionLocation.Local
+            || reserved.State != RemoteResearchProvenanceState.DispatchReserved)
+        {
+            throw new InvalidOperationException("Remote dispatch can only attach to an exact durable DispatchReserved state.");
+        }
         if (current.ApprovalScope is not null)
             throw new InvalidOperationException("Approval-bearing research cannot be dispatched remotely.");
-        if (string.IsNullOrWhiteSpace(receipt.OpaqueWorkItemId)
-            || string.IsNullOrWhiteSpace(receipt.RemoteJobId))
-        {
+        if (string.IsNullOrWhiteSpace(receipt.OpaqueWorkItemId) || string.IsNullOrWhiteSpace(receipt.RemoteJobId))
             throw new InvalidOperationException("Dispatch receipt is missing remote provenance identifiers.");
-        }
 
         var checkpoint = current.Checkpoint
             ?? throw new InvalidOperationException("Research dispatch requires a durable input checkpoint.");
-        if (!string.Equals(checkpoint.Step, receipt.CheckpointStep, StringComparison.Ordinal))
-            throw new InvalidOperationException("Dispatch receipt does not match the current research checkpoint.");
+        if (!string.Equals(checkpoint.Step, receipt.CheckpointStep, StringComparison.Ordinal)
+            || !string.Equals(reserved.OpaqueWorkItemId, receipt.OpaqueWorkItemId, StringComparison.Ordinal)
+            || !string.Equals(reserved.InputCheckpointStep, checkpoint.Step, StringComparison.Ordinal)
+            || reserved.InputCheckpointSavedAt != checkpoint.SavedAt)
+        {
+            throw new InvalidOperationException("Dispatch receipt does not match the exact reserved research checkpoint.");
+        }
 
-        var provenance = new RemoteResearchProvenance(
-            ResearchWorkItemProtector.ProtocolVersion,
-            receipt.OpaqueWorkItemId,
-            receipt.RemoteJobId,
-            checkpoint.Step,
-            checkpoint.SavedAt,
-            receipt.DispatchedAt,
-            RemoteResearchProvenanceState.Dispatched);
+        var provenance = reserved with
+        {
+            RemoteJobId = receipt.RemoteJobId,
+            DispatchedAt = receipt.DispatchedAt,
+            State = RemoteResearchProvenanceState.Dispatched
+        };
         var replacement = current with
         {
-            State = AgentJobState.Running,
             ExecutionLocation = JobExecutionLocation.NebiusServerless,
             Attempt = current.Attempt + 1,
             LastError = null,
@@ -105,7 +162,7 @@ public sealed class RemoteResearchResultIngestor
         if (!applied)
             throw new InvalidOperationException("Research state changed while remote dispatch provenance was being attached.");
 
-        await AppendAuditAsync(replacement, "research.remote_dispatched", "Encrypted research stage attached to Nebius Serverless provenance.", cancellationToken).ConfigureAwait(false);
+        await AppendAuditAsync(replacement, "research.remote_dispatched", "Reserved encrypted research stage attached to Nebius Serverless provenance.", cancellationToken).ConfigureAwait(false);
         return replacement;
     }
 
@@ -121,6 +178,8 @@ public sealed class RemoteResearchResultIngestor
             throw new InvalidOperationException("Only an in-flight Nebius research stage can ingest a remote result.");
         if (provenance.State != RemoteResearchProvenanceState.Dispatched || provenance.ResultAppliedAt is not null)
             throw new InvalidOperationException("Remote research result has already been applied or is no longer ingestible.");
+        if (string.IsNullOrWhiteSpace(provenance.RemoteJobId))
+            throw new InvalidOperationException("Dispatched research provenance is missing the Nebius job id.");
         if (!string.Equals(provenance.ProtocolVersion, ResearchWorkItemProtector.ProtocolVersion, StringComparison.Ordinal))
             throw new InvalidOperationException("Remote research provenance protocol is unsupported.");
 
@@ -128,17 +187,13 @@ public sealed class RemoteResearchResultIngestor
             ?? throw new InvalidOperationException("Remote research job is missing its input checkpoint.");
         if (!string.Equals(checkpoint.Step, provenance.InputCheckpointStep, StringComparison.Ordinal)
             || checkpoint.SavedAt != provenance.InputCheckpointSavedAt)
-        {
             throw new InvalidOperationException("Local research checkpoint no longer matches the dispatched remote stage.");
-        }
 
         var envelope = await _results.GetAsync(provenance.OpaqueWorkItemId, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidOperationException("Remote research result is not available yet.");
         if (!string.Equals(envelope.OpaqueWorkItemId, provenance.OpaqueWorkItemId, StringComparison.Ordinal)
             || !string.Equals(envelope.RemoteJobId, provenance.RemoteJobId, StringComparison.Ordinal))
-        {
             throw new InvalidOperationException("Remote result transport returned substituted provenance.");
-        }
 
         var currentTime = now ?? DateTimeOffset.UtcNow;
         var result = ResearchResultProtector.Unprotect(envelope, _clientPrivateKeyPem, currentTime);
@@ -148,9 +203,7 @@ public sealed class RemoteResearchResultIngestor
             || !string.Equals(result.InputCheckpointStep, provenance.InputCheckpointStep, StringComparison.Ordinal)
             || !string.Equals(result.OpaqueWorkItemId, provenance.OpaqueWorkItemId, StringComparison.Ordinal)
             || !string.Equals(result.RemoteJobId, provenance.RemoteJobId, StringComparison.Ordinal))
-        {
             throw new InvalidOperationException("Protected remote research result does not match the expected local stage provenance.");
-        }
 
         var step = result.StepResult;
         if (step.RequiresApproval || !string.IsNullOrWhiteSpace(step.ApprovalScope))
@@ -199,16 +252,8 @@ public sealed class RemoteResearchResultIngestor
     private Task AppendAuditAsync(AgentJobRecord job, string eventType, string summary, CancellationToken cancellationToken) =>
         _auditTrail.AppendAsync(
             new AuditEvent(
-                Guid.NewGuid(),
-                DateTimeOffset.UtcNow,
-                job.Definition.CapabilityId,
-                job.JobId.ToString("N"),
-                eventType,
-                job.Definition.Risk,
-                true,
-                false,
-                string.Empty,
-                summary,
+                Guid.NewGuid(), DateTimeOffset.UtcNow, job.Definition.CapabilityId, job.JobId.ToString("N"), eventType,
+                job.Definition.Risk, true, false, string.Empty, summary,
                 new Dictionary<string, string>
                 {
                     ["jobType"] = job.Definition.JobType,
@@ -220,23 +265,11 @@ public sealed class RemoteResearchResultIngestor
 
     private async Task BestEffortDeleteAsync(string opaqueWorkItemId)
     {
-        try
-        {
-            await _results.DeleteAsync(opaqueWorkItemId, CancellationToken.None).ConfigureAwait(false);
-        }
-        catch
-        {
-            // The encrypted result is TTL-bounded. Cleanup failure must not roll back a committed CAS.
-        }
+        try { await _results.DeleteAsync(opaqueWorkItemId, CancellationToken.None).ConfigureAwait(false); }
+        catch { }
 
         if (_workItems is null) return;
-        try
-        {
-            await _workItems.DeleteAsync(opaqueWorkItemId, CancellationToken.None).ConfigureAwait(false);
-        }
-        catch
-        {
-            // Same bounded-retention rule as the encrypted result transport.
-        }
+        try { await _workItems.DeleteAsync(opaqueWorkItemId, CancellationToken.None).ConfigureAwait(false); }
+        catch { }
     }
 }

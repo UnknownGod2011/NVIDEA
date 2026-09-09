@@ -8,6 +8,93 @@ namespace Nvidea.Core.Tests;
 public sealed class RemoteResearchResultIngestorTests
 {
     [Fact]
+    public async Task ReserveDispatchAsync_FreezesExactCheckpointBeforeRemoteCreation()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            using var clientRsa = RSA.Create(2048);
+            var store = new JsonAgentJobStore(Path.Combine(root, "jobs.json"), new PassThroughProtector());
+            var audit = new MemoryAuditTrail();
+            var now = DateTimeOffset.UtcNow;
+            var original = CreatePendingJob(now);
+            await store.SaveAsync(original);
+            var ingestor = new RemoteResearchResultIngestor(
+                store,
+                new MemoryResultTransport(),
+                clientRsa.ExportPkcs8PrivateKeyPem(),
+                audit);
+
+            var reserved = await ingestor.ReserveDispatchAsync(new RemoteResearchDispatchReservation(
+                original.JobId,
+                original.Checkpoint!.Step,
+                "mY7FhPlAdtPz9xL4b8gU1cKqN3sW6vRt",
+                now.AddSeconds(1)));
+
+            Assert.Equal(AgentJobState.Running, reserved.State);
+            Assert.Equal(JobExecutionLocation.Local, reserved.ExecutionLocation);
+            Assert.Equal(0, reserved.Attempt);
+            Assert.Equal(RemoteResearchProvenanceState.DispatchReserved, reserved.RemoteResearch!.State);
+            Assert.Null(reserved.RemoteResearch.RemoteJobId);
+            Assert.Equal(original.Checkpoint.SavedAt, reserved.RemoteResearch.InputCheckpointSavedAt);
+            Assert.Contains(audit.Events, e => e.EventType == "research.remote_dispatch_reserved");
+            await Assert.ThrowsAsync<InvalidOperationException>(() => ingestor.ReserveDispatchAsync(new RemoteResearchDispatchReservation(
+                original.JobId,
+                original.Checkpoint.Step,
+                "anotherOpaqueWorkItemId1234567890",
+                now.AddSeconds(2))));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task AttachDispatchAsync_RequiresMatchingDurableReservation()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            using var clientRsa = RSA.Create(2048);
+            var store = new JsonAgentJobStore(Path.Combine(root, "jobs.json"), new PassThroughProtector());
+            var now = DateTimeOffset.UtcNow;
+            var original = CreatePendingJob(now);
+            await store.SaveAsync(original);
+            var ingestor = new RemoteResearchResultIngestor(
+                store,
+                new MemoryResultTransport(),
+                clientRsa.ExportPkcs8PrivateKeyPem(),
+                new MemoryAuditTrail());
+
+            var directReceipt = new NebiusResearchDispatchReceipt(
+                original.JobId,
+                original.Checkpoint!.Step,
+                "mY7FhPlAdtPz9xL4b8gU1cKqN3sW6vRt",
+                "aijob-nebius-123",
+                now.AddSeconds(2));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => ingestor.AttachDispatchAsync(directReceipt));
+
+            await ingestor.ReserveDispatchAsync(new RemoteResearchDispatchReservation(
+                original.JobId,
+                original.Checkpoint.Step,
+                directReceipt.OpaqueWorkItemId,
+                now.AddSeconds(1)));
+            var attached = await ingestor.AttachDispatchAsync(directReceipt);
+
+            Assert.Equal(AgentJobState.Running, attached.State);
+            Assert.Equal(JobExecutionLocation.NebiusServerless, attached.ExecutionLocation);
+            Assert.Equal(1, attached.Attempt);
+            Assert.Equal(RemoteResearchProvenanceState.Dispatched, attached.RemoteResearch!.State);
+            Assert.Equal(directReceipt.RemoteJobId, attached.RemoteResearch.RemoteJobId);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task IngestAsync_AppliesVerifiedResultOnceAndReturnsExecutionLocal()
     {
         var root = CreateTempDirectory();
@@ -21,22 +108,17 @@ public sealed class RemoteResearchResultIngestorTests
             var original = CreatePendingJob(now);
             await store.SaveAsync(original);
 
-            var ingestor = new RemoteResearchResultIngestor(
-                store,
-                results,
-                clientRsa.ExportPkcs8PrivateKeyPem(),
-                audit);
+            var ingestor = new RemoteResearchResultIngestor(store, results, clientRsa.ExportPkcs8PrivateKeyPem(), audit);
             var receipt = new NebiusResearchDispatchReceipt(
                 original.JobId,
                 original.Checkpoint!.Step,
                 "mY7FhPlAdtPz9xL4b8gU1cKqN3sW6vRt",
                 "aijob-nebius-123",
-                now.AddSeconds(1));
-
+                now.AddSeconds(2));
+            await ingestor.ReserveDispatchAsync(new RemoteResearchDispatchReservation(
+                original.JobId, original.Checkpoint.Step, receipt.OpaqueWorkItemId, now.AddSeconds(1)));
             var attached = await ingestor.AttachDispatchAsync(receipt);
-            Assert.Equal(AgentJobState.Running, attached.State);
             Assert.Equal(JobExecutionLocation.NebiusServerless, attached.ExecutionLocation);
-            Assert.NotNull(attached.RemoteResearch);
 
             var remote = new RemoteResearchStageResult(
                 original.JobId,
@@ -76,17 +158,18 @@ public sealed class RemoteResearchResultIngestorTests
             using var clientRsa = RSA.Create(2048);
             var store = new JsonAgentJobStore(Path.Combine(root, "jobs.json"), new PassThroughProtector());
             var results = new MemoryResultTransport();
-            var audit = new MemoryAuditTrail();
             var now = DateTimeOffset.UtcNow;
             var original = CreatePendingJob(now);
             await store.SaveAsync(original);
-            var ingestor = new RemoteResearchResultIngestor(store, results, clientRsa.ExportPkcs8PrivateKeyPem(), audit);
+            var ingestor = new RemoteResearchResultIngestor(store, results, clientRsa.ExportPkcs8PrivateKeyPem(), new MemoryAuditTrail());
             var receipt = new NebiusResearchDispatchReceipt(
                 original.JobId,
                 original.Checkpoint!.Step,
                 "mY7FhPlAdtPz9xL4b8gU1cKqN3sW6vRt",
                 "aijob-nebius-123",
-                now.AddSeconds(1));
+                now.AddSeconds(2));
+            await ingestor.ReserveDispatchAsync(new RemoteResearchDispatchReservation(
+                original.JobId, original.Checkpoint.Step, receipt.OpaqueWorkItemId, now.AddSeconds(1)));
             var attached = await ingestor.AttachDispatchAsync(receipt);
 
             await store.SaveAsync(attached with

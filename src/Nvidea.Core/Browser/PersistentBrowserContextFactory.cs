@@ -9,8 +9,10 @@ namespace Nvidea.Core.Browser;
 /// cookies and local storage may persist, but every runtime begins on a fresh explicitly-permitted
 /// page so stale tabs cannot silently become agent-visible context. Browser downloads are accepted
 /// only into NVIDEA-owned bounded staging/quarantine and require a separate explicit export handoff.
+/// This raw transport boundary is assembly-internal so product/plugin code cannot obtain direct
+/// Playwright execution authority around BrowserProductRuntime and BrowserHostRuntime policy gates.
 /// </summary>
-public static class PersistentBrowserContextFactory
+internal static class PersistentBrowserContextFactory
 {
     public static Task<PersistentBrowserContextSession> LaunchAsync(
         IPlaywright playwright,
@@ -186,7 +188,7 @@ public static class PersistentBrowserContextFactory
     }
 }
 
-public sealed record PersistentBrowserContextSession(
+internal sealed record PersistentBrowserContextSession(
     string ProfileDirectory,
     IBrowserContext Context,
     PlaywrightBrowserSessionDriver Driver,

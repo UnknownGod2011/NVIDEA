@@ -17,7 +17,7 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Tavily Search + Extract research with canonical deduplication, evidence quality/freshness/diversity, provenance, untrusted-evidence handling, validated citations, and restart-safe staged checkpoints.
 - Safe browser agent includes persistent Chromium state, popup/new-tab tracking, iterative verification, prompt-injection/tool-output trust boundaries, permission gates, durable download quarantine, emergency stop, and crash recovery.
 - Protected local state uses Windows CurrentUser DPAPI by default, durable job-store CAS, hash-chained/segmented audit, and OS-backed single-owner mutation leases.
-- Concrete privileged persistence/runtime boundaries are increasingly Core-only: `JsonAgentJobStore`, `ResearchJobRuntime`, raw `BrowserHostRuntime` construction, privileged `BrowserGoalAgent(BrowserHostRuntime,...)` construction, raw persistent Playwright transport, and now path-backed `JsonBrowserGoalSessionStore` construction cannot be bootstrapped by ordinary external product/plugin code.
+- Concrete privileged persistence/runtime boundaries are increasingly Core-only: `JsonAgentJobStore`, `ResearchJobRuntime`, raw `BrowserHostRuntime` construction, privileged `BrowserGoalAgent(BrowserHostRuntime,...)` construction, raw persistent Playwright transport, path-backed `JsonBrowserGoalSessionStore`, and path-backed `BrowserDownloadStagingGuard` construction cannot be bootstrapped by ordinary external product/plugin code.
 - Product research flows through `ResearchProductRuntime`; provider-aware remote execution flows through `ResearchCloudExecutionCoordinator`; WPF durable research uses the lifecycle-aware facade and `ResearchProductUiState`.
 - Browser product/UI flows through `BrowserProductRuntime`; WPF does not receive the raw host.
 - Remote research uses encrypted opaque work items, signed authoritative Nebius resource-ID bindings, two-phase dispatch, crash reconciliation, provider lifecycle reconciliation, durable cancellation, exact-once result ingestion, race-safe cleanup, and a non-root worker image.
@@ -68,6 +68,32 @@ Security / privacy / failure review:
 - The public `IBrowserGoalSessionStore` interface intentionally remains available so `BrowserGoalAgent` can be tested/composed against least-authority in-memory/custom stores without exporting the NVIDEA-owned path-backed implementation.
 - Browser execution, exact approval grants, capability checks, persistent profile ownership, prompt-injection defenses, download quarantine, crash recovery, and emergency stop were not weakened or removed.
 
+### 2026-09-11 — Browser download staging authority hardening
+Completed:
+- Re-read `progress.md` completely, inspected current commits/tree, `BrowserDownloadQuarantine`, `BrowserDownloadStagingGuard`, `BrowserHostRuntime`, and existing download API-surface tests before changing code.
+- Identified that `BrowserDownloadStagingGuard` remained publicly constructible with an arbitrary state directory even though it owns Playwright staging paths and exposes `ReclaimStartupLeftovers()`, which deletes crash-leftover files inside NVIDEA-owned transient browser state.
+- Changed the path-backed `BrowserDownloadStagingGuard(string, BrowserDownloadStagingOptions?)` constructor from public to assembly-internal. The public option/result records remain available and all runtime behavior is unchanged.
+- Preserved trusted Core composition: `PersistentBrowserContextFactory` / `BrowserHostRuntime` remain in the same assembly and can construct the guard normally; existing test code retains access through the current `InternalsVisibleTo("Nvidea.Core.Tests")` seam.
+- Added XML documentation explaining why path-backed construction is privileged.
+- Added `tests/Nvidea.Core.Tests/BrowserDownloadStagingGuardApiSurfaceTests.cs` to assert there is no public constructor, the intended internal `(string, BrowserDownloadStagingOptions)` seam remains, and no public static factory reconstructs the authority.
+
+Commits this run:
+- `0ef56bbadc2194f47e6ec4874da5416354c0decd` — narrow browser download staging authority.
+- `d27db51c159544e3b5f08e521a9b7c57c8eabf37` — lock staging cleanup behind Core boundary.
+
+Validation / evidence:
+- Repository identity was explicitly verified before each mutation and every write target was exactly `UnknownGod2011/NVIDEA`; no other repository was mutated.
+- A static compare from `5f8b8da66f864513f1351abce6c6c4b9c7c55f34` to `d27db51c159544e3b5f08e521a9b7c57c8eabf37` shows exactly two changed files: the staging guard and its new API-surface regression test.
+- The source change is limited to constructor visibility plus explanatory XML documentation; quota checks, cancellation, startup reclaim validation, reparse-point protection, strict-child path checks, and measurement logic are unchanged.
+- The container still exposes no usable `dotnet` binary; Core/WPF/Worker compilation and test execution are therefore **not claimed**.
+- No live Nebius credentials/resources or paid provider calls were used and no GitHub Actions workflow was triggered merely to obtain a green result.
+
+Security / privacy / failure review:
+- Ordinary external product/plugin code can no longer point a newly constructed staging guard at NVIDEA state and invoke its transient-file reclamation authority outside the trusted browser lifecycle.
+- The guard still fails closed on reparse points, unexpected directories, oversized entry populations, staging/partial quotas, cancellation, and path escapes.
+- Browser downloads, quarantine capture, explicit export/discard approvals, persistent Chromium profile ownership, prompt-injection defenses, durable jobs, and emergency-stop behavior were not removed or weakened.
+- `BrowserDownloadQuarantine` remains publicly constructible and is now the next browser-download authority candidate; unlike the staging guard it also owns durable metadata/capture state, so its cross-assembly/API implications should be inspected carefully before narrowing.
+
 ## Known Blockers / Risks
 - No usable .NET 8 execution signal is available in this environment; current Core/WPF/API-surface changes are not compiled or executed here.
 - No live Object Storage bucket/static key, digest-pinned registry image, MysteryBox refs, subnet, Serverless access token, or Serverless job has been provisioned/validated here.
@@ -78,4 +104,4 @@ Security / privacy / failure review:
 - The evidence pair proves reproducibility consistency, not third-party attestation.
 
 ## Single Best Next Task
-First obtain a .NET 8-capable execution signal and compile `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, and the Nebius contract tools; run the focused research, browser authority, browser integration and API-surface suites and fix every compile/XAML/runtime defect. If execution remains unavailable, continue the authority audit with `BrowserDownloadQuarantine`, `BrowserDownloadStagingGuard`, and protected research transport constructors: narrow only concrete NVIDEA-owned path/credential-bearing mutation surfaces that can bypass product capability/lifecycle authorities, while preserving public record/protocol abstractions required by Worker, contract tooling, tests and future Nebius composition.
+First obtain a .NET 8-capable execution signal and compile `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, and the Nebius contract tools; run the focused research, browser authority, browser integration and API-surface suites and fix every compile/XAML/runtime defect. If execution remains unavailable, inspect `BrowserDownloadQuarantine` and protected research transport constructors next: narrow only concrete NVIDEA-owned path/credential-bearing mutation surfaces that can bypass product capability/lifecycle authorities, while preserving public record/protocol abstractions required by Worker, contract tooling, tests and future Nebius composition.

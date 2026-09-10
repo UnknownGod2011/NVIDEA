@@ -73,6 +73,14 @@ public sealed class ResearchProductRuntime
 
     public bool RemoteDispatchEnabled { get; }
 
+    /// <summary>
+    /// Indicates whether this product composition has a provider-aware lifecycle coordinator.
+    /// This is intentionally independent from <see cref="RemoteDispatchEnabled"/>: an application
+    /// may need to reconcile/cancel already-remote durable records while keeping all new paid cloud
+    /// dispatch disabled.
+    /// </summary>
+    public bool RemoteLifecycleAvailable => _cloud is not null;
+
     public Task<ResearchJobStatus> CreateAsync(
         string question,
         CancellationToken cancellationToken = default) =>

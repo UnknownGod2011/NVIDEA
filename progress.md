@@ -17,7 +17,7 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Tavily Search + Extract research with canonical deduplication, evidence quality/freshness/diversity, provenance, untrusted-evidence handling, validated citations, and restart-safe staged checkpoints.
 - Safe browser agent includes persistent Chromium state, popup/new-tab tracking, iterative verification, prompt-injection/tool-output trust boundaries, permission gates, durable download quarantine, emergency stop, and crash recovery.
 - Protected local state uses Windows CurrentUser DPAPI by default, durable job-store CAS, hash-chained/segmented audit, and OS-backed single-owner mutation leases.
-- `JsonAgentJobStore`, `ResearchJobRuntime`, raw `BrowserHostRuntime` construction, privileged `BrowserGoalAgent(BrowserHostRuntime,...)` construction, and the raw persistent Playwright transport are trusted Core-only construction surfaces rather than public product/plugin escape hatches.
+- Concrete privileged persistence/runtime boundaries are increasingly Core-only: `JsonAgentJobStore`, `ResearchJobRuntime`, raw `BrowserHostRuntime` construction, privileged `BrowserGoalAgent(BrowserHostRuntime,...)` construction, raw persistent Playwright transport, and now path-backed `JsonBrowserGoalSessionStore` construction cannot be bootstrapped by ordinary external product/plugin code.
 - Product research flows through `ResearchProductRuntime`; provider-aware remote execution flows through `ResearchCloudExecutionCoordinator`; WPF durable research uses the lifecycle-aware facade and `ResearchProductUiState`.
 - Browser product/UI flows through `BrowserProductRuntime`; WPF does not receive the raw host.
 - Remote research uses encrypted opaque work items, signed authoritative Nebius resource-ID bindings, two-phase dispatch, crash reconciliation, provider lifecycle reconciliation, durable cancellation, exact-once result ingestion, race-safe cleanup, and a non-root worker image.
@@ -39,33 +39,34 @@ Added native S3-compatible protected transport, exact S3 ↔ Serverless mount ma
 Added `ResearchCloudExecutionCoordinator`, `ResearchProductRuntime`, replay-race protection under mutation leases, WPF lifecycle-aware research integration, explicit remote reconciliation/disclosure UX, `ResearchProductUiState`, `BrowserProductRuntime`, WPF browser/download migration, internal raw browser-host construction, and least-authority `IBrowserGoalHost` composition.
 
 ### 2026-09-10 to 2026-09-11 — Concrete persistence/runtime boundary hardening
-Made concrete `ResearchJobRuntime` and `JsonAgentJobStore` construction assembly-internal, preserved public least-authority interfaces, and added reflection regression tests preventing public reconstruction of privileged local lifecycle/persistence authorities.
+Made concrete `ResearchJobRuntime` and `JsonAgentJobStore` construction assembly-internal, preserved public least-authority interfaces, narrowed privileged `BrowserGoalAgent` construction, hid the raw persistent Playwright transport, and added reflection regression tests preventing public reconstruction of privileged local lifecycle/persistence/browser authorities.
 
-### 2026-09-11 — Current run: hide raw persistent Playwright transport
+### 2026-09-11 — Browser goal-session persistence authority hardening
 Completed:
-- Re-read this ledger completely and inspected current repo head/history, Core tree, desktop composition root, `PersistentBrowserContextFactory`, `BrowserHostRuntime`, `PlaywrightBrowserSessionDriver`, assembly friend visibility, and existing authority-surface test conventions.
-- Confirmed again that this execution environment has no usable `dotnet` executable; no compile/test success is claimed.
-- Identified a genuine remaining browser authority bypass: `PersistentBrowserContextFactory` was public and returned `PersistentBrowserContextSession`, which exposes the raw Playwright `IBrowserContext`, session driver, download quarantine, and staging guard. External in-process product/plugin code could therefore launch against the NVIDEA-owned persistent browser profile and obtain direct Playwright execution authority without going through `BrowserProductRuntime`, `BrowserHostRuntime`, capability policy, exact approval gates, durable job orchestration, audit semantics, or emergency-stop ownership.
-- Changed `PersistentBrowserContextFactory` from public to assembly-internal and changed `PersistentBrowserContextSession` from public to assembly-internal. The launch implementation, persistent-profile behavior, state-directory lease transfer, authenticated browser state, popup/tab safety, download quarantine/staging, timeouts, and trusted `BrowserHostRuntime` call path are unchanged.
-- Added explicit XML documentation recording that this is privileged transport infrastructure and that product/plugin code must not receive this authority boundary.
-- Added `tests/Nvidea.Core.Tests/PersistentBrowserTransportApiSurfaceTests.cs`. It asserts both transport types are absent from the Core assembly's exported type set while preserving the internal launch seam for trusted Core/tests through existing `InternalsVisibleTo("Nvidea.Core.Tests")`.
+- Re-read this ledger completely and inspected current repo head/history, the Core tree, `NvideaCompositionRoot`, `BrowserGoalSessionStore`, download quarantine/staging candidates, and existing API-surface regression-test conventions.
+- Re-checked executable validation availability. This environment still has no usable `dotnet` executable, so no compile/test success is claimed.
+- Identified a genuine remaining persistence bypass: `JsonBrowserGoalSessionStore` was publicly constructible with an arbitrary path and exposes low-level `SaveAsync(BrowserGoalSession)`. External in-process product/plugin code could therefore point a fresh concrete store at NVIDEA's durable `goal-sessions.json` and write descriptive lifecycle/recovery state without going through the trusted `BrowserGoalAgent`, product authority, or explicit recovery service.
+- Changed `JsonBrowserGoalSessionStore(string, ILocalStateProtector?)` from public to assembly-internal. The public `IBrowserGoalSessionStore` contract remains available for least-authority composition/test doubles.
+- Preserved all store behavior: DPAPI-at-rest default on Windows, pending-action/private typed-value stripping, read/list/save semantics, startup plaintext migration, and the trusted `NvideaCompositionRoot.CreateBrowserGoalStore()` path.
+- Added XML documentation explaining why concrete path-backed construction is privileged.
+- Added `tests/Nvidea.Core.Tests/BrowserGoalSessionStoreApiSurfaceTests.cs`. The regression suite asserts that the concrete path-backed store has no public constructor, retains the trusted internal `(string, ILocalStateProtector?)` construction seam, still implements the public interface, and cannot expose its raw save authority through public concrete construction.
 
 Commits this run:
-- `9890dde2b12c354d761119d2cdc5dd0ef75012f8` — hide raw persistent browser transport boundary.
-- `22fa6578109ab4975f4998a6a52c447943f2cd53` — lock raw browser transport behind Core API boundary.
+- `0ded85dd3fbf63ce7373b98bc68007c67a77be17` — narrow browser goal session store construction.
+- `09c9bfa355d6515731c19cf1f6bc74a7cdbd6b2b` — lock browser goal persistence behind Core boundary.
 
 Validation / evidence:
 - Repository identity was explicitly re-verified immediately before every GitHub mutation; every mutation target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
-- Static inspection confirms `BrowserHostRuntime` calls the internal `PersistentBrowserContextFactory.LaunchOwnedAsync(...)` from the same Core assembly, so trusted product composition remains source-accessible.
-- `src/Nvidea.Core/Properties/AssemblyInfo.cs` grants `InternalsVisibleTo("Nvidea.Core.Tests")`, so integration/API-surface tests retain access to the internal transport.
-- No usable `dotnet` executable is installed in the execution environment; Core compilation, WPF/XAML compilation, Worker compilation, and test execution are therefore **not claimed**.
+- Static inspection confirms `NvideaCompositionRoot.CreateBrowserGoalStore()` constructs the internal concrete store from within the same Core assembly, so trusted browser-goal creation/list/recovery composition remains source-accessible.
+- `src/Nvidea.Core/Properties/AssemblyInfo.cs` already grants `InternalsVisibleTo("Nvidea.Core.Tests")`, so existing store tests and the new API-surface test retain internal access.
+- The container exposes no usable `dotnet` binary; Core compilation, WPF/XAML compilation, Worker compilation, and test execution are therefore **not claimed**.
 - No live Nebius credentials/resources were used and no GitHub Actions workflow was triggered merely to manufacture a green result.
 
 Security / privacy / failure review:
-- External product/plugin code can no longer use NVIDEA's public Core API to launch the NVIDEA-owned persistent Chromium profile and directly obtain raw Playwright context/driver authority around capability/approval/audit/job guards.
-- This does not attempt to prevent fully trusted arbitrary code from separately using Playwright or directly accessing the user's filesystem; it prevents NVIDEA itself from exporting a privileged shortcut into its owned authenticated browser state.
-- BrowserHostRuntime behavior, host allowlists, state-directory single-owner lease, profile ownership checks, download quarantine, approval semantics, prompt-injection defenses, crash recovery, and emergency stop are unchanged.
-- The public lower-level browser abstractions remain available where they are generic protocols; this change narrows only the NVIDEA-owned persistent-profile bootstrap/session boundary.
+- Ordinary external product/plugin code can no longer bootstrap NVIDEA's path-backed browser-goal session persistence and directly write status, pending-job identifiers, exact-scope descriptions, counters, or verified-step metadata around the higher-level browser authorities.
+- This does not claim the goal-session records are authorization tokens; the store deliberately persists descriptive/non-authorizing state only. The hardening removes an integrity/recovery-confusion shortcut rather than elevating the data to a secret.
+- The public `IBrowserGoalSessionStore` interface intentionally remains available so `BrowserGoalAgent` can be tested/composed against least-authority in-memory/custom stores without exporting the NVIDEA-owned path-backed implementation.
+- Browser execution, exact approval grants, capability checks, persistent profile ownership, prompt-injection defenses, download quarantine, crash recovery, and emergency stop were not weakened or removed.
 
 ## Known Blockers / Risks
 - No usable .NET 8 execution signal is available in this environment; current Core/WPF/API-surface changes are not compiled or executed here.
@@ -77,4 +78,4 @@ Security / privacy / failure review:
 - The evidence pair proves reproducibility consistency, not third-party attestation.
 
 ## Single Best Next Task
-First obtain a .NET 8-capable execution signal and compile `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, and the Nebius contract tools; run the focused research, browser authority, browser integration and API-surface suites and fix every compile/XAML/runtime defect. If execution remains unavailable, continue the authority audit with `JsonBrowserGoalSessionStore`, download quarantine/staging and protected research transport constructors: narrow only concrete NVIDEA-owned path/credential-bearing mutation surfaces that can bypass product capability/lifecycle authorities, while preserving public protocol abstractions required by Worker, contract tooling, tests and future Nebius composition.
+First obtain a .NET 8-capable execution signal and compile `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, and the Nebius contract tools; run the focused research, browser authority, browser integration and API-surface suites and fix every compile/XAML/runtime defect. If execution remains unavailable, continue the authority audit with `BrowserDownloadQuarantine`, `BrowserDownloadStagingGuard`, and protected research transport constructors: narrow only concrete NVIDEA-owned path/credential-bearing mutation surfaces that can bypass product capability/lifecycle authorities, while preserving public record/protocol abstractions required by Worker, contract tooling, tests and future Nebius composition.

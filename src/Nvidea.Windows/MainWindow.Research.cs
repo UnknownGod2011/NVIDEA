@@ -32,7 +32,7 @@ public partial class MainWindow
 
     private async void ResearchStartButton_Click(object sender, RoutedEventArgs e)
     {
-        var runtime = _root.ResearchJobs;
+        var runtime = _root.Research;
         if (runtime is null)
         {
             ResearchStatusText.Text = "Durable research unavailable — configure TAVILY_API_KEY.";
@@ -61,7 +61,7 @@ public partial class MainWindow
 
     private async void ResearchResumeButton_Click(object sender, RoutedEventArgs e)
     {
-        var runtime = _root.ResearchJobs;
+        var runtime = _root.Research;
         if (runtime is null || _activeResearchJobId is not { } jobId || _researchRunning)
             return;
 
@@ -69,6 +69,12 @@ public partial class MainWindow
         try
         {
             var current = await runtime.GetStatusAsync(jobId);
+            if (current.RequiresRemoteReconciliation)
+            {
+                ResearchStatusText.Text = "Remote research cannot be resumed locally. Use Nebius reconciliation when that lifecycle path is enabled.";
+                return;
+            }
+
             if (current.CanRecoverInterrupted)
             {
                 // Recovery itself never calls Nemotron/Tavily. Re-arming and retrying are two
@@ -91,15 +97,57 @@ public partial class MainWindow
         }
     }
 
+    private async void ResearchReconcileButton_Click(object sender, RoutedEventArgs e)
+    {
+        var runtime = _root.Research;
+        if (runtime is null || _activeResearchJobId is not { } jobId || _researchRunning)
+            return;
+        if (!runtime.RemoteLifecycleAvailable)
+        {
+            ResearchStatusText.Text = "Nebius lifecycle reconciliation is locked until the validated cloud runtime is composed.";
+            return;
+        }
+
+        SetResearchRunning(true);
+        try
+        {
+            var current = await runtime.GetStatusAsync(jobId);
+            if (!current.RequiresRemoteReconciliation)
+            {
+                ResearchStatusText.Text = "This research job has no unfinished Nebius lifecycle to reconcile.";
+                return;
+            }
+
+            var reconciled = await runtime.ReconcileRemoteAsync(jobId, _researchCts?.Token ?? CancellationToken.None);
+            ApplyResearchStatus(reconciled);
+        }
+        catch (Exception)
+        {
+            ResearchStatusText.Text = "Nebius lifecycle reconciliation could not be confirmed. Local replay remains blocked.";
+        }
+        finally
+        {
+            SetResearchRunning(false);
+            await RefreshResearchAsync();
+        }
+    }
+
     private async void ResearchCancelButton_Click(object sender, RoutedEventArgs e)
     {
         _researchCts?.Cancel();
-        var runtime = _root.ResearchJobs;
+        var runtime = _root.Research;
         if (runtime is null || _activeResearchJobId is not { } jobId)
             return;
 
         try
         {
+            var current = await runtime.GetStatusAsync(jobId);
+            if (current.RequiresRemoteReconciliation && !runtime.RemoteLifecycleAvailable)
+            {
+                ResearchStatusText.Text = "Remote cancellation is unavailable until the validated Nebius lifecycle runtime is composed. Local fallback is blocked.";
+                return;
+            }
+
             var status = await runtime.CancelAsync(jobId);
             ApplyResearchStatus(status);
         }
@@ -113,11 +161,11 @@ public partial class MainWindow
         }
     }
 
-    private async Task RunResearchStepAsync(ResearchJobRuntime runtime, Guid jobId)
+    private async Task RunResearchStepAsync(ResearchProductRuntime runtime, Guid jobId)
     {
         _researchCts?.Dispose();
         _researchCts = new CancellationTokenSource();
-        var status = await runtime.RunNextStepAsync(jobId, _researchCts.Token);
+        var status = await runtime.RunNextLocalStepAsync(jobId, _researchCts.Token);
         ApplyResearchStatus(status);
 
         if (status.Stage == ResearchJobStage.Completed)
@@ -129,7 +177,7 @@ public partial class MainWindow
 
     private async Task RefreshResearchAsync()
     {
-        var runtime = _root.ResearchJobs;
+        var runtime = _root.Research;
         if (runtime is null)
         {
             ResearchPanel.Visibility = Visibility.Collapsed;
@@ -137,6 +185,12 @@ public partial class MainWindow
         }
 
         ResearchPanel.Visibility = Visibility.Visible;
+        ResearchCloudStatusText.Text = runtime.RemoteLifecycleAvailable
+            ? runtime.RemoteDispatchEnabled
+                ? "Nebius lifecycle + new dispatch are enabled in this composition. Consequential cloud execution still requires explicit scoped approval."
+                : "Nebius lifecycle reconciliation is available; new Serverless dispatch remains locked."
+            : "Cloud execution is locked: local Nemotron + Tavily research is available, but Nebius lifecycle controls remain disabled until the live deployment contract is proven and composed.";
+
         try
         {
             var statuses = await runtime.ListAsync();
@@ -194,19 +248,26 @@ public partial class MainWindow
 
     private void UpdateResearchControls(ResearchJobStatus? status)
     {
+        var runtime = _root.Research;
         if (_researchRunning)
         {
             ResearchStartButton.IsEnabled = false;
             ResearchResumeButton.IsEnabled = false;
+            ResearchReconcileButton.IsEnabled = false;
             ResearchCancelButton.IsEnabled = true;
             return;
         }
 
-        ResearchStartButton.IsEnabled = true;
-        ResearchResumeButton.IsEnabled = status?.CanRunNextStep == true || status?.CanRecoverInterrupted == true;
+        ResearchStartButton.IsEnabled = runtime is not null;
+        ResearchResumeButton.IsEnabled = status is not null
+            && !status.RequiresRemoteReconciliation
+            && (status.CanRunNextStep || status.CanRecoverInterrupted);
         ResearchResumeButton.Content = status?.CanRecoverInterrupted == true
             ? "Re-arm interrupted stage"
             : "Resume next stage";
-        ResearchCancelButton.IsEnabled = status?.CanCancel == true;
+        ResearchReconcileButton.IsEnabled = status?.RequiresRemoteReconciliation == true
+            && runtime?.RemoteLifecycleAvailable == true;
+        ResearchCancelButton.IsEnabled = status?.CanCancel == true
+            && (!status.RequiresRemoteReconciliation || runtime?.RemoteLifecycleAvailable == true);
     }
 }

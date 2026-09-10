@@ -191,11 +191,7 @@ public partial class MainWindow
         }
 
         ResearchPanel.Visibility = Visibility.Visible;
-        ResearchCloudStatusText.Text = runtime.RemoteLifecycleAvailable
-            ? runtime.RemoteDispatchEnabled
-                ? "Nebius lifecycle + new dispatch are enabled in this composition. Consequential cloud execution still requires explicit scoped approval."
-                : "Nebius lifecycle reconciliation is available; new Serverless dispatch remains locked."
-            : "Cloud execution is locked: local Nemotron + Tavily research is available, but Nebius lifecycle controls remain disabled until the live deployment contract is proven and composed.";
+        ResearchCloudStatusText.Text = ProjectResearchUiState(null).CloudDisclosureText;
 
         try
         {
@@ -254,26 +250,23 @@ public partial class MainWindow
 
     private void UpdateResearchControls(ResearchJobStatus? status)
     {
-        var runtime = _root.Research;
-        if (_researchRunning)
-        {
-            ResearchStartButton.IsEnabled = false;
-            ResearchResumeButton.IsEnabled = false;
-            ResearchReconcileButton.IsEnabled = false;
-            ResearchCancelButton.IsEnabled = true;
-            return;
-        }
+        var ui = ProjectResearchUiState(status);
+        ResearchStartButton.IsEnabled = ui.StartEnabled;
+        ResearchResumeButton.IsEnabled = ui.ResumeEnabled;
+        ResearchResumeButton.Content = ui.ResumeLabel;
+        ResearchReconcileButton.IsEnabled = ui.ReconcileEnabled;
+        ResearchCancelButton.IsEnabled = ui.CancelEnabled;
+    }
 
-        ResearchStartButton.IsEnabled = runtime is not null;
-        ResearchResumeButton.IsEnabled = status is not null
-            && !status.RequiresRemoteReconciliation
-            && (status.CanRunNextStep || status.CanRecoverInterrupted);
-        ResearchResumeButton.Content = status?.CanRecoverInterrupted == true
-            ? "Re-arm interrupted stage"
-            : "Resume next stage";
-        ResearchReconcileButton.IsEnabled = status?.RequiresRemoteReconciliation == true
-            && runtime?.RemoteLifecycleAvailable == true;
-        ResearchCancelButton.IsEnabled = status?.CanCancel == true
-            && (!status.RequiresRemoteReconciliation || runtime?.RemoteLifecycleAvailable == true);
+    private ResearchProductUiState ProjectResearchUiState(ResearchJobStatus? status)
+    {
+        var runtime = _root.Research;
+        return ResearchProductUiState.Project(
+            status,
+            runtimeAvailable: runtime is not null,
+            operationInProgress: _researchRunning,
+            hasActiveJob: _activeResearchJobId.HasValue,
+            remoteLifecycleAvailable: runtime?.RemoteLifecycleAvailable == true,
+            remoteDispatchEnabled: runtime?.RemoteDispatchEnabled == true);
     }
 }

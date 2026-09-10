@@ -33,6 +33,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         DesktopInvocationService desktop,
         DesktopSessionController session,
         ResearchJobRuntime? researchJobs,
+        ResearchProductRuntime? research,
         string stateDirectory)
     {
         _nebiusHttp = nebiusHttp;
@@ -44,6 +45,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         Desktop = desktop;
         Session = session;
         ResearchJobs = researchJobs;
+        Research = research;
         LocalState = new LocalStateRuntime(Path.Combine(stateDirectory, "browser"));
     }
 
@@ -52,8 +54,17 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     public PersonalMemoryService Memory => _memory;
 
     /// <summary>
-    /// Trusted durable research runtime. It is available only when Tavily is configured and
-    /// executes locally until a real Nebius Serverless dispatcher is wired.
+    /// Lifecycle-aware durable research surface intended for product/UI use. It is available only
+    /// when Tavily is configured. Serverless dispatch is deliberately disabled in this desktop
+    /// composition until the credential-backed deployment contract has passed and a cloud
+    /// coordinator is explicitly composed.
+    /// </summary>
+    public ResearchProductRuntime? Research { get; }
+
+    /// <summary>
+    /// Local research runtime retained for trusted internal compatibility. Product/UI code should
+    /// prefer <see cref="Research"/> so remote and ambiguous durable records cannot be replayed
+    /// through local-only actions.
     /// </summary>
     public ResearchJobRuntime? ResearchJobs { get; }
 
@@ -79,18 +90,25 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         await memory.InitializeAsync(cancellationToken).ConfigureAwait(false);
 
         HttpClient? tavilyHttp = null;
-        ResearchEngine? research = null;
+        ResearchEngine? researchEngine = null;
         ResearchJobRuntime? researchJobs = null;
+        ResearchProductRuntime? research = null;
         var tavilyKey = Environment.GetEnvironmentVariable("TAVILY_API_KEY");
         if (!string.IsNullOrWhiteSpace(tavilyKey))
         {
             tavilyHttp = new HttpClient();
             var tavily = new TavilyResearchClient(tavilyHttp, new TavilyOptions { ApiKey = tavilyKey });
-            research = new ResearchEngine(inference, tavily);
-            researchJobs = new ResearchJobRuntime(Path.Combine(dataDirectory, "research"), research);
+            researchEngine = new ResearchEngine(inference, tavily);
+            var researchDirectory = Path.Combine(dataDirectory, "research");
+            researchJobs = new ResearchJobRuntime(researchDirectory, researchEngine);
+            research = new ResearchProductRuntime(
+                researchDirectory,
+                researchJobs,
+                cloud: null,
+                remoteDispatchEnabled: false);
         }
 
-        var desktop = new DesktopInvocationService(inference, memory, research);
+        var desktop = new DesktopInvocationService(inference, memory, researchEngine);
         var session = new DesktopSessionController(desktop);
         return new NvideaCompositionRoot(
             nebiusHttp,
@@ -101,6 +119,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
             desktop,
             session,
             researchJobs,
+            research,
             dataDirectory);
     }
 
@@ -123,7 +142,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
                 cancellationToken).ConfigureAwait(false);
 
             _browser = browser;
-            return browser;
+            return _browser;
         }
         finally
         {

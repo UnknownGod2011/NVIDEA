@@ -15,7 +15,7 @@ namespace Nvidea.Core.Jobs;
 /// concurrently start/re-arm/cancel work against the same research state. Read-only status/report
 /// access remains lease-free.
 /// </summary>
-public sealed class ResearchJobRuntime
+public sealed class ResearchJobRuntime : ILocalResearchRuntime
 {
     public const string CapabilityId = "research.deep";
 
@@ -88,7 +88,17 @@ public sealed class ResearchJobRuntime
         CancellationToken cancellationToken = default) =>
         WithMutationLeaseAsync(async ct =>
         {
-            var job = await _orchestrator.RunNextStepAsync(jobId, ct).ConfigureAwait(false);
+            // Re-read and validate under the same OS-backed mutation lease before the orchestrator
+            // can execute any handler work. A product-layer status read may race another process
+            // reserving/dispatching this checkpoint to Nebius, so post-execution validation is too late.
+            var existing = await GetRequiredResearchAsync(jobId, ct).ConfigureAwait(false);
+            if (ResearchJobStatus.HasUnfinishedRemoteProvenance(existing))
+            {
+                throw new InvalidOperationException(
+                    "Research with unfinished remote execution provenance must be reconciled instead of locally executed.");
+            }
+
+            var job = await _orchestrator.RunNextStepAsync(existing.JobId, ct).ConfigureAwait(false);
             EnsureResearch(job);
             return ResearchJobStatus.FromRecord(job);
         }, cancellationToken);

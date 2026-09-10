@@ -22,8 +22,9 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - `NebiusResearchDeploymentPreflight` enforces exact S3 bucket/prefix ↔ Serverless mount alignment, `READ_WRITE` transport, valid MysteryBox-backed worker credentials, and required verification-key topology.
 - `NebiusResearchLiveDryRunPreflight` adds zero-cost validation for digest-pinned worker image, compute/storage shape, RSA strength, and exact client signing/public-key correspondence.
 - `NebiusResearchDeploymentManifestBuilder` + `NebiusResearchLivePreflightReporter` create deterministic redacted deployment evidence and secret-version pin coverage without exposing raw infrastructure secrets/identifiers.
-- `Nvidea.NebiusContractProbe` provides default planner, `--live-research-preflight`, and opt-in real `--live-research` modes. Live/preflight share one configuration builder and emit the same redacted deployment fingerprint.
-- `NebiusResearchPassEvidenceBuilder` defines bounded machine-readable redacted PASS evidence. PASS persistence now delegates to reusable `AtomicTextArtifactWriter` for same-directory crash-safe replacement.
+- `NebiusResearchLiveConfigurationLoader` now owns the complete live environment/file parsing and preflight construction path, making the paid and zero-cost live configurations directly unit-testable instead of embedding parsing in top-level CLI code.
+- `Nvidea.NebiusContractProbe` provides default planner, `--live-research-preflight`, and opt-in real `--live-research` modes. Both live modes now consume the same validated configuration object and emit the same redacted deployment fingerprint.
+- `NebiusResearchPassEvidenceBuilder` defines bounded machine-readable redacted PASS evidence. PASS and redacted-manifest persistence use reusable `AtomicTextArtifactWriter` for same-directory crash-safe replacement.
 
 ## Persistent Progress History
 
@@ -33,50 +34,48 @@ Added Nebius/Nemotron inference, layered memory, Tavily research, capability/app
 ### 2026-09-09 — Research durability + Nebius Serverless control plane
 Added Tavily Extract enrichment, evidence quality/staleness/diversity, restart-safe research stages, remote encrypted transport, two-phase Nebius dispatch, authoritative signed resource-ID binding, exact-once result ingestion, lifecycle/cancellation reconciliation, bounded pagination, mounted transport, and worker deployment hardening.
 
-### 2026-09-10 — Native Object Storage + live preflight
-Added native S3-compatible protected transport, exact S3 ↔ Serverless mount mapping, digest-pinned live worker requirement, current Nebius lifecycle states, `NebiusResearchLiveRuntimeFactory`, `--live-research`, zero-cost `--live-research-preflight`, reproducible/redacted deployment fingerprints, optional MysteryBox version IDs, and machine-readable PASS evidence.
+### 2026-09-10 — Native Object Storage + reproducible live evidence
+Added native S3-compatible protected transport, exact S3 ↔ Serverless mount mapping, digest-pinned live worker requirement, current Nebius lifecycle states, `NebiusResearchLiveRuntimeFactory`, `--live-research`, zero-cost `--live-research-preflight`, reproducible/redacted deployment fingerprints, optional MysteryBox version IDs, machine-readable PASS evidence, reusable atomic artifact persistence, and strict MysteryBox resource-id validation.
 
-### 2026-09-10 — Current run: atomic judging artifacts + strict MysteryBox references
+### 2026-09-10 — Current run: testable live configuration boundary
 Completed:
-- Re-read `progress.md` completely before changing code and inspected the current live contract-probe configuration path, deployment preflight, PASS evidence persistence, and related tests.
-- Verified current Nebius MysteryBox documentation before tightening assumptions. Nebius documents secret resource ids in the `mbsec-*` form and version ids in the `mbsecver-*` form; version selection is optional when using the primary secret version.
-- Added `src/Nvidea.Core/Jobs/AtomicTextArtifactWriter.cs`, a reusable same-directory temp-file + write-through + atomic-replace primitive for already-redacted judging/evidence artifacts. It requires an existing destination directory, never creates directories implicitly, and performs best-effort temp cleanup without masking the original failure.
-- Refactored `NebiusResearchPassEvidenceBuilder.PersistAtomically` to delegate to the shared atomic writer rather than maintaining a second persistence implementation.
-- Hardened `NebiusResearchDeploymentPreflight.Validate` so each required worker credential is syntactically validated as a MysteryBox reference before any paid live execution can begin.
-- Added public `ValidateMysteryBoxSecretReference` with bounded/control-character-safe resource-id validation: secret ids must use `mbsec-...`; version ids must use `mbsecver-...`; NVIDEA's reproducible live configuration requires the owning secret id whenever a version id is pinned.
-- Updated `NebiusResearchDeploymentPreflightTests` so fixtures use provider-shaped MysteryBox ids and added focused regression cases for malformed secret ids, malformed version ids, a version pin without its owning secret id, and a valid explicit version pin.
+- Re-read `progress.md` completely before mutation and inspected recent commits, `Program.cs`, deployment preflight, dry-run preflight, atomic artifact persistence, and existing tests.
+- Added `src/Nvidea.Core/Jobs/NebiusResearchLiveConfiguration.cs` with `NebiusResearchLiveConfiguration` and `NebiusResearchLiveConfigurationLoader`.
+- Moved required/optional environment parsing, positive integer parsing, bounded polling/timeout parsing, PEM-file loading, output-path validation, MysteryBox secret/version reference construction, object-storage options, Serverless dispatch options, RSA client-public-key derivation, research-question limits, and preflight report creation behind one reusable loader.
+- The loader accepts an injected environment reader for deterministic tests and performs no provider/network calls. PEM read failures are converted to bounded/sanitized errors that identify only the configuration variable, not the secret filesystem path.
+- Refactored `tools/Nvidea.NebiusContractProbe/Program.cs` so both `--live-research-preflight` and `--live-research` consume `NebiusResearchLiveConfigurationLoader.LoadFromEnvironment()` instead of maintaining top-level parsing helpers.
+- Removed direct `File.WriteAllText` redacted-manifest persistence. `NVIDEA_LIVE_REDACTED_MANIFEST_PATH` now uses `AtomicTextArtifactWriter`, matching the crash-safe semantics already used by live PASS evidence.
+- Moved live-only poll seconds, total timeout, research question, manifest path, and PASS-evidence path into the validated configuration object, ensuring malformed values are rejected before provider clients are constructed.
+- Added `tests/Nvidea.Core.Tests/NebiusResearchLiveConfigurationLoaderTests.cs` covering a valid configuration, runtime bounds, missing required values, oversized/control-character environment data, malformed MysteryBox version pins, missing/oversized PEM files with path-redaction checks, and canonical/existing-directory output-path validation.
 
 Commits this run:
-- `c40d9350bd04f8f8a3f4295ca2a87dbae39eac97` — add reusable atomic artifact writer.
-- `56abed6835788707d606b890c9882b56c5348465` — reuse atomic writer for PASS evidence.
-- `eab02d6a771b843134b86bacfd924b5f04d4f362` — validate MysteryBox secret reference syntax.
-- `dfad35b084e494a93b3a169ffdbbdaaee3a237b2` — add strict MysteryBox preflight regression coverage.
+- `4a76679c182156226f7409753b796c0cd0fcfe2a` — extract testable live research configuration loader.
+- `bd3d951337ce1494f6e256fdbabe04495dedecb1` — wire contract probe to the shared loader and atomic redacted-manifest persistence.
+- `138446820bc3b98a4e762c4f2311682e955c5a99` — add live configuration parser regression tests.
 
 Validation / evidence:
-- Repository identity was explicitly verified immediately before every mutation; every write targeted exactly `UnknownGod2011/NVIDEA`.
-- Official Nebius MysteryBox documentation was checked during this run: documented examples use `mbsec-*` secret ids and `mbsecver-*` version ids, and primary-version fallback remains provider behavior when no version id is supplied.
-- Static review confirms required live worker secret references now fail before Object Storage/Serverless/model clients are created because deployment preflight is part of the existing zero-cost configuration gate.
-- Static review confirms PASS evidence retains the same atomic semantics after refactoring because the extracted writer preserves same-directory temp creation, write-through flushing, overwrite move, and best-effort temp cleanup.
-- This runtime does not expose a usable .NET SDK, so compilation and test execution are **not claimed**.
+- Repository identity was explicitly re-verified immediately before each mutation; every write targeted exactly `UnknownGod2011/NVIDEA`.
+- Static review confirms preflight and paid live modes now share the exact configuration-construction path and that output paths/runtime limits are validated before Object Storage or Serverless clients are instantiated.
+- Static review confirms redacted deployment manifests no longer use incremental direct writes; both manifest and PASS artifacts now use the same-directory atomic writer.
+- Static review confirms test fixtures use generated 2048-bit RSA material, a digest-pinned synthetic worker image, aligned bucket/prefix topology, and provider-shaped MysteryBox ids without real credentials.
+- `dotnet --info` was checked in the execution runtime and `dotnet` is not installed, so compilation and test execution are **not claimed**.
 - No live Nebius credentials/resources were available, so Object Storage/Serverless/Nemotron/Tavily execution is **not claimed**.
 - No GitHub Actions workflow was triggered merely to manufacture a green signal.
 
 Security / privacy / failure review:
-- New MysteryBox validation inspects only resource identifiers; it never resolves or logs secret values.
-- Error messages name only the affected worker environment variable and reference type, never the actual secret/version id.
-- Version-pinned live references now fail closed if the secret id is missing, preventing ambiguous secret-version provenance in NVIDEA's reproducibility manifest.
-- The shared atomic writer is intended only for already-redacted artifacts; it does not weaken existing secret-handling boundaries.
-- The stricter reference policy is intentionally narrower than the provider's more permissive selector forms because the NVIDEA live path already supplies required secret ids plus optional version ids and needs deterministic evidence.
+- Configuration errors do not print secret values, access keys, PEM bodies, MysteryBox ids/version ids, bucket names, or provider response bodies.
+- PEM-path failures deliberately return variable-scoped messages rather than leaking resolved local paths.
+- Output destinations must already have an existing parent directory, preventing the evidence path from silently creating arbitrary directory structures.
+- Runtime polling and total timeout remain bounded (1-30 seconds and 2-60 minutes respectively), and the synthetic question remains capped at 2000 characters.
+- Both live modes remain fail-closed through `NebiusResearchLivePreflightReporter.ValidateAndBuild`; successful parsing alone cannot bypass digest pinning, RSA identity validation, MysteryBox requirements, or Object Storage/mount alignment.
 
 ## Known Blockers / Risks
 - No verified .NET 8/Windows/container execution signal is available here; new code is statically reviewed but not compiled/executed.
 - No live Object Storage bucket/static key, digest-pinned registry image, MysteryBox refs, subnet, Serverless access token, or Serverless job has been provisioned/validated in this environment.
 - Exact provider acceptance of the configured Serverless Object Storage `Source`/`SourcePath` still requires a real job.
 - The dry run cannot prove that the hidden worker-private-key MysteryBox version corresponds to the configured worker public key without resolving the secret; the real worker protocol remains authoritative proof.
-- Live configuration parsing still lives in top-level `Program.cs`; it remains harder to unit-test than the underlying deployment primitives.
-- `NVIDEA_LIVE_REDACTED_MANIFEST_PATH` still calls direct `File.WriteAllText` in the probe and has not yet been moved to `AtomicTextArtifactWriter`.
 - WPF/`ResearchJobRuntime` still deliberately avoid claiming production Serverless execution until the real contract succeeds.
 - Local voice/transcription and a verified production embedding adapter remain absent.
 
 ## Single Best Next Task
-Extract the live environment/configuration parser from `tools/Nvidea.NebiusContractProbe/Program.cs` into a directly testable component and move redacted-manifest persistence onto `AtomicTextArtifactWriter`. Add parser-focused tests for missing/oversized/control-character environment values, numeric bounds, PEM-file handling, output-path validation, and MysteryBox id/version combinations. This is the remaining highest-value zero-cost hardening step before a credential-backed Nebius Serverless PASS.
+Perform a compile-oriented contract hardening pass around the newly extracted live configuration boundary: add tests for default optional values, total-timeout/question limits, invalid RSA private-key material, and safe failure behavior when the manifest destination is unwritable; then add a deterministic deployment-evidence comparison command or helper that can compare a saved redacted preflight manifest with a later PASS fingerprint without ever requiring raw credentials. This gives judges/operators a simple reproducibility proof while remaining zero-cost and privacy-preserving before the first credential-backed Nebius Serverless run.

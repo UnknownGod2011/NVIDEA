@@ -106,26 +106,49 @@ static async Task<int> RunLiveResearchProbeAsync()
     // The loader runs the same zero-cost fail-closed deployment gate used by preflight before any
     // Object Storage, Serverless, Nemotron or Tavily client is constructed or dispatched.
     var configuration = NebiusResearchLiveConfigurationLoader.LoadFromEnvironment();
-    // Validate the exact parsed destinations before creating provider clients. This rejects
-    // manifest/PASS aliasing and unwritable destinations without mutating the final artifacts.
+    // Validate once before persisting the preflight manifest, then enforce the same exact parsed
+    // destinations again at the provider-factory boundary. The second gate makes ordering testable:
+    // provider construction cannot be reached when final artifact destinations are unsafe.
     ValidateArtifactDestinations(configuration);
     PersistRedactedManifestIfRequested(configuration);
+
+    var providers = NebiusResearchLiveProviderStartup.CreateAfterDestinationPreflight(
+        configuration,
+        () =>
+        {
+            NebiusObjectStorageClient? objectStorage = null;
+            HttpClient? serverlessHttp = null;
+            try
+            {
+                objectStorage = new NebiusObjectStorageClient(configuration.ObjectStorageOptions);
+                var transport = new S3ProtectedResearchTransport(objectStorage);
+                serverlessHttp = new HttpClient();
+                var serverless = new NebiusServerlessJobClient(
+                    serverlessHttp,
+                    new NebiusServerlessOptions(
+                        configuration.ServerlessAccessToken,
+                        configuration.ProjectId,
+                        RequestTimeout: TimeSpan.FromSeconds(30),
+                        MaxRetries: 2));
+                return (ObjectStorage: objectStorage, Transport: transport, ServerlessHttp: serverlessHttp, Serverless: serverless);
+            }
+            catch
+            {
+                objectStorage?.Dispose();
+                serverlessHttp?.Dispose();
+                throw;
+            }
+        });
+
+    using var objectStorage = providers.ObjectStorage;
+    using var serverlessHttp = providers.ServerlessHttp;
+    var transport = providers.Transport;
+    var serverless = providers.Serverless;
 
     var stateRoot = Path.Combine(Path.GetTempPath(), "nvidea-nebius-live-probe", Guid.NewGuid().ToString("N"));
     Directory.CreateDirectory(stateRoot);
     var store = new JsonAgentJobStore(Path.Combine(stateRoot, "jobs.json"));
     IAuditTrail auditTrail = new JsonLinesAuditTrail(Path.Combine(stateRoot, "audit.jsonl"));
-    using var objectStorage = new NebiusObjectStorageClient(configuration.ObjectStorageOptions);
-    var transport = new S3ProtectedResearchTransport(objectStorage);
-
-    using var serverlessHttp = new HttpClient();
-    var serverless = new NebiusServerlessJobClient(
-        serverlessHttp,
-        new NebiusServerlessOptions(
-            configuration.ServerlessAccessToken,
-            configuration.ProjectId,
-            RequestTimeout: TimeSpan.FromSeconds(30),
-            MaxRetries: 2));
 
     var runtime = NebiusResearchLiveRuntimeFactory.Create(
         store,
@@ -256,7 +279,7 @@ try
         Console.WriteLine("--live-research: explicit live Nebius Serverless research probe; PASS prints the same deployment fingerprint.");
         Console.WriteLine("Optional: NVIDEA_LIVE_REDACTED_MANIFEST_PATH atomically persists only the redacted deployment manifest.");
         Console.WriteLine("Optional live-only: NVIDEA_LIVE_PASS_EVIDENCE_PATH atomically persists redacted machine-readable evidence only after a validated PASS.");
-        Console.WriteLine("Configured manifest/PASS destinations are checked for distinctness and writability before persistence or live provider construction.");
+        Console.WriteLine("Configured manifest/PASS destinations are checked for distinctness and writability before persistence and again at live provider construction.");
         return 0;
     }
     if (liveResearch && liveResearchPreflight)

@@ -30,7 +30,13 @@ public sealed class ResearchJobRuntime : ILocalResearchRuntime
     private readonly ResumableJobOrchestrator _orchestrator;
     private readonly SemaphoreSlim _mutationGate = new(1, 1);
 
-    public ResearchJobRuntime(
+    /// <summary>
+    /// Trusted Core-only construction path. Product/plugin code should compose durable research
+    /// through <see cref="ResearchProductRuntime"/> and the least-authority
+    /// <see cref="ILocalResearchRuntime"/> contract instead of bootstrapping this local-only runtime
+    /// directly and bypassing lifecycle-aware routing for remote or ambiguous checkpoints.
+    /// </summary>
+    internal ResearchJobRuntime(
         string stateDirectory,
         ResearchEngine engine,
         IAuditTrail? auditTrail = null)

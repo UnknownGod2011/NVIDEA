@@ -24,9 +24,10 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - `ResearchCloudExecutionCoordinator` is the narrow provider-aware bridge from durable research state to `NebiusResearchClientRuntime`, with exact checkpoint/disclosure approval, shared mutation lease, provider reconciliation/cancellation, private-data rejection, and no provider credential exposure.
 - `ResearchJobRuntime` is intentionally local-only and validates current durable location/provenance under the mutation lease before any local Nemotron/Tavily handler invocation.
 - `ResearchProductRuntime` is the lifecycle-aware product facade: it projects truthful local/remote status, routes local work only to `ILocalResearchRuntime`, remote lifecycle operations only to `IResearchCloudExecutionCoordinator`, and independently gates new paid Serverless dispatch.
-- `NvideaCompositionRoot` exposes only the lifecycle-aware `ResearchProductRuntime` to product/UI callers. The concrete local-only `ResearchJobRuntime` is now retained solely as an internal construction dependency and is no longer a public composition-root property.
+- `NvideaCompositionRoot` exposes only lifecycle-aware `ResearchProductRuntime` for durable research; concrete `ResearchJobRuntime` remains an internal construction dependency.
 - WPF durable-research reads/actions use `ResearchProductRuntime`; remote/ambiguous records are never offered as local recovery, and a separate Nebius reconciliation control remains disabled when no validated cloud lifecycle coordinator is composed.
-- `ResearchProductUiState` centralizes research control enablement, labels, and cloud disclosure independently of WPF, so lifecycle authority can be adversarially unit-tested.
+- `ResearchProductUiState` centralizes research control enablement, labels, and cloud disclosure independently of WPF.
+- Browser product/UI access now goes through `BrowserProductRuntime`, a constrained facade over trusted `BrowserHostRuntime`. The composition root no longer returns the raw host, and WPF navigation/download flows use only the facade. The facade intentionally omits low-level create/advance/re-arm/reconcile/observation/session-snapshot authority.
 
 ## Persistent Progress History
 
@@ -43,36 +44,42 @@ Added native S3-compatible protected transport, exact S3 ↔ Serverless mount ma
 Added `ResearchCloudExecutionCoordinator`, narrow remote-runtime contracts, explicit per-stage cloud approval, remote lifecycle reconciliation/cancellation, privacy-safe Nebius status projection, and fail-closed recovery/cancellation for ambiguous `DispatchReserved` state. Closed duplicate-execution paths where uncertain/remote Serverless work could otherwise be mistaken for crashed local work.
 
 ### 2026-09-10 — Lifecycle-aware product + Windows integration
-Added `ResearchProductRuntime`, lifecycle-aware status projection, replay-race closure under the mutation lease, WPF migration to the product facade, a separate reconciliation control, explicit cloud-disclosure copy, cancellation-token hardening, and the testable `ResearchProductUiState` authority projector.
+Added `ResearchProductRuntime`, lifecycle-aware status projection, replay-race closure under the mutation lease, WPF migration to the product facade, separate reconciliation UX, explicit cloud-disclosure copy, cancellation-token hardening, `ResearchProductUiState`, and removal of the public local `ResearchJobRuntime` composition-root escape hatch.
 
-### 2026-09-10 — Current run: close local-runtime product bypass
+### 2026-09-10 — Current run: narrow browser product authority
 Completed:
-- Re-read this ledger completely and inspected the current repository tree, recent commits, `NvideaCompositionRoot`, WPF call sites, and existing API-surface test conventions before changing code.
-- Audited the remaining obvious product-facing compatibility surface and identified `NvideaCompositionRoot.ResearchJobs` as a public escape hatch exposing concrete `ResearchJobRuntime` despite WPF already migrating to `ResearchProductRuntime`.
-- Removed the public `ResearchJobs` property and its constructor plumbing from `src/Nvidea.Core/Desktop/NvideaCompositionRoot.cs`.
-- Kept the same working local research implementation: `ResearchJobRuntime` is still constructed when Tavily is configured and passed directly into `ResearchProductRuntime`; functionality was not deleted or simplified away.
-- Renamed the local construction variable to `localResearch` to make its role explicit and reduce accidental product-level reuse.
-- Added `tests/Nvidea.Core.Tests/NvideaCompositionRootResearchApiSurfaceTests.cs` using reflection to lock the boundary: `NvideaCompositionRoot` must expose lifecycle-aware `ResearchProductRuntime` while exposing no public property/method signature typed as `ResearchJobRuntime`.
-- This makes the safe routing boundary structural rather than merely advisory documentation: product/UI callers obtaining the composition root can no longer bypass remote/ambiguous lifecycle checks through a public local-only runtime property.
+- Re-read this ledger completely and inspected the current repository tree, recent commits, `NvideaCompositionRoot`, `BrowserHostRuntime`, WPF browser/download call sites, recovery code, and existing reflection-based API-surface test conventions before changing code.
+- Identified a concrete product-facing authority escape hatch: `NvideaCompositionRoot.GetBrowserAsync()` returned the full `BrowserHostRuntime`, exposing low-level durable-job creation/advancement, re-arming, direct ambiguous-child reconciliation, observation/session snapshots, and other trusted-host APIs to UI/plugin callers.
+- Added `src/Nvidea.Core/Desktop/BrowserProductRuntime.cs`, a deliberately constrained facade exposing only the current product operations: start one policy-enforced browser action, exact approval+resume, cancellation, trusted download listing, exact download handoff/discard preparation, and exact approved export/discard.
+- Replaced the public composition-root raw-host getter with `GetBrowserProductAsync()`. Raw host creation is now a private `GetBrowserHostAsync()` implementation detail used by trusted goal-agent/recovery composition.
+- Migrated `src/Nvidea.Windows/MainWindow.xaml.cs` browser navigation from `BrowserHostRuntime` to `BrowserProductRuntime`.
+- Migrated `src/Nvidea.Windows/MainWindow.Downloads.cs` trusted download recovery/export/discard paths to the same product facade without weakening existing quarantine snapshot revalidation or exact approval checks.
+- Added `tests/Nvidea.Core.Tests/NvideaCompositionRootBrowserApiSurfaceTests.cs`. It asserts that the composition root exposes the product browser boundary but no public member typed with `BrowserHostRuntime`, and locks the facade to an explicit allowlist so low-level create/advance/re-arm/reconcile/observation APIs cannot silently leak into product code.
+- Preserved all existing working browser functionality used by WPF; this is an authority narrowing/refactor, not deletion of the underlying host implementation.
 
 Commits this run:
-- `fbd2ee1256141da197e3638234a318aa971891d3` — close public local research runtime bypass in desktop composition.
-- `50d5375c806cc982c854ba857bb5dd07babbc6a2` — lock lifecycle-aware research API surface with reflection regression coverage.
+- `81bb32b6dd3b1f2cc52aa4d8ba3c8a2ce46e5485` — add constrained browser product runtime.
+- `a9ca929d025d7181d88dda08be108a7dfd2676a3` — hide raw browser host behind composition-root product boundary.
+- `546c6d07d5924a40dea78830ea246d19e247029d` — route WPF browser navigation through the product boundary.
+- `740786c499e7d86deb3111dd1d737bea6ef4eceb` — route WPF download UX through the product boundary.
+- `1d46297ade257990439f3830dfcc26ea18dc8ca4` — lock browser authority API surface with reflection regression coverage.
 
 Validation / evidence:
 - Repository identity was explicitly re-verified immediately before every GitHub mutation; every write targeted exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
-- Current `main` repository tree and recent commits were inspected before implementation.
-- `src/Nvidea.Windows/MainWindow.xaml.cs` was inspected and contains no dependency on the removed `ResearchJobs` property; current WPF research work is already routed through the product facade in the dedicated research partial.
-- Existing reflection-based API-surface test conventions were inspected before adding the new test.
-- `dotnet` was checked directly in this execution environment and remains unavailable, so Core compilation, WPF/XAML compilation, and test execution are **not claimed**.
+- The current repo tree and recent commit history were inspected before implementation.
+- Post-change static inspection confirms `NvideaCompositionRoot` publicly returns `BrowserProductRuntime` and keeps `BrowserHostRuntime` behind a private getter.
+- Post-change static inspection confirms the main WPF browser action path uses `GetBrowserProductAsync()` and a `BrowserProductRuntime` field.
+- The new reflection regression source was re-read after persistence and contains both the composition-root raw-host exclusion and product-method allowlist assertions.
+- `dotnet` was checked directly in the execution environment and remains unavailable, so Core compilation, WPF/XAML compilation, and test execution are **not claimed**.
 - No live Nebius credentials/resources were used and no GitHub Actions workflow was triggered merely to manufacture a green result.
 
 Security / privacy / failure review:
-- Removing the public local runtime reduces the authority exposed to UI/plugin/product code without changing persisted research state or provider behavior.
-- Remote/ambiguous records still cannot be intentionally routed through local product actions because the publicly exposed research surface is now `ResearchProductRuntime` only.
-- No provider credentials, checkpoint payloads, source content, approval material, Object Storage identifiers, Serverless ids, or signing keys were added to a public surface.
-- New Serverless dispatch remains disabled in desktop composition and no paid-provider action was introduced.
-- Source remains statically reviewed only; compile/runtime defects remain possible until a .NET 8-capable environment executes the focused suite.
+- Product/UI code no longer receives a raw host through the trusted composition root, reducing accidental bypass of durable-job sequencing and authority separation.
+- Exact approval remains required for consequential browser actions and download export/discard; the facade delegates to the existing hardened host rather than duplicating authorization logic.
+- Passive download inspection remains browser-free through `LocalStateRuntime`; initializing the product browser facade is still an explicit trusted-runtime action.
+- No provider credentials, browser typed values, approval grants, audit payload contents, quarantine bytes, or secret material were added to the new facade.
+- Emergency-stop cancellation semantics are preserved because WPF still owns and cancels the operation token while durable browser cancellation remains available through the constrained facade.
+- Remaining authority risk: `BrowserHostRuntime` itself is still a public Core type with a public creation API, and `BrowserGoalAgent` has a public convenience constructor taking it. The composition root no longer leaks it, but a separate Core consumer could instantiate the raw host directly. This should be narrowed once compile compatibility is checked.
 
 ## Known Blockers / Risks
 - No usable .NET 8 execution signal is available in this environment; current Core/WPF changes are not compiled or executed here.
@@ -82,7 +89,7 @@ Security / privacy / failure review:
 - Current WPF composition intentionally has no cloud lifecycle coordinator, so pre-existing remote records can be displayed safely but cannot yet be reconciled/cancelled from the desktop. Local fallback remains blocked.
 - Local voice/transcription and a verified production embedding adapter remain absent.
 - The evidence pair proves reproducibility consistency, not third-party attestation.
-- GitHub code search did not return indexed symbol hits during this run, so the compatibility-surface audit used the repository tree plus direct inspection of known composition/WPF files; a compile-capable full-reference scan is still desirable.
+- `BrowserHostRuntime` remains publicly constructible at the Core assembly boundary even though the desktop composition root no longer exposes it.
 
 ## Single Best Next Task
-Obtain a .NET 8-capable execution signal and compile `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, and the Nebius contract tools; run the focused `NvideaCompositionRootResearchApiSurfaceTests`, `ResearchProductUiState`, `ResearchProductRuntime`, `ResearchJobRuntime`, cloud-coordinator, remote-recovery, and status suites and fix every compile/XAML/runtime defect before attempting the first credential-backed Nebius Serverless live PASS. If execution remains unavailable, continue the authority-surface audit across public Core APIs and remove or narrow any remaining product-accessible mutation path that can bypass capability approvals, lifecycle routing, or emergency-stop/cancellation semantics without removing working functionality.
+First obtain a .NET 8-capable execution signal and compile `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, and the Nebius contract tools; run the focused research and new browser API-surface suites and fix every compile/XAML/runtime defect. If execution remains unavailable, finish the browser authority boundary by making raw `BrowserHostRuntime` construction assembly-internal (and narrowing the `BrowserGoalAgent` raw-host convenience constructor as needed), while preserving test access through the existing `InternalsVisibleTo("Nvidea.Core.Tests")` and keeping the safe `BrowserProductRuntime`/goal/recovery product paths intact.

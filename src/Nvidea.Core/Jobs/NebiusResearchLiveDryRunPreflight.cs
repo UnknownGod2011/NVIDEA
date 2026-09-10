@@ -100,6 +100,21 @@ public static class NebiusResearchLiveDryRunPreflight
         if (privateKey.KeySize < 2048)
             throw new InvalidOperationException("Client dispatch-signing RSA key must be at least 2048 bits.");
 
+        // ImportFromPem also accepts a public-only RSA PEM. Prove that private key material is
+        // actually present with a harmless fixed-hash signature before allowing a paid live run.
+        // This avoids a configuration that passes preflight but later fails when dispatch signing starts.
+        try
+        {
+            _ = privateKey.SignHash(
+                SHA256.HashData(Array.Empty<byte>()),
+                HashAlgorithmName.SHA256,
+                RSASignaturePadding.Pkcs1);
+        }
+        catch (CryptographicException)
+        {
+            throw new InvalidOperationException("Client dispatch-signing private key PEM does not contain usable RSA private key material.");
+        }
+
         var plaintext = options.EnvironmentVariables ?? new Dictionary<string, string>();
         if (!plaintext.TryGetValue(NebiusResearchDeploymentPreflight.ClientPublicKeyEnvironmentVariable, out var configuredPublicKey)
             || string.IsNullOrWhiteSpace(configuredPublicKey))
@@ -135,6 +150,12 @@ public static class NebiusResearchLiveDryRunPreflight
 
     private static void ValidateRsaPublicKey(string pem, string description)
     {
+        // Never accept a private-key PEM where a public-only deployment input is expected. Besides
+        // catching operator mistakes, this prevents private material from being carried into redacted
+        // deployment/evidence plumbing that should only ever need a public key.
+        if (pem.Contains("PRIVATE KEY", StringComparison.Ordinal))
+            throw new InvalidOperationException($"The {description} must contain public-only RSA key material.");
+
         using var rsa = RSA.Create();
         try
         {

@@ -116,7 +116,7 @@ public sealed class BrowserGoalAgent
     private readonly IBrowserGoalSessionStore? _store;
     private readonly TimeProvider _timeProvider;
 
-    public BrowserGoalAgent(
+    internal BrowserGoalAgent(
         BrowserHostRuntime host,
         NemotronBrowserPlanner planner,
         IBrowserGoalSessionStore? store = null,

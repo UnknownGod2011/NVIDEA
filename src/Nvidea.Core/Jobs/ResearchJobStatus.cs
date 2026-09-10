@@ -74,6 +74,7 @@ public sealed record ResearchJobStatus(
         ArgumentNullException.ThrowIfNull(record);
         return record.State == AgentJobState.Running
             && record.ExecutionLocation == JobExecutionLocation.Local
+            && !HasUnfinishedRemoteProvenance(record)
             && record.Attempt < record.Definition.MaxAttempts
             && record.ApprovalScope is null
             && IsRecoverableCheckpoint(record.Checkpoint?.Step)
@@ -85,6 +86,14 @@ public sealed record ResearchJobStatus(
         ResearchJobHandler.PlannedStep or
         ResearchJobHandler.EvidenceStep;
 
+    internal static bool HasUnfinishedRemoteProvenance(AgentJobRecord record) =>
+        record.RemoteResearch is
+        {
+            State: RemoteResearchProvenanceState.DispatchReserved
+                or RemoteResearchProvenanceState.Dispatched
+                or RemoteResearchProvenanceState.CancelRequested
+        };
+
     private static ResearchJobStage ResolveStage(AgentJobRecord record)
     {
         if (record.State == AgentJobState.Completed) return ResearchJobStage.Completed;
@@ -93,6 +102,7 @@ public sealed record ResearchJobStatus(
         if (record.State == AgentJobState.RetryScheduled) return ResearchJobStage.WaitingToRetry;
         if (record.State == AgentJobState.Running
             && record.ExecutionLocation == JobExecutionLocation.Local
+            && !HasUnfinishedRemoteProvenance(record)
             && IsRecoverableCheckpoint(record.Checkpoint?.Step))
         {
             return ResearchJobStage.Interrupted;
@@ -124,6 +134,9 @@ public sealed record ResearchJobStatus(
             };
             return $"Interrupted during {interruptedStage} — explicit retry may repeat provider work/cost";
         }
+
+        if (record.RemoteResearch?.State == RemoteResearchProvenanceState.DispatchReserved)
+            return "Nebius dispatch outcome is ambiguous — reconcile before any retry";
 
         if (record.ExecutionLocation == JobExecutionLocation.NebiusServerless && record.State == AgentJobState.Running)
         {

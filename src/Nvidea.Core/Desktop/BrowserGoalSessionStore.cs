@@ -15,6 +15,10 @@ public interface IBrowserGoalSessionStore
 /// Durable browser-goal state. Only descriptive/non-authorizing state is persisted:
 /// no approval grants, grant ids, bearer tokens, credentials, or typed browser values.
 /// PendingAction is deliberately stripped because its Value may contain private user data.
+/// Concrete path-backed construction is Core-internal so product/plugin code cannot point this
+/// low-level store at NVIDEA-owned durable state and write lifecycle/recovery metadata around the
+/// constrained browser product/goal/recovery authorities. The public interface remains available
+/// for least-authority composition and test doubles.
 /// </summary>
 public sealed class JsonBrowserGoalSessionStore : IBrowserGoalSessionStore
 {
@@ -30,7 +34,7 @@ public sealed class JsonBrowserGoalSessionStore : IBrowserGoalSessionStore
     private readonly ILocalStateProtector? _protector;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
-    public JsonBrowserGoalSessionStore(string path, ILocalStateProtector? protector = null)
+    internal JsonBrowserGoalSessionStore(string path, ILocalStateProtector? protector = null)
     {
         if (string.IsNullOrWhiteSpace(path))
             throw new ArgumentException("Browser goal session store path is required.", nameof(path));

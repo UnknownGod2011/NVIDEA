@@ -119,6 +119,55 @@ public sealed class NebiusResearchDeploymentEvidenceVerifierTests
         }
     }
 
+    [Fact]
+    public void VerifyFiles_RejectsMalformedArtifactWithoutLeakingFilePath()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "nvidea-evidence-verifier-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var manifestPath = Path.Combine(root, "manifest-secret-location.json");
+            var passPath = Path.Combine(root, "pass.json");
+            File.WriteAllText(manifestPath, "{ malformed-json }");
+            File.WriteAllText(passPath, "{}");
+
+            var error = Assert.Throws<InvalidDataException>(() =>
+                NebiusResearchDeploymentEvidenceVerifier.VerifyFiles(manifestPath, passPath));
+
+            Assert.Contains("deployment manifest", error.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(root, error.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain("manifest-secret-location.json", error.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void VerifyFiles_RejectsOversizedArtifactBeforeJsonParsing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "nvidea-evidence-verifier-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var manifestPath = Path.Combine(root, "oversized-manifest.json");
+            var passPath = Path.Combine(root, "pass.json");
+            File.WriteAllText(manifestPath, new string('x', (256 * 1024) + 1));
+            File.WriteAllText(passPath, "{}");
+
+            var error = Assert.Throws<InvalidDataException>(() =>
+                NebiusResearchDeploymentEvidenceVerifier.VerifyFiles(manifestPath, passPath));
+
+            Assert.Contains("size limit", error.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(root, error.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     private static NebiusResearchDeploymentManifest ValidManifest()
     {
         var manifest = new NebiusResearchDeploymentManifest(

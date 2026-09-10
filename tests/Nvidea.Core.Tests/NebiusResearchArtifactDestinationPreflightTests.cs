@@ -44,6 +44,30 @@ public sealed class NebiusResearchArtifactDestinationPreflightTests
     }
 
     [Fact]
+    public void ValidatePaths_ProbesExactParsedDestinationsWithoutCreatingFinalFiles()
+    {
+        var root = CreateRoot();
+        try
+        {
+            var manifest = Path.GetFullPath(Path.Combine(root, "manifest.json"));
+            var pass = Path.GetFullPath(Path.Combine(root, "pass.json"));
+
+            var report = NebiusResearchArtifactDestinationPreflight.ValidatePaths(manifest, pass);
+
+            Assert.True(report.RedactedManifestConfigured);
+            Assert.True(report.PassEvidenceConfigured);
+            Assert.Equal(2, report.WritableDestinationCount);
+            Assert.False(File.Exists(manifest));
+            Assert.False(File.Exists(pass));
+            Assert.Empty(Directory.GetFiles(root, "*.probe.tmp", SearchOption.TopDirectoryOnly));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Validate_RejectsSameManifestAndPassDestination()
     {
         var root = CreateRoot();
@@ -61,6 +85,27 @@ public sealed class NebiusResearchArtifactDestinationPreflightTests
 
             Assert.Contains("must be different files", exception.Message, StringComparison.Ordinal);
             Assert.False(File.Exists(path));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ValidatePaths_RejectsAliasedParsedDestinationsBeforeAnyProbe()
+    {
+        var root = CreateRoot();
+        try
+        {
+            var path = Path.GetFullPath(Path.Combine(root, "evidence.json"));
+
+            var exception = Assert.Throws<InvalidOperationException>(() =>
+                NebiusResearchArtifactDestinationPreflight.ValidatePaths(path, path));
+
+            Assert.Contains("must be different files", exception.Message, StringComparison.Ordinal);
+            Assert.False(File.Exists(path));
+            Assert.Empty(Directory.GetFiles(root, "*.probe.tmp", SearchOption.TopDirectoryOnly));
         }
         finally
         {

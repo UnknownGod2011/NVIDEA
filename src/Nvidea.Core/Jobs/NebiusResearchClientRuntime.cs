@@ -64,7 +64,7 @@ public sealed class ResearchDispatchBindingCleanup
 /// Serverless execution should be exposed to product UX only after this runtime is backed by a live,
 /// authenticated shared transport and the narrow Nebius contract probe succeeds.
 /// </summary>
-public sealed class NebiusResearchClientRuntime
+public sealed class NebiusResearchClientRuntime : IRemoteResearchClientRuntime
 {
     private readonly ResearchDispatchBindingCleanup _bindingCleanup;
 

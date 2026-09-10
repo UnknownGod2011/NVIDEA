@@ -109,17 +109,23 @@ public partial class MainWindow
         }
 
         SetResearchRunning(true);
+        _researchCts?.Dispose();
+        _researchCts = new CancellationTokenSource();
         try
         {
-            var current = await runtime.GetStatusAsync(jobId);
+            var current = await runtime.GetStatusAsync(jobId, _researchCts.Token);
             if (!current.RequiresRemoteReconciliation)
             {
                 ResearchStatusText.Text = "This research job has no unfinished Nebius lifecycle to reconcile.";
                 return;
             }
 
-            var reconciled = await runtime.ReconcileRemoteAsync(jobId, _researchCts?.Token ?? CancellationToken.None);
+            var reconciled = await runtime.ReconcileRemoteAsync(jobId, _researchCts.Token);
             ApplyResearchStatus(reconciled);
+        }
+        catch (OperationCanceledException) when (_researchCts.IsCancellationRequested)
+        {
+            ResearchStatusText.Text = "Nebius lifecycle reconciliation stopped locally; durable remote state remains authoritative and must be reconciled before retry.";
         }
         catch (Exception)
         {

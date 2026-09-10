@@ -1,6 +1,6 @@
 # NVIDEA
 
-NVIDEA is the open-source hackathon edition of a Windows-first personal AI operating layer inspired by keyboard.wtf. The goal is not another chat wrapper: NVIDEA is being built as a permissioned agent that can understand desktop context, remember useful information over time, research with provenance, execute multi-step browser and computer workflows, and hand off long-running work to Nebius infrastructure.
+NVIDEA is the open-source hackathon edition of a Windows-first personal AI operating layer inspired by keyboard.wtf. The goal is not another chat wrapper: NVIDEA is being built as a permissioned agent that can understand desktop context, remember useful information over time, research with provenance, execute multi-step browser and computer workflows, and hand off appropriate long-running work to Nebius infrastructure.
 
 ## Hackathon target
 
@@ -11,7 +11,7 @@ NVIDEA is the open-source hackathon edition of a Windows-first personal AI opera
 
 ## Current status
 
-The repository is being built in layers. `src/Nvidea.Core` now contains the NVIDIA/Nebius inference foundation, privacy-aware personal memory, a Tavily-backed research core connected to Nemotron planning/synthesis, durable research checkpoints, and a safety-focused browser runtime. `src/Nvidea.Windows` exposes the trusted Windows shell, including restart-resumable research controls.
+The repository is being built in layers. `src/Nvidea.Core` contains the NVIDIA/Nebius inference foundation, privacy-aware personal memory, a Tavily-backed research core connected to Nemotron planning/synthesis, durable research checkpoints, a safety-focused browser runtime, and an explicit Nebius Serverless research contract path. `src/Nvidea.Windows` exposes the trusted Windows shell, including restart-resumable research controls. `src/Nvidea.Worker` is the non-root remote worker used by the explicit Serverless contract path.
 
 Implemented now:
 
@@ -46,12 +46,19 @@ Implemented now:
 - `ResearchJobRuntime` persists research jobs and audit records under the local application state directory; on Windows the existing stores use CurrentUser DPAPI protection by default.
 - The Windows shell can create durable research, recover the latest unfinished job after restart, run one explicit stage at a time, cancel work, and recover completed reports.
 - Research status UI is intentionally payload-free: it shows coarse Nemotron/Tavily stages, attempts and execution location without rendering saved questions, source contents/URLs, raw provider errors or checkpoint JSON.
-- Research execution is truthfully labeled **local** today. NVIDEA does not claim Nebius Serverless execution until an actual remote dispatcher is connected.
-- Emergency stop cancels an in-flight durable research stage as well as the existing desktop/browser work paths.
 - Persistent Playwright browser sessions with iterative post-action verification, permission gates, prompt-injection/tool-output trust boundaries, crash-safe download quarantine/recovery and single-owner durable browser state.
-- Contract-focused tests using in-memory HTTP/memory/inference/provider fakes; no real cloud credentials are required.
+- Native S3-compatible protected Object Storage transport for encrypted remote work items, bindings, and results.
+- Explicit Nebius Serverless research contract path with two-phase dispatch, signed resource-ID binding, durable cancellation/reconciliation, exact-once result ingestion, and a non-root worker image.
+- Zero-cost `--live-research-preflight` mode that validates the exact live deployment inputs before any provider work.
+- Deployment preflight enforces digest-pinned worker images, exact Object Storage ↔ Serverless mount alignment, MysteryBox-backed worker credentials, bounded compute/storage configuration, RSA key strength/roles, and signing-identity consistency.
+- Redacted deterministic deployment manifests and machine-readable live PASS evidence tied by the same SHA-256 deployment fingerprint.
+- `tools/Nvidea.NebiusEvidenceVerifier` independently recomputes the manifest fingerprint and verifies a later PASS artifact without credentials or network access.
+- Strict judging-evidence ingestion rejects unknown/duplicate JSON members, comments, trailing commas, excessive nesting, malformed files, and oversized artifacts.
+- Contract-focused tests using in-memory HTTP/memory/inference/provider fakes; no real cloud credentials are required for the test suite.
 
-Still under active development: a verified production embedding adapter, memory compaction/summarization, research-specific interrupted-running recovery, real Nebius Serverless dispatch, browser automation polish, broader skills, production Windows validation, packaging and the final hackathon demo.
+The important readiness distinction is: the **explicit Serverless contract path is implemented**, but a credential-backed live Serverless PASS has not yet been demonstrated in this repository, and the production WPF `ResearchJobRuntime` still deliberately avoids claiming remote execution until that contract is proven. This keeps the project technically ambitious without overstating validation.
+
+Still under active development: a verified production embedding adapter, memory compaction/summarization, production WPF integration of the proven remote path, credential-backed Nebius Serverless validation, browser automation polish, broader skills, production Windows validation, packaging and the final hackathon demo.
 
 ## Why model routing is conservative
 
@@ -77,6 +84,8 @@ $env:NVIDEA_MODEL_DEEP = "<verified-token-factory-model-id>"
 
 Do not commit API keys. Provider secrets stay outside durable research checkpoints. On Windows, durable research job/audit state uses the existing CurrentUser DPAPI-backed local-state protection path.
 
+The explicit live Serverless contract uses additional `NVIDEA_LIVE_*` variables for Object Storage, Serverless deployment shape, public/private key files and MysteryBox references. See [`docs/nebius-contract-probe.md`](docs/nebius-contract-probe.md) rather than copying credentials into scripts or source files.
+
 ## Build and test
 
 Prerequisite: .NET 8 SDK.
@@ -87,7 +96,7 @@ dotnet build .\src\Nvidea.Windows\Nvidea.Windows.csproj
 dotnet test .\tests\Nvidea.Core.Tests\Nvidea.Core.Tests.csproj
 ```
 
-The tests mock network/storage dependencies and cover request structure, model routing, bearer authentication, tool-call parsing, retry behavior, endpoint safety, memory privacy policy, session-only persistence, hybrid retrieval, embedding failure fallback, expiry, deduplicated updates, JSON round trips, Tavily Search/Extract request shapes, canonical URL deduplication, rate-limit retries, extraction fallback behavior, prompt-injection boundaries, research planning, deterministic authority/freshness/diversity ranking, citation-ID validation, durable research stage transitions, restart recovery from saved evidence, zero-repeat Tavily search after an evidence checkpoint, truthful local execution status and terminal cancellation behavior.
+The tests mock network/storage dependencies and cover request structure, model routing, bearer authentication, tool-call parsing, retry behavior, endpoint safety, memory privacy policy, session-only persistence, hybrid retrieval, embedding failure fallback, expiry, deduplicated updates, JSON round trips, Tavily Search/Extract request shapes, canonical URL deduplication, rate-limit retries, extraction fallback behavior, prompt-injection boundaries, research planning, deterministic authority/freshness/diversity ranking, citation-ID validation, durable research stage transitions, restart recovery from saved evidence, zero-repeat Tavily search after an evidence checkpoint, terminal cancellation behavior, Serverless deployment contracts, live-configuration bounds, RSA key roles, and judging-evidence verification.
 
 ## Durable research workflow
 
@@ -99,7 +108,7 @@ The judging-visible long-running research path is deliberately staged rather tha
 4. **Nemotron synthesis** — resume from the saved evidence checkpoint without repeating Tavily discovery/extraction.
 5. **Completed report** — persist and recover the final citation-validated report.
 
-The Windows panel executes one stage per explicit Start/Resume action and can rediscover an unfinished job after process restart. User cancellation is terminal. A process crash while a stage is durably marked `Running` remains fail-closed today instead of silently replaying a possibly costly remote call; a research-specific explicit recovery transition is planned.
+The Windows panel executes one stage per explicit Start/Resume action and can rediscover an unfinished job after process restart. User cancellation is terminal. The Windows production path remains local while the explicit Serverless contract is validated independently; this avoids silently routing private desktop work to cloud infrastructure before the remote contract is proven.
 
 ## Personal memory contract
 
@@ -159,9 +168,9 @@ Windows interaction shell
                     v
           verified task outcome
 
-Long-running cloud-safe work -> Nebius Serverless (target; remote dispatcher not yet wired)
-Private OS actions            -> local Windows runtime
-Durable research today        -> protected local Windows runtime
+Long-running cloud-safe research -> explicit Nebius Serverless contract path
+Private OS/browser actions       -> local Windows runtime
+Production Windows research      -> local until remote contract is live-validated
 ```
 
 ## Personal AI safety contract
@@ -175,6 +184,18 @@ NVIDEA is designed around least privilege:
 - every autonomous action should become auditable and cancellable;
 - cloud inference should receive only the data required for the current task;
 - credentials and authentication secrets must not be stored as personal memory.
+
+## Reproducible judging evidence
+
+The Serverless demo path has a deliberate zero-secret evidence workflow so a successful live run can be tied back to the exact deployment that was preflighted:
+
+1. Configure the live deployment using a digest-pinned worker image and MysteryBox-backed worker secrets.
+2. Run the **zero-cost** `--live-research-preflight` mode and save the redacted deployment manifest.
+3. Run the explicit `--live-research` contract only when credentials/infrastructure are intentionally available.
+4. A PASS artifact may be persisted only after remote completion and validated research citations.
+5. Run `tools/Nvidea.NebiusEvidenceVerifier` over the preflight manifest and PASS artifact. It recomputes the canonical redacted manifest fingerprint and requires the PASS fingerprint to match.
+
+This verification requires no Nebius token, Object Storage key, MysteryBox resolution, private PEM, or network connection. It proves internal deployment reproducibility consistency, **not** third-party Nebius attestation. Full commands, redaction guarantees and limitations are documented in [`docs/judging-evidence.md`](docs/judging-evidence.md).
 
 ## Relationship to keyboard.wtf
 

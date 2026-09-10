@@ -9,6 +9,13 @@ static int Fail(string category, string detail)
     return 1;
 }
 
+static void ValidateArtifactDestinations(NebiusResearchLiveConfiguration configuration)
+{
+    NebiusResearchArtifactDestinationPreflight.ValidatePaths(
+        configuration.RedactedManifestPath,
+        configuration.PassEvidencePath);
+}
+
 static void PersistRedactedManifestIfRequested(NebiusResearchLiveConfiguration configuration)
 {
     if (configuration.RedactedManifestPath is null) return;
@@ -78,10 +85,12 @@ static async Task<int> RunPlannerProbeAsync()
 static int RunLiveResearchPreflight()
 {
     var configuration = NebiusResearchLiveConfigurationLoader.LoadFromEnvironment();
+    ValidateArtifactDestinations(configuration);
     PersistRedactedManifestIfRequested(configuration);
 
     Console.WriteLine("NVIDEA live research deployment preflight: PASS");
     PrintReproducibilityEvidence(configuration.Report);
+    Console.WriteLine("Judging artifact destinations: validated non-destructively");
     Console.WriteLine("Cloud jobs/model calls/Object Storage requests: not performed");
     Console.WriteLine("Worker image: digest-pinned");
     Console.WriteLine("Worker/client RSA material: parseable and signing identity consistent");
@@ -97,6 +106,9 @@ static async Task<int> RunLiveResearchProbeAsync()
     // The loader runs the same zero-cost fail-closed deployment gate used by preflight before any
     // Object Storage, Serverless, Nemotron or Tavily client is constructed or dispatched.
     var configuration = NebiusResearchLiveConfigurationLoader.LoadFromEnvironment();
+    // Validate the exact parsed destinations before creating provider clients. This rejects
+    // manifest/PASS aliasing and unwritable destinations without mutating the final artifacts.
+    ValidateArtifactDestinations(configuration);
     PersistRedactedManifestIfRequested(configuration);
 
     var stateRoot = Path.Combine(Path.GetTempPath(), "nvidea-nebius-live-probe", Guid.NewGuid().ToString("N"));
@@ -244,6 +256,7 @@ try
         Console.WriteLine("--live-research: explicit live Nebius Serverless research probe; PASS prints the same deployment fingerprint.");
         Console.WriteLine("Optional: NVIDEA_LIVE_REDACTED_MANIFEST_PATH atomically persists only the redacted deployment manifest.");
         Console.WriteLine("Optional live-only: NVIDEA_LIVE_PASS_EVIDENCE_PATH atomically persists redacted machine-readable evidence only after a validated PASS.");
+        Console.WriteLine("Configured manifest/PASS destinations are checked for distinctness and writability before persistence or live provider construction.");
         return 0;
     }
     if (liveResearch && liveResearchPreflight)

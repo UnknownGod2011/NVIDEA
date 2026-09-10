@@ -25,6 +25,37 @@ public sealed class NebiusResearchLiveConfigurationLoaderTests
     }
 
     [Fact]
+    public void Load_UsesDocumentedRuntimeDefaults()
+    {
+        using var fixture = LiveConfigurationFixture.Create();
+
+        var configuration = NebiusResearchLiveConfigurationLoader.Load(fixture.Read);
+
+        Assert.Equal(5, configuration.PollSeconds);
+        Assert.Equal(20, configuration.TotalTimeoutMinutes);
+        Assert.False(string.IsNullOrWhiteSpace(configuration.ResearchQuestion));
+    }
+
+    [Theory]
+    [InlineData("1", "2", 1, 2)]
+    [InlineData("30", "60", 30, 60)]
+    public void Load_AcceptsInclusiveRuntimeBounds(
+        string pollSeconds,
+        string timeoutMinutes,
+        int expectedPollSeconds,
+        int expectedTimeoutMinutes)
+    {
+        using var fixture = LiveConfigurationFixture.Create();
+        fixture.Environment["NVIDEA_LIVE_POLL_SECONDS"] = pollSeconds;
+        fixture.Environment["NVIDEA_LIVE_TOTAL_TIMEOUT_MINUTES"] = timeoutMinutes;
+
+        var configuration = NebiusResearchLiveConfigurationLoader.Load(fixture.Read);
+
+        Assert.Equal(expectedPollSeconds, configuration.PollSeconds);
+        Assert.Equal(expectedTimeoutMinutes, configuration.TotalTimeoutMinutes);
+    }
+
+    [Fact]
     public void Load_RejectsMissingRequiredEnvironmentBeforeProviderConstruction()
     {
         using var fixture = LiveConfigurationFixture.Create();
@@ -66,6 +97,37 @@ public sealed class NebiusResearchLiveConfigurationLoaderTests
         Assert.Contains("NVIDEA_LIVE_POLL_SECONDS", error.Message, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("1")]
+    [InlineData("61")]
+    [InlineData("not-a-number")]
+    public void Load_RejectsInvalidTotalTimeoutBounds(string value)
+    {
+        using var fixture = LiveConfigurationFixture.Create();
+        fixture.Environment["NVIDEA_LIVE_TOTAL_TIMEOUT_MINUTES"] = value;
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            NebiusResearchLiveConfigurationLoader.Load(fixture.Read));
+
+        Assert.Contains("NVIDEA_LIVE_TOTAL_TIMEOUT_MINUTES", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Load_AcceptsMaximumResearchQuestionAndRejectsOverflow()
+    {
+        using var fixture = LiveConfigurationFixture.Create();
+        fixture.Environment["NVIDEA_LIVE_RESEARCH_QUESTION"] = new string('q', NebiusResearchLiveConfigurationLoader.MaximumResearchQuestionLength);
+
+        var accepted = NebiusResearchLiveConfigurationLoader.Load(fixture.Read);
+        Assert.Equal(NebiusResearchLiveConfigurationLoader.MaximumResearchQuestionLength, accepted.ResearchQuestion.Length);
+
+        fixture.Environment["NVIDEA_LIVE_RESEARCH_QUESTION"] = new string('q', NebiusResearchLiveConfigurationLoader.MaximumResearchQuestionLength + 1);
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            NebiusResearchLiveConfigurationLoader.Load(fixture.Read));
+        Assert.Contains("NVIDEA_LIVE_RESEARCH_QUESTION", error.Message, StringComparison.Ordinal);
+        Assert.Contains("limit", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void Load_RejectsMalformedPinnedMysteryBoxVersion()
     {
@@ -97,6 +159,54 @@ public sealed class NebiusResearchLiveConfigurationLoaderTests
         var oversized = Assert.Throws<InvalidOperationException>(() =>
             NebiusResearchLiveConfigurationLoader.Load(fixture.Read));
         Assert.Contains("oversized", oversized.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Load_RejectsMalformedClientPrivateKeyWithoutLeakingItsPath()
+    {
+        using var fixture = LiveConfigurationFixture.Create();
+        var malformedPath = Path.Combine(fixture.Root, "malformed-client-private.pem");
+        File.WriteAllText(malformedPath, "not a pem key");
+        fixture.Environment["NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE"] = malformedPath;
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            NebiusResearchLiveConfigurationLoader.Load(fixture.Read));
+
+        Assert.Contains("NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE", error.Message, StringComparison.Ordinal);
+        Assert.Contains("valid RSA private key", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(fixture.Root, error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Load_RejectsPublicOnlyClientSigningKeyBeforeAnyProviderUse()
+    {
+        using var fixture = LiveConfigurationFixture.Create();
+        using var rsa = RSA.Create(2048);
+        var publicOnlyPath = Path.Combine(fixture.Root, "client-public-only.pem");
+        File.WriteAllText(publicOnlyPath, rsa.ExportSubjectPublicKeyInfoPem());
+        fixture.Environment["NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE"] = publicOnlyPath;
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            NebiusResearchLiveConfigurationLoader.Load(fixture.Read));
+
+        Assert.Contains("private key material", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(fixture.Root, error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Load_RejectsPrivatePemWhereWorkerPublicKeyIsRequired()
+    {
+        using var fixture = LiveConfigurationFixture.Create();
+        using var rsa = RSA.Create(2048);
+        var privatePath = Path.Combine(fixture.Root, "worker-private-in-public-slot.pem");
+        File.WriteAllText(privatePath, rsa.ExportPkcs8PrivateKeyPem());
+        fixture.Environment["NVIDEA_LIVE_WORKER_PUBLIC_KEY_PEM_FILE"] = privatePath;
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            NebiusResearchLiveConfigurationLoader.Load(fixture.Read));
+
+        Assert.Contains("public-only", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(fixture.Root, error.Message, StringComparison.Ordinal);
     }
 
     [Fact]

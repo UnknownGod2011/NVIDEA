@@ -47,6 +47,7 @@ public sealed class ResearchRemoteRecoverySafetyTests
             await store.SaveAsync(reserved);
 
             var status = await runtime.GetStatusAsync(created.JobId);
+            Assert.True(status.RequiresRemoteReconciliation);
             Assert.False(status.CanRecoverInterrupted);
             Assert.False(status.CanRunNextStep);
             Assert.False(status.CanCancel);

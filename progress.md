@@ -27,7 +27,8 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Evidence verification rejects unknown JSON members, duplicate property names at any depth, comments, trailing commas, excessive nesting, oversized artifacts, malformed artifacts, self-inconsistent manifests, and cross-artifact fingerprint mismatches.
 - Live RSA role validation proves that the client signing PEM can perform a private-key signature and rejects private material in the worker-public-key slot.
 - Main README distinguishes the implemented explicit Serverless contract path from still-unverified production WPF remote execution and links the reproducible judging-evidence workflow.
-- Judging artifact destinations now have a non-destructive writability preflight and a standalone zero-network operator CLI.
+- Judging artifact destinations have a non-destructive writability preflight and standalone zero-network operator CLI.
+- Both `--live-research-preflight` and `--live-research` now enforce destination distinctness/writability against the exact canonical paths returned by `NebiusResearchLiveConfigurationLoader` before final artifact persistence; the paid live path performs this before Object Storage or Serverless clients are constructed.
 
 ## Persistent Progress History
 
@@ -43,40 +44,42 @@ Added native S3-compatible protected transport, exact S3 ↔ Serverless mount ma
 ### 2026-09-10 — Strict judging evidence + RSA hardening
 Added strict evidence JSON ingestion, canonical manifest re-hashing, fixed-time fingerprint comparison, malformed/oversized evidence rejection, RSA signing-capability proof, public/private key-role separation, parser boundary tests, and judging-evidence documentation.
 
-### 2026-09-10 — Current run: artifact destination safety
+### 2026-09-10 — Artifact destination safety
+Added non-destructive destination writability probing, same manifest/PASS path rejection, direct atomic-writer/destination regression tests, and `tools/Nvidea.NebiusArtifactDestinationCheck`.
+
+### 2026-09-10 — Current run: mandatory destination gating in live modes
 Completed:
-- Re-read this progress ledger completely before mutation and inspected the current repo tree, `AtomicTextArtifactWriter`, live configuration loader, live contract probe, PASS-evidence tests, and existing evidence workflow.
-- Hardened `AtomicTextArtifactWriter.ValidateDestination` so directory targets fail closed rather than surviving validation until the eventual replacement operation.
-- Added `AtomicTextArtifactWriter.ValidateWritableDestination`, which verifies the destination directory supports create/write/flush/delete using a randomized sibling probe file. It never creates, truncates, or replaces the configured final artifact and cleans the probe best-effort on every path.
-- Added direct `AtomicTextArtifactWriterTests` for initial write, existing-file replacement, temp cleanup, directory-target rejection, non-destructive writability probing, preservation of existing final evidence, and missing-parent failure without implicit directory creation.
-- Found and fixed a judging-evidence integrity risk: manifest and PASS paths could be configured as the same file, allowing a successful live PASS to overwrite the saved preflight manifest and destroy the evidence pair.
-- Added `NebiusResearchArtifactDestinationPreflight`, which reads the two optional judging-artifact destinations, rejects malformed/control-character values, rejects manifest/PASS aliasing with OS-appropriate path comparison, and proves each configured destination is writable without modifying final artifacts.
-- Added focused tests confirming no-output behavior, two-destination probing, same-path rejection, preservation of existing artifacts, and cleanup of ephemeral probes.
-- Added `tools/Nvidea.NebiusArtifactDestinationCheck`, a standalone zero-network self-check CLI that reads `NVIDEA_LIVE_REDACTED_MANIFEST_PATH` and `NVIDEA_LIVE_PASS_EVIDENCE_PATH`, checks writability/distinctness, prints no path values, and performs no provider calls.
+- Re-read this progress ledger completely and inspected the current repository tree, recent commits, `NebiusResearchArtifactDestinationPreflight`, `NebiusResearchLiveConfigurationLoader`, `Nvidea.NebiusContractProbe`, destination tests, and judging-evidence workflow before changing code.
+- Added `NebiusResearchArtifactDestinationPreflight.ValidatePaths(...)` so callers can validate the exact already-parsed/canonical manifest and PASS destinations instead of re-reading mutable process environment state.
+- Refactored environment-based destination validation to reuse the same path-validation core.
+- Integrated destination validation into `--live-research-preflight` before redacted-manifest persistence.
+- Integrated destination validation into `--live-research` before redacted-manifest persistence and before construction of Object Storage or Nebius Serverless provider clients.
+- Therefore same-path or unwritable judging destinations now fail before paid provider work begins, rather than relying on operators to remember the standalone self-check.
+- Updated CLI help/output to make the enforced destination gate explicit without printing destination paths.
+- Added direct regression coverage for validating exact parsed paths and rejecting aliased parsed destinations before probe-file creation.
+- Updated `docs/judging-evidence.md` with the standalone destination-check command and documented that both live modes enforce the same check automatically.
 
 Commits this run:
-- `a6d0bb1d8da71ce4d2f7776e300d39ae4a4e63f4` — harden atomic artifact destination validation and add non-destructive writability probing.
-- `ae1166ea1f49d7118bbb37f12a612095a12263de` — add direct atomic writer regression tests.
-- `53ae932f36556427fdc9c69e384b11914660a42f` — add judging artifact destination preflight.
-- `ad3879aaa4b8ca4ae91803ae85a516f2be4351ed` — test destination preflight behavior and artifact preservation.
-- `ce71a68308d8e1db5849e374a19450b5eec1cdc5` — add artifact destination self-check tool project.
-- `e57d4a25a450b6fa0631cfa49e184829a02335f0` — implement the zero-cost artifact destination self-check CLI.
+- `53e66b3c47f695fc6dbadd0451acc257c87eab2e` — add canonical parsed-path destination validation.
+- `cb23ce0c93a3eef87dd8148caa9075e861f4cdad` — enforce destination preflight in both live contract-probe paths.
+- `474ad7b80c2a3917455160436fecdd28dd690ac2` — add parsed-path destination regression tests.
+- `ae96100169bbbba362822bfaaf699b067608f0e1` — document mandatory/standalone artifact destination checks.
 
 Validation / evidence:
 - Repository identity was explicitly re-verified before every GitHub mutation; all writes targeted exactly `UnknownGod2011/NVIDEA`.
-- Static review confirms `ValidateWritableDestination` only creates a randomized sibling `*.probe.tmp`, writes one byte, flushes it, deletes it, and never opens the configured final artifact for write/truncate/replacement.
-- Static review confirms same manifest/PASS paths fail before either writability probe begins, so no final evidence can be silently collapsed into one file.
-- Static review confirms the standalone CLI prints only configured/writable status counts and never emits artifact paths, secret values, provider identifiers, or evidence contents.
+- Static review confirms both live modes call `ValidateArtifactDestinations(configuration)` immediately after loading configuration and before manifest persistence.
+- Static review confirms the paid live mode performs that check before creating `NebiusObjectStorageClient`, `NebiusServerlessJobClient`, or dispatching any remote stage.
+- Static review confirms `ValidatePaths` works on the exact configuration paths, preventing a second environment read from drifting away from the values the live runtime will later use.
+- Static review confirms same-path rejection happens before any writability probe begins and the check still does not create/replace final evidence artifacts.
 - `dotnet` is not installed in this execution environment, so compilation and test execution are **not claimed**.
 - No live Nebius credentials/resources were used and no GitHub Actions workflow was triggered merely to manufacture a green signal.
 
 Security / privacy / failure review:
-- Destination failures use generic descriptions and do not include full filesystem paths.
-- The self-check does not contact Nebius, Tavily, Object Storage, MysteryBox, or Token Factory.
-- Existing final evidence files are deliberately preserved during writability probing.
-- Missing directories are never created implicitly.
-- Probe-file cleanup is best-effort in `finally`; cleanup failure cannot convert a failed validation into a false success.
-- This check proves directory-level create/write/flush/delete capability. It does not guarantee that an existing final file can always be atomically replaced under every OS ACL/locking condition; the real atomic writer remains the authoritative final operation.
+- No artifact paths, credentials, secret IDs, bucket identity, PEM contents, or protected research payloads were added to console output.
+- Destination probing remains zero-network and non-destructive to configured final artifacts.
+- The paid path now fails on destination configuration before provider-client construction, reducing accidental spend and preventing a run that cannot persist its intended evidence.
+- Environment-to-runtime TOCTOU is reduced because destination checks operate on the same immutable configuration object later used for persistence.
+- This still cannot guarantee a destination remains writable for the entire live run; filesystem ACL/lock state may change after preflight. Final atomic persistence remains authoritative and a persistence failure must still prevent a PASS claim.
 
 ## Known Blockers / Risks
 - No verified .NET 8/Windows/container execution signal is available here; current code is statically reviewed but not compiled/executed.
@@ -86,7 +89,7 @@ Security / privacy / failure review:
 - WPF/`ResearchJobRuntime` still deliberately avoid claiming production Serverless execution until the real contract succeeds.
 - Local voice/transcription and a verified production embedding adapter remain absent.
 - The evidence pair proves reproducibility consistency, not third-party attestation.
-- The new artifact-destination self-check is not yet automatically invoked by the full `--live-research-preflight` / `--live-research` paths; operators can run the standalone CLI now, but integrating the same check into those paths would eliminate the possibility of skipping it.
+- Destination writability can change after preflight due to external ACL/locking changes; final atomic persistence therefore remains the definitive operation.
 
 ## Single Best Next Task
-Integrate `NebiusResearchArtifactDestinationPreflight` into both `--live-research-preflight` and `--live-research` before any final artifact persistence or provider-client construction, so same-path and unwritable-destination failures cannot be bypassed. Then document the standalone self-check in the judging-evidence flow and, if a .NET-capable environment becomes available, immediately compile and run the focused atomic-writer/destination/configuration/evidence tests before attempting the first credential-backed Serverless contract.
+Add an explicit provider-construction boundary testable seam around the live contract-probe startup so regression tests can prove destination failure occurs before any Object Storage/Serverless client factory is invoked, then—if a .NET-capable environment becomes available—compile and run the focused destination/configuration/evidence tests before the first credential-backed Serverless contract. After that, prioritize the first real Nebius Serverless live PASS and use its findings to wire proven remote research into the production WPF `ResearchJobRuntime` rather than continuing to grow unverified deployment scaffolding.

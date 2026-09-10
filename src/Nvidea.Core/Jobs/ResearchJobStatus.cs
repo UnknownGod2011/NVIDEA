@@ -45,8 +45,10 @@ public sealed record ResearchJobStatus(
         var canCancel = !terminal;
         var canRun = record.State switch
         {
-            AgentJobState.Pending => true,
-            AgentJobState.RetryScheduled => record.NextAttemptAt is null || record.NextAttemptAt <= DateTimeOffset.UtcNow,
+            AgentJobState.Pending => record.ExecutionLocation == JobExecutionLocation.Local,
+            AgentJobState.RetryScheduled =>
+                record.ExecutionLocation == JobExecutionLocation.Local
+                && (record.NextAttemptAt is null || record.NextAttemptAt <= DateTimeOffset.UtcNow),
             _ => false
         };
         var canRecoverInterrupted = CanRecoverInterrupted(record, DateTimeOffset.UtcNow);
@@ -89,8 +91,12 @@ public sealed record ResearchJobStatus(
         if (record.State == AgentJobState.Cancelled) return ResearchJobStage.Cancelled;
         if (record.State == AgentJobState.Failed) return ResearchJobStage.Failed;
         if (record.State == AgentJobState.RetryScheduled) return ResearchJobStage.WaitingToRetry;
-        if (record.State == AgentJobState.Running && IsRecoverableCheckpoint(record.Checkpoint?.Step))
+        if (record.State == AgentJobState.Running
+            && record.ExecutionLocation == JobExecutionLocation.Local
+            && IsRecoverableCheckpoint(record.Checkpoint?.Step))
+        {
             return ResearchJobStage.Interrupted;
+        }
 
         return ResolveCheckpointStage(record.Checkpoint?.Step);
     }
@@ -117,6 +123,17 @@ public sealed record ResearchJobStatus(
                 _ => "research work"
             };
             return $"Interrupted during {interruptedStage} — explicit retry may repeat provider work/cost";
+        }
+
+        if (record.ExecutionLocation == JobExecutionLocation.NebiusServerless && record.State == AgentJobState.Running)
+        {
+            return stage switch
+            {
+                ResearchJobStage.Planning => "Planning with Nemotron on Nebius Serverless…",
+                ResearchJobStage.GatheringEvidence => "Gathering Tavily evidence on Nebius Serverless…",
+                ResearchJobStage.Synthesizing => "Synthesizing verified evidence on Nebius Serverless…",
+                _ => "Nebius Serverless research is running…"
+            };
         }
 
         return (stage, record.State) switch

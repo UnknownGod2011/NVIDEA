@@ -9,15 +9,17 @@ namespace Nvidea.Core.Tests;
 public sealed class ResearchRemoteRecoverySafetyTests
 {
     [Fact]
-    public async Task Stale_dispatch_reservation_is_never_advertised_rearmed_or_cancelled_as_local_work()
+    public async Task Stale_dispatch_reservation_is_never_advertised_rearmed_run_or_cancelled_as_local_work()
     {
         var directory = Path.Combine(Path.GetTempPath(), "nvidea-remote-recovery-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         try
         {
+            var inference = new NeverInferenceClient();
+            var provider = new NeverResearchProvider();
             var runtime = new ResearchJobRuntime(
                 directory,
-                new ResearchEngine(new NeverInferenceClient(), new NeverResearchProvider()),
+                new ResearchEngine(inference, provider),
                 new MemoryAuditTrail());
             var created = await runtime.CreateAsync("Do not replay an ambiguous Nebius dispatch");
 
@@ -51,8 +53,11 @@ public sealed class ResearchRemoteRecoverySafetyTests
             Assert.NotEqual(ResearchJobStage.Interrupted, status.Stage);
             Assert.Contains("reconcile", status.DisplayText, StringComparison.OrdinalIgnoreCase);
 
+            await Assert.ThrowsAsync<InvalidOperationException>(() => runtime.RunNextStepAsync(created.JobId));
             await Assert.ThrowsAsync<InvalidOperationException>(() => runtime.RecoverInterruptedAsync(created.JobId));
             await Assert.ThrowsAsync<InvalidOperationException>(() => runtime.CancelAsync(created.JobId));
+            Assert.Equal(0, inference.Calls);
+            Assert.Equal(0, provider.Calls);
 
             var after = await store.GetAsync(created.JobId)
                 ?? throw new InvalidOperationException("Expected reserved job after rejected local mutations.");
@@ -70,16 +75,26 @@ public sealed class ResearchRemoteRecoverySafetyTests
 
     private sealed class NeverInferenceClient : IAgentInferenceClient
     {
-        public Task<AgentCompletion> CompleteAsync(AgentRequest request, CancellationToken cancellationToken = default) =>
+        public int Calls { get; private set; }
+
+        public Task<AgentCompletion> CompleteAsync(AgentRequest request, CancellationToken cancellationToken = default)
+        {
+            Calls++;
             throw new InvalidOperationException("Local inference must not execute during recovery-safety validation.");
+        }
     }
 
     private sealed class NeverResearchProvider : IResearchProvider
     {
+        public int Calls { get; private set; }
+
         public Task<ResearchBatch> SearchAsync(
             IReadOnlyList<ResearchQuery> queries,
-            CancellationToken cancellationToken = default) =>
+            CancellationToken cancellationToken = default)
+        {
+            Calls++;
             throw new InvalidOperationException("Local research provider must not execute during recovery-safety validation.");
+        }
     }
 
     private sealed class MemoryAuditTrail : IAuditTrail

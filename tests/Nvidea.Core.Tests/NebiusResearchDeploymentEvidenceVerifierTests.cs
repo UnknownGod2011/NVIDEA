@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using Nvidea.Core.Jobs;
 
 namespace Nvidea.Core.Tests;
@@ -7,8 +10,8 @@ public sealed class NebiusResearchDeploymentEvidenceVerifierTests
     [Fact]
     public void VerifyJson_AcceptsMatchingRedactedArtifacts()
     {
-        var fingerprint = new string('a', 64);
-        var manifest = MinimalManifest(fingerprint);
+        var manifest = ValidManifest();
+        var fingerprint = manifest.DeploymentFingerprintSha256;
         var pass = NebiusResearchPassEvidenceBuilder.Build(
             fingerprint,
             new DateTimeOffset(2026, 9, 10, 4, 0, 0, TimeSpan.Zero),
@@ -29,7 +32,7 @@ public sealed class NebiusResearchDeploymentEvidenceVerifierTests
     [Fact]
     public void VerifyJson_RejectsFingerprintMismatch()
     {
-        var manifest = MinimalManifest(new string('a', 64));
+        var manifest = ValidManifest();
         var pass = NebiusResearchPassEvidenceBuilder.Build(
             new string('b', 64),
             DateTimeOffset.UtcNow,
@@ -46,10 +49,34 @@ public sealed class NebiusResearchDeploymentEvidenceVerifierTests
     }
 
     [Fact]
+    public void VerifyJson_RejectsManifestWhoseContentsWereChangedAfterFingerprinting()
+    {
+        var manifest = ValidManifest();
+        var tamperedManifest = manifest with
+        {
+            Compute = manifest.Compute with { Preset = "different-preset" }
+        };
+        var pass = NebiusResearchPassEvidenceBuilder.Build(
+            manifest.DeploymentFingerprintSha256,
+            DateTimeOffset.UtcNow,
+            1,
+            1,
+            1);
+
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            NebiusResearchDeploymentEvidenceVerifier.VerifyJson(
+                NebiusResearchDeploymentManifestBuilder.ToJson(tamperedManifest, indented: false),
+                NebiusResearchPassEvidenceBuilder.ToJson(pass, indented: false)));
+
+        Assert.Contains("does not match", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void VerifyJson_RejectsUnsupportedSchemasAndInvalidPassCounts()
     {
-        var fingerprint = new string('c', 64);
-        var manifestJson = NebiusResearchDeploymentManifestBuilder.ToJson(MinimalManifest(fingerprint), indented: false)
+        var manifest = ValidManifest();
+        var fingerprint = manifest.DeploymentFingerprintSha256;
+        var manifestJson = NebiusResearchDeploymentManifestBuilder.ToJson(manifest, indented: false)
             .Replace(NebiusResearchDeploymentManifest.CurrentSchemaVersion, "unsupported", StringComparison.Ordinal);
         var pass = NebiusResearchPassEvidenceBuilder.Build(fingerprint, DateTimeOffset.UtcNow, 1, 1, 1);
 
@@ -62,7 +89,7 @@ public sealed class NebiusResearchDeploymentEvidenceVerifierTests
             .Replace("\"validatedCitationCount\":1", "\"validatedCitationCount\":2", StringComparison.Ordinal);
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             NebiusResearchDeploymentEvidenceVerifier.VerifyJson(
-                NebiusResearchDeploymentManifestBuilder.ToJson(MinimalManifest(fingerprint), indented: false),
+                NebiusResearchDeploymentManifestBuilder.ToJson(manifest, indented: false),
                 invalidPassJson));
     }
 
@@ -73,10 +100,11 @@ public sealed class NebiusResearchDeploymentEvidenceVerifierTests
         Directory.CreateDirectory(root);
         try
         {
-            var fingerprint = new string('d', 64);
+            var manifest = ValidManifest();
+            var fingerprint = manifest.DeploymentFingerprintSha256;
             var manifestPath = Path.Combine(root, "manifest.json");
             var passPath = Path.Combine(root, "pass.json");
-            File.WriteAllText(manifestPath, NebiusResearchDeploymentManifestBuilder.ToJson(MinimalManifest(fingerprint)));
+            File.WriteAllText(manifestPath, NebiusResearchDeploymentManifestBuilder.ToJson(manifest));
             File.WriteAllText(passPath, NebiusResearchPassEvidenceBuilder.ToJson(
                 NebiusResearchPassEvidenceBuilder.Build(fingerprint, DateTimeOffset.UtcNow, 2, 4, 2)));
 
@@ -91,23 +119,40 @@ public sealed class NebiusResearchDeploymentEvidenceVerifierTests
         }
     }
 
-    private static NebiusResearchDeploymentManifest MinimalManifest(string fingerprint) => new(
-        NebiusResearchDeploymentManifest.CurrentSchemaVersion,
-        "sha256:" + new string('e', 64),
-        new NebiusResearchComputeSummary("cpu-d3", "1vcpu-4gb", "900s", "network-ssd", 10_000_000_000),
-        new NebiusResearchStorageMappingSummary(
-            "storage.eu-north1.nebius.cloud",
-            "eu-north1",
-            new string('f', 64),
-            "nvidea-research",
-            "nvidea-research",
-            "/mnt/nvidea-research",
-            "READ_WRITE"),
-        new string('1', 64),
-        new string('2', 64),
-        new[]
+    private static NebiusResearchDeploymentManifest ValidManifest()
+    {
+        var manifest = new NebiusResearchDeploymentManifest(
+            NebiusResearchDeploymentManifest.CurrentSchemaVersion,
+            "sha256:" + new string('e', 64),
+            new NebiusResearchComputeSummary("cpu-d3", "1vcpu-4gb", "900s", "network-ssd", 10_000_000_000),
+            new NebiusResearchStorageMappingSummary(
+                "storage.eu-north1.nebius.cloud",
+                "eu-north1",
+                new string('f', 64),
+                "nvidea-research",
+                "nvidea-research",
+                "/mnt/nvidea-research",
+                "READ_WRITE"),
+            new string('1', 64),
+            new string('2', 64),
+            new[]
+            {
+                new NebiusResearchSecretReferenceSummary("NEBIUS_API_KEY", "version-pinned", new string('3', 64))
+            },
+            string.Empty);
+
+        var unsigned = new
         {
-            new NebiusResearchSecretReferenceSummary("NEBIUS_API_KEY", "version-pinned", new string('3', 64))
-        },
-        fingerprint);
+            schemaVersion = manifest.SchemaVersion,
+            workerImageDigest = manifest.WorkerImageDigest,
+            compute = manifest.Compute,
+            storage = manifest.Storage,
+            workerEnvelopePublicKeySha256 = manifest.WorkerEnvelopePublicKeySha256,
+            clientVerificationPublicKeySha256 = manifest.ClientVerificationPublicKeySha256,
+            secrets = manifest.Secrets
+        };
+        var canonical = JsonSerializer.Serialize(unsigned, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
+        return manifest with { DeploymentFingerprintSha256 = fingerprint };
+    }
 }

@@ -85,7 +85,7 @@ public partial class MainWindow
 
     private async Task<BrowserDownloadRecord> ResolveTrustedDownloadAsync(BrowserDownloadSnapshotItem snapshot)
     {
-        _browserHost ??= await _root.GetBrowserAsync();
+        _browserHost ??= await _root.GetBrowserProductAsync();
         var records = await _browserHost.ListDownloadsAsync();
         var record = records.FirstOrDefault(item => item.DownloadId == snapshot.DownloadId)
             ?? throw new InvalidOperationException("The selected quarantine download no longer exists after trusted runtime recovery.");
@@ -116,7 +116,7 @@ public partial class MainWindow
         OutputBox.Text = string.Empty;
         try
         {
-            _browserHost ??= await _root.GetBrowserAsync(cancellationToken);
+            _browserHost ??= await _root.GetBrowserProductAsync(cancellationToken);
             var records = await _browserHost.ListDownloadsAsync(cancellationToken);
             var interrupted = records.Count(static item => item.State == BrowserDownloadState.Interrupted);
             OutputBox.Text =

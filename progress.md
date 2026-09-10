@@ -29,7 +29,10 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Main README distinguishes the implemented explicit Serverless contract path from still-unverified production WPF remote execution and links the reproducible judging-evidence workflow.
 - Judging artifact destinations have a non-destructive writability preflight and standalone zero-network operator CLI.
 - Both `--live-research-preflight` and `--live-research` enforce destination distinctness/writability against the exact canonical paths returned by `NebiusResearchLiveConfigurationLoader` before final artifact persistence.
-- `NebiusResearchLiveProviderStartup` now forms an explicit fail-closed provider-construction boundary: the live Object Storage/Serverless factory is invoked only after the exact parsed judging destinations pass the final non-destructive preflight.
+- `NebiusResearchLiveProviderStartup` is a fail-closed provider-construction boundary: the live Object Storage/Serverless factory is invoked only after exact parsed judging destinations pass the final non-destructive preflight.
+- `ResearchCloudExecutionCoordinator` is now the narrow production-facing bridge between the durable local research store and `NebiusResearchClientRuntime`. It requires explicit disclosure-versioned approval scoped to the exact current checkpoint before remote dispatch, shares the state-directory lease with local execution, routes remote reconciliation/cancellation by durable provenance, rejects private OS data, and exposes no provider credentials or transport objects.
+- `ResearchJobStatus` distinguishes active Nebius execution and ambiguous `DispatchReserved` state from a crashed local stage. Unfinished remote provenance cannot be advertised as local crash recovery; ambiguous dispatch is shown as requiring reconciliation.
+- `ResearchJobRuntime` now blocks both local recovery and local cancellation while unfinished remote provenance exists, preventing an ambiguous Serverless create from being converted into a replayable/cancelled local record.
 
 ## Persistent Progress History
 
@@ -42,52 +45,60 @@ Added Tavily Extract enrichment, evidence quality/staleness/diversity, restart-s
 ### 2026-09-10 — Native Object Storage + reproducible live evidence
 Added native S3-compatible protected transport, exact S3 ↔ Serverless mount mapping, digest-pinned live worker requirement, current Nebius lifecycle states, `NebiusResearchLiveRuntimeFactory`, `--live-research`, zero-cost `--live-research-preflight`, reproducible/redacted deployment fingerprints, optional MysteryBox version IDs, machine-readable PASS evidence, reusable atomic artifact persistence, strict MysteryBox resource-id validation, a directly testable live configuration loader, and an independent deployment-evidence verifier CLI.
 
-### 2026-09-10 — Strict judging evidence + RSA hardening
-Added strict evidence JSON ingestion, canonical manifest re-hashing, fixed-time fingerprint comparison, malformed/oversized evidence rejection, RSA signing-capability proof, public/private key-role separation, parser boundary tests, and judging-evidence documentation.
+### 2026-09-10 — Strict judging evidence + startup safety
+Added strict evidence JSON ingestion, canonical manifest re-hashing, fixed-time fingerprint comparison, malformed/oversized evidence rejection, RSA signing-capability proof, public/private key-role separation, parser boundary tests, judging-evidence documentation, non-destructive destination writability probing, same manifest/PASS path rejection, the artifact-destination CLI, canonical-path gating in both live modes, and the fail-closed provider-construction seam.
 
-### 2026-09-10 — Artifact destination safety
-Added non-destructive destination writability probing, same manifest/PASS path rejection, direct atomic-writer/destination regression tests, `tools/Nvidea.NebiusArtifactDestinationCheck`, and mandatory canonical-path destination gating in both live modes.
-
-### 2026-09-10 — Current run: provider-construction fail-closed seam
+### 2026-09-10 — Current run: production remote-research integration safety
 Completed:
-- Re-read this progress ledger completely and inspected the current repository tree, the contract-probe startup path, `NebiusResearchArtifactDestinationPreflight`, `NebiusResearchLiveConfiguration`, provider client construction, and focused destination tests before modifying code.
-- Added `src/Nvidea.Core/Jobs/NebiusResearchLiveProviderStartup.cs` as a small, reusable startup seam whose provider factory is unreachable until `NebiusResearchArtifactDestinationPreflight.ValidatePaths(...)` succeeds against the exact canonical destinations already stored in `NebiusResearchLiveConfiguration`.
-- Refactored the real `--live-research` path so construction of `NebiusObjectStorageClient`, the S3 protected transport, the Serverless `HttpClient`, and `NebiusServerlessJobClient` occurs inside that guarded provider factory.
-- Kept the earlier pre-manifest destination validation, then re-validates immediately at provider construction. This intentionally protects both manifest persistence and the provider boundary, including against destination state changes between those points.
-- Added partial-construction cleanup: if a provider constructor fails after Object Storage or the Serverless `HttpClient` has been allocated, already-created disposable resources are disposed before the exception propagates.
-- Added `tests/Nvidea.Core.Tests/NebiusResearchLiveProviderStartupTests.cs` proving an aliased manifest/PASS destination yields zero provider-factory invocations and does not create the final evidence file.
-- Added the positive ordering regression proving valid writable destinations invoke the provider factory exactly once while the non-destructive preflight still leaves both final evidence files absent.
+- Re-read this progress ledger completely and inspected the current repository state, recent commits/tree, `ResearchJobRuntime`, `NebiusResearchClientRuntime`, two-phase dispatch, result ingestion, research status projection, WPF research flow, and the underlying resumable orchestrator before modifying code.
+- Added `src/Nvidea.Core/Jobs/ResearchCloudExecutionCoordinator.cs` with a narrow `IRemoteResearchClientRuntime` contract. The coordinator reads the exact current durable checkpoint, rejects non-pending/non-local/private/approval-bearing/unsupported stages, enforces a positive <=24-hour work-item lifetime, validates exact disclosure-versioned stage approval before any remote call, and then delegates to the existing encrypted two-phase Nebius runtime.
+- Made `NebiusResearchClientRuntime` implement `IRemoteResearchClientRuntime`, preserving its existing dispatcher/reconciler/ingestor composition while allowing production integration and tests to depend on a small provider-agnostic lifecycle contract.
+- Added remote lifecycle reconciliation routing for `DispatchReserved`, `Dispatched`, and `CancelRequested` provenance plus an explicit remote-cancellation request path. All coordinator mutations are serialized under the same OS-backed state-directory lease used by local durable research operations.
+- Fixed `ResearchJobStatus` so a genuine `NebiusServerless + Running` stage is no longer falsely labeled `Interrupted`; remote planning/gather/synthesis now has explicit privacy-safe Nebius status text and cannot advertise local `RunNextStep`.
+- Found and closed a higher-severity replay hazard: `DispatchReserved` deliberately remains `Local + Running` while Serverless creation is ambiguous. Previously, once stale, it could satisfy local interrupted-recovery checks and be re-armed, risking duplicate provider work/cost. `ResearchJobStatus.HasUnfinishedRemoteProvenance`, status projection, and `ResearchJobRuntime.RecoverInterruptedAsync` now fail closed and require remote reconciliation instead.
+- Closed the corresponding cancellation hazard: an ambiguous remote reservation is no longer advertised as locally cancellable, and `ResearchJobRuntime.CancelAsync` rejects unfinished remote provenance so durable reconciliation evidence cannot be discarded while a Nebius job may exist.
+- Added `tests/Nvidea.Core.Tests/ResearchCloudExecutionCoordinatorTests.cs` covering exact-stage approval rejection before remote invocation, successful remote-state projection, private-OS-data rejection, lifetime bounds, and `DispatchReserved` reconciliation routing without local provider execution.
+- Added `tests/Nvidea.Core.Tests/ResearchRemoteRecoverySafetyTests.cs` proving a stale ambiguous `DispatchReserved` record is not marked interrupted, cannot advertise local run/recovery/cancel, rejects both local recovery and local cancellation, and preserves its durable remote provenance unchanged.
 
 Commits this run:
-- `4828ae747e1ee22ab8a775fc94184ac78fa86646` — add fail-closed live provider startup seam.
-- `fa27ae5abb64b30502dbfc891b6e29d5d6153392` — enforce destination gate at the real provider factory boundary and clean up partial construction failures.
-- `bf000173c04c52618fecd79a4be85fe8958ce6dd` — add provider-startup ordering regression tests.
+- `f05d591943116e2243d1ca6ae01a7770fae457e5` — add production research cloud execution coordinator.
+- `103c54bccd857e7c1b5cdb9abd1ea281f38b492f` — expose Nebius client through the narrow remote runtime contract.
+- `02d3e4272fd74da241f66cb8ff3713b5a12bf1a4` and `64c44d1fc784f84d2f056ab44141b813662b2c9d` — correct remote status projection and block ambiguous reservations from local recovery semantics.
+- `4e1f6aeec6810c0a788c924a7c317f1dd942fadf` — add coordinator regression tests.
+- `dcc39579ea3b7ac0f60426562ffba322795b1341` — block ambiguous remote dispatch from `ResearchJobRuntime` local recovery.
+- `81f15a60b56e8249100b9d5caa0d9a1a6cafd92b` — add stale remote-reservation recovery safety test.
+- `635751dbe8e51c8ba98c995797dd288aa5146a1b` and `594205e5ed9a387d928da356330bbaf72ed2daf6` — fail closed local cancellation and status affordances for ambiguous remote work.
+- `3e2fb1c62e925c3a6efb458b62c3da0c5539ea78` — extend the safety regression through local cancellation.
 
 Validation / evidence:
-- Repository identity was explicitly re-verified before every GitHub mutation; every write targeted exactly `UnknownGod2011/NVIDEA`.
-- Static review confirms the real live path now creates Object Storage and Serverless clients only inside `NebiusResearchLiveProviderStartup.CreateAfterDestinationPreflight(...)`.
-- Static review confirms the guarded seam performs destination validation before invoking the supplied factory delegate.
-- Regression source inspection confirms the failure test asserts factory invocation count remains `0` for aliased paths; the success test asserts exactly `1` invocation and no final evidence-file creation by preflight.
-- Static review confirms partial provider-construction failures dispose any already-created Object Storage client and Serverless `HttpClient` before rethrowing.
-- `dotnet` is not installed in this execution environment, so compilation and test execution are **not claimed**.
-- No live Nebius credentials/resources were used and no GitHub Actions workflow was triggered merely to manufacture a green signal.
+- Repository identity was explicitly re-verified before every GitHub mutation; every write targeted exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
+- Source review confirms the coordinator validates exact current checkpoint + disclosure approval before invoking `IRemoteResearchClientRuntime.DispatchAsync`.
+- Source review confirms remote reconciliation is provenance-driven rather than replaying `ResearchJobHandler` locally.
+- Source review confirms active Nebius `Running` records are no longer treated as local interrupted execution and `DispatchReserved` provenance is explicitly excluded from local recovery.
+- Source review confirms local cancellation now fails before `ResumableJobOrchestrator.CancelAsync` when unfinished remote provenance is present.
+- Regression source covers zero remote dispatch calls for invalid approval/private data/invalid lifetime, correct remote projection for an accepted dispatch, reserved-state reconciliation routing, and preservation of an ambiguous reservation after rejected local recovery/cancellation.
+- `dotnet` was checked in this execution environment and is not installed, so compilation and test execution are **not claimed**.
+- No live Nebius credentials/resources were available or used, and no GitHub Actions workflow was triggered merely to manufacture a green signal.
 
 Security / privacy / failure review:
-- The new seam accepts only the already-loaded configuration object and does not re-read environment variables, avoiding a second mutable configuration source.
-- No credentials, secret IDs, bucket identity, artifact paths, PEM contents, or protected research payloads are logged by the new boundary.
-- Destination failures occur before provider construction and therefore before any Object Storage/Serverless network-capable object can be used.
-- Provider constructors themselves are expected to be local setup; no claim is made that construction proves provider connectivity.
-- Destination writability can still change after the final preflight because of external ACL/lock changes; atomic manifest/PASS persistence remains authoritative and a persistence failure must continue to prevent a PASS claim.
+- Cloud authorization is ephemeral input to the coordinator and must match job id, exact checkpoint step, current disclosure version, and timing bounds; no approval grant is persisted as execution authority.
+- `ContainsPrivateOsData` remains a hard local-only boundary before remote invocation and is checked again by `ResearchWorkItemProtector` at the cryptographic dispatch boundary.
+- Remote work items contain the existing durable checkpoint payload but are encrypted before shared transport; provider control-plane arguments receive only an opaque id and bounded protocol metadata through the existing dispatcher.
+- The coordinator exposes no API keys, MysteryBox ids, Object Storage credentials, PEM content, URLs, research text, or transport handles in status output.
+- Ambiguous `DispatchReserved` provenance now has one safe recovery direction: provider-aware reconciliation. Local retry/re-arm/cancel paths cannot erase or replay it.
+- Cancellation of an already `Dispatched` remote stage remains provider-aware via `ResearchCloudExecutionCoordinator.RequestCancellationAsync` + later reconciliation; WPF has not yet been wired to this coordinator and therefore must not claim production remote execution.
+- The new code is statically reviewed only; compile/runtime errors remain possible until a .NET 8-capable environment executes the focused suite.
 
 ## Known Blockers / Risks
 - No verified .NET 8/Windows/container execution signal is available here; current code is statically reviewed but not compiled/executed.
 - No live Object Storage bucket/static key, digest-pinned registry image, MysteryBox refs, subnet, Serverless access token, or Serverless job has been provisioned/validated in this environment.
 - Exact provider acceptance of the configured Serverless Object Storage `Source`/`SourcePath` still requires a real job.
 - The dry run cannot prove that the hidden worker-private-key MysteryBox version corresponds to the configured worker public key without resolving the secret; the real worker protocol remains authoritative proof.
-- WPF/`ResearchJobRuntime` still deliberately avoid claiming production Serverless execution until the real contract succeeds.
+- Production WPF still does not construct/use `ResearchCloudExecutionCoordinator`; remote research must remain disabled there until composition, disclosure UX, lifecycle routing, and the first live contract PASS are proven.
+- `ResearchJobRuntime.GetStatusAsync` is intentionally local-only for non-local records; product integration must route remote status/actions through a lifecycle-aware facade rather than bypassing that boundary.
 - Local voice/transcription and a verified production embedding adapter remain absent.
 - The evidence pair proves reproducibility consistency, not third-party attestation.
-- Destination writability can change after preflight due to external ACL/locking changes; final atomic persistence therefore remains the definitive operation.
+- Destination writability can change after preflight due to external ACL/locking changes; final atomic persistence remains the definitive operation.
 
 ## Single Best Next Task
-Prioritize executable evidence over more scaffolding. If a .NET-capable environment is available, compile `Nvidea.Core`, `Nvidea.Worker`, and the contract-probe tools and run the focused live-configuration/destination/provider-startup/evidence tests first, fixing any compile/runtime issues found. Then perform the first credential-backed Nebius Serverless live contract using the deterministic manifest/PASS workflow. Use the real run findings to wire the proven remote research path into production WPF `ResearchJobRuntime`; if credentials remain unavailable, next strengthen the production integration boundary and its tests rather than adding another standalone preflight layer.
+If a .NET-capable path becomes available, compile `Nvidea.Core`, `Nvidea.Worker`, the contract probe, and the focused cloud-coordinator/recovery-safety suites first, fixing any compile/runtime issue before further architecture work; then perform the first credential-backed Nebius Serverless live contract with the manifest/PASS workflow. If execution credentials remain unavailable, build a lifecycle-aware product research facade/composition seam that routes local stages to `ResearchJobRuntime` and remote/ambiguous stages to `ResearchCloudExecutionCoordinator`, with explicit disclosure approval and cancellation/reconciliation semantics, but keep actual WPF cloud dispatch disabled until a real live PASS exists.

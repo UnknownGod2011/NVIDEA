@@ -22,6 +22,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     private readonly string _stateDirectory;
     private readonly SemaphoreSlim _browserGate = new(1, 1);
     private BrowserHostRuntime? _browser;
+    private BrowserProductRuntime? _browserProduct;
     private bool _disposed;
 
     private NvideaCompositionRoot(
@@ -112,7 +113,23 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
             dataDirectory);
     }
 
-    public async Task<BrowserHostRuntime> GetBrowserAsync(CancellationToken cancellationToken = default)
+    /// <summary>
+    /// Returns the product-facing browser authority boundary. Raw <see cref="BrowserHostRuntime"/>
+    /// infrastructure is intentionally kept private so UI/plugin code cannot bypass the constrained
+    /// action, approval, download-quarantine and cancellation surface.
+    /// </summary>
+    public async Task<BrowserProductRuntime> GetBrowserProductAsync(
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_browserProduct is not null)
+            return _browserProduct;
+
+        var host = await GetBrowserHostAsync(cancellationToken).ConfigureAwait(false);
+        return _browserProduct ??= new BrowserProductRuntime(host);
+    }
+
+    private async Task<BrowserHostRuntime> GetBrowserHostAsync(CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (_browser is not null)
@@ -147,7 +164,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     public async Task<BrowserGoalAgent> CreateBrowserGoalAgentAsync(CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        var browser = await GetBrowserAsync(cancellationToken).ConfigureAwait(false);
+        var browser = await GetBrowserHostAsync(cancellationToken).ConfigureAwait(false);
         var goalStore = CreateBrowserGoalStore();
         return new BrowserGoalAgent(browser, new NemotronBrowserPlanner(_inference), goalStore);
     }
@@ -174,7 +191,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        var browser = await GetBrowserAsync(cancellationToken).ConfigureAwait(false);
+        var browser = await GetBrowserHostAsync(cancellationToken).ConfigureAwait(false);
         return new BrowserAmbiguousRecoveryService(browser, CreateBrowserGoalStore());
     }
 
@@ -190,6 +207,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
             if (_browser is not null)
                 await _browser.DisposeAsync().ConfigureAwait(false);
             _browser = null;
+            _browserProduct = null;
         }
         finally
         {

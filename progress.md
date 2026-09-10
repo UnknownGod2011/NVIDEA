@@ -28,7 +28,8 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Live RSA role validation proves that the client signing PEM can perform a private-key signature and rejects private material in the worker-public-key slot.
 - Main README distinguishes the implemented explicit Serverless contract path from still-unverified production WPF remote execution and links the reproducible judging-evidence workflow.
 - Judging artifact destinations have a non-destructive writability preflight and standalone zero-network operator CLI.
-- Both `--live-research-preflight` and `--live-research` now enforce destination distinctness/writability against the exact canonical paths returned by `NebiusResearchLiveConfigurationLoader` before final artifact persistence; the paid live path performs this before Object Storage or Serverless clients are constructed.
+- Both `--live-research-preflight` and `--live-research` enforce destination distinctness/writability against the exact canonical paths returned by `NebiusResearchLiveConfigurationLoader` before final artifact persistence.
+- `NebiusResearchLiveProviderStartup` now forms an explicit fail-closed provider-construction boundary: the live Object Storage/Serverless factory is invoked only after the exact parsed judging destinations pass the final non-destructive preflight.
 
 ## Persistent Progress History
 
@@ -45,41 +46,38 @@ Added native S3-compatible protected transport, exact S3 ↔ Serverless mount ma
 Added strict evidence JSON ingestion, canonical manifest re-hashing, fixed-time fingerprint comparison, malformed/oversized evidence rejection, RSA signing-capability proof, public/private key-role separation, parser boundary tests, and judging-evidence documentation.
 
 ### 2026-09-10 — Artifact destination safety
-Added non-destructive destination writability probing, same manifest/PASS path rejection, direct atomic-writer/destination regression tests, and `tools/Nvidea.NebiusArtifactDestinationCheck`.
+Added non-destructive destination writability probing, same manifest/PASS path rejection, direct atomic-writer/destination regression tests, `tools/Nvidea.NebiusArtifactDestinationCheck`, and mandatory canonical-path destination gating in both live modes.
 
-### 2026-09-10 — Current run: mandatory destination gating in live modes
+### 2026-09-10 — Current run: provider-construction fail-closed seam
 Completed:
-- Re-read this progress ledger completely and inspected the current repository tree, recent commits, `NebiusResearchArtifactDestinationPreflight`, `NebiusResearchLiveConfigurationLoader`, `Nvidea.NebiusContractProbe`, destination tests, and judging-evidence workflow before changing code.
-- Added `NebiusResearchArtifactDestinationPreflight.ValidatePaths(...)` so callers can validate the exact already-parsed/canonical manifest and PASS destinations instead of re-reading mutable process environment state.
-- Refactored environment-based destination validation to reuse the same path-validation core.
-- Integrated destination validation into `--live-research-preflight` before redacted-manifest persistence.
-- Integrated destination validation into `--live-research` before redacted-manifest persistence and before construction of Object Storage or Nebius Serverless provider clients.
-- Therefore same-path or unwritable judging destinations now fail before paid provider work begins, rather than relying on operators to remember the standalone self-check.
-- Updated CLI help/output to make the enforced destination gate explicit without printing destination paths.
-- Added direct regression coverage for validating exact parsed paths and rejecting aliased parsed destinations before probe-file creation.
-- Updated `docs/judging-evidence.md` with the standalone destination-check command and documented that both live modes enforce the same check automatically.
+- Re-read this progress ledger completely and inspected the current repository tree, the contract-probe startup path, `NebiusResearchArtifactDestinationPreflight`, `NebiusResearchLiveConfiguration`, provider client construction, and focused destination tests before modifying code.
+- Added `src/Nvidea.Core/Jobs/NebiusResearchLiveProviderStartup.cs` as a small, reusable startup seam whose provider factory is unreachable until `NebiusResearchArtifactDestinationPreflight.ValidatePaths(...)` succeeds against the exact canonical destinations already stored in `NebiusResearchLiveConfiguration`.
+- Refactored the real `--live-research` path so construction of `NebiusObjectStorageClient`, the S3 protected transport, the Serverless `HttpClient`, and `NebiusServerlessJobClient` occurs inside that guarded provider factory.
+- Kept the earlier pre-manifest destination validation, then re-validates immediately at provider construction. This intentionally protects both manifest persistence and the provider boundary, including against destination state changes between those points.
+- Added partial-construction cleanup: if a provider constructor fails after Object Storage or the Serverless `HttpClient` has been allocated, already-created disposable resources are disposed before the exception propagates.
+- Added `tests/Nvidea.Core.Tests/NebiusResearchLiveProviderStartupTests.cs` proving an aliased manifest/PASS destination yields zero provider-factory invocations and does not create the final evidence file.
+- Added the positive ordering regression proving valid writable destinations invoke the provider factory exactly once while the non-destructive preflight still leaves both final evidence files absent.
 
 Commits this run:
-- `53e66b3c47f695fc6dbadd0451acc257c87eab2e` — add canonical parsed-path destination validation.
-- `cb23ce0c93a3eef87dd8148caa9075e861f4cdad` — enforce destination preflight in both live contract-probe paths.
-- `474ad7b80c2a3917455160436fecdd28dd690ac2` — add parsed-path destination regression tests.
-- `ae96100169bbbba362822bfaaf699b067608f0e1` — document mandatory/standalone artifact destination checks.
+- `4828ae747e1ee22ab8a775fc94184ac78fa86646` — add fail-closed live provider startup seam.
+- `fa27ae5abb64b30502dbfc891b6e29d5d6153392` — enforce destination gate at the real provider factory boundary and clean up partial construction failures.
+- `bf000173c04c52618fecd79a4be85fe8958ce6dd` — add provider-startup ordering regression tests.
 
 Validation / evidence:
-- Repository identity was explicitly re-verified before every GitHub mutation; all writes targeted exactly `UnknownGod2011/NVIDEA`.
-- Static review confirms both live modes call `ValidateArtifactDestinations(configuration)` immediately after loading configuration and before manifest persistence.
-- Static review confirms the paid live mode performs that check before creating `NebiusObjectStorageClient`, `NebiusServerlessJobClient`, or dispatching any remote stage.
-- Static review confirms `ValidatePaths` works on the exact configuration paths, preventing a second environment read from drifting away from the values the live runtime will later use.
-- Static review confirms same-path rejection happens before any writability probe begins and the check still does not create/replace final evidence artifacts.
+- Repository identity was explicitly re-verified before every GitHub mutation; every write targeted exactly `UnknownGod2011/NVIDEA`.
+- Static review confirms the real live path now creates Object Storage and Serverless clients only inside `NebiusResearchLiveProviderStartup.CreateAfterDestinationPreflight(...)`.
+- Static review confirms the guarded seam performs destination validation before invoking the supplied factory delegate.
+- Regression source inspection confirms the failure test asserts factory invocation count remains `0` for aliased paths; the success test asserts exactly `1` invocation and no final evidence-file creation by preflight.
+- Static review confirms partial provider-construction failures dispose any already-created Object Storage client and Serverless `HttpClient` before rethrowing.
 - `dotnet` is not installed in this execution environment, so compilation and test execution are **not claimed**.
 - No live Nebius credentials/resources were used and no GitHub Actions workflow was triggered merely to manufacture a green signal.
 
 Security / privacy / failure review:
-- No artifact paths, credentials, secret IDs, bucket identity, PEM contents, or protected research payloads were added to console output.
-- Destination probing remains zero-network and non-destructive to configured final artifacts.
-- The paid path now fails on destination configuration before provider-client construction, reducing accidental spend and preventing a run that cannot persist its intended evidence.
-- Environment-to-runtime TOCTOU is reduced because destination checks operate on the same immutable configuration object later used for persistence.
-- This still cannot guarantee a destination remains writable for the entire live run; filesystem ACL/lock state may change after preflight. Final atomic persistence remains authoritative and a persistence failure must still prevent a PASS claim.
+- The new seam accepts only the already-loaded configuration object and does not re-read environment variables, avoiding a second mutable configuration source.
+- No credentials, secret IDs, bucket identity, artifact paths, PEM contents, or protected research payloads are logged by the new boundary.
+- Destination failures occur before provider construction and therefore before any Object Storage/Serverless network-capable object can be used.
+- Provider constructors themselves are expected to be local setup; no claim is made that construction proves provider connectivity.
+- Destination writability can still change after the final preflight because of external ACL/lock changes; atomic manifest/PASS persistence remains authoritative and a persistence failure must continue to prevent a PASS claim.
 
 ## Known Blockers / Risks
 - No verified .NET 8/Windows/container execution signal is available here; current code is statically reviewed but not compiled/executed.
@@ -92,4 +90,4 @@ Security / privacy / failure review:
 - Destination writability can change after preflight due to external ACL/locking changes; final atomic persistence therefore remains the definitive operation.
 
 ## Single Best Next Task
-Add an explicit provider-construction boundary testable seam around the live contract-probe startup so regression tests can prove destination failure occurs before any Object Storage/Serverless client factory is invoked, then—if a .NET-capable environment becomes available—compile and run the focused destination/configuration/evidence tests before the first credential-backed Serverless contract. After that, prioritize the first real Nebius Serverless live PASS and use its findings to wire proven remote research into the production WPF `ResearchJobRuntime` rather than continuing to grow unverified deployment scaffolding.
+Prioritize executable evidence over more scaffolding. If a .NET-capable environment is available, compile `Nvidea.Core`, `Nvidea.Worker`, and the contract-probe tools and run the focused live-configuration/destination/provider-startup/evidence tests first, fixing any compile/runtime issues found. Then perform the first credential-backed Nebius Serverless live contract using the deterministic manifest/PASS workflow. Use the real run findings to wire the proven remote research path into production WPF `ResearchJobRuntime`; if credentials remain unavailable, next strengthen the production integration boundary and its tests rather than adding another standalone preflight layer.

@@ -59,6 +59,65 @@ public sealed class NebiusResearchDeploymentPreflightTests
     }
 
     [Fact]
+    public void Validate_RejectsMalformedMysteryBoxSecretId()
+    {
+        var valid = CreateValidOptions();
+        var secrets = new Dictionary<string, NebiusMysteryBoxSecretRef>(valid.SecretEnvironmentVariables!, StringComparer.Ordinal)
+        {
+            ["TAVILY_API_KEY"] = new(SecretId: "not-a-nebius-secret")
+        };
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            NebiusResearchDeploymentPreflight.Validate(valid with { SecretEnvironmentVariables = secrets }));
+
+        Assert.Contains("TAVILY_API_KEY", error.Message, StringComparison.Ordinal);
+        Assert.Contains("secret id", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Validate_RejectsMalformedMysteryBoxVersionId()
+    {
+        var valid = CreateValidOptions();
+        var secrets = new Dictionary<string, NebiusMysteryBoxSecretRef>(valid.SecretEnvironmentVariables!, StringComparer.Ordinal)
+        {
+            ["TAVILY_API_KEY"] = new(SecretId: "mbsec-tavily", VersionId: "version-without-nebius-prefix")
+        };
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            NebiusResearchDeploymentPreflight.Validate(valid with { SecretEnvironmentVariables = secrets }));
+
+        Assert.Contains("TAVILY_API_KEY", error.Message, StringComparison.Ordinal);
+        Assert.Contains("version id", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Validate_RejectsVersionPinWithoutOwningSecretId()
+    {
+        var valid = CreateValidOptions();
+        var secrets = new Dictionary<string, NebiusMysteryBoxSecretRef>(valid.SecretEnvironmentVariables!, StringComparer.Ordinal)
+        {
+            ["NVIDEA_WORKER_PRIVATE_KEY_PEM"] = new(VersionId: "mbsecver-worker-key-v1")
+        };
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            NebiusResearchDeploymentPreflight.Validate(valid with { SecretEnvironmentVariables = secrets }));
+
+        Assert.Contains("must include its MysteryBox secret id", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Validate_AcceptsExplicitlyVersionPinnedMysteryBoxSecret()
+    {
+        var valid = CreateValidOptions();
+        var secrets = new Dictionary<string, NebiusMysteryBoxSecretRef>(valid.SecretEnvironmentVariables!, StringComparer.Ordinal)
+        {
+            ["TAVILY_API_KEY"] = new(SecretId: "mbsec-tavily", VersionId: "mbsecver-tavily-v2")
+        };
+
+        NebiusResearchDeploymentPreflight.Validate(valid with { SecretEnvironmentVariables = secrets });
+    }
+
+    [Fact]
     public void Validate_RejectsPlaintextWorkerCredentialEvenWhenSecretReferenceAlsoExists()
     {
         var valid = CreateValidOptions();
@@ -213,9 +272,9 @@ public sealed class NebiusResearchDeploymentPreflightTests
             },
             SecretEnvironmentVariables: new Dictionary<string, NebiusMysteryBoxSecretRef>(StringComparer.Ordinal)
             {
-                ["NEBIUS_API_KEY"] = new(SecretId: "secret-nebius"),
-                ["TAVILY_API_KEY"] = new(SecretId: "secret-tavily"),
-                ["NVIDEA_WORKER_PRIVATE_KEY_PEM"] = new(VersionId: "version-worker-key")
+                ["NEBIUS_API_KEY"] = new(SecretId: "mbsec-nebius"),
+                ["TAVILY_API_KEY"] = new(SecretId: "mbsec-tavily"),
+                ["NVIDEA_WORKER_PRIVATE_KEY_PEM"] = new(SecretId: "mbsec-worker-key", VersionId: "mbsecver-worker-key-v1")
             },
             Volumes: new[]
             {

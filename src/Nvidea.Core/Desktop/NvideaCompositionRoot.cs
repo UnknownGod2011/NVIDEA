@@ -32,7 +32,6 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         PersonalMemoryService memory,
         DesktopInvocationService desktop,
         DesktopSessionController session,
-        ResearchJobRuntime? researchJobs,
         ResearchProductRuntime? research,
         string stateDirectory)
     {
@@ -44,7 +43,6 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         _stateDirectory = stateDirectory;
         Desktop = desktop;
         Session = session;
-        ResearchJobs = researchJobs;
         Research = research;
         LocalState = new LocalStateRuntime(Path.Combine(stateDirectory, "browser"));
     }
@@ -60,13 +58,6 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     /// coordinator is explicitly composed.
     /// </summary>
     public ResearchProductRuntime? Research { get; }
-
-    /// <summary>
-    /// Local research runtime retained for trusted internal compatibility. Product/UI code should
-    /// prefer <see cref="Research"/> so remote and ambiguous durable records cannot be replayed
-    /// through local-only actions.
-    /// </summary>
-    public ResearchJobRuntime? ResearchJobs { get; }
 
     /// <summary>
     /// Read-only protected local-state inspection that never initializes Playwright/Chromium or
@@ -91,7 +82,6 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
 
         HttpClient? tavilyHttp = null;
         ResearchEngine? researchEngine = null;
-        ResearchJobRuntime? researchJobs = null;
         ResearchProductRuntime? research = null;
         var tavilyKey = Environment.GetEnvironmentVariable("TAVILY_API_KEY");
         if (!string.IsNullOrWhiteSpace(tavilyKey))
@@ -100,10 +90,10 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
             var tavily = new TavilyResearchClient(tavilyHttp, new TavilyOptions { ApiKey = tavilyKey });
             researchEngine = new ResearchEngine(inference, tavily);
             var researchDirectory = Path.Combine(dataDirectory, "research");
-            researchJobs = new ResearchJobRuntime(researchDirectory, researchEngine);
+            var localResearch = new ResearchJobRuntime(researchDirectory, researchEngine);
             research = new ResearchProductRuntime(
                 researchDirectory,
-                researchJobs,
+                localResearch,
                 cloud: null,
                 remoteDispatchEnabled: false);
         }
@@ -118,7 +108,6 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
             memory,
             desktop,
             session,
-            researchJobs,
             research,
             dataDirectory);
     }

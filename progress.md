@@ -17,6 +17,7 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Tavily Search + Extract research with canonical deduplication, evidence quality/freshness/diversity, provenance, untrusted-evidence handling, validated citations, and restart-safe staged checkpoints.
 - Safe browser agent includes persistent Chromium state, popup/new-tab tracking, iterative verification, prompt-injection/tool-output trust boundaries, permission gates, durable download quarantine, emergency stop, and crash recovery.
 - Protected local state uses Windows CurrentUser DPAPI by default, durable job-store CAS, hash-chained/segmented audit, and OS-backed single-owner mutation leases.
+- Raw durable job persistence is now trusted Core infrastructure: `JsonAgentJobStore` remains the low-level `IAgentJobStore` implementation, but its concrete construction is assembly-internal so external product/plugin code cannot ordinarily point blind `SaveAsync` mutation at NVIDEA's job state around lifecycle/approval authorities.
 - Remote research uses encrypted opaque work items, signed authoritative Nebius resource-ID bindings, two-phase dispatch, crash reconciliation, provider lifecycle reconciliation, durable cancellation, exact-once result ingestion, race-safe cleanup, and a non-root worker image.
 - Native Windows-side S3-compatible Object Storage transport publishes encrypted work items/bindings/results directly through Nebius Object Storage while the worker consumes the same bucket prefix through a Serverless-mounted directory.
 - Deployment preflight enforces exact Object Storage ↔ Serverless mount alignment, READ_WRITE transport, MysteryBox-backed worker credentials, digest-pinned worker image, RSA strength/identity consistency, bounded compute/storage settings, and a redacted reproducible deployment fingerprint.
@@ -27,7 +28,7 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - WPF durable-research reads/actions use `ResearchProductRuntime`; remote/ambiguous records are never offered as local recovery. `ResearchProductUiState` centralizes control enablement, labels, and cloud disclosure.
 - Browser product/UI access goes through constrained `BrowserProductRuntime`; the composition root does not expose raw `BrowserHostRuntime`, and WPF navigation/download flows use only the facade.
 - Raw `BrowserHostRuntime` construction is assembly-internal: there is no public instance constructor or public static factory that external product/plugin code can use to create the privileged host.
-- `BrowserGoalAgent` now publicly accepts only `IBrowserGoalHost`; its convenience constructor taking privileged `BrowserHostRuntime` is assembly-internal for trusted Core composition and tests.
+- `BrowserGoalAgent` publicly accepts only `IBrowserGoalHost`; its convenience constructor taking privileged `BrowserHostRuntime` is assembly-internal for trusted Core composition and tests.
 
 ## Persistent Progress History
 
@@ -49,35 +50,41 @@ Added `ResearchProductRuntime`, lifecycle-aware status projection, replay-race c
 ### 2026-09-10 — Browser product authority narrowing
 Added `BrowserProductRuntime`, replaced the public composition-root raw-host getter with `GetBrowserProductAsync()`, migrated WPF browser/download flows, added reflection regression coverage, made `BrowserHostRuntime.CreateAsync(...)` assembly-internal, and narrowed `BrowserGoalAgent` so the privileged concrete-host constructor is assembly-internal while `IBrowserGoalHost` remains the public integration contract.
 
-### 2026-09-10 — Current run: close direct local-research construction bypass
+### 2026-09-10 — Local research construction hardening
+Made `ResearchJobRuntime` construction assembly-internal and added API-surface regression coverage while preserving the public least-authority `ILocalResearchRuntime` contract and all working local research behavior.
+
+### 2026-09-11 — Current run: close raw durable-job persistence bypass
 Completed:
-- Re-read this ledger completely and inspected the current repository head, recent commits/tree, `NvideaCompositionRoot`, `ResearchProductRuntime`, `ResearchJobRuntime`, `ResearchCloudExecutionCoordinator`, the worker, contract probe, browser recovery/local-state surfaces, and existing API-surface test conventions before changing code.
-- Re-confirmed that the composition root no longer exposes `ResearchJobRuntime`, but the concrete local-only runtime itself still had a public constructor. External product/plugin code could therefore instantiate it directly against the same state directory and intentionally bypass the lifecycle-aware `ResearchProductRuntime` facade.
-- Changed only `ResearchJobRuntime` construction from `public` to `internal`. The class and `CapabilityId` remain public because separate executable tooling references the capability identity; all local execution, recovery, cancellation, durable leases, replay protection, report/status reads, and provider behavior are unchanged.
-- Added XML documentation explaining that trusted Core composition owns the concrete runtime and that external callers should integrate through `ResearchProductRuntime` / `ILocalResearchRuntime`.
-- Added `tests/Nvidea.Core.Tests/ResearchJobRuntimeApiSurfaceTests.cs`. Reflection coverage asserts that the concrete local runtime has no public instance constructor, preserves the expected assembly-internal `(string, ResearchEngine, IAuditTrail?)` construction path for trusted Core/tests, still implements `ILocalResearchRuntime`, and keeps that least-authority interface public.
-- Inspected `ResearchCloudExecutionCoordinator` separately and intentionally left its public construction untouched: unlike `ResearchJobRuntime`, it is itself the constrained lifecycle boundary and revalidates exact authorization, durable state, private-data policy, and remote provenance before provider work.
+- Re-read this ledger completely before implementation and inspected current repository head/history, the Core tree, `NvideaCompositionRoot`, `JsonAgentJobStore`, `JobContracts`, `ResearchCloudExecutionCoordinator`, `Nvidea.Worker`, `InternalsVisibleTo`, and existing API-surface-test conventions.
+- Confirmed there is still no usable `dotnet` executable in the execution environment, so the fallback authority audit was selected rather than fabricating build/test evidence.
+- Identified a genuine bypass-capable primitive: `JsonAgentJobStore` had a public constructor while exposing blind low-level `SaveAsync(AgentJobRecord)`. External in-process product/plugin code could therefore point a new store at the same durable job file and write lifecycle/provenance/approval state without going through `BrowserProductRuntime`, `ResearchProductRuntime`, the browser host guard, or `ResearchCloudExecutionCoordinator`.
+- Changed only `JsonAgentJobStore` construction from `public` to `internal`; its class, `IAgentJobStore` implementation, Get/List/Save behavior, CAS implementation, DPAPI protection, migration behavior, and trusted Core call sites are unchanged.
+- Added XML documentation explicitly classifying the store as trusted persistence infrastructure and directing product/plugin callers to constrained runtimes/coordinator contracts instead of raw durable mutation.
+- Added `tests/Nvidea.Core.Tests/JsonAgentJobStoreApiSurfaceTests.cs`. Reflection coverage asserts there is no public constructor, preserves the expected assembly-internal `(string, ILocalStateProtector?)` construction path for trusted Core/tests, verifies `IAgentJobStore` remains a public least-authority abstraction, and records that low-level `SaveAsync` stays reachable only after trusted construction.
+- Inspected the separate `Nvidea.Worker` executable before narrowing construction; the worker does not instantiate `JsonAgentJobStore`. `ResearchCloudExecutionCoordinator` remains in the Core assembly and continues constructing the same store internally.
 
 Commits this run:
-- `623258301bdce26c3218e883a26b16645a5d45b5` — narrow local research runtime construction.
-- `ad7f7c250f28b85ea31ac76e13eb68608fe103af` — lock local research runtime construction boundary with reflection coverage.
+- `04aeaf2ffaa64e97cda89bfef2353691bc0fb456` — narrow raw durable job store construction.
+- `c6aff5276e5d9a0bfae036f63ad0b80b1adc338e` — lock raw job-store construction boundary with reflection coverage.
 
 Validation / evidence:
-- Repository identity was explicitly re-verified immediately before every GitHub mutation; every write targeted exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
-- Post-change source inspection confirms `ResearchJobRuntime` keeps its full existing implementation but its constructor is now `internal`.
-- Post-change test source was re-read and verifies both non-public concrete construction and preservation of the public least-authority interface.
-- `NvideaCompositionRoot` remains in the same `Nvidea.Core` assembly and can continue constructing `ResearchJobRuntime` normally. `Nvidea.Worker` does not construct it, and the separate Nebius contract probe only references the public `ResearchJobRuntime.CapabilityId` in the inspected live-probe path.
-- The execution environment was checked again and has no usable `dotnet` binary, so Core compilation, WPF/XAML compilation, and test execution are **not claimed**.
+- Repository identity was explicitly re-verified immediately before every GitHub mutation; each write target resolved to `full_name: UnknownGod2011/NVIDEA`. No other repository was mutated.
+- Post-change source inspection confirms `JsonAgentJobStore` is still public and fully functional but its constructor is now `internal`.
+- `src/Nvidea.Core/Properties/AssemblyInfo.cs` grants `InternalsVisibleTo("Nvidea.Core.Tests")`, preserving direct construction for the test assembly.
+- `ResearchCloudExecutionCoordinator` is in `Nvidea.Core`, so its existing trusted `new JsonAgentJobStore(...)` path remains source-accessible.
+- `Nvidea.Worker/Program.cs` uses the protected remote transport/worker protocol and does not depend on constructing the local JSON job store.
+- The environment has no usable `dotnet` binary; Core compilation, WPF/XAML compilation, Worker compilation, and test execution are therefore **not claimed**.
 - No live Nebius credentials/resources were used and no GitHub Actions workflow was triggered merely to manufacture a green result.
 
 Security / privacy / failure review:
-- Product/plugin consumers can no longer obtain the concrete local runtime through ordinary public construction and use local execution/recovery/cancellation as an alternate authority path around remote lifecycle state.
-- The public `ILocalResearchRuntime` contract remains available for least-authority composition and test doubles; `ResearchProductRuntime` remains the intended durable product surface.
-- Existing remote replay prevention, exact cloud disclosure approval, state-directory mutation leases, private-data rejection, provider cancellation/reconciliation, and emergency-stop behavior are unchanged.
-- This is an assembly/API authority boundary, not a process sandbox; fully trusted in-process reflection can still bypass ordinary .NET accessibility.
+- Ordinary external product/plugin code can no longer bootstrap direct blind writes against the protected browser/research job file through the concrete JSON persistence implementation.
+- This preserves the intended architecture: product mutations flow through constrained lifecycle/capability authorities, while raw state persistence stays inside trusted Core composition/recovery code.
+- DPAPI-at-rest protection, CAS semantics, browser checkpoint migration/quarantine, remote replay protection, exact cloud disclosure approval, mutation leases, private-data rejection, provider reconciliation/cancellation, and emergency-stop behavior are unchanged.
+- The public `IAgentJobStore` contract intentionally remains available for least-authority composition/test doubles; this hardening blocks ordinary construction of NVIDEA's concrete path-backed mutator, not fully trusted reflection or arbitrary direct filesystem tampering inside the same user account.
+- Narrowing the constructor could expose compile-time dependencies in another NVIDEA executable only if an uninspected external project constructs this exact concrete type; inspected Worker and desktop/Core composition do not. A real .NET build remains required to prove the entire solution boundary.
 
 ## Known Blockers / Risks
-- No usable .NET 8 execution signal is available in this environment; current Core/WPF changes are not compiled or executed here.
+- No usable .NET 8 execution signal is available in this environment; current Core/WPF/API-surface changes are not compiled or executed here.
 - No live Object Storage bucket/static key, digest-pinned registry image, MysteryBox refs, subnet, Serverless access token, or Serverless job has been provisioned/validated here.
 - Exact provider acceptance of the Serverless Object Storage `Source`/`SourcePath` still requires a real job.
 - The dry run cannot prove that the worker-private-key MysteryBox version corresponds to the configured worker public key without resolving the secret; the real worker protocol remains authoritative proof.
@@ -86,4 +93,4 @@ Security / privacy / failure review:
 - The evidence pair proves reproducibility consistency, not third-party attestation.
 
 ## Single Best Next Task
-First obtain a .NET 8-capable execution signal and compile `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, and the Nebius contract tools; run the focused research, browser authority, browser integration and API-surface suites and fix every compile/XAML/runtime defect. If execution remains unavailable, continue the public Core authority audit with the remaining low-level job/provider types, but only narrow constructors that are genuinely bypass-capable; preserve public constrained coordinators/protocol abstractions needed by the worker, contract tooling, and future cloud composition.
+First obtain a .NET 8-capable execution signal and compile `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, and the Nebius contract tools; run the focused research, browser authority, browser integration and API-surface suites and fix every compile/XAML/runtime defect. If execution remains unavailable, audit the remaining path-backed mutable persistence/provider constructors (especially browser goal/session and protected transport primitives) and narrow only concrete construction that can bypass product capability/lifecycle authorities; preserve public protocol abstractions required by the worker, tests, contract tooling, and future Nebius cloud composition.

@@ -98,6 +98,8 @@ public sealed class ResearchJobRuntime
     /// This transition never executes provider work itself. It is deliberately research-only,
     /// requires a known checkpoint and a grace period, and preserves the current checkpoint so
     /// the next user-initiated RunNextStepAsync retries exactly the interrupted stage.
+    /// Remote dispatch reservations are never re-armed here because an unresolved reservation can
+    /// mean Nebius accepted the create request even when the client did not receive an authoritative id.
     /// </summary>
     public Task<ResearchJobStatus> RecoverInterruptedAsync(
         Guid jobId,
@@ -112,6 +114,8 @@ public sealed class ResearchJobRuntime
                 throw new InvalidOperationException("Interrupted research checkpoint is not safe to retry.");
             if (job.ExecutionLocation != JobExecutionLocation.Local)
                 throw new InvalidOperationException("Only local research execution can be recovered by this runtime.");
+            if (ResearchJobStatus.HasUnfinishedRemoteProvenance(job))
+                throw new InvalidOperationException("Research with unfinished remote execution provenance must be reconciled instead of locally re-armed.");
             if (job.ApprovalScope is not null)
                 throw new InvalidOperationException("Research recovery cannot carry an approval scope.");
             if (job.Attempt >= job.Definition.MaxAttempts)

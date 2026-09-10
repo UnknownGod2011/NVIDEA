@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Nvidea.Core.Jobs;
 
@@ -19,6 +20,13 @@ public sealed record NebiusResearchDeploymentEvidenceVerification(
 public static class NebiusResearchDeploymentEvidenceVerifier
 {
     private const int MaximumArtifactLength = 256 * 1024;
+    private const int MaximumJsonDepth = 32;
+
+    private static readonly JsonSerializerOptions StrictSerializerOptions = new(JsonSerializerDefaults.Web)
+    {
+        MaxDepth = MaximumJsonDepth,
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
+    };
 
     public static NebiusResearchDeploymentEvidenceVerification VerifyFiles(
         string manifestPath,
@@ -113,12 +121,43 @@ public static class NebiusResearchDeploymentEvidenceVerifier
 
         try
         {
-            return JsonSerializer.Deserialize<T>(json, new JsonSerializerOptions(JsonSerializerDefaults.Web))
+            using var document = JsonDocument.Parse(json, new JsonDocumentOptions
+            {
+                AllowTrailingCommas = false,
+                CommentHandling = JsonCommentHandling.Disallow,
+                MaxDepth = MaximumJsonDepth
+            });
+            RejectDuplicatePropertyNames(document.RootElement, description);
+
+            return JsonSerializer.Deserialize<T>(json, StrictSerializerOptions)
                    ?? throw new InvalidDataException($"The {description} is empty or invalid.");
         }
         catch (JsonException)
         {
-            throw new InvalidDataException($"The {description} is not valid JSON.");
+            throw new InvalidDataException($"The {description} contains invalid or unsupported JSON.");
+        }
+    }
+
+    private static void RejectDuplicatePropertyNames(JsonElement element, string description)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+            {
+                var names = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var property in element.EnumerateObject())
+                {
+                    if (!names.Add(property.Name))
+                        throw new InvalidDataException($"The {description} contains duplicate JSON property names.");
+                    RejectDuplicatePropertyNames(property.Value, description);
+                }
+
+                break;
+            }
+            case JsonValueKind.Array:
+                foreach (var item in element.EnumerateArray())
+                    RejectDuplicatePropertyNames(item, description);
+                break;
         }
     }
 

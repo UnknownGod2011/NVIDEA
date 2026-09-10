@@ -9,7 +9,7 @@ namespace Nvidea.Core.Tests;
 public sealed class ResearchRemoteRecoverySafetyTests
 {
     [Fact]
-    public async Task Stale_dispatch_reservation_is_never_advertised_or_rearmed_as_local_crash_recovery()
+    public async Task Stale_dispatch_reservation_is_never_advertised_rearmed_or_cancelled_as_local_work()
     {
         var directory = Path.Combine(Path.GetTempPath(), "nvidea-remote-recovery-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
@@ -47,13 +47,15 @@ public sealed class ResearchRemoteRecoverySafetyTests
             var status = await runtime.GetStatusAsync(created.JobId);
             Assert.False(status.CanRecoverInterrupted);
             Assert.False(status.CanRunNextStep);
+            Assert.False(status.CanCancel);
             Assert.NotEqual(ResearchJobStage.Interrupted, status.Stage);
             Assert.Contains("reconcile", status.DisplayText, StringComparison.OrdinalIgnoreCase);
 
             await Assert.ThrowsAsync<InvalidOperationException>(() => runtime.RecoverInterruptedAsync(created.JobId));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => runtime.CancelAsync(created.JobId));
 
             var after = await store.GetAsync(created.JobId)
-                ?? throw new InvalidOperationException("Expected reserved job after rejected recovery.");
+                ?? throw new InvalidOperationException("Expected reserved job after rejected local mutations.");
             Assert.Equal(AgentJobState.Running, after.State);
             Assert.Equal(JobExecutionLocation.Local, after.ExecutionLocation);
             Assert.Equal(RemoteResearchProvenanceState.DispatchReserved, after.RemoteResearch?.State);

@@ -24,9 +24,9 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - `ResearchCloudExecutionCoordinator` is the narrow provider-aware bridge from durable research state to `NebiusResearchClientRuntime`, with exact checkpoint/disclosure approval, shared mutation lease, provider reconciliation/cancellation, private-data rejection, and no provider credential exposure.
 - `ResearchJobRuntime` is intentionally local-only and validates current durable location/provenance under the mutation lease before any local Nemotron/Tavily handler invocation.
 - `ResearchProductRuntime` is the lifecycle-aware product facade: it projects truthful local/remote status, routes local work only to `ILocalResearchRuntime`, remote lifecycle operations only to `IResearchCloudExecutionCoordinator`, and independently gates new paid Serverless dispatch.
-- `NvideaCompositionRoot` composes `ResearchProductRuntime` whenever Tavily is configured, while deliberately leaving `cloud: null` and `remoteDispatchEnabled: false` until the live deployment contract is proven.
+- `NvideaCompositionRoot` exposes only the lifecycle-aware `ResearchProductRuntime` to product/UI callers. The concrete local-only `ResearchJobRuntime` is now retained solely as an internal construction dependency and is no longer a public composition-root property.
 - WPF durable-research reads/actions use `ResearchProductRuntime`; remote/ambiguous records are never offered as local recovery, and a separate Nebius reconciliation control remains disabled when no validated cloud lifecycle coordinator is composed.
-- `ResearchProductUiState` now centralizes research control enablement, labels, and cloud disclosure independently of WPF, so lifecycle authority can be adversarially unit-tested.
+- `ResearchProductUiState` centralizes research control enablement, labels, and cloud disclosure independently of WPF, so lifecycle authority can be adversarially unit-tested.
 
 ## Persistent Progress History
 
@@ -43,39 +43,36 @@ Added native S3-compatible protected transport, exact S3 ↔ Serverless mount ma
 Added `ResearchCloudExecutionCoordinator`, narrow remote-runtime contracts, explicit per-stage cloud approval, remote lifecycle reconciliation/cancellation, privacy-safe Nebius status projection, and fail-closed recovery/cancellation for ambiguous `DispatchReserved` state. Closed duplicate-execution paths where uncertain/remote Serverless work could otherwise be mistaken for crashed local work.
 
 ### 2026-09-10 — Lifecycle-aware product + Windows integration
-Added `ResearchProductRuntime`, lifecycle-aware status projection, replay-race closure under the mutation lease, WPF migration to the product facade, a separate reconciliation control, explicit cloud-disclosure copy, and cancellation-token hardening. Current desktop composition still has no cloud coordinator and keeps new Serverless dispatch disabled.
+Added `ResearchProductRuntime`, lifecycle-aware status projection, replay-race closure under the mutation lease, WPF migration to the product facade, a separate reconciliation control, explicit cloud-disclosure copy, cancellation-token hardening, and the testable `ResearchProductUiState` authority projector.
 
-### 2026-09-10 — Current run: testable research-control authority
+### 2026-09-10 — Current run: close local-runtime product bypass
 Completed:
-- Re-read this ledger completely and inspected the current repository tree, recent commits, `ResearchJobStatus`, `ResearchProductRuntime`, WPF research handlers, and existing test conventions before changing code.
-- Added `src/Nvidea.Core/Jobs/ResearchProductUiState.cs`, a UI-independent projection for Start, Resume/Re-arm, Reconcile, Cancel, resume labeling, and cloud-disclosure state.
-- The projector fails closed if `remoteDispatchEnabled` is ever presented without provider lifecycle availability, preventing an impossible/unsafe composition from being silently rendered as valid UI authority.
-- Local resume/re-arm remains disabled whenever `RequiresRemoteReconciliation` is true. Reconcile is enabled only when unfinished remote provenance exists and a provider-aware lifecycle coordinator is available.
-- Remote cancellation is only exposed when the underlying status permits cancellation and provider lifecycle authority is available. `DispatchReserved` and `CancelRequested` remain non-cancellable until reconciliation.
-- Busy-state projection disables all new mutation starts. Durable Cancel is now enabled during a busy operation only if an active durable job actually exists; this removes the previous UI state where Cancel could be enabled during startup before any job id existed.
-- Added `tests/Nvidea.Core.Tests/ResearchProductUiStateTests.cs` covering local pending work, interrupted local re-arm labeling, ambiguous `DispatchReserved`, dispatched Serverless work, `CancelRequested`, terminal state, busy/no-job behavior, lifecycle-unavailable fail-closed behavior, and invalid dispatch-without-lifecycle composition.
-- Migrated `src/Nvidea.Windows/MainWindow.Research.cs` control enablement and cloud-disclosure rendering onto `ResearchProductUiState`. WPF no longer duplicates the lifecycle-control boolean logic.
-- Static review after the migration confirms the WPF helper supplies only privacy-safe status/feature booleans; no provider ids, credentials, work-item payloads, checkpoint contents, URLs, or source text were introduced into the presenter boundary.
+- Re-read this ledger completely and inspected the current repository tree, recent commits, `NvideaCompositionRoot`, WPF call sites, and existing API-surface test conventions before changing code.
+- Audited the remaining obvious product-facing compatibility surface and identified `NvideaCompositionRoot.ResearchJobs` as a public escape hatch exposing concrete `ResearchJobRuntime` despite WPF already migrating to `ResearchProductRuntime`.
+- Removed the public `ResearchJobs` property and its constructor plumbing from `src/Nvidea.Core/Desktop/NvideaCompositionRoot.cs`.
+- Kept the same working local research implementation: `ResearchJobRuntime` is still constructed when Tavily is configured and passed directly into `ResearchProductRuntime`; functionality was not deleted or simplified away.
+- Renamed the local construction variable to `localResearch` to make its role explicit and reduce accidental product-level reuse.
+- Added `tests/Nvidea.Core.Tests/NvideaCompositionRootResearchApiSurfaceTests.cs` using reflection to lock the boundary: `NvideaCompositionRoot` must expose lifecycle-aware `ResearchProductRuntime` while exposing no public property/method signature typed as `ResearchJobRuntime`.
+- This makes the safe routing boundary structural rather than merely advisory documentation: product/UI callers obtaining the composition root can no longer bypass remote/ambiguous lifecycle checks through a public local-only runtime property.
 
 Commits this run:
-- `f429cd9202900d7cddcc9112454bd1bd7a3e7e4e` — extract research UI lifecycle state projector.
-- `dcd9025499a75beff56c2efa521b053ee2adf636` — add adversarial research UI lifecycle projection tests.
-- `f904804dda471b3996c8212b51a2129d6370fa03` — simplify string assertions for current xUnit compatibility.
-- `98eaf76e259dd30dd1de59fc206a2dd8cceaccba` — route WPF controls/disclosure through the tested projector.
-- `ea0c99e30bdab19f2111bba670c25343b2630867` — add the explicit xUnit import required by repository test conventions.
+- `fbd2ee1256141da197e3638234a318aa971891d3` — close public local research runtime bypass in desktop composition.
+- `50d5375c806cc982c854ba857bb5dd07babbc6a2` — lock lifecycle-aware research API surface with reflection regression coverage.
 
 Validation / evidence:
-- Repository identity was explicitly re-verified before every GitHub mutation; every write targeted exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
-- Current `main` was re-read after mutation and the WPF call site was statically inspected to confirm control decisions now flow through `ResearchProductUiState.Project(...)`.
-- Existing test project conventions were inspected; the new test file was corrected to use the repository's explicit `using Xunit;` convention.
-- `dotnet` was checked directly in this execution environment and is still unavailable, so Core compilation, WPF/XAML compilation, and test execution are **not claimed**.
+- Repository identity was explicitly re-verified immediately before every GitHub mutation; every write targeted exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
+- Current `main` repository tree and recent commits were inspected before implementation.
+- `src/Nvidea.Windows/MainWindow.xaml.cs` was inspected and contains no dependency on the removed `ResearchJobs` property; current WPF research work is already routed through the product facade in the dedicated research partial.
+- Existing reflection-based API-surface test conventions were inspected before adding the new test.
+- `dotnet` was checked directly in this execution environment and remains unavailable, so Core compilation, WPF/XAML compilation, and test execution are **not claimed**.
 - No live Nebius credentials/resources were used and no GitHub Actions workflow was triggered merely to manufacture a green result.
 
 Security / privacy / failure review:
-- The projector consumes only `ResearchJobStatus` plus product feature booleans. It does not receive durable checkpoint payloads, approval grants, Serverless ids, Object Storage handles, MysteryBox references, API keys, signing keys, user queries, URLs, source content, or provider errors.
-- Ambiguous and remote lifecycle states cannot regain a local Resume/Re-arm affordance through WPF-specific branching because the authority logic now lives in one Core projection.
-- `RemoteDispatchEnabled` still remains false in the desktop composition. This run did not add any WPF control that can initiate paid Serverless dispatch.
-- Source remains statically reviewed only; compile/XAML/runtime defects remain possible until a .NET 8-capable environment executes the focused suite.
+- Removing the public local runtime reduces the authority exposed to UI/plugin/product code without changing persisted research state or provider behavior.
+- Remote/ambiguous records still cannot be intentionally routed through local product actions because the publicly exposed research surface is now `ResearchProductRuntime` only.
+- No provider credentials, checkpoint payloads, source content, approval material, Object Storage identifiers, Serverless ids, or signing keys were added to a public surface.
+- New Serverless dispatch remains disabled in desktop composition and no paid-provider action was introduced.
+- Source remains statically reviewed only; compile/runtime defects remain possible until a .NET 8-capable environment executes the focused suite.
 
 ## Known Blockers / Risks
 - No usable .NET 8 execution signal is available in this environment; current Core/WPF changes are not compiled or executed here.
@@ -85,6 +82,7 @@ Security / privacy / failure review:
 - Current WPF composition intentionally has no cloud lifecycle coordinator, so pre-existing remote records can be displayed safely but cannot yet be reconciled/cancelled from the desktop. Local fallback remains blocked.
 - Local voice/transcription and a verified production embedding adapter remain absent.
 - The evidence pair proves reproducibility consistency, not third-party attestation.
+- GitHub code search did not return indexed symbol hits during this run, so the compatibility-surface audit used the repository tree plus direct inspection of known composition/WPF files; a compile-capable full-reference scan is still desirable.
 
 ## Single Best Next Task
-Obtain a .NET 8-capable execution signal and compile `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, and the Nebius contract tools; run the focused `ResearchProductUiState`, `ResearchProductRuntime`, `ResearchJobRuntime`, cloud-coordinator, remote-recovery, and status suites and fix every compile/XAML/runtime defect before attempting the first credential-backed Nebius Serverless live PASS. If execution remains unavailable, audit all remaining direct `ResearchJobs`/`ResearchJobRuntime` consumers and reduce that trusted compatibility surface so product code cannot bypass `ResearchProductRuntime` lifecycle routing.
+Obtain a .NET 8-capable execution signal and compile `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, and the Nebius contract tools; run the focused `NvideaCompositionRootResearchApiSurfaceTests`, `ResearchProductUiState`, `ResearchProductRuntime`, `ResearchJobRuntime`, cloud-coordinator, remote-recovery, and status suites and fix every compile/XAML/runtime defect before attempting the first credential-backed Nebius Serverless live PASS. If execution remains unavailable, continue the authority-surface audit across public Core APIs and remove or narrow any remaining product-accessible mutation path that can bypass capability approvals, lifecycle routing, or emergency-stop/cancellation semantics without removing working functionality.

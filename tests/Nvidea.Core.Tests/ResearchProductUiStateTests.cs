@@ -29,7 +29,7 @@ public sealed class ResearchProductUiStateTests
         Assert.Equal(ResearchProductUiState.ResumeNextStageLabel, ui.ResumeLabel);
         Assert.False(ui.ReconcileEnabled);
         Assert.True(ui.CancelEnabled);
-        Assert.Contains("Cloud execution is locked", ui.CloudDisclosureText, StringComparison.Ordinal);
+        Assert.Contains("Cloud execution is locked", ui.CloudDisclosureText);
     }
 
     [Fact]
@@ -87,7 +87,7 @@ public sealed class ResearchProductUiStateTests
         Assert.False(ui.ResumeEnabled);
         Assert.True(ui.ReconcileEnabled);
         Assert.True(ui.CancelEnabled);
-        Assert.Contains("new Serverless dispatch remains locked", ui.CloudDisclosureText, StringComparison.Ordinal);
+        Assert.Contains("new Serverless dispatch remains locked", ui.CloudDisclosureText);
     }
 
     [Fact]

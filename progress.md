@@ -23,7 +23,8 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - `NebiusResearchLiveConfigurationLoader` owns the complete live environment/file parsing and preflight construction path for both zero-cost and paid live modes.
 - `Nvidea.NebiusContractProbe` supports cheap planner, `--live-research-preflight`, and explicit real `--live-research` modes. Both live modes consume the same validated configuration object and fingerprint.
 - PASS evidence and redacted deployment manifests use `AtomicTextArtifactWriter` for crash-safe same-directory replacement.
-- `NebiusResearchDeploymentEvidenceVerifier` + `tools/Nvidea.NebiusEvidenceVerifier` now provide a zero-network, zero-secret reproducibility check between saved preflight and later live PASS artifacts.
+- `NebiusResearchDeploymentEvidenceVerifier` + `tools/Nvidea.NebiusEvidenceVerifier` provide a zero-network, zero-secret reproducibility check between saved preflight and later live PASS artifacts.
+- Evidence verification now rejects unknown JSON members, duplicate property names at any depth, comments, trailing commas, and excessive nesting before accepting a judging artifact.
 
 ## Persistent Progress History
 
@@ -34,51 +35,50 @@ Added Nebius/Nemotron inference, layered memory, Tavily research, capability/app
 Added Tavily Extract enrichment, evidence quality/staleness/diversity, restart-safe research stages, remote encrypted transport, two-phase Nebius dispatch, authoritative signed resource-ID binding, exact-once result ingestion, lifecycle/cancellation reconciliation, bounded pagination, mounted transport, and worker deployment hardening.
 
 ### 2026-09-10 — Native Object Storage + reproducible live evidence
-Added native S3-compatible protected transport, exact S3 ↔ Serverless mount mapping, digest-pinned live worker requirement, current Nebius lifecycle states, `NebiusResearchLiveRuntimeFactory`, `--live-research`, zero-cost `--live-research-preflight`, reproducible/redacted deployment fingerprints, optional MysteryBox version IDs, machine-readable PASS evidence, reusable atomic artifact persistence, strict MysteryBox resource-id validation, and a directly testable live configuration loader.
+Added native S3-compatible protected transport, exact S3 ↔ Serverless mount mapping, digest-pinned live worker requirement, current Nebius lifecycle states, `NebiusResearchLiveRuntimeFactory`, `--live-research`, zero-cost `--live-research-preflight`, reproducible/redacted deployment fingerprints, optional MysteryBox version IDs, machine-readable PASS evidence, reusable atomic artifact persistence, strict MysteryBox resource-id validation, a directly testable live configuration loader, and an independent deployment-evidence verifier CLI.
 
-### 2026-09-10 — Current run: independent deployment-evidence verification
+### 2026-09-10 — Current run: strict judging-evidence ingestion
 Completed:
-- Re-read `progress.md` completely before mutation and inspected recent commits, the extracted live configuration loader, deployment manifest model, PASS evidence model, contract probe, and existing regression-test style.
-- Added `src/Nvidea.Core/Jobs/NebiusResearchDeploymentEvidenceVerifier.cs`.
-- The verifier reads only redacted manifest/PASS artifacts, imposes a 256 KiB per-artifact limit, validates both schema versions, validates deployment fingerprints, reuses the production PASS builder for UTC/count invariants, and returns only safe summary evidence.
-- Static review identified and fixed a subtle integrity issue: comparing only the two stored fingerprint fields would accept a manifest whose contents had been edited without updating the fingerprint. The verifier now deterministically recomputes SHA-256 from the redacted manifest's unsigned canonical deployment fields and rejects a self-inconsistent manifest before comparing it to PASS evidence.
-- Manifest self-integrity and manifest↔PASS equality use fixed-time byte comparison after strict 64-hex validation.
-- Added `tests/Nvidea.Core.Tests/NebiusResearchDeploymentEvidenceVerifierTests.cs` covering matching artifacts, manifest/PASS fingerprint mismatch, post-fingerprint manifest tampering, unsupported schemas, invalid PASS counts, and bounded file-based verification.
-- Added standalone `tools/Nvidea.NebiusEvidenceVerifier` CLI so operators/judges can run the reproducibility check without loading live credentials or invoking Nebius/Tavily/Object Storage.
-- Added `docs/nebius-evidence-verification.md` documenting generation/verification flow, privacy boundaries, and the important limitation that this proves internal reproducibility consistency rather than third-party authorship/attestation.
+- Re-read `progress.md` completely before mutation and inspected the current repo tree, live configuration loader, deployment-evidence verifier, regression tests, README, and verifier CLI.
+- Hardened `src/Nvidea.Core/Jobs/NebiusResearchDeploymentEvidenceVerifier.cs`.
+- Added strict .NET 8 unmapped-member rejection so unknown top-level or nested JSON fields fail closed instead of being silently ignored.
+- Added a bounded JSON parse pre-pass (`MaxDepth = 32`) that rejects comments and trailing commas.
+- Added recursive duplicate-property detection using ordinal property-name comparison for every JSON object, including nested deployment structures and arrays of objects. This prevents ambiguous last-property-wins interpretation from weakening evidence verification.
+- Retained the existing 256 KiB file/input bound, schema validation, PASS invariant validation, manifest fingerprint recomputation, and fixed-time fingerprint comparisons.
+- Added `tests/Nvidea.Core.Tests/NebiusResearchDeploymentEvidenceStrictJsonTests.cs` covering unknown top-level members, unknown nested members, duplicate top-level/nested properties, comments, trailing commas, and excessive nesting.
+- Added `docs/judging-evidence.md` with the intended zero-cost preflight → explicit live run → zero-network verifier workflow, redaction boundary, PASS emission conditions, verifier guarantees, and the explicit limitation that the pair is internally reproducible evidence rather than third-party attestation.
+- Verified against current Microsoft .NET documentation that `JsonSerializerOptions.UnmappedMemberHandling = Disallow` is available starting in .NET 8 and raises `JsonException` for unmapped payload members.
 
 Commits this run:
-- `6d9e5d60eb48377cd1895a7493d79d9ffb8691eb` — add redacted deployment evidence verifier.
-- `f7437eddafe7a4b924212d93d12e83c61671939a` — add verifier regression tests.
-- `c7ac2a151e2d8a14f4f45a6ec34b25c727f21fee` — add verifier CLI project.
-- `97c986d4c588c0262a79de2733b2e1a14600c691` — expose zero-network verifier CLI.
-- `34e73ad0675fc11e755f1312fd165ec764a2df72` — recompute manifest fingerprint during verification.
-- `1cd16ffe4553551d067220d2b30373ff84aac427` — cover manifest self-integrity in verifier tests.
-- `3e66d9359fb7e62dc22ff7769b2c77f5a401a4f7` — document deployment evidence verification.
+- `4d0ee23e19f0fb302cab69160159509651f2db6c` — harden deployment evidence JSON verification.
+- `a6cac1268565f6039a745fe180412e6092142840` — add strict JSON evidence verifier regression coverage.
+- `7ee7b56938c576cf2ae3e0d83cf4a332169af723` — add judging evidence verification workflow.
 
 Validation / evidence:
 - Repository identity was explicitly re-verified immediately before every GitHub mutation; every write targeted exactly `UnknownGod2011/NVIDEA`.
-- `dotnet --info` was checked in the execution runtime and `dotnet` is not installed, so compilation/test execution is **not claimed**.
-- Static review confirms the new verifier requires no provider clients, credentials, secret resolution, or network calls.
-- Static review confirms malformed, oversized, unsupported-schema, self-inconsistent, and cross-artifact-mismatched evidence fails closed.
-- No live Nebius credentials/resources were available, so Object Storage/Serverless/Nemotron/Tavily execution is **not claimed**.
+- Static review confirms strict parsing occurs before typed deserialization and before any fingerprint comparison.
+- Static review confirms duplicate JSON property names are rejected recursively rather than relying on serializer last-write behavior.
+- Current Microsoft .NET documentation confirms unmapped-member rejection through `JsonUnmappedMemberHandling.Disallow` is supported in .NET 8.
+- No live Nebius credentials/resources were used, and no provider/network call is required by the verifier.
 - No GitHub Actions workflow was triggered merely to manufacture a green signal.
+- A usable .NET SDK/runtime is still not available in this execution environment, so compilation/test execution is **not claimed**.
 
 Security / privacy / failure review:
 - The verifier consumes only already-redacted artifacts and never needs Serverless tokens, Object Storage credentials, MysteryBox IDs, PEM material, provider responses, research bodies, bucket names, or resource IDs.
-- File-read failures report only the artifact class, not file contents or secret-bearing configuration.
-- Artifact size is bounded before reading; malformed JSON and unsupported schemas fail closed.
-- Fingerprints are validated as exact 64-character hexadecimal SHA-256 values before fixed-time comparison.
-- The verifier explicitly does not claim third-party authenticity: replacing both redacted artifacts can create another internally consistent pair. This limitation is documented rather than overstated.
+- Artifact reads remain bounded before content is loaded.
+- Unknown fields now fail closed, preventing a future or malicious producer from smuggling unverified semantics into evidence that an older verifier would otherwise ignore.
+- Duplicate property names fail closed at every object depth, avoiding parser differential/ambiguity attacks.
+- Comments, trailing commas, malformed JSON, unsupported schemas, excessive nesting, self-inconsistent manifests, and cross-artifact mismatches fail closed.
+- The verifier still explicitly does not claim external authorship/attestation; replacing both redacted artifacts can produce another internally consistent pair.
 
 ## Known Blockers / Risks
-- No verified .NET 8/Windows/container execution signal is available here; new code is statically reviewed but not compiled/executed.
+- No verified .NET 8/Windows/container execution signal is available here; the new code is statically reviewed but not compiled/executed.
 - No live Object Storage bucket/static key, digest-pinned registry image, MysteryBox refs, subnet, Serverless access token, or Serverless job has been provisioned/validated in this environment.
 - Exact provider acceptance of the configured Serverless Object Storage `Source`/`SourcePath` still requires a real job.
 - The dry run cannot prove that the hidden worker-private-key MysteryBox version corresponds to the configured worker public key without resolving the secret; the real worker protocol remains authoritative proof.
 - WPF/`ResearchJobRuntime` still deliberately avoid claiming production Serverless execution until the real contract succeeds.
 - Local voice/transcription and a verified production embedding adapter remain absent.
-- The verifier proves deployment-evidence consistency, not external authorship/attestation; stronger signed provenance could be added later if judging needs it.
+- The evidence pair proves reproducibility consistency, not third-party attestation.
 
 ## Single Best Next Task
-Do a compile-oriented hardening pass on the new verifier and live configuration boundary: add default-value and edge-boundary tests for poll/timeout/question parsing, invalid RSA private-key material, unreadable output destinations, malformed/oversized evidence files, and duplicate/unknown JSON fields as appropriate; then make the verifier tooling visible from the main README/judging workflow. If a .NET-capable environment becomes available, run the focused unit tests and both zero-cost CLIs before attempting the first credential-backed Nebius Serverless research contract.
+Do the next compile-oriented hardening pass on the live boundary: add focused tests for default/min/max poll and total-timeout values, research-question limits, invalid RSA private-key material, unreadable output destinations, malformed/oversized evidence files, and file-path redaction. Then surface `docs/judging-evidence.md` from the main README and, if a .NET-capable environment becomes available, run the focused verifier/configuration tests plus both zero-cost CLIs before attempting the first credential-backed Nebius Serverless contract.

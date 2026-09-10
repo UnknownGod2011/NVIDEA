@@ -42,7 +42,10 @@ public sealed record ResearchJobStatus(
             throw new InvalidOperationException("Only durable research jobs can be projected as research status.");
 
         var terminal = record.State is AgentJobState.Completed or AgentJobState.Cancelled or AgentJobState.Failed;
-        var canCancel = !terminal;
+        var remoteState = record.RemoteResearch?.State;
+        var canCancel = !terminal
+            && remoteState is not RemoteResearchProvenanceState.DispatchReserved
+            && remoteState is not RemoteResearchProvenanceState.CancelRequested;
         var canRun = record.State switch
         {
             AgentJobState.Pending => record.ExecutionLocation == JobExecutionLocation.Local,
@@ -136,7 +139,10 @@ public sealed record ResearchJobStatus(
         }
 
         if (record.RemoteResearch?.State == RemoteResearchProvenanceState.DispatchReserved)
-            return "Nebius dispatch outcome is ambiguous — reconcile before any retry";
+            return "Nebius dispatch outcome is ambiguous — reconcile before any retry or cancellation";
+
+        if (record.RemoteResearch?.State == RemoteResearchProvenanceState.CancelRequested)
+            return "Nebius cancellation requested — reconcile provider state";
 
         if (record.ExecutionLocation == JobExecutionLocation.NebiusServerless && record.State == AgentJobState.Running)
         {

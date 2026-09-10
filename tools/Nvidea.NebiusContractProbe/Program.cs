@@ -55,6 +55,18 @@ static string ReadRequiredPemFile(string environmentName)
     return text;
 }
 
+static string? OptionalOutputPath(string environmentName)
+{
+    var requestedPath = OptionalEnvironment(environmentName);
+    if (requestedPath is null) return null;
+
+    var path = Path.GetFullPath(requestedPath);
+    var parent = Path.GetDirectoryName(path);
+    if (string.IsNullOrWhiteSpace(parent) || !Directory.Exists(parent) || string.IsNullOrWhiteSpace(Path.GetFileName(path)))
+        throw new InvalidOperationException($"{environmentName} must point to a file in an existing directory.");
+    return path;
+}
+
 static NebiusMysteryBoxSecretRef RequiredSecretRef(string idEnvironmentName, string versionEnvironmentName)
 {
     var secretId = RequiredEnvironment(idEnvironmentName);
@@ -64,13 +76,8 @@ static NebiusMysteryBoxSecretRef RequiredSecretRef(string idEnvironmentName, str
 
 static void PersistRedactedManifestIfRequested(NebiusResearchDeploymentManifest manifest)
 {
-    var requestedPath = OptionalEnvironment("NVIDEA_LIVE_REDACTED_MANIFEST_PATH");
-    if (requestedPath is null) return;
-
-    var path = Path.GetFullPath(requestedPath);
-    var parent = Path.GetDirectoryName(path);
-    if (string.IsNullOrWhiteSpace(parent) || !Directory.Exists(parent))
-        throw new InvalidOperationException("NVIDEA_LIVE_REDACTED_MANIFEST_PATH must point into an existing directory.");
+    var path = OptionalOutputPath("NVIDEA_LIVE_REDACTED_MANIFEST_PATH");
+    if (path is null) return;
 
     var json = NebiusResearchDeploymentManifestBuilder.ToJson(manifest, indented: true);
     File.WriteAllText(path, json);
@@ -247,6 +254,7 @@ static async Task<int> RunLiveResearchProbeAsync()
     // Object Storage, Serverless, Nemotron or Tavily request is constructed or dispatched.
     var configuration = BuildLiveConfiguration();
     PersistRedactedManifestIfRequested(configuration.Report.Manifest);
+    var passEvidencePath = OptionalOutputPath("NVIDEA_LIVE_PASS_EVIDENCE_PATH");
 
     var pollSeconds = BoundedInt32("NVIDEA_LIVE_POLL_SECONDS", 5, 1, 30);
     var totalTimeoutMinutes = BoundedInt32("NVIDEA_LIVE_TOTAL_TIMEOUT_MINUTES", 20, 2, 60);
@@ -361,11 +369,25 @@ static async Task<int> RunLiveResearchProbeAsync()
     if (report.UsedCitations.Count == 0)
         return Fail("live-research", "Completed report contained no validated citations.");
 
+    var passEvidence = NebiusResearchPassEvidenceBuilder.Build(
+        configuration.Report.Manifest.DeploymentFingerprintSha256,
+        DateTimeOffset.UtcNow,
+        remoteStages,
+        report.Evidence.Sources.Count,
+        report.UsedCitations.Count);
+    if (passEvidencePath is not null)
+    {
+        NebiusResearchPassEvidenceBuilder.PersistAtomically(
+            passEvidencePath,
+            NebiusResearchPassEvidenceBuilder.ToJson(passEvidence, indented: true));
+    }
+
     Console.WriteLine("NVIDEA live Nebius research contract probe: PASS");
     PrintReproducibilityEvidence(configuration.Report);
     Console.WriteLine($"Remote durable stages: {remoteStages}");
     Console.WriteLine($"Evidence items: {report.Evidence.Sources.Count}");
     Console.WriteLine($"Validated citations: {report.UsedCitations.Count}");
+    Console.WriteLine($"Machine-readable PASS evidence: {(passEvidencePath is null ? "not requested" : "persisted atomically")}");
     Console.WriteLine("Native encrypted Object Storage transport: accepted");
     Console.WriteLine("Object Storage mount/prefix alignment: accepted");
     Console.WriteLine("Authoritative dispatch binding: accepted");
@@ -385,6 +407,7 @@ try
         Console.WriteLine("--live-research-preflight: zero-cost local validation plus redacted deployment fingerprint; performs no provider calls.");
         Console.WriteLine("--live-research: explicit live Nebius Serverless research probe; PASS prints the same deployment fingerprint.");
         Console.WriteLine("Optional: NVIDEA_LIVE_REDACTED_MANIFEST_PATH persists only the redacted deployment manifest.");
+        Console.WriteLine("Optional live-only: NVIDEA_LIVE_PASS_EVIDENCE_PATH atomically persists redacted machine-readable evidence only after a validated PASS.");
         return 0;
     }
     if (liveResearch && liveResearchPreflight)

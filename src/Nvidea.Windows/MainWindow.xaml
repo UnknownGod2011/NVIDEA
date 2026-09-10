@@ -119,7 +119,10 @@
                     <TextBlock Text="Durable Nemotron + Tavily research" FontWeight="SemiBold"/>
                     <TextBlock x:Name="ResearchStatusText" Text="No durable research job yet." Margin="0,3,14,0"
                                TextWrapping="Wrap" Opacity="0.72"/>
-                    <TextBlock Text="Only coarse stage telemetry is shown here. Saved questions, source contents, URLs, checkpoint payloads, and provider errors stay out of status UI. Execution is local until real Nebius Serverless dispatch is wired."
+                    <TextBlock x:Name="ResearchCloudStatusText"
+                               Text="Cloud execution is locked until the live Nebius deployment contract is proven."
+                               Margin="0,3,14,0" TextWrapping="Wrap" FontSize="11" Opacity="0.68"/>
+                    <TextBlock Text="Only coarse stage telemetry is shown here. Saved questions, source contents, URLs, checkpoint payloads, provider IDs, approvals, and provider errors stay out of status UI. Remote work is never replayed locally."
                                Margin="0,3,14,0" TextWrapping="Wrap" FontSize="11" Opacity="0.58"/>
                 </StackPanel>
                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
@@ -127,6 +130,9 @@
                             Click="ResearchStartButton_Click"/>
                     <Button x:Name="ResearchResumeButton" Content="Resume next step" Padding="14,5" Margin="0,6,0,0"
                             Click="ResearchResumeButton_Click" IsEnabled="False"/>
+                    <Button x:Name="ResearchReconcileButton" Content="Reconcile Nebius state" Padding="14,5" Margin="0,6,0,0"
+                            Click="ResearchReconcileButton_Click" IsEnabled="False"
+                            ToolTip="Provider-aware reconciliation only; never replays ambiguous remote work locally."/>
                     <Button x:Name="ResearchCancelButton" Content="Cancel" Padding="14,5" Margin="0,6,0,0"
                             Click="ResearchCancelButton_Click" IsEnabled="False"/>
                 </StackPanel>

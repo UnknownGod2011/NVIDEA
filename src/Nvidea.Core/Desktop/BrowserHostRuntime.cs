@@ -36,7 +36,8 @@ public sealed record BrowserJobOutcome(
 /// <summary>
 /// Owns one local Playwright browser session and composes the existing safety,
 /// capability, approval, audit and resumable-job layers into a desktop-safe API.
-/// Browser writes never execute directly from UI code.
+/// Browser writes never execute directly from UI code. Construction is assembly-internal so
+/// product/plugin callers cannot obtain this privileged host outside the trusted composition root.
 /// </summary>
 public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousRecoveryHost
 {
@@ -82,7 +83,7 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
         _jobs = jobs;
     }
 
-    public static Task<BrowserHostRuntime> CreateAsync(
+    internal static Task<BrowserHostRuntime> CreateAsync(
         string stateDirectory,
         BrowserHostOptions? options = null,
         CancellationToken cancellationToken = default) =>
@@ -94,7 +95,7 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
 
     /// <summary>
     /// Internal transport seam used to verify that durable-state contention fails before Playwright
-    /// transport startup. Production callers use the public overload, which supplies Playwright.CreateAsync.
+    /// transport startup. Trusted Core composition supplies Playwright.CreateAsync in production.
     /// </summary>
     internal static async Task<BrowserHostRuntime> CreateAsync(
         string stateDirectory,

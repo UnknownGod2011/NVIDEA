@@ -2,14 +2,30 @@
 
 NVIDEA's live Nebius research path is designed so a successful demo can be tied to the exact deployment configuration that was preflighted, without publishing credentials or secret identifiers.
 
-## 1. Run zero-cost preflight
+## 0. Check artifact destinations
 
-Configure the documented `NVIDEA_LIVE_*` environment variables, including optional output locations:
+Configure the optional output locations first:
 
 ```powershell
 $env:NVIDEA_LIVE_REDACTED_MANIFEST_PATH = ".\artifacts\nebius-preflight.json"
 $env:NVIDEA_LIVE_PASS_EVIDENCE_PATH = ".\artifacts\nebius-pass.json"
+```
 
+You can run the standalone zero-network destination check before loading the full live configuration:
+
+```powershell
+dotnet run --project .\tools\Nvidea.NebiusArtifactDestinationCheck\Nvidea.NebiusArtifactDestinationCheck.csproj
+```
+
+The check rejects aliased manifest/PASS paths and verifies each configured destination directory supports create/write/flush/delete using only a randomized sibling probe file. It does not create, truncate, replace, or print the final artifact paths.
+
+This check is also enforced automatically inside both `--live-research-preflight` and `--live-research` against the exact canonical paths produced by the live configuration loader. The live mode performs it before constructing Object Storage or Serverless provider clients, so an unwritable or aliased evidence destination cannot consume a paid run first.
+
+## 1. Run zero-cost preflight
+
+Configure the remaining documented `NVIDEA_LIVE_*` environment variables, then run:
+
+```powershell
 dotnet run --project .\tools\Nvidea.NebiusContractProbe\Nvidea.NebiusContractProbe.csproj -- --live-research-preflight
 ```
 
@@ -25,7 +41,7 @@ Only after preflight succeeds:
 dotnet run --project .\tools\Nvidea.NebiusContractProbe\Nvidea.NebiusContractProbe.csproj -- --live-research
 ```
 
-A PASS evidence artifact is written only after the durable remote research flow completes and the final report has non-empty evidence plus validated citations. Failure, timeout, cancellation, or invalid final evidence must not produce a PASS artifact.
+A PASS evidence artifact is written only after the durable remote research flow completes and the final report has non-empty evidence plus validated citations. Failure, timeout, cancellation, invalid final evidence, or an invalid artifact destination must not produce a PASS artifact.
 
 The PASS artifact contains only:
 

@@ -35,6 +35,13 @@ public sealed record ResearchJobStatus(
 {
     public static readonly TimeSpan InterruptedRecoveryDelay = TimeSpan.FromSeconds(30);
 
+    /// <summary>
+    /// True when durable provenance says provider-aware reconciliation is required before any
+    /// local retry/recovery can be considered. This intentionally exposes only a lifecycle boolean,
+    /// not provider ids, payloads, source data, approval state or errors.
+    /// </summary>
+    public bool RequiresRemoteReconciliation { get; init; }
+
     public static ResearchJobStatus FromRecord(AgentJobRecord record)
     {
         ArgumentNullException.ThrowIfNull(record);
@@ -69,7 +76,10 @@ public sealed record ResearchJobStatus(
             canRecoverInterrupted,
             canCancel,
             terminal,
-            Display(record, stage));
+            Display(record, stage))
+        {
+            RequiresRemoteReconciliation = HasUnfinishedRemoteProvenance(record)
+        };
     }
 
     internal static bool CanRecoverInterrupted(AgentJobRecord record, DateTimeOffset now)

@@ -41,7 +41,7 @@ The preflight fails closed unless all of the following hold:
 
 The real `--live-research` mode executes this same zero-cost preflight before constructing provider clients or submitting a job, so the dry run is not a separate weaker checklist.
 
-A preflight PASS proves local configuration consistency only. It does **not** prove that Nebius accepts the job specification, that the bucket mount succeeds, that MysteryBox permissions are correct, or that Nemotron/Tavily execute successfully.
+A preflight PASS proves local configuration consistency only. It does **not** prove that Nebius accepts the job specification, that the bucket mount succeeds, that MysteryBox permissions are correct, or that Nemotron/Tavily execute successfully. It also never writes `NVIDEA_LIVE_PASS_EVIDENCE_PATH`; PASS evidence is reserved for an actual validated live run.
 
 ## Explicit live research probe
 
@@ -101,6 +101,8 @@ Optional settings:
 - `NVIDEA_LIVE_POLL_SECONDS` (1-30, default 5; used only by the real live probe).
 - `NVIDEA_LIVE_TOTAL_TIMEOUT_MINUTES` (2-60, default 20; used only by the real live probe).
 - `NVIDEA_LIVE_RESEARCH_QUESTION` (synthetic/default question is used when omitted; used only by the real live probe).
+- `NVIDEA_LIVE_REDACTED_MANIFEST_PATH` — optional file in an existing directory for the redacted deployment manifest.
+- `NVIDEA_LIVE_PASS_EVIDENCE_PATH` — optional file in an existing directory for redacted machine-readable evidence. The path is validated before any paid/provider operation, but the file is created or replaced atomically only after every remote stage completes and the final report has both evidence and validated citations. Preflight, failure, timeout, and cancellation paths never write this PASS artifact.
 
 Run the real contract:
 
@@ -109,6 +111,14 @@ dotnet run --project tools/Nvidea.NebiusContractProbe/Nvidea.NebiusContractProbe
 ```
 
 Use `--help` to list modes. The cheap planner probe remains the default, so CI or accidental local invocations do not create Serverless jobs.
+
+## Machine-readable live PASS evidence
+
+When `NVIDEA_LIVE_PASS_EVIDENCE_PATH` is configured, a successful live run persists schema `nvidea.nebius.research-pass.v1` only after final research validation. The artifact contains only the deployment SHA-256 fingerprint, UTC completion timestamp, completed remote-stage count, evidence-item count, and validated-citation count.
+
+The PASS file deliberately excludes Serverless job/resource ids, bucket names, Object Storage credentials, MysteryBox ids/version ids, PEM material, URLs, research text, evidence bodies, and provider responses. It is written through the same-directory temporary-file + flush + atomic replace primitive in `NebiusResearchPassEvidenceBuilder`, so the final path is not written incrementally.
+
+The live probe prints whether evidence persistence was requested and completed, but never prints the configured output path. If PASS evidence persistence itself fails, the probe fails before printing `NVIDEA live Nebius research contract probe: PASS`.
 
 ## Credential and data handling
 

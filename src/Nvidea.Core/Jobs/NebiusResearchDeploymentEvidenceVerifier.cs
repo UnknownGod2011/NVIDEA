@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 
 namespace Nvidea.Core.Jobs;
@@ -53,10 +55,17 @@ public static class NebiusResearchDeploymentEvidenceVerifier
         ValidateFingerprint(manifest.DeploymentFingerprintSha256, "deployment manifest");
         ValidateFingerprint(passEvidence.DeploymentFingerprintSha256, "PASS evidence");
 
-        if (!string.Equals(
-                manifest.DeploymentFingerprintSha256,
-                passEvidence.DeploymentFingerprintSha256,
-                StringComparison.OrdinalIgnoreCase))
+        var recomputedManifestFingerprint = ComputeManifestFingerprint(manifest);
+        if (!CryptographicOperations.FixedTimeEquals(
+                Convert.FromHexString(recomputedManifestFingerprint),
+                Convert.FromHexString(manifest.DeploymentFingerprintSha256)))
+        {
+            throw new InvalidDataException("Deployment manifest fingerprint does not match its redacted deployment contents.");
+        }
+
+        if (!CryptographicOperations.FixedTimeEquals(
+                Convert.FromHexString(manifest.DeploymentFingerprintSha256),
+                Convert.FromHexString(passEvidence.DeploymentFingerprintSha256)))
         {
             throw new InvalidDataException("Deployment fingerprint mismatch: PASS evidence does not correspond to the supplied preflight manifest.");
         }
@@ -76,6 +85,25 @@ public static class NebiusResearchDeploymentEvidenceVerifier
             validatedPass.RemoteStageCount,
             validatedPass.EvidenceItemCount,
             validatedPass.ValidatedCitationCount);
+    }
+
+    private static string ComputeManifestFingerprint(NebiusResearchDeploymentManifest manifest)
+    {
+        if (manifest.Compute is null || manifest.Storage is null || manifest.Secrets is null)
+            throw new InvalidDataException("Deployment manifest is structurally incomplete.");
+
+        var unsigned = new
+        {
+            schemaVersion = manifest.SchemaVersion,
+            workerImageDigest = manifest.WorkerImageDigest,
+            compute = manifest.Compute,
+            storage = manifest.Storage,
+            workerEnvelopePublicKeySha256 = manifest.WorkerEnvelopePublicKeySha256,
+            clientVerificationPublicKeySha256 = manifest.ClientVerificationPublicKeySha256,
+            secrets = manifest.Secrets
+        };
+        var canonical = JsonSerializer.Serialize(unsigned, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
     }
 
     private static T Deserialize<T>(string json, string description)

@@ -23,6 +23,24 @@ public static class NebiusResearchArtifactDestinationPreflight
 
         var manifestPath = ReadOptionalPath(environmentReader, RedactedManifestEnvironmentVariable);
         var passPath = ReadOptionalPath(environmentReader, PassEvidenceEnvironmentVariable);
+        return ValidatePaths(manifestPath, passPath);
+    }
+
+    /// <summary>
+    /// Validates the exact, already-parsed destinations that the caller will later persist to.
+    /// This overload prevents a second environment read from drifting from the configuration used
+    /// by the live runtime.
+    /// </summary>
+    public static NebiusResearchArtifactDestinationPreflightReport ValidatePaths(
+        string? redactedManifestPath,
+        string? passEvidencePath)
+    {
+        var manifestPath = ValidateOptionalCanonicalPath(
+            redactedManifestPath,
+            "Redacted deployment manifest");
+        var passPath = ValidateOptionalCanonicalPath(
+            passEvidencePath,
+            "PASS evidence");
 
         if (manifestPath is not null && passPath is not null && PathsEqual(manifestPath, passPath))
         {
@@ -61,6 +79,19 @@ public static class NebiusResearchArtifactDestinationPreflight
             throw new InvalidOperationException($"Judging-artifact configuration '{name}' is invalid.");
 
         return AtomicTextArtifactWriter.ValidateDestination(raw, name);
+    }
+
+    private static string? ValidateOptionalCanonicalPath(string? path, string description)
+    {
+        if (path is null) return null;
+        if (string.IsNullOrWhiteSpace(path)
+            || path.Length > NebiusResearchLiveConfigurationLoader.MaximumEnvironmentValueLength
+            || path.Any(char.IsControl))
+        {
+            throw new InvalidOperationException($"{description} destination is invalid.");
+        }
+
+        return AtomicTextArtifactWriter.ValidateDestination(path, description);
     }
 
     private static bool PathsEqual(string left, string right) =>

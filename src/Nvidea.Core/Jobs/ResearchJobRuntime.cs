@@ -160,6 +160,12 @@ public sealed class ResearchJobRuntime
         WithMutationLeaseAsync(async ct =>
         {
             var existing = await GetRequiredResearchAsync(jobId, ct).ConfigureAwait(false);
+            if (ResearchJobStatus.HasUnfinishedRemoteProvenance(existing))
+            {
+                throw new InvalidOperationException(
+                    "Research with unfinished remote execution provenance must use remote cancellation/reconciliation; local cancellation is blocked.");
+            }
+
             var job = await _orchestrator.CancelAsync(existing.JobId, ct).ConfigureAwait(false);
             return ResearchJobStatus.FromRecord(job);
         }, cancellationToken);

@@ -39,7 +39,7 @@ public interface IRemoteResearchClientRuntime
 /// The state-directory lease spans dispatch/reconciliation/cancellation so local RunNextStep/Cancel
 /// operations in another NVIDEA process cannot race the remote lifecycle CAS transitions.
 /// </summary>
-public sealed class ResearchCloudExecutionCoordinator
+public sealed class ResearchCloudExecutionCoordinator : IResearchCloudExecutionCoordinator
 {
     public static readonly TimeSpan DefaultWorkItemLifetime = TimeSpan.FromHours(1);
 

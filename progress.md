@@ -26,6 +26,7 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - `NebiusResearchDeploymentEvidenceVerifier` + `tools/Nvidea.NebiusEvidenceVerifier` provide a zero-network, zero-secret reproducibility check between saved preflight and later live PASS artifacts.
 - Evidence verification rejects unknown JSON members, duplicate property names at any depth, comments, trailing commas, excessive nesting, oversized artifacts, malformed artifacts, self-inconsistent manifests, and cross-artifact fingerprint mismatches.
 - Live RSA role validation now proves that the configured client signing PEM can actually perform a private-key signature and rejects private-key PEM material in the worker-public-key slot.
+- Main README now accurately distinguishes the implemented explicit Serverless contract path from still-unverified production WPF remote execution and links the reproducible judging-evidence workflow.
 
 ## Persistent Progress History
 
@@ -49,11 +50,15 @@ Completed:
 - Hardened worker envelope key-role validation so a PEM containing private-key material is rejected when the deployment expects a public-only worker envelope key. This reduces accidental propagation of private material into deployment/evidence plumbing that never needs it.
 - Expanded `NebiusResearchLiveConfigurationLoaderTests` with documented defaults, inclusive min/max poll and total-timeout boundaries, invalid total-timeout boundaries, exact research-question maximum and overflow, malformed private-key path redaction, public-only signing-key rejection, and private-key-in-public-slot rejection.
 - Expanded `NebiusResearchDeploymentEvidenceVerifierTests` with malformed file ingestion and >256 KiB artifact rejection, including checks that error messages do not leak filesystem paths.
+- Updated the main README to remove stale claims that Serverless dispatch is merely a future target. It now explicitly states that the Serverless contract path is implemented but not yet credential-backed/live-validated, while production Windows research remains local until that proof exists.
+- Added a README judging-evidence section linking `docs/judging-evidence.md` and documenting the deterministic preflight → live PASS → offline verifier flow and its non-attestation limitation.
 
 Commits this run:
 - `603429ee3846a48bf0c6332489b1fc958f356c1b` — harden live RSA key-role validation.
 - `5353c268c9a877bfc90df8ede9ecc5762dd6a8c2` — expand live configuration boundary tests.
 - `38388b3a9ef896da47ee653dbd4881f27475b2b7` — cover malformed and oversized evidence files.
+- `36c36e847d03b9b044d9f62869b3bc7fc191f547` — persist intermediate boundary-hardening progress.
+- `a34c3e6ede5fea32a03ccebce10f5497f6831206` — clarify Serverless readiness and judging evidence in README.
 
 Validation / evidence:
 - Repository identity was explicitly re-verified before every GitHub mutation; all writes targeted exactly `UnknownGod2011/NVIDEA`.
@@ -61,7 +66,8 @@ Validation / evidence:
 - Static review confirms worker public-key validation rejects PEM labels containing private-key material before RSA import/use.
 - Static review confirms the new configuration tests exercise default, minimum, maximum, overflow, malformed-key, role-confusion, and path-redaction cases without real credentials.
 - Static review confirms evidence file tests exercise malformed and oversized file paths before any successful evidence verification.
-- `dotnet` is still unavailable in this execution environment, so compilation and test execution are **not claimed**.
+- Main README was reviewed against the current repo architecture and no longer claims that Serverless is entirely unwired.
+- `dotnet` remains unavailable in this execution environment, so compilation and test execution are **not claimed**.
 - No live Nebius credentials/resources were used and no GitHub Actions workflow was triggered merely to manufacture a green signal.
 
 Security / privacy / failure review:
@@ -70,6 +76,7 @@ Security / privacy / failure review:
 - Worker envelope configuration now fails closed if a private-key PEM is supplied where only a public key should exist, reducing accidental secret exposure.
 - PEM and evidence ingestion errors remain path-redacted; tests explicitly check that temporary root/file names do not appear in error text.
 - Evidence reads remain bounded at 256 KiB before JSON parsing.
+- README wording deliberately distinguishes implemented code from live-validated production capability to avoid overstating hackathon evidence.
 
 ## Known Blockers / Risks
 - No verified .NET 8/Windows/container execution signal is available here; the new code is statically reviewed but not compiled/executed.
@@ -79,7 +86,6 @@ Security / privacy / failure review:
 - WPF/`ResearchJobRuntime` still deliberately avoid claiming production Serverless execution until the real contract succeeds.
 - Local voice/transcription and a verified production embedding adapter remain absent.
 - The evidence pair proves reproducibility consistency, not third-party attestation.
-- README still contains stale language describing Serverless as not wired, even though the explicit contract-probe path now exists; this should be corrected without overstating unverified production readiness.
 
 ## Single Best Next Task
-Update the main README/architecture status so it accurately distinguishes the implemented explicit Nebius Serverless contract-probe path from the still-unverified production WPF integration, link `docs/judging-evidence.md`, and add a short deterministic operator checklist for zero-cost preflight/evidence verification. If a .NET-capable environment becomes available, immediately run the focused live-configuration/evidence tests and both zero-cost CLIs before attempting the first credential-backed Serverless contract.
+Harden output/evidence persistence before the first paid run: add direct `AtomicTextArtifactWriter` tests for directory targets, existing-file replacement, write failures and temp-file cleanup; then add a zero-cost operator/self-check command that validates all configured artifact destinations are writable without creating the final manifest/PASS files. If a .NET-capable environment becomes available, immediately run the focused live-configuration/evidence/atomic-writer tests and both zero-cost CLIs before attempting the first credential-backed Serverless contract.

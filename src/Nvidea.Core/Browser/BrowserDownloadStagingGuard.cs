@@ -31,7 +31,12 @@ public sealed class BrowserDownloadStagingGuard
 {
     private readonly BrowserDownloadStagingOptions _options;
 
-    public BrowserDownloadStagingGuard(string stateDirectory, BrowserDownloadStagingOptions? options = null)
+    /// <summary>
+    /// Creates the path-backed staging authority used by the trusted Core browser composition.
+    /// Construction is assembly-internal because this object can reclaim files inside NVIDEA-owned
+    /// transient browser state and must not be bootstrapped by ordinary product/plugin callers.
+    /// </summary>
+    internal BrowserDownloadStagingGuard(string stateDirectory, BrowserDownloadStagingOptions? options = null)
     {
         if (string.IsNullOrWhiteSpace(stateDirectory))
             throw new ArgumentException("State directory is required.", nameof(stateDirectory));

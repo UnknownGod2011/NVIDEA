@@ -3,6 +3,13 @@ using Nvidea.Core.Security;
 
 namespace Nvidea.Core.Jobs;
 
+/// <summary>
+/// Trusted durable job-state infrastructure. Product/plugin callers must not construct this
+/// store directly because <see cref="SaveAsync"/> is intentionally a low-level persistence
+/// primitive and does not enforce lifecycle, approval, or provider-authority invariants.
+/// Construction is owned by Nvidea.Core composition/recovery paths; external code should use the
+/// constrained product runtimes and coordinator contracts instead.
+/// </summary>
 public sealed class JsonAgentJobStore : IAgentJobStore
 {
     private const string ProtectionPurpose = "agent-jobs-v1";
@@ -11,7 +18,7 @@ public sealed class JsonAgentJobStore : IAgentJobStore
     private readonly ILocalStateProtector? _protector;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
-    public JsonAgentJobStore(string path, ILocalStateProtector? protector = null)
+    internal JsonAgentJobStore(string path, ILocalStateProtector? protector = null)
     {
         if (string.IsNullOrWhiteSpace(path))
             throw new ArgumentException("Job store path is required.", nameof(path));

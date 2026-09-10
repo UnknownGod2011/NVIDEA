@@ -17,7 +17,7 @@ public partial class MainWindow : Window
     private readonly NvideaCompositionRoot _root;
     private HwndSource? _source;
     private DesktopContext? _pendingContext;
-    private BrowserHostRuntime? _browserHost;
+    private BrowserProductRuntime? _browserHost;
     private BrowserAmbiguousRecoveryService? _browserRecovery;
     private BrowserGoalSession? _recoveryCandidate;
     private CancellationTokenSource? _browserActionCts;
@@ -141,7 +141,7 @@ public partial class MainWindow : Window
 
         try
         {
-            _browserHost ??= await _root.GetBrowserAsync(cancellationToken);
+            _browserHost ??= await _root.GetBrowserProductAsync(cancellationToken);
             var action = new BrowserAction(
                 BrowserActionKind.Navigate,
                 Destination: destination,

@@ -1,4 +1,5 @@
 using Nvidea.Core.Jobs;
+using Xunit;
 
 namespace Nvidea.Core.Tests;
 

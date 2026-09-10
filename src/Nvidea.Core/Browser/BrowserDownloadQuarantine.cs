@@ -61,6 +61,8 @@ public sealed class BrowserDownloadQuotaExceededException : IOException
 /// Durable download boundary for untrusted browser payloads. Browser bytes first land in an
 /// NVIDEA-owned quarantine directory and are not considered user-visible files until an explicit
 /// handoff copies a verified payload to a caller-selected destination.
+/// Concrete path-backed construction is assembly-internal so external product/plugin code cannot
+/// bootstrap raw capture or crash-recovery authority over NVIDEA-owned durable download state.
 /// </summary>
 public sealed class BrowserDownloadQuarantine
 {
@@ -77,12 +79,12 @@ public sealed class BrowserDownloadQuarantine
     private readonly BrowserDownloadQuarantineOptions _options;
     private readonly SemaphoreSlim _gate;
 
-    public BrowserDownloadQuarantine(string stateDirectory, ILocalStateProtector? protector = null)
+    internal BrowserDownloadQuarantine(string stateDirectory, ILocalStateProtector? protector = null)
         : this(stateDirectory, new BrowserDownloadQuarantineOptions(), protector)
     {
     }
 
-    public BrowserDownloadQuarantine(
+    internal BrowserDownloadQuarantine(
         string stateDirectory,
         BrowserDownloadQuarantineOptions options,
         ILocalStateProtector? protector = null)

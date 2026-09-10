@@ -25,8 +25,9 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - PASS evidence and redacted deployment manifests use `AtomicTextArtifactWriter` for crash-safe same-directory replacement.
 - `NebiusResearchDeploymentEvidenceVerifier` + `tools/Nvidea.NebiusEvidenceVerifier` provide a zero-network, zero-secret reproducibility check between saved preflight and later live PASS artifacts.
 - Evidence verification rejects unknown JSON members, duplicate property names at any depth, comments, trailing commas, excessive nesting, oversized artifacts, malformed artifacts, self-inconsistent manifests, and cross-artifact fingerprint mismatches.
-- Live RSA role validation now proves that the configured client signing PEM can actually perform a private-key signature and rejects private-key PEM material in the worker-public-key slot.
-- Main README now accurately distinguishes the implemented explicit Serverless contract path from still-unverified production WPF remote execution and links the reproducible judging-evidence workflow.
+- Live RSA role validation proves that the client signing PEM can perform a private-key signature and rejects private material in the worker-public-key slot.
+- Main README distinguishes the implemented explicit Serverless contract path from still-unverified production WPF remote execution and links the reproducible judging-evidence workflow.
+- Judging artifact destinations now have a non-destructive writability preflight and a standalone zero-network operator CLI.
 
 ## Persistent Progress History
 
@@ -39,53 +40,53 @@ Added Tavily Extract enrichment, evidence quality/staleness/diversity, restart-s
 ### 2026-09-10 — Native Object Storage + reproducible live evidence
 Added native S3-compatible protected transport, exact S3 ↔ Serverless mount mapping, digest-pinned live worker requirement, current Nebius lifecycle states, `NebiusResearchLiveRuntimeFactory`, `--live-research`, zero-cost `--live-research-preflight`, reproducible/redacted deployment fingerprints, optional MysteryBox version IDs, machine-readable PASS evidence, reusable atomic artifact persistence, strict MysteryBox resource-id validation, a directly testable live configuration loader, and an independent deployment-evidence verifier CLI.
 
-### 2026-09-10 — Strict judging-evidence ingestion
-Hardened deployment-evidence verification with .NET 8 unmapped-member rejection, bounded strict JSON parsing, recursive duplicate-property detection, schema checks, manifest-fingerprint recomputation, fixed-time fingerprint comparison, and `docs/judging-evidence.md` describing the zero-cost preflight → live run → offline verification workflow.
+### 2026-09-10 — Strict judging evidence + RSA hardening
+Added strict evidence JSON ingestion, canonical manifest re-hashing, fixed-time fingerprint comparison, malformed/oversized evidence rejection, RSA signing-capability proof, public/private key-role separation, parser boundary tests, and judging-evidence documentation.
 
-### 2026-09-10 — Current run: RSA role + boundary hardening
+### 2026-09-10 — Current run: artifact destination safety
 Completed:
-- Re-read `progress.md` completely before any mutation and inspected the current repo tree, `NebiusResearchLiveConfigurationLoader`, preflight, evidence verifier, existing regression tests, and main README.
-- Found and fixed a real live-preflight defect: `RSA.ImportFromPem` accepts public-only RSA PEMs, so a public key supplied in `NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE` could previously survive import/public-key derivation and fail only later when dispatch attempted to sign.
-- Hardened `NebiusResearchLiveDryRunPreflight.ValidateSigningIdentity` to perform a harmless fixed-hash RSA signature before a live run is accepted. Public-only or otherwise unusable private-key material now fails closed before any provider/client construction.
-- Hardened worker envelope key-role validation so a PEM containing private-key material is rejected when the deployment expects a public-only worker envelope key. This reduces accidental propagation of private material into deployment/evidence plumbing that never needs it.
-- Expanded `NebiusResearchLiveConfigurationLoaderTests` with documented defaults, inclusive min/max poll and total-timeout boundaries, invalid total-timeout boundaries, exact research-question maximum and overflow, malformed private-key path redaction, public-only signing-key rejection, and private-key-in-public-slot rejection.
-- Expanded `NebiusResearchDeploymentEvidenceVerifierTests` with malformed file ingestion and >256 KiB artifact rejection, including checks that error messages do not leak filesystem paths.
-- Updated the main README to remove stale claims that Serverless dispatch is merely a future target. It now explicitly states that the Serverless contract path is implemented but not yet credential-backed/live-validated, while production Windows research remains local until that proof exists.
-- Added a README judging-evidence section linking `docs/judging-evidence.md` and documenting the deterministic preflight → live PASS → offline verifier flow and its non-attestation limitation.
+- Re-read this progress ledger completely before mutation and inspected the current repo tree, `AtomicTextArtifactWriter`, live configuration loader, live contract probe, PASS-evidence tests, and existing evidence workflow.
+- Hardened `AtomicTextArtifactWriter.ValidateDestination` so directory targets fail closed rather than surviving validation until the eventual replacement operation.
+- Added `AtomicTextArtifactWriter.ValidateWritableDestination`, which verifies the destination directory supports create/write/flush/delete using a randomized sibling probe file. It never creates, truncates, or replaces the configured final artifact and cleans the probe best-effort on every path.
+- Added direct `AtomicTextArtifactWriterTests` for initial write, existing-file replacement, temp cleanup, directory-target rejection, non-destructive writability probing, preservation of existing final evidence, and missing-parent failure without implicit directory creation.
+- Found and fixed a judging-evidence integrity risk: manifest and PASS paths could be configured as the same file, allowing a successful live PASS to overwrite the saved preflight manifest and destroy the evidence pair.
+- Added `NebiusResearchArtifactDestinationPreflight`, which reads the two optional judging-artifact destinations, rejects malformed/control-character values, rejects manifest/PASS aliasing with OS-appropriate path comparison, and proves each configured destination is writable without modifying final artifacts.
+- Added focused tests confirming no-output behavior, two-destination probing, same-path rejection, preservation of existing artifacts, and cleanup of ephemeral probes.
+- Added `tools/Nvidea.NebiusArtifactDestinationCheck`, a standalone zero-network self-check CLI that reads `NVIDEA_LIVE_REDACTED_MANIFEST_PATH` and `NVIDEA_LIVE_PASS_EVIDENCE_PATH`, checks writability/distinctness, prints no path values, and performs no provider calls.
 
 Commits this run:
-- `603429ee3846a48bf0c6332489b1fc958f356c1b` — harden live RSA key-role validation.
-- `5353c268c9a877bfc90df8ede9ecc5762dd6a8c2` — expand live configuration boundary tests.
-- `38388b3a9ef896da47ee653dbd4881f27475b2b7` — cover malformed and oversized evidence files.
-- `36c36e847d03b9b044d9f62869b3bc7fc191f547` — persist intermediate boundary-hardening progress.
-- `a34c3e6ede5fea32a03ccebce10f5497f6831206` — clarify Serverless readiness and judging evidence in README.
+- `a6d0bb1d8da71ce4d2f7776e300d39ae4a4e63f4` — harden atomic artifact destination validation and add non-destructive writability probing.
+- `ae1166ea1f49d7118bbb37f12a612095a12263de` — add direct atomic writer regression tests.
+- `53ae932f36556427fdc9c69e384b11914660a42f` — add judging artifact destination preflight.
+- `ad3879aaa4b8ca4ae91803ae85a516f2be4351ed` — test destination preflight behavior and artifact preservation.
+- `ce71a68308d8e1db5849e374a19450b5eec1cdc5` — add artifact destination self-check tool project.
+- `e57d4a25a450b6fa0631cfa49e184829a02335f0` — implement the zero-cost artifact destination self-check CLI.
 
 Validation / evidence:
 - Repository identity was explicitly re-verified before every GitHub mutation; all writes targeted exactly `UnknownGod2011/NVIDEA`.
-- Static review confirms the new signing-capability proof runs inside zero-cost live preflight, after RSA import/strength checks and before the provider-backed live runtime is constructed.
-- Static review confirms worker public-key validation rejects PEM labels containing private-key material before RSA import/use.
-- Static review confirms the new configuration tests exercise default, minimum, maximum, overflow, malformed-key, role-confusion, and path-redaction cases without real credentials.
-- Static review confirms evidence file tests exercise malformed and oversized file paths before any successful evidence verification.
-- Main README was reviewed against the current repo architecture and no longer claims that Serverless is entirely unwired.
-- `dotnet` remains unavailable in this execution environment, so compilation and test execution are **not claimed**.
+- Static review confirms `ValidateWritableDestination` only creates a randomized sibling `*.probe.tmp`, writes one byte, flushes it, deletes it, and never opens the configured final artifact for write/truncate/replacement.
+- Static review confirms same manifest/PASS paths fail before either writability probe begins, so no final evidence can be silently collapsed into one file.
+- Static review confirms the standalone CLI prints only configured/writable status counts and never emits artifact paths, secret values, provider identifiers, or evidence contents.
+- `dotnet` is not installed in this execution environment, so compilation and test execution are **not claimed**.
 - No live Nebius credentials/resources were used and no GitHub Actions workflow was triggered merely to manufacture a green signal.
 
 Security / privacy / failure review:
-- Private signing material is never logged or included in judging evidence; the preflight only proves usability via an in-memory signature over a fixed empty-input SHA-256 hash.
-- A public-only key can no longer masquerade as the dispatch signing key until paid execution begins.
-- Worker envelope configuration now fails closed if a private-key PEM is supplied where only a public key should exist, reducing accidental secret exposure.
-- PEM and evidence ingestion errors remain path-redacted; tests explicitly check that temporary root/file names do not appear in error text.
-- Evidence reads remain bounded at 256 KiB before JSON parsing.
-- README wording deliberately distinguishes implemented code from live-validated production capability to avoid overstating hackathon evidence.
+- Destination failures use generic descriptions and do not include full filesystem paths.
+- The self-check does not contact Nebius, Tavily, Object Storage, MysteryBox, or Token Factory.
+- Existing final evidence files are deliberately preserved during writability probing.
+- Missing directories are never created implicitly.
+- Probe-file cleanup is best-effort in `finally`; cleanup failure cannot convert a failed validation into a false success.
+- This check proves directory-level create/write/flush/delete capability. It does not guarantee that an existing final file can always be atomically replaced under every OS ACL/locking condition; the real atomic writer remains the authoritative final operation.
 
 ## Known Blockers / Risks
-- No verified .NET 8/Windows/container execution signal is available here; the new code is statically reviewed but not compiled/executed.
+- No verified .NET 8/Windows/container execution signal is available here; current code is statically reviewed but not compiled/executed.
 - No live Object Storage bucket/static key, digest-pinned registry image, MysteryBox refs, subnet, Serverless access token, or Serverless job has been provisioned/validated in this environment.
 - Exact provider acceptance of the configured Serverless Object Storage `Source`/`SourcePath` still requires a real job.
 - The dry run cannot prove that the hidden worker-private-key MysteryBox version corresponds to the configured worker public key without resolving the secret; the real worker protocol remains authoritative proof.
 - WPF/`ResearchJobRuntime` still deliberately avoid claiming production Serverless execution until the real contract succeeds.
 - Local voice/transcription and a verified production embedding adapter remain absent.
 - The evidence pair proves reproducibility consistency, not third-party attestation.
+- The new artifact-destination self-check is not yet automatically invoked by the full `--live-research-preflight` / `--live-research` paths; operators can run the standalone CLI now, but integrating the same check into those paths would eliminate the possibility of skipping it.
 
 ## Single Best Next Task
-Harden output/evidence persistence before the first paid run: add direct `AtomicTextArtifactWriter` tests for directory targets, existing-file replacement, write failures and temp-file cleanup; then add a zero-cost operator/self-check command that validates all configured artifact destinations are writable without creating the final manifest/PASS files. If a .NET-capable environment becomes available, immediately run the focused live-configuration/evidence/atomic-writer tests and both zero-cost CLIs before attempting the first credential-backed Serverless contract.
+Integrate `NebiusResearchArtifactDestinationPreflight` into both `--live-research-preflight` and `--live-research` before any final artifact persistence or provider-client construction, so same-path and unwritable-destination failures cannot be bypassed. Then document the standalone self-check in the judging-evidence flow and, if a .NET-capable environment becomes available, immediately compile and run the focused atomic-writer/destination/configuration/evidence tests before attempting the first credential-backed Serverless contract.

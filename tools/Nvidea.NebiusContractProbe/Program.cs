@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using Nvidea.Core.Browser;
 using Nvidea.Core.Capabilities;
 using Nvidea.Core.Jobs;
@@ -10,170 +9,15 @@ static int Fail(string category, string detail)
     return 1;
 }
 
-static string RequiredEnvironment(string name)
+static void PersistRedactedManifestIfRequested(NebiusResearchLiveConfiguration configuration)
 {
-    var value = Environment.GetEnvironmentVariable(name)?.Trim();
-    if (string.IsNullOrWhiteSpace(value))
-        throw new InvalidOperationException($"Required live-probe configuration '{name}' is missing.");
-    if (value.Length > 8192 || value.Any(char.IsControl))
-        throw new InvalidOperationException($"Live-probe configuration '{name}' is invalid.");
-    return value;
-}
+    if (configuration.RedactedManifestPath is null) return;
 
-static string? OptionalEnvironment(string name)
-{
-    var value = Environment.GetEnvironmentVariable(name)?.Trim();
-    if (string.IsNullOrWhiteSpace(value)) return null;
-    if (value.Length > 8192 || value.Any(char.IsControl))
-        throw new InvalidOperationException($"Live-probe configuration '{name}' is invalid.");
-    return value;
-}
-
-static long RequiredPositiveInt64(string name)
-{
-    var value = RequiredEnvironment(name);
-    if (!long.TryParse(value, out var parsed) || parsed <= 0)
-        throw new InvalidOperationException($"Required live-probe configuration '{name}' must be a positive integer.");
-    return parsed;
-}
-
-static int BoundedInt32(string name, int defaultValue, int minimum, int maximum)
-{
-    var value = OptionalEnvironment(name);
-    if (value is null) return defaultValue;
-    if (!int.TryParse(value, out var parsed) || parsed < minimum || parsed > maximum)
-        throw new InvalidOperationException($"Live-probe configuration '{name}' must be between {minimum} and {maximum}.");
-    return parsed;
-}
-
-static string ReadRequiredPemFile(string environmentName)
-{
-    var path = Path.GetFullPath(RequiredEnvironment(environmentName));
-    var text = File.ReadAllText(path);
-    if (string.IsNullOrWhiteSpace(text) || text.Length > 65536)
-        throw new InvalidOperationException($"PEM material referenced by '{environmentName}' is missing or oversized.");
-    return text;
-}
-
-static string? OptionalOutputPath(string environmentName)
-{
-    var requestedPath = OptionalEnvironment(environmentName);
-    if (requestedPath is null) return null;
-
-    var path = Path.GetFullPath(requestedPath);
-    var parent = Path.GetDirectoryName(path);
-    if (string.IsNullOrWhiteSpace(parent) || !Directory.Exists(parent) || string.IsNullOrWhiteSpace(Path.GetFileName(path)))
-        throw new InvalidOperationException($"{environmentName} must point to a file in an existing directory.");
-    return path;
-}
-
-static NebiusMysteryBoxSecretRef RequiredSecretRef(string idEnvironmentName, string versionEnvironmentName)
-{
-    var secretId = RequiredEnvironment(idEnvironmentName);
-    var versionId = OptionalEnvironment(versionEnvironmentName);
-    return new NebiusMysteryBoxSecretRef(SecretId: secretId, VersionId: versionId);
-}
-
-static void PersistRedactedManifestIfRequested(NebiusResearchDeploymentManifest manifest)
-{
-    var path = OptionalOutputPath("NVIDEA_LIVE_REDACTED_MANIFEST_PATH");
-    if (path is null) return;
-
-    var json = NebiusResearchDeploymentManifestBuilder.ToJson(manifest, indented: true);
-    File.WriteAllText(path, json);
-}
-
-static (
-    string ServerlessAccessToken,
-    string ProjectId,
-    string ClientPrivateKeyPem,
-    NebiusResearchDispatchOptions DispatchOptions,
-    NebiusObjectStorageClientOptions ObjectStorageOptions,
-    NebiusResearchLivePreflightReport Report) BuildLiveConfiguration()
-{
-    var serverlessAccessToken = RequiredEnvironment("NVIDEA_LIVE_SERVERLESS_ACCESS_TOKEN");
-    var projectId = RequiredEnvironment("NVIDEA_LIVE_SERVERLESS_PROJECT_ID");
-    var workerImage = RequiredEnvironment("NVIDEA_LIVE_WORKER_IMAGE");
-    var subnetId = RequiredEnvironment("NVIDEA_LIVE_SUBNET_ID");
-    var platform = RequiredEnvironment("NVIDEA_LIVE_PLATFORM");
-    var preset = RequiredEnvironment("NVIDEA_LIVE_PRESET");
-    var timeout = RequiredEnvironment("NVIDEA_LIVE_TIMEOUT");
-    var diskType = RequiredEnvironment("NVIDEA_LIVE_DISK_TYPE");
-    var diskSizeBytes = RequiredPositiveInt64("NVIDEA_LIVE_DISK_SIZE_BYTES");
-    var transportSource = RequiredEnvironment("NVIDEA_LIVE_TRANSPORT_SOURCE");
-    var workerTransportRoot = OptionalEnvironment("NVIDEA_LIVE_WORKER_TRANSPORT_ROOT") ?? "/mnt/nvidea-research";
-    var objectStoragePrefix = OptionalEnvironment("NVIDEA_LIVE_OBJECT_STORAGE_PREFIX") ?? "nvidea-research";
-    var transportSourcePath = OptionalEnvironment("NVIDEA_LIVE_TRANSPORT_SOURCE_PATH") ?? objectStoragePrefix;
-    var workerPublicKeyPem = ReadRequiredPemFile("NVIDEA_LIVE_WORKER_PUBLIC_KEY_PEM_FILE");
-    var clientPrivateKeyPem = ReadRequiredPemFile("NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE");
-
-    var objectStorageOptions = new NebiusObjectStorageClientOptions(
-        Endpoint: RequiredEnvironment("NVIDEA_LIVE_OBJECT_STORAGE_ENDPOINT"),
-        Region: RequiredEnvironment("NVIDEA_LIVE_OBJECT_STORAGE_REGION"),
-        Bucket: RequiredEnvironment("NVIDEA_LIVE_OBJECT_STORAGE_BUCKET"),
-        AccessKeyId: RequiredEnvironment("NVIDEA_LIVE_OBJECT_STORAGE_ACCESS_KEY_ID"),
-        SecretAccessKey: RequiredEnvironment("NVIDEA_LIVE_OBJECT_STORAGE_SECRET_ACCESS_KEY"),
-        Prefix: objectStoragePrefix,
-        OperationTimeout: TimeSpan.FromSeconds(30),
-        MaxRetries: 2);
-
-    using var clientRsa = RSA.Create();
-    try
-    {
-        clientRsa.ImportFromPem(clientPrivateKeyPem);
-    }
-    catch (Exception exception) when (exception is CryptographicException or ArgumentException)
-    {
-        throw new InvalidOperationException("NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE does not contain a valid RSA private key.");
-    }
-    var clientPublicKeyPem = clientRsa.ExportSubjectPublicKeyInfoPem();
-
-    var secretEnvironment = new Dictionary<string, NebiusMysteryBoxSecretRef>(StringComparer.Ordinal)
-    {
-        ["NEBIUS_API_KEY"] = RequiredSecretRef(
-            "NVIDEA_LIVE_SECRET_NEBIUS_API_KEY_ID",
-            "NVIDEA_LIVE_SECRET_NEBIUS_API_KEY_VERSION_ID"),
-        ["TAVILY_API_KEY"] = RequiredSecretRef(
-            "NVIDEA_LIVE_SECRET_TAVILY_API_KEY_ID",
-            "NVIDEA_LIVE_SECRET_TAVILY_API_KEY_VERSION_ID"),
-        ["NVIDEA_WORKER_PRIVATE_KEY_PEM"] = RequiredSecretRef(
-            "NVIDEA_LIVE_SECRET_WORKER_PRIVATE_KEY_ID",
-            "NVIDEA_LIVE_SECRET_WORKER_PRIVATE_KEY_VERSION_ID")
-    };
-    var plainEnvironment = new Dictionary<string, string>(StringComparer.Ordinal)
-    {
-        [NebiusResearchDeploymentPreflight.TransportRootEnvironmentVariable] = workerTransportRoot,
-        [NebiusResearchDeploymentPreflight.ClientPublicKeyEnvironmentVariable] = clientPublicKeyPem
-    };
-
-    var dispatchOptions = new NebiusResearchDispatchOptions(
-        WorkerImage: workerImage,
-        WorkerPublicKeyPem: workerPublicKeyPem,
-        ContainerCommand: "dotnet",
-        Platform: platform,
-        Preset: preset,
-        Timeout: timeout,
-        SubnetId: subnetId,
-        Disk: new NebiusServerlessDiskSpec(diskType, diskSizeBytes),
-        EnvironmentVariables: plainEnvironment,
-        SecretEnvironmentVariables: secretEnvironment,
-        Volumes: new[]
-        {
-            new NebiusServerlessVolumeMount(
-                transportSource,
-                workerTransportRoot,
-                "READ_WRITE",
-                transportSourcePath)
-        });
-
-    var report = NebiusResearchLivePreflightReporter.ValidateAndBuild(
-        dispatchOptions,
-        objectStorageOptions,
-        serverlessAccessToken,
-        projectId,
-        clientPrivateKeyPem);
-
-    return (serverlessAccessToken, projectId, clientPrivateKeyPem, dispatchOptions, objectStorageOptions, report);
+    var json = NebiusResearchDeploymentManifestBuilder.ToJson(configuration.Report.Manifest, indented: true);
+    AtomicTextArtifactWriter.Write(
+        configuration.RedactedManifestPath,
+        json,
+        "NVIDEA live redacted deployment manifest");
 }
 
 static void PrintReproducibilityEvidence(NebiusResearchLivePreflightReport report)
@@ -233,8 +77,8 @@ static async Task<int> RunPlannerProbeAsync()
 
 static int RunLiveResearchPreflight()
 {
-    var configuration = BuildLiveConfiguration();
-    PersistRedactedManifestIfRequested(configuration.Report.Manifest);
+    var configuration = NebiusResearchLiveConfigurationLoader.LoadFromEnvironment();
+    PersistRedactedManifestIfRequested(configuration);
 
     Console.WriteLine("NVIDEA live research deployment preflight: PASS");
     PrintReproducibilityEvidence(configuration.Report);
@@ -250,18 +94,10 @@ static int RunLiveResearchPreflight()
 
 static async Task<int> RunLiveResearchProbeAsync()
 {
-    // BuildLiveConfiguration runs the exact zero-cost fail-closed deployment gate before any
-    // Object Storage, Serverless, Nemotron or Tavily request is constructed or dispatched.
-    var configuration = BuildLiveConfiguration();
-    PersistRedactedManifestIfRequested(configuration.Report.Manifest);
-    var passEvidencePath = OptionalOutputPath("NVIDEA_LIVE_PASS_EVIDENCE_PATH");
-
-    var pollSeconds = BoundedInt32("NVIDEA_LIVE_POLL_SECONDS", 5, 1, 30);
-    var totalTimeoutMinutes = BoundedInt32("NVIDEA_LIVE_TOTAL_TIMEOUT_MINUTES", 20, 2, 60);
-    var question = OptionalEnvironment("NVIDEA_LIVE_RESEARCH_QUESTION")
-        ?? "What are the current official capabilities of NVIDIA Nemotron models served through Nebius for agentic research? Use authoritative sources and state uncertainty.";
-    if (question.Length > 2000)
-        throw new InvalidOperationException("NVIDEA_LIVE_RESEARCH_QUESTION exceeds the live-probe limit.");
+    // The loader runs the same zero-cost fail-closed deployment gate used by preflight before any
+    // Object Storage, Serverless, Nemotron or Tavily client is constructed or dispatched.
+    var configuration = NebiusResearchLiveConfigurationLoader.LoadFromEnvironment();
+    PersistRedactedManifestIfRequested(configuration);
 
     var stateRoot = Path.Combine(Path.GetTempPath(), "nvidea-nebius-live-probe", Guid.NewGuid().ToString("N"));
     Directory.CreateDirectory(stateRoot);
@@ -305,14 +141,14 @@ static async Task<int> RunLiveResearchProbeAsync()
         AgentJobState.Pending,
         JobExecutionLocation.Local,
         Attempt: 0,
-        Checkpoint: ResearchJobHandler.CreateInitialCheckpoint(question),
+        Checkpoint: ResearchJobHandler.CreateInitialCheckpoint(configuration.ResearchQuestion),
         ApprovalScope: null,
         LastError: null,
         CreatedAt: now,
         UpdatedAt: now);
     await store.SaveAsync(initial);
 
-    using var overall = new CancellationTokenSource(TimeSpan.FromMinutes(totalTimeoutMinutes));
+    using var overall = new CancellationTokenSource(TimeSpan.FromMinutes(configuration.TotalTimeoutMinutes));
     var cancellationToken = overall.Token;
     AgentJobRecord current = initial;
     var remoteStages = 0;
@@ -335,7 +171,7 @@ static async Task<int> RunLiveResearchProbeAsync()
             current.Checkpoint.Payload,
             ContainsPrivateOsData: false,
             CreatedAt: stageStartedAt,
-            ExpiresAt: stageStartedAt.AddMinutes(Math.Min(totalTimeoutMinutes, 30)));
+            ExpiresAt: stageStartedAt.AddMinutes(Math.Min(configuration.TotalTimeoutMinutes, 30)));
         var authorization = new ResearchCloudAuthorization(
             current.JobId,
             current.Checkpoint.Step,
@@ -350,7 +186,7 @@ static async Task<int> RunLiveResearchProbeAsync()
         while (current.ExecutionLocation == JobExecutionLocation.NebiusServerless
                && current.State == AgentJobState.Running)
         {
-            await Task.Delay(TimeSpan.FromSeconds(pollSeconds), cancellationToken);
+            await Task.Delay(TimeSpan.FromSeconds(configuration.PollSeconds), cancellationToken);
             current = await runtime.ReconcileDispatchedAsync(current.JobId, cancellationToken: cancellationToken);
         }
 
@@ -375,10 +211,10 @@ static async Task<int> RunLiveResearchProbeAsync()
         remoteStages,
         report.Evidence.Sources.Count,
         report.UsedCitations.Count);
-    if (passEvidencePath is not null)
+    if (configuration.PassEvidencePath is not null)
     {
         NebiusResearchPassEvidenceBuilder.PersistAtomically(
-            passEvidencePath,
+            configuration.PassEvidencePath,
             NebiusResearchPassEvidenceBuilder.ToJson(passEvidence, indented: true));
     }
 
@@ -387,7 +223,7 @@ static async Task<int> RunLiveResearchProbeAsync()
     Console.WriteLine($"Remote durable stages: {remoteStages}");
     Console.WriteLine($"Evidence items: {report.Evidence.Sources.Count}");
     Console.WriteLine($"Validated citations: {report.UsedCitations.Count}");
-    Console.WriteLine($"Machine-readable PASS evidence: {(passEvidencePath is null ? "not requested" : "persisted atomically")}");
+    Console.WriteLine($"Machine-readable PASS evidence: {(configuration.PassEvidencePath is null ? "not requested" : "persisted atomically")}");
     Console.WriteLine("Native encrypted Object Storage transport: accepted");
     Console.WriteLine("Object Storage mount/prefix alignment: accepted");
     Console.WriteLine("Authoritative dispatch binding: accepted");
@@ -406,7 +242,7 @@ try
         Console.WriteLine("Default: cheap Token Factory structured-planner probe.");
         Console.WriteLine("--live-research-preflight: zero-cost local validation plus redacted deployment fingerprint; performs no provider calls.");
         Console.WriteLine("--live-research: explicit live Nebius Serverless research probe; PASS prints the same deployment fingerprint.");
-        Console.WriteLine("Optional: NVIDEA_LIVE_REDACTED_MANIFEST_PATH persists only the redacted deployment manifest.");
+        Console.WriteLine("Optional: NVIDEA_LIVE_REDACTED_MANIFEST_PATH atomically persists only the redacted deployment manifest.");
         Console.WriteLine("Optional live-only: NVIDEA_LIVE_PASS_EVIDENCE_PATH atomically persists redacted machine-readable evidence only after a validated PASS.");
         return 0;
     }

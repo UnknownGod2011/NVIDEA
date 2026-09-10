@@ -64,44 +64,6 @@ public static class NebiusResearchPassEvidenceBuilder
     /// Persists already-redacted evidence with temp-file + same-directory atomic replacement.
     /// The destination directory must exist; this method never creates directories implicitly.
     /// </summary>
-    public static void PersistAtomically(string path, string contents)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(path);
-        ArgumentNullException.ThrowIfNull(contents);
-
-        var fullPath = Path.GetFullPath(path);
-        var parent = Path.GetDirectoryName(fullPath);
-        if (string.IsNullOrWhiteSpace(parent) || !Directory.Exists(parent))
-            throw new InvalidOperationException("Evidence path must point into an existing directory.");
-
-        var fileName = Path.GetFileName(fullPath);
-        if (string.IsNullOrWhiteSpace(fileName))
-            throw new InvalidOperationException("Evidence path must include a file name.");
-
-        var tempPath = Path.Combine(parent, $".{fileName}.{Guid.NewGuid():N}.tmp");
-        try
-        {
-            using (var stream = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
-            using (var writer = new StreamWriter(stream))
-            {
-                writer.Write(contents);
-                writer.Flush();
-                stream.Flush(flushToDisk: true);
-            }
-
-            File.Move(tempPath, fullPath, overwrite: true);
-        }
-        finally
-        {
-            try
-            {
-                if (File.Exists(tempPath))
-                    File.Delete(tempPath);
-            }
-            catch
-            {
-                // Best-effort cleanup only. Never hide the original persistence failure.
-            }
-        }
-    }
+    public static void PersistAtomically(string path, string contents) =>
+        AtomicTextArtifactWriter.Write(path, contents, "Evidence");
 }

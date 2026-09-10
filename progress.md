@@ -22,7 +22,7 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Deployment preflight enforces exact Object Storage ↔ Serverless mount alignment, READ_WRITE transport, MysteryBox-backed worker credentials, digest-pinned worker image, RSA strength/identity consistency, bounded compute/storage settings, and a redacted reproducible deployment fingerprint.
 - `Nvidea.NebiusContractProbe` supports cheap planner, zero-cost live preflight, and explicit paid live research; redacted manifest/PASS evidence persistence and offline verification are fail-closed and reproducible.
 - `ResearchCloudExecutionCoordinator` is the narrow provider-aware bridge from durable research state to `NebiusResearchClientRuntime`, with exact checkpoint/disclosure approval, shared mutation lease, provider reconciliation/cancellation, private-data rejection, and no provider credential exposure.
-- `ResearchJobRuntime` is intentionally local-only and validates current durable location/provenance under the mutation lease before any local Nemotron/Tavily handler invocation.
+- `ResearchJobRuntime` is intentionally local-only and validates current durable location/provenance under the mutation lease before any local Nemotron/Tavily handler invocation. Its concrete constructor is assembly-internal so external product/plugin code cannot bootstrap it around lifecycle-aware routing.
 - `ResearchProductRuntime` is the lifecycle-aware product facade: truthful local/remote status, local work only through `ILocalResearchRuntime`, remote lifecycle only through `IResearchCloudExecutionCoordinator`, and independently gated paid Serverless dispatch.
 - WPF durable-research reads/actions use `ResearchProductRuntime`; remote/ambiguous records are never offered as local recovery. `ResearchProductUiState` centralizes control enablement, labels, and cloud disclosure.
 - Browser product/UI access goes through constrained `BrowserProductRuntime`; the composition root does not expose raw `BrowserHostRuntime`, and WPF navigation/download flows use only the facade.
@@ -47,34 +47,34 @@ Added `ResearchCloudExecutionCoordinator`, narrow remote-runtime contracts, expl
 Added `ResearchProductRuntime`, lifecycle-aware status projection, replay-race closure under the mutation lease, WPF migration to the product facade, separate reconciliation UX, explicit cloud-disclosure copy, cancellation-token hardening, `ResearchProductUiState`, and removal of the public local `ResearchJobRuntime` composition-root escape hatch.
 
 ### 2026-09-10 — Browser product authority narrowing
-Added `BrowserProductRuntime`, replaced the public composition-root raw-host getter with `GetBrowserProductAsync()`, migrated WPF browser/download flows, added reflection regression coverage, and made `BrowserHostRuntime.CreateAsync(...)` assembly-internal so external product/plugin code cannot normally bootstrap the privileged raw host.
+Added `BrowserProductRuntime`, replaced the public composition-root raw-host getter with `GetBrowserProductAsync()`, migrated WPF browser/download flows, added reflection regression coverage, made `BrowserHostRuntime.CreateAsync(...)` assembly-internal, and narrowed `BrowserGoalAgent` so the privileged concrete-host constructor is assembly-internal while `IBrowserGoalHost` remains the public integration contract.
 
-### 2026-09-10 — Current run: narrow BrowserGoalAgent privileged construction
+### 2026-09-10 — Current run: close direct local-research construction bypass
 Completed:
-- Re-read this ledger completely and inspected the current repository head, recent commits, tree, `BrowserGoalAgent`, `BrowserHostRuntime`, `NvideaCompositionRoot`, browser recovery surface, and relevant tests before changing code.
-- Re-confirmed the next authority-surface debt: `BrowserGoalAgent` still had a public convenience constructor accepting privileged `BrowserHostRuntime`, even though external callers already had a safer public `IBrowserGoalHost` constructor and raw-host creation had been made assembly-internal.
-- Changed only the concrete-host convenience constructor from `public` to `internal`. No goal-loop behavior, planner behavior, approval semantics, durable child sequencing, crash handling, or browser execution logic was removed or simplified.
-- Preserved the public `BrowserGoalAgent(IBrowserGoalHost, ...)` constructor so external consumers can still integrate a browser goal host through the least-authority contract.
-- Trusted `NvideaCompositionRoot.CreateBrowserGoalAgentAsync()` remains in the same Core assembly and can still use the concrete internal constructor with the existing raw host, preserving production composition behavior.
-- Added `tests/Nvidea.Core.Tests/BrowserGoalAgentApiSurfaceTests.cs` with reflection coverage that asserts: (1) no public constructor accepts `BrowserHostRuntime`, (2) a public constructor accepting `IBrowserGoalHost` remains, and (3) a non-public concrete-host path still exists for trusted Core/test composition.
+- Re-read this ledger completely and inspected the current repository head, recent commits/tree, `NvideaCompositionRoot`, `ResearchProductRuntime`, `ResearchJobRuntime`, `ResearchCloudExecutionCoordinator`, the worker, contract probe, browser recovery/local-state surfaces, and existing API-surface test conventions before changing code.
+- Re-confirmed that the composition root no longer exposes `ResearchJobRuntime`, but the concrete local-only runtime itself still had a public constructor. External product/plugin code could therefore instantiate it directly against the same state directory and intentionally bypass the lifecycle-aware `ResearchProductRuntime` facade.
+- Changed only `ResearchJobRuntime` construction from `public` to `internal`. The class and `CapabilityId` remain public because separate executable tooling references the capability identity; all local execution, recovery, cancellation, durable leases, replay protection, report/status reads, and provider behavior are unchanged.
+- Added XML documentation explaining that trusted Core composition owns the concrete runtime and that external callers should integrate through `ResearchProductRuntime` / `ILocalResearchRuntime`.
+- Added `tests/Nvidea.Core.Tests/ResearchJobRuntimeApiSurfaceTests.cs`. Reflection coverage asserts that the concrete local runtime has no public instance constructor, preserves the expected assembly-internal `(string, ResearchEngine, IAuditTrail?)` construction path for trusted Core/tests, still implements `ILocalResearchRuntime`, and keeps that least-authority interface public.
+- Inspected `ResearchCloudExecutionCoordinator` separately and intentionally left its public construction untouched: unlike `ResearchJobRuntime`, it is itself the constrained lifecycle boundary and revalidates exact authorization, durable state, private-data policy, and remote provenance before provider work.
 
 Commits this run:
-- `26f33ed49c506a351a0533ae6c092ca88e651d07` — narrow browser goal agent host constructor.
-- `34433561387be037e1c65b4897ecaf25b809a309` — lock browser goal agent authority boundary with reflection regression coverage.
+- `623258301bdce26c3218e883a26b16645a5d45b5` — narrow local research runtime construction.
+- `ad7f7c250f28b85ea31ac76e13eb68608fe103af` — lock local research runtime construction boundary with reflection coverage.
 
 Validation / evidence:
 - Repository identity was explicitly re-verified immediately before every GitHub mutation; every write targeted exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
-- Post-change source inspection confirms the `BrowserHostRuntime` constructor overload is `internal` and the `IBrowserGoalHost` overload remains `public`.
-- Post-change test source was re-read and covers both non-leakage and preservation of the safe public integration path.
-- `NvideaCompositionRoot.CreateBrowserGoalAgentAsync()` was inspected before the change and remains assembly-local to `Nvidea.Core`, so its existing construction path is compatible with the new accessibility boundary.
+- Post-change source inspection confirms `ResearchJobRuntime` keeps its full existing implementation but its constructor is now `internal`.
+- Post-change test source was re-read and verifies both non-public concrete construction and preservation of the public least-authority interface.
+- `NvideaCompositionRoot` remains in the same `Nvidea.Core` assembly and can continue constructing `ResearchJobRuntime` normally. `Nvidea.Worker` does not construct it, and the separate Nebius contract probe only references the public `ResearchJobRuntime.CapabilityId` in the inspected live-probe path.
 - The execution environment was checked again and has no usable `dotnet` binary, so Core compilation, WPF/XAML compilation, and test execution are **not claimed**.
 - No live Nebius credentials/resources were used and no GitHub Actions workflow was triggered merely to manufacture a green result.
 
 Security / privacy / failure review:
-- External Core consumers are no longer encouraged or able through normal public API construction to wire the goal loop directly to privileged `BrowserHostRuntime`; the least-authority `IBrowserGoalHost` contract is the public integration boundary.
-- Existing exact approval, download quarantine, durable-job sequencing, prompt-injection defenses, state leases, audit trail, emergency stop, and ambiguous-side-effect behavior are unchanged.
-- Trusted Core/test access remains intentionally assembly-scoped through the existing `InternalsVisibleTo` test configuration rather than reopening production authority solely for testability.
-- This is an API/least-authority boundary, not a process sandbox; fully trusted in-process reflection can still bypass ordinary .NET accessibility.
+- Product/plugin consumers can no longer obtain the concrete local runtime through ordinary public construction and use local execution/recovery/cancellation as an alternate authority path around remote lifecycle state.
+- The public `ILocalResearchRuntime` contract remains available for least-authority composition and test doubles; `ResearchProductRuntime` remains the intended durable product surface.
+- Existing remote replay prevention, exact cloud disclosure approval, state-directory mutation leases, private-data rejection, provider cancellation/reconciliation, and emergency-stop behavior are unchanged.
+- This is an assembly/API authority boundary, not a process sandbox; fully trusted in-process reflection can still bypass ordinary .NET accessibility.
 
 ## Known Blockers / Risks
 - No usable .NET 8 execution signal is available in this environment; current Core/WPF changes are not compiled or executed here.
@@ -86,4 +86,4 @@ Security / privacy / failure review:
 - The evidence pair proves reproducibility consistency, not third-party attestation.
 
 ## Single Best Next Task
-First obtain a .NET 8-capable execution signal and compile `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, and the Nebius contract tools; run the focused research, browser authority, browser integration and API-surface suites and fix every compile/XAML/runtime defect. If execution remains unavailable, continue the public Core authority audit and identify any remaining signatures that expose privileged concrete browser/research infrastructure or bypass capability approvals, lifecycle routing, or emergency-stop semantics; narrow only those surfaces while preserving the existing safe abstractions and trusted composition paths.
+First obtain a .NET 8-capable execution signal and compile `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, and the Nebius contract tools; run the focused research, browser authority, browser integration and API-surface suites and fix every compile/XAML/runtime defect. If execution remains unavailable, continue the public Core authority audit with the remaining low-level job/provider types, but only narrow constructors that are genuinely bypass-capable; preserve public constrained coordinators/protocol abstractions needed by the worker, contract tooling, and future cloud composition.

@@ -97,6 +97,93 @@ public partial class MainWindow
         }
     }
 
+    private async void ResearchDispatchButton_Click(object sender, RoutedEventArgs e)
+    {
+        var runtime = _root.Research;
+        if (runtime is null || _activeResearchJobId is not { } jobId || _researchRunning)
+            return;
+        if (!runtime.RemoteDispatchEnabled)
+        {
+            ResearchStatusText.Text = "New Nebius Serverless dispatch is locked in this desktop composition.";
+            return;
+        }
+
+        ResearchJobStatus reviewed;
+        try
+        {
+            reviewed = await runtime.GetStatusAsync(jobId);
+        }
+        catch (Exception)
+        {
+            ResearchStatusText.Text = "Research state could not be verified for cloud approval.";
+            return;
+        }
+
+        var reviewedUi = ProjectResearchUiState(reviewed);
+        if (!reviewedUi.DispatchEnabled || string.IsNullOrWhiteSpace(reviewed.CheckpointStep))
+        {
+            ResearchStatusText.Text = reviewed.ContainsPrivateOsData
+                ? "This research is classified as containing private OS-local data and must remain on-device."
+                : "The current durable research stage is not eligible for new Nebius dispatch.";
+            return;
+        }
+
+        var reviewedCheckpoint = reviewed.CheckpointStep;
+        var dialog = new ResearchCloudDispatchDialog(reviewed) { Owner = this };
+        if (dialog.ShowDialog() != true)
+        {
+            ResearchStatusText.Text = "Nebius dispatch was not approved; research remains local.";
+            return;
+        }
+
+        SetResearchRunning(true);
+        _researchCts?.Dispose();
+        _researchCts = new CancellationTokenSource();
+        try
+        {
+            // Consent is bound to what the user actually reviewed. Re-read durable state after the
+            // modal dialog so another process or prior operation cannot silently advance the scope.
+            var current = await runtime.GetStatusAsync(jobId, _researchCts.Token);
+            var stillEligible = current.State == AgentJobState.Pending
+                && current.ExecutionLocation == JobExecutionLocation.Local
+                && current.CanRunNextStep
+                && !current.RequiresRemoteReconciliation
+                && !current.ContainsPrivateOsData
+                && string.Equals(current.CheckpointStep, reviewedCheckpoint, StringComparison.Ordinal);
+            if (!stillEligible)
+            {
+                ResearchStatusText.Text = "Research changed after approval. No cloud authorization was used; review the current checkpoint again.";
+                return;
+            }
+
+            var authorization = new ResearchCloudAuthorization(
+                current.JobId,
+                current.CheckpointStep!,
+                Approved: true,
+                ResearchWorkItemProtector.DisclosureVersion,
+                DateTimeOffset.UtcNow);
+
+            var dispatched = await runtime.DispatchCurrentStageAsync(
+                current.JobId,
+                authorization,
+                cancellationToken: _researchCts.Token);
+            ApplyResearchStatus(dispatched);
+        }
+        catch (OperationCanceledException) when (_researchCts.IsCancellationRequested)
+        {
+            ResearchStatusText.Text = "Nebius dispatch stopped locally. Durable state must be refreshed/reconciled before any retry because provider acceptance may be ambiguous.";
+        }
+        catch (Exception)
+        {
+            ResearchStatusText.Text = "Nebius dispatch could not be confirmed. Durable state was retained; do not replay locally until its lifecycle is reviewed.";
+        }
+        finally
+        {
+            SetResearchRunning(false);
+            await RefreshResearchAsync();
+        }
+    }
+
     private async void ResearchReconcileButton_Click(object sender, RoutedEventArgs e)
     {
         var runtime = _root.Research;
@@ -254,6 +341,7 @@ public partial class MainWindow
         ResearchStartButton.IsEnabled = ui.StartEnabled;
         ResearchResumeButton.IsEnabled = ui.ResumeEnabled;
         ResearchResumeButton.Content = ui.ResumeLabel;
+        ResearchDispatchButton.IsEnabled = ui.DispatchEnabled;
         ResearchReconcileButton.IsEnabled = ui.ReconcileEnabled;
         ResearchCancelButton.IsEnabled = ui.CancelEnabled;
     }

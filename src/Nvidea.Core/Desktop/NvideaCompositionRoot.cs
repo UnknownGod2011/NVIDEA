@@ -113,10 +113,12 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
                         configuration,
                         () =>
                         {
-                            var objectStorage = new NebiusObjectStorageClient(configuration.ObjectStorageOptions);
+                            NebiusObjectStorageClient? objectStorage = null;
+                            HttpClient? serverlessHttp = null;
                             try
                             {
-                                var serverlessHttp = new HttpClient();
+                                objectStorage = new NebiusObjectStorageClient(configuration.ObjectStorageOptions);
+                                serverlessHttp = new HttpClient();
                                 var transport = new S3ProtectedResearchTransport(objectStorage);
                                 var serverless = new NebiusServerlessJobClient(
                                     serverlessHttp,
@@ -129,7 +131,8 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
                             }
                             catch
                             {
-                                objectStorage.Dispose();
+                                serverlessHttp?.Dispose();
+                                objectStorage?.Dispose();
                                 throw;
                             }
                         });

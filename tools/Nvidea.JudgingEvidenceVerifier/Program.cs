@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Nvidea.Core.Jobs;
+using Nvidea.Core.Nebius;
 
 namespace Nvidea.JudgingEvidenceVerifier;
 
@@ -10,6 +11,8 @@ internal static class Program
 {
     private const int MaximumArtifactLength = 256 * 1024;
     private const int MaximumJsonDepth = 32;
+    private static readonly TimeSpan MaximumCatalogAge = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan MaximumFutureClockSkew = TimeSpan.FromMinutes(2);
 
     private static readonly string[] RequiredPositiveChecks =
     [
@@ -55,6 +58,7 @@ internal static class Program
             var adversarialArtifact = ReadArtifact(options.AdversarialPath, "adversarial evaluator evidence");
             var manifestArtifact = ReadArtifact(options.NebiusManifestPath, "Nebius deployment manifest");
             var passArtifact = ReadArtifact(options.NebiusPassPath, "Nebius live PASS evidence");
+            var catalogArtifact = ReadArtifact(options.NebiusCatalogPath, "Nebius model catalog evidence");
 
             var positive = Deserialize<PositiveEvidence>(positiveArtifact.Bytes, "positive evaluator evidence");
             var adversarial = Deserialize<AdversarialEvidence>(adversarialArtifact.Bytes, "adversarial evaluator evidence");
@@ -67,38 +71,44 @@ internal static class Program
                 Encoding.UTF8.GetString(manifestArtifact.Bytes),
                 Encoding.UTF8.GetString(passArtifact.Bytes));
 
+            var catalog = Deserialize<ModelCatalogEvidence>(catalogArtifact.Bytes, "Nebius model catalog evidence");
+            var catalogSummary = ValidateModelCatalogEvidence(catalog, DateTimeOffset.UtcNow, catalogArtifact.Sha256);
+
             var summary = new JudgeEvidenceSummary(
-                SchemaVersion: 1,
+                SchemaVersion: 2,
                 OverallPassed: true,
                 EvidenceBoundary: new EvidenceBoundary(
                     SyntheticEvidenceVerified: true,
                     LiveNebiusEvidenceVerified: true,
+                    CurrentNebiusModelCatalogVerified: true,
                     ClaimsExcluded:
                     [
                         "Synthetic evaluator PASS does not prove live Tavily, Playwright, WPF, speech, Ollama, Object Storage, or Serverless health.",
-                        "Nebius live PASS verifies the supplied deployment fingerprint and recorded research evidence only; it is not third-party attestation."
+                        "Nebius live PASS verifies the supplied deployment fingerprint and recorded research evidence only; it is not third-party attestation.",
+                        "Fresh live model-catalog evidence proves configured model IDs were listed recently; it does not prove quota, feature support, or inference success."
                     ]),
                 PositiveEvaluator: new EvaluatorSummary(
                     "synthetic",
                     positive.GeneratedAt,
-                    positive.Checks.Count,
+                    positive.Checks!.Count,
                     positive.Checks.Select(static check => check.Id).Order(StringComparer.Ordinal).ToArray(),
                     positiveArtifact.Sha256),
                 AdversarialEvaluator: new EvaluatorSummary(
                     "synthetic",
                     adversarial.GeneratedAt,
-                    adversarial.Checks.Count,
+                    adversarial.Checks!.Count,
                     adversarial.Checks.Select(static check => check.Id).Order(StringComparer.Ordinal).ToArray(),
                     adversarialArtifact.Sha256),
                 NebiusLiveEvidence: new NebiusSummary(
-                    "live",
+                    "provider-live",
                     nebius.CompletedAtUtc,
                     nebius.DeploymentFingerprintSha256,
                     nebius.RemoteStageCount,
                     nebius.EvidenceItemCount,
                     nebius.ValidatedCitationCount,
                     manifestArtifact.Sha256,
-                    passArtifact.Sha256));
+                    passArtifact.Sha256),
+                NebiusModelCatalog: catalogSummary);
 
             var json = JsonSerializer.Serialize(summary, new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true });
             Console.WriteLine(json);
@@ -108,10 +118,64 @@ internal static class Program
         }
         catch (Exception exception) when (exception is InvalidDataException or ArgumentException or IOException or UnauthorizedAccessException or NotSupportedException or JsonException)
         {
-            var failure = new FailureSummary(1, false, SanitizeFailure(exception.Message));
+            var failure = new FailureSummary(2, false, SanitizeFailure(exception.Message));
             Console.Error.WriteLine(JsonSerializer.Serialize(failure, new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
             return 1;
         }
+    }
+
+    internal static CatalogSummary ValidateModelCatalogEvidence(ModelCatalogEvidence catalog, DateTimeOffset now, string artifactSha256)
+    {
+        ArgumentNullException.ThrowIfNull(catalog);
+        if (!string.Equals(catalog.SchemaVersion, "nvidea.nebius-model-catalog-check.v1", StringComparison.Ordinal))
+            throw new InvalidDataException("The Nebius model catalog evidence schema version is unsupported.");
+        if (!string.Equals(catalog.Mode, "live", StringComparison.Ordinal))
+            throw new InvalidDataException("Current Nebius readiness requires live model catalog evidence; captured catalog evidence is not sufficient.");
+        if (!catalog.Passed)
+            throw new InvalidDataException("The Nebius model catalog evidence did not pass.");
+        if (catalog.ObservedAtUtc == default)
+            throw new InvalidDataException("The Nebius model catalog observation timestamp is invalid.");
+        if (catalog.ObservedAtUtc > now + MaximumFutureClockSkew)
+            throw new InvalidDataException("The Nebius model catalog observation timestamp is too far in the future.");
+        if (now - catalog.ObservedAtUtc > MaximumCatalogAge)
+            throw new InvalidDataException("The Nebius model catalog evidence is stale; run a fresh live catalog check immediately before judging.");
+        if (!IsLowerHexSha256(catalog.CatalogSha256))
+            throw new InvalidDataException("The Nebius model catalog SHA-256 is invalid.");
+        if (catalog.CatalogModelCount is null or <= 0 or > 2048)
+            throw new InvalidDataException("The Nebius model catalog count is invalid.");
+        if (!IsTrustedNebiusHost(catalog.EndpointHost))
+            throw new InvalidDataException("The Nebius model catalog endpoint host is not trusted.");
+        if (catalog.FailureCodes is null || catalog.FailureCodes.Count != 0)
+            throw new InvalidDataException("Passing Nebius model catalog evidence must not contain failure codes.");
+        if (catalog.RequiredModels is null || catalog.RequiredModels.Count != 3)
+            throw new InvalidDataException("The Nebius model catalog evidence must contain exactly three required model tiers.");
+
+        var expected = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["fast"] = EnvironmentOrDefault("NVIDEA_MODEL_FAST", NebiusOptions.VerifiedNemotronNanoModel),
+            ["standard"] = EnvironmentOrDefault("NVIDEA_MODEL_STANDARD", NebiusOptions.VerifiedNemotronSuperModel),
+            ["deep"] = EnvironmentOrDefault("NVIDEA_MODEL_DEEP", NebiusOptions.VerifiedNemotronUltraModel)
+        };
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var required in catalog.RequiredModels)
+        {
+            if (string.IsNullOrWhiteSpace(required.Tier) || !seen.Add(required.Tier) || !expected.TryGetValue(required.Tier, out var expectedModel))
+                throw new InvalidDataException("The Nebius model catalog evidence contains an invalid or duplicate required tier.");
+            if (!required.Present || !string.Equals(required.Model, expectedModel, StringComparison.Ordinal))
+                throw new InvalidDataException("The Nebius model catalog evidence does not match the currently configured Nemotron tiers.");
+        }
+        if (seen.Count != expected.Count)
+            throw new InvalidDataException("The Nebius model catalog evidence is missing a configured Nemotron tier.");
+
+        return new CatalogSummary(
+            EvidenceClass: "provider-live-readiness",
+            ObservedAtUtc: catalog.ObservedAtUtc,
+            MaximumAgeSeconds: (int)MaximumCatalogAge.TotalSeconds,
+            EndpointHost: catalog.EndpointHost!,
+            CatalogSha256: catalog.CatalogSha256!,
+            CatalogModelCount: catalog.CatalogModelCount.Value,
+            RequiredModels: catalog.RequiredModels.OrderBy(static item => item.Tier, StringComparer.Ordinal).ToArray(),
+            ArtifactSha256: artifactSha256);
     }
 
     private static void ValidateEvaluator(
@@ -216,6 +280,30 @@ internal static class Program
         }
     }
 
+    private static bool IsTrustedNebiusHost(string? host) =>
+        !string.IsNullOrWhiteSpace(host)
+        && (string.Equals(host, "nebius.com", StringComparison.OrdinalIgnoreCase)
+            || host.EndsWith(".nebius.com", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsLowerHexSha256(string? value)
+    {
+        if (value is null || value.Length != 64)
+            return false;
+        foreach (var character in value)
+        {
+            if (character is >= '0' and <= '9' or >= 'a' and <= 'f')
+                continue;
+            return false;
+        }
+        return true;
+    }
+
+    private static string EnvironmentOrDefault(string name, string fallback)
+    {
+        var value = Environment.GetEnvironmentVariable(name);
+        return string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+    }
+
     private static async Task WriteAtomicAsync(string path, string content)
     {
         if (string.IsNullOrWhiteSpace(path))
@@ -250,11 +338,11 @@ internal static class Program
 
     private static Options ParseArguments(string[] args)
     {
-        if (args.Length is not 4 and not 6)
-            throw new ArgumentException("Expected four evidence paths and optional --output <path>. Use --help for usage.");
-        if (args.Length == 6 && (!string.Equals(args[4], "--output", StringComparison.Ordinal) || string.IsNullOrWhiteSpace(args[5])))
+        if (args.Length is not 5 and not 7)
+            throw new ArgumentException("Expected five evidence paths and optional --output <path>. Use --help for usage.");
+        if (args.Length == 7 && (!string.Equals(args[5], "--output", StringComparison.Ordinal) || string.IsNullOrWhiteSpace(args[6])))
             throw new ArgumentException("Optional arguments must be --output <path>.");
-        return new Options(args[0], args[1], args[2], args[3], args.Length == 6 ? args[5] : null);
+        return new Options(args[0], args[1], args[2], args[3], args[4], args.Length == 7 ? args[6] : null);
     }
 
     private static string SanitizeFailure(string message)
@@ -265,19 +353,22 @@ internal static class Program
 
     private static void PrintUsage()
     {
-        Console.WriteLine("Usage: Nvidea.JudgingEvidenceVerifier <positive-eval.json> <adversarial-eval.json> <nebius-manifest.json> <nebius-pass.json> [--output <summary.json>]");
-        Console.WriteLine("Verifies exact evaluator check sets, PASS state, bounded strict JSON, duplicate-property rejection, SHA-256 artifact hashes, and matching Nebius live deployment evidence.");
-        Console.WriteLine("The emitted summary contains no artifact paths, evaluator details, credentials, provider errors, research payloads, or secrets.");
+        Console.WriteLine("Usage: Nvidea.JudgingEvidenceVerifier <positive-eval.json> <adversarial-eval.json> <nebius-manifest.json> <nebius-pass.json> <nebius-live-model-catalog.json> [--output <summary.json>]");
+        Console.WriteLine("Verifies exact evaluator check sets, matching Nebius live deployment evidence, and a fresh live model-catalog PASS for the currently configured Nemotron tiers.");
+        Console.WriteLine("Captured or stale model-catalog evidence is rejected as proof of current provider readiness.");
     }
 
-    private sealed record Options(string PositivePath, string AdversarialPath, string NebiusManifestPath, string NebiusPassPath, string? OutputPath);
+    private sealed record Options(string PositivePath, string AdversarialPath, string NebiusManifestPath, string NebiusPassPath, string NebiusCatalogPath, string? OutputPath);
     private sealed record Artifact(byte[] Bytes, string Sha256);
     private sealed record EvalCheck(string Id, bool Passed, string? Detail);
     private sealed record PositiveEvidence(int SchemaVersion, DateTimeOffset GeneratedAt, bool OverallPassed, IReadOnlyList<EvalCheck>? Checks, JsonElement Metrics);
     private sealed record AdversarialEvidence(int SchemaVersion, DateTimeOffset GeneratedAt, bool OverallPassed, IReadOnlyList<EvalCheck>? Checks);
-    private sealed record EvidenceBoundary(bool SyntheticEvidenceVerified, bool LiveNebiusEvidenceVerified, IReadOnlyList<string> ClaimsExcluded);
+    internal sealed record RequiredModelEvidence(string Tier, string Model, bool Present);
+    internal sealed record ModelCatalogEvidence(string SchemaVersion, DateTimeOffset ObservedAtUtc, string Mode, bool Passed, string? CatalogSha256, int? CatalogModelCount, string? EndpointHost, IReadOnlyList<RequiredModelEvidence>? RequiredModels, IReadOnlyList<string>? FailureCodes);
+    private sealed record EvidenceBoundary(bool SyntheticEvidenceVerified, bool LiveNebiusEvidenceVerified, bool CurrentNebiusModelCatalogVerified, IReadOnlyList<string> ClaimsExcluded);
     private sealed record EvaluatorSummary(string EvidenceClass, DateTimeOffset GeneratedAt, int CheckCount, IReadOnlyList<string> CheckIds, string ArtifactSha256);
     private sealed record NebiusSummary(string EvidenceClass, DateTimeOffset CompletedAt, string DeploymentFingerprintSha256, int RemoteStageCount, int EvidenceItemCount, int ValidatedCitationCount, string ManifestSha256, string PassEvidenceSha256);
-    private sealed record JudgeEvidenceSummary(int SchemaVersion, bool OverallPassed, EvidenceBoundary EvidenceBoundary, EvaluatorSummary PositiveEvaluator, EvaluatorSummary AdversarialEvaluator, NebiusSummary NebiusLiveEvidence);
+    internal sealed record CatalogSummary(string EvidenceClass, DateTimeOffset ObservedAtUtc, int MaximumAgeSeconds, string EndpointHost, string CatalogSha256, int CatalogModelCount, IReadOnlyList<RequiredModelEvidence> RequiredModels, string ArtifactSha256);
+    private sealed record JudgeEvidenceSummary(int SchemaVersion, bool OverallPassed, EvidenceBoundary EvidenceBoundary, EvaluatorSummary PositiveEvaluator, EvaluatorSummary AdversarialEvaluator, NebiusSummary NebiusLiveEvidence, CatalogSummary NebiusModelCatalog);
     private sealed record FailureSummary(int SchemaVersion, bool OverallPassed, string Failure);
 }

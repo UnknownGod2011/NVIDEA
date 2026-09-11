@@ -93,7 +93,8 @@ public sealed class PersonalMemoryService : IDisposable
                 UpdatedAt = now,
                 LastAccessedAt = now,
                 ExpiresAt = CalculateExpiry(request.Retention, now),
-                Embedding = embedding,
+                Embedding = embedding?.Vector,
+                EmbeddingProvenance = embedding?.Provenance,
             };
 
             _memories[record.Id] = record;
@@ -281,18 +282,19 @@ public sealed class PersonalMemoryService : IDisposable
     private MemorySearchResult Score(
         MemoryRecord memory,
         string query,
-        IReadOnlyList<float>? queryEmbedding,
+        MemoryEmbeddingVector? queryEmbedding,
         DateTimeOffset now)
     {
         var lexical = LexicalSimilarity(query, memory);
-        var semantic = queryEmbedding is null || memory.Embedding is null
-            ? 0
-            : CosineSimilarity(queryEmbedding, memory.Embedding);
+        var semantic = CanCompareEmbeddings(queryEmbedding, memory)
+            ? CosineSimilarity(queryEmbedding!.Vector, memory.Embedding!)
+            : 0;
         var ageDays = Math.Max(0, (now - memory.UpdatedAt).TotalDays);
         var recency = Math.Exp(-Math.Log(2) * ageDays / 30.0);
         var confidenceFactor = 0.7 + (0.3 * memory.Confidence);
 
-        var score = queryEmbedding is not null && memory.Embedding is not null
+        var hasComparableEmbedding = CanCompareEmbeddings(queryEmbedding, memory);
+        var score = hasComparableEmbedding
             ? (0.45 * Math.Max(0, semantic)) + (0.20 * lexical) + (0.20 * recency) + (0.15 * memory.Importance)
             : (0.50 * lexical) + (0.30 * recency) + (0.20 * memory.Importance);
 
@@ -312,15 +314,28 @@ public sealed class PersonalMemoryService : IDisposable
         return semanticAvailable && result.SemanticScore >= 0.15;
     }
 
-    private async Task<IReadOnlyList<float>?> TryEmbedAsync(string text, CancellationToken cancellationToken)
+    private async Task<MemoryEmbeddingVector?> TryEmbedAsync(string text, CancellationToken cancellationToken)
     {
         if (_embeddingProvider is null || string.IsNullOrWhiteSpace(text))
             return null;
 
         try
         {
-            var result = await _embeddingProvider.EmbedAsync(text, cancellationToken).ConfigureAwait(false);
-            return result.Count == 0 ? null : result;
+            if (_embeddingProvider is IProvenancedMemoryEmbeddingProvider provenanced)
+                return ValidateEmbedding(await provenanced.EmbedWithMetadataAsync(text, cancellationToken).ConfigureAwait(false));
+
+            var vector = await _embeddingProvider.EmbedAsync(text, cancellationToken).ConfigureAwait(false);
+            if (vector.Count == 0)
+                return null;
+
+            return ValidateEmbedding(new MemoryEmbeddingVector(
+                vector,
+                new MemoryEmbeddingProvenance(
+                    Provider: "unprovenanced",
+                    Model: _embeddingProvider.GetType().FullName ?? _embeddingProvider.GetType().Name,
+                    Dimensions: vector.Count,
+                    IsLocal: false,
+                    CreatedAt: _timeProvider.GetUtcNow())));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -331,6 +346,30 @@ public sealed class PersonalMemoryService : IDisposable
             // Memory remains usable with deterministic lexical/recency retrieval when embeddings are temporarily unavailable.
             return null;
         }
+    }
+
+    private static MemoryEmbeddingVector? ValidateEmbedding(MemoryEmbeddingVector embedding)
+    {
+        if (embedding.Vector.Count == 0 || embedding.Provenance.Dimensions != embedding.Vector.Count)
+            return null;
+        if (string.IsNullOrWhiteSpace(embedding.Provenance.Provider) || string.IsNullOrWhiteSpace(embedding.Provenance.Model))
+            return null;
+        if (embedding.Vector.Any(value => !float.IsFinite(value)))
+            return null;
+        return embedding;
+    }
+
+    private static bool CanCompareEmbeddings(MemoryEmbeddingVector? queryEmbedding, MemoryRecord memory)
+    {
+        if (queryEmbedding is null || memory.Embedding is null || memory.EmbeddingProvenance is null)
+            return false;
+        var queryProvenance = queryEmbedding.Provenance;
+        var memoryProvenance = memory.EmbeddingProvenance;
+        return queryEmbedding.Vector.Count == memory.Embedding.Count &&
+               queryProvenance.Dimensions == queryEmbedding.Vector.Count &&
+               memoryProvenance.Dimensions == memory.Embedding.Count &&
+               string.Equals(queryProvenance.Provider, memoryProvenance.Provider, StringComparison.Ordinal) &&
+               string.Equals(queryProvenance.Model, memoryProvenance.Model, StringComparison.Ordinal);
     }
 
     private static double LexicalSimilarity(string query, MemoryRecord memory)

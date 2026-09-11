@@ -25,6 +25,14 @@ public enum MemoryRetention
     Indefinite,
 }
 
+public enum MemoryEmbeddingMigrationReason
+{
+    MissingEmbedding,
+    MissingProvenance,
+    StaleEmbeddingSpace,
+    ForcedRefresh,
+}
+
 public sealed record MemoryProvenance(
     string SourceType,
     string? SourceId = null,
@@ -41,6 +49,47 @@ public sealed record MemoryEmbeddingProvenance(
 public sealed record MemoryEmbeddingVector(
     IReadOnlyList<float> Vector,
     MemoryEmbeddingProvenance Provenance);
+
+public sealed record MemoryEmbeddingMigrationTarget(
+    string Provider,
+    string Model,
+    bool IsLocal,
+    int? ExpectedDimensions = null);
+
+public sealed record MemoryEmbeddingMigrationOptions
+{
+    public int BatchSize { get; init; } = 8;
+    public bool IncludeSensitive { get; init; }
+    public bool IncludeRestricted { get; init; }
+    public bool ForceReembedCurrent { get; init; }
+}
+
+public sealed record MemoryEmbeddingMigrationCandidate(
+    string Id,
+    MemoryLayer Layer,
+    MemorySensitivity Sensitivity,
+    MemoryEmbeddingMigrationReason Reason);
+
+public sealed record MemoryEmbeddingMigrationPlan(
+    MemoryEmbeddingMigrationTarget Target,
+    IReadOnlyList<MemoryEmbeddingMigrationCandidate> Candidates,
+    int ExcludedSensitive,
+    int ExcludedRestricted)
+{
+    public int TotalCandidates => Candidates.Count;
+}
+
+public sealed record MemoryEmbeddingMigrationProgress(
+    int Total,
+    int Processed,
+    int Updated,
+    int SkippedConcurrentChanges,
+    string? LastProcessedId);
+
+public sealed record MemoryEmbeddingMigrationResult(
+    int Planned,
+    int Updated,
+    int SkippedConcurrentChanges);
 
 public sealed record MemoryRecord
 {
@@ -121,6 +170,12 @@ public interface IMemoryBatchEmbeddingProvider : IProvenancedMemoryEmbeddingProv
     Task<IReadOnlyList<MemoryEmbeddingVector>> EmbedBatchWithMetadataAsync(
         IReadOnlyList<string> texts,
         CancellationToken cancellationToken = default);
+}
+
+public interface IMemoryEmbeddingMigrationProvider : IMemoryBatchEmbeddingProvider
+{
+    MemoryEmbeddingMigrationTarget MigrationTarget { get; }
+    bool IsCurrentEmbedding(MemoryEmbeddingProvenance provenance);
 }
 
 public interface IMemoryStore

@@ -47,7 +47,7 @@ internal sealed class SystemSpeechLocalTranscriber : ILocalVoiceTranscriber
             completion.TrySetResult(new LocalVoiceTranscript(
                 result.Text,
                 result.Confidence,
-                result.Culture?.Name ?? _recognizer.Culture.Name));
+                _recognizer.Culture.Name));
         };
 
         completedHandler = (_, args) =>

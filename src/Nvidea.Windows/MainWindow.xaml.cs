@@ -53,6 +53,8 @@ public partial class MainWindow : Window
     {
         _browserActionCts?.Cancel();
         _browserActionCts?.Dispose();
+        _memoryMigrationCts?.Cancel();
+        _memoryMigrationCts?.Dispose();
         _root.Session.StatusChanged -= Session_StatusChanged;
         var handle = new WindowInteropHelper(this).Handle;
         if (handle != IntPtr.Zero)
@@ -78,7 +80,7 @@ public partial class MainWindow : Window
 
     private async void InvokeButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_running || _browserRunning || string.IsNullOrWhiteSpace(PromptBox.Text))
+        if (_running || _browserRunning || _memoryMigrationRunning || string.IsNullOrWhiteSpace(PromptBox.Text))
             return;
 
         var allowClipboard = ClipboardCheck.IsChecked == true;
@@ -122,7 +124,7 @@ public partial class MainWindow : Window
 
     private async void BrowserButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_running || _browserRunning)
+        if (_running || _browserRunning || _memoryMigrationRunning)
             return;
 
         if (!Uri.TryCreate(BrowserUrlBox.Text.Trim(), UriKind.Absolute, out var destination)
@@ -186,7 +188,7 @@ public partial class MainWindow : Window
 
     private async void RecoveryButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_running || _browserRunning || _recoveryCandidate is null)
+        if (_running || _browserRunning || _memoryMigrationRunning || _recoveryCandidate is null)
             return;
 
         _browserActionCts?.Dispose();
@@ -285,12 +287,13 @@ public partial class MainWindow : Window
     private void StopButton_Click(object sender, RoutedEventArgs e)
     {
         _browserActionCts?.Cancel();
+        _memoryMigrationCts?.Cancel();
         _ = _root.Session.EmergencyStop();
     }
 
     private void Session_StatusChanged(object? sender, DesktopAgentStatus status)
     {
-        if (_browserRunning)
+        if (_browserRunning || _memoryMigrationRunning)
             return;
 
         Dispatcher.InvokeAsync(() =>
@@ -322,7 +325,7 @@ public partial class MainWindow : Window
 
     private void UpdateBusyControls()
     {
-        var busy = _running || _browserRunning;
+        var busy = _running || _browserRunning || _memoryMigrationRunning;
         InvokeButton.IsEnabled = !busy;
         BrowserButton.IsEnabled = !busy;
         BrowserUrlBox.IsEnabled = !busy;
@@ -331,6 +334,7 @@ public partial class MainWindow : Window
         ClipboardCheck.IsEnabled = !busy;
         RecoveryButton.IsEnabled = !busy && _recoveryCandidate is not null;
         StopButton.IsEnabled = busy;
+        UpdateMemoryMaintenanceControls();
     }
 
     private void UpdateContextLabel(DesktopContext context)

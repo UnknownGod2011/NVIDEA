@@ -113,9 +113,9 @@ internal static class Program
             !string.IsNullOrWhiteSpace(command.Label) &&
             !string.IsNullOrWhiteSpace(command.Command) &&
             IsSafeRelativePath(command.ProjectPath) &&
-            command.Command.Contains(command.ProjectPath.Replace('/', Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase) ||
-            command.Command.Contains(command.ProjectPath, StringComparison.OrdinalIgnoreCase));
-        checks.Add(Check("demo-commands", commandsValid, "Every demo command must reference its declared project path."));
+            (command.Command.Contains(command.ProjectPath.Replace('/', Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase) ||
+             command.Command.Contains(command.ProjectPath, StringComparison.OrdinalIgnoreCase)));
+        checks.Add(Check("demo-commands", commandsValid, "Every demo command must have a label, use a safe project path, and reference that declared project path."));
 
         var secretFree = EnumerateManifestStrings(manifest).All(static value => !LooksLikeSecret(value));
         checks.Add(Check("manifest-secret-scan", secretFree, "Manifest must not contain private keys, bearer tokens, API-key assignments, or common secret prefixes."));
@@ -160,9 +160,20 @@ internal static class Program
 
     private static bool IsSafeRelativePath(string? path)
     {
-        if (string.IsNullOrWhiteSpace(path) || Path.IsPathRooted(path)) return false;
+        if (string.IsNullOrWhiteSpace(path) || path.Any(char.IsControl)) return false;
+
         var normalized = path.Replace('\\', '/');
-        return normalized.Split('/', StringSplitOptions.RemoveEmptyEntries).All(static segment => segment != "..");
+        if (normalized.StartsWith('/', StringComparison.Ordinal) ||
+            normalized.StartsWith("//", StringComparison.Ordinal) ||
+            Path.IsPathRooted(path))
+            return false;
+
+        var segments = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length == 0) return false;
+
+        return segments.All(static segment =>
+            segment is not "." and not ".." &&
+            !segment.Contains(':', StringComparison.Ordinal));
     }
 
     private static bool PathExists(string repoRoot, string relativePath)
@@ -186,7 +197,43 @@ internal static class Program
     {
         using var document = JsonDocument.Parse(bytes, new JsonDocumentOptions { AllowTrailingCommas = false, CommentHandling = JsonCommentHandling.Disallow, MaxDepth = MaximumJsonDepth });
         RejectDuplicateProperties(document.RootElement);
-        return JsonSerializer.Deserialize<DemoManifest>(bytes, StrictJson) ?? throw new InvalidDataException("Demo manifest is empty or invalid.");
+        var manifest = JsonSerializer.Deserialize<DemoManifest>(bytes, StrictJson) ?? throw new InvalidDataException("Demo manifest is empty or invalid.");
+        EnsureManifestShape(manifest);
+        return manifest;
+    }
+
+    private static void EnsureManifestShape(DemoManifest manifest)
+    {
+        if (string.IsNullOrWhiteSpace(manifest.Title) || manifest.Title.Length > 256)
+            throw new InvalidDataException("Demo manifest title is required and must be at most 256 characters.");
+        if (manifest.Beats is null || manifest.Commands is null)
+            throw new InvalidDataException("Demo manifest beats and commands are required arrays.");
+        if (manifest.Beats.Count > 64 || manifest.Commands.Count > 64)
+            throw new InvalidDataException("Demo manifest contains too many beats or commands.");
+
+        foreach (var beat in manifest.Beats)
+        {
+            if (beat is null || beat.FeaturePaths is null || beat.Evidence is null)
+                throw new InvalidDataException("Each demo beat and its featurePaths/evidence arrays are required.");
+            if (string.IsNullOrWhiteSpace(beat.Label) || string.IsNullOrWhiteSpace(beat.JudgeClaim))
+                throw new InvalidDataException("Each demo beat requires a label and judge claim.");
+            if (beat.FeaturePaths.Count > 64 || beat.Evidence.Count > 64)
+                throw new InvalidDataException("A demo beat contains too many feature paths or evidence references.");
+            if (beat.FeaturePaths.Any(string.IsNullOrWhiteSpace))
+                throw new InvalidDataException("Demo feature paths cannot be empty.");
+
+            foreach (var evidence in beat.Evidence)
+            {
+                if (evidence is null || string.IsNullOrWhiteSpace(evidence.EvidenceClass) || string.IsNullOrWhiteSpace(evidence.Path) || string.IsNullOrWhiteSpace(evidence.Claim))
+                    throw new InvalidDataException("Each evidence reference requires class, path, and claim.");
+            }
+        }
+
+        foreach (var command in manifest.Commands)
+        {
+            if (command is null || string.IsNullOrWhiteSpace(command.Label) || string.IsNullOrWhiteSpace(command.ProjectPath) || string.IsNullOrWhiteSpace(command.Command))
+                throw new InvalidDataException("Each demo command requires label, projectPath, and command.");
+        }
     }
 
     private static void RejectDuplicateProperties(JsonElement element)

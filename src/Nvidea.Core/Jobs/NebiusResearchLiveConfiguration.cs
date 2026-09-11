@@ -33,6 +33,13 @@ public static class NebiusResearchLiveConfigurationLoader
     {
         ArgumentNullException.ThrowIfNull(environmentReader);
 
+        // Establish the static-credential destination boundary before reading any Object Storage
+        // access-key material. This keeps a tampered endpoint/region pair from causing credential
+        // variables to be touched at all.
+        var objectStorageEndpoint = RequiredEnvironment(environmentReader, "NVIDEA_LIVE_OBJECT_STORAGE_ENDPOINT");
+        var objectStorageRegion = RequiredEnvironment(environmentReader, "NVIDEA_LIVE_OBJECT_STORAGE_REGION");
+        ValidateObjectStorageEndpointAndRegion(objectStorageEndpoint, objectStorageRegion);
+
         var serverlessAccessToken = RequiredEnvironment(environmentReader, "NVIDEA_LIVE_SERVERLESS_ACCESS_TOKEN");
         var projectId = RequiredEnvironment(environmentReader, "NVIDEA_LIVE_SERVERLESS_PROJECT_ID");
         var workerImage = RequiredEnvironment(environmentReader, "NVIDEA_LIVE_WORKER_IMAGE");
@@ -50,8 +57,8 @@ public static class NebiusResearchLiveConfigurationLoader
         var clientPrivateKeyPem = ReadRequiredPemFile(environmentReader, "NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE");
 
         var objectStorageOptions = new NebiusObjectStorageClientOptions(
-            Endpoint: RequiredEnvironment(environmentReader, "NVIDEA_LIVE_OBJECT_STORAGE_ENDPOINT"),
-            Region: RequiredEnvironment(environmentReader, "NVIDEA_LIVE_OBJECT_STORAGE_REGION"),
+            Endpoint: objectStorageEndpoint,
+            Region: objectStorageRegion,
             Bucket: RequiredEnvironment(environmentReader, "NVIDEA_LIVE_OBJECT_STORAGE_BUCKET"),
             AccessKeyId: RequiredEnvironment(environmentReader, "NVIDEA_LIVE_OBJECT_STORAGE_ACCESS_KEY_ID"),
             SecretAccessKey: RequiredEnvironment(environmentReader, "NVIDEA_LIVE_OBJECT_STORAGE_SECRET_ACCESS_KEY"),
@@ -139,6 +146,35 @@ public static class NebiusResearchLiveConfigurationLoader
             BoundedInt32(environmentReader, "NVIDEA_LIVE_POLL_SECONDS", 5, 1, 30),
             BoundedInt32(environmentReader, "NVIDEA_LIVE_TOTAL_TIMEOUT_MINUTES", 20, 2, 60),
             question);
+    }
+
+    internal static void ValidateObjectStorageEndpointAndRegion(string endpointValue, string region)
+    {
+        if (string.IsNullOrWhiteSpace(region)
+            || region.Length > 64
+            || region.Any(static ch => !(char.IsLower(ch) || char.IsDigit(ch) || ch == '-'))
+            || region[0] == '-'
+            || region[^1] == '-')
+        {
+            throw new InvalidOperationException("NVIDEA_LIVE_OBJECT_STORAGE_REGION must be a bounded Nebius region identifier.");
+        }
+
+        if (!Uri.TryCreate(endpointValue, UriKind.Absolute, out var endpoint)
+            || endpoint.Scheme != Uri.UriSchemeHttps
+            || !string.IsNullOrEmpty(endpoint.UserInfo)
+            || endpoint.Port != 443
+            || !string.IsNullOrEmpty(endpoint.Query)
+            || !string.IsNullOrEmpty(endpoint.Fragment)
+            || endpoint.AbsolutePath != "/")
+        {
+            throw new InvalidOperationException("NVIDEA_LIVE_OBJECT_STORAGE_ENDPOINT must be the trusted HTTPS regional Nebius Object Storage origin on port 443.");
+        }
+
+        var expectedHost = $"storage.{region}.nebius.cloud";
+        if (!string.Equals(endpoint.Host, expectedHost, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("NVIDEA_LIVE_OBJECT_STORAGE_ENDPOINT must match NVIDEA_LIVE_OBJECT_STORAGE_REGION.");
+        }
     }
 
     public static string RequiredEnvironment(Func<string, string?> environmentReader, string name)

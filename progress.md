@@ -13,7 +13,7 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 ## Current Product / Architecture State
 - .NET 8 core in `src/Nvidea.Core`; WPF host in `src/Nvidea.Windows`; deployable remote worker in `src/Nvidea.Worker`.
 - NVIDIA Nemotron through Nebius Token Factory with structured reasoning/tool boundaries, retries, timeout/cancellation, and conservative routing.
-- Layered personal memory with privacy-aware writes, durable provenance, hybrid lexical/semantic/recency/importance retrieval, edit/delete/retention controls, deterministic fallback, retrieval-quality fixtures, loopback-only Ollama embeddings, vector-space provenance isolation, and local-only migration/re-index maintenance.
+- Layered personal memory with privacy-aware writes, durable provenance, hybrid lexical/semantic/recency/importance retrieval, local Ollama embeddings, vector-space provenance isolation, and local-only migration/re-index maintenance.
 - Tavily Search + Extract research with canonical deduplication, quality/freshness/diversity ranking, untrusted-evidence boundaries, machine-verifiable citations, and restart-safe staged checkpoints.
 - Safe browser agent includes persistent Chromium state, popup/new-tab tracking, plan/act/observe/verify execution, prompt-injection detection, consequential-action gates, durable download quarantine, emergency stop, and crash recovery.
 - Browser pages flagged by the Playwright prompt-injection detector require explicit approval for state-changing Navigate/Click/Type/Select/Download actions; Read/Back/Refresh remain usable, Upload remains independently approval-gated, and credential typing remains blocked.
@@ -28,7 +28,8 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Windows Memory maintenance previews and safely re-indexes stale/missing local embeddings with explicit Sensitive/Restricted opt-ins, stale-preview revalidation, progress/cancellation, and aggregate-only UI disclosure.
 - `tools/Nvidea.PersonalAiDemoEval` provides deterministic, credential-free positive cross-cutting evidence over real Core contracts.
 - `tools/Nvidea.PersonalAiAdversarialEval` provides deterministic, credential-free negative-path evidence for prompt-injection authority, approval denial, verification failure, citation hallucination, exact approval scope, and ambiguous crash recovery.
-- `tools/Nvidea.JudgingEvidenceVerifier` now combines positive/adversarial synthetic evaluator artifacts with matching Nebius live deployment evidence into one bounded, hashed, redacted judge-facing PASS/FAIL summary.
+- `tools/Nvidea.JudgingEvidenceVerifier` combines positive/adversarial synthetic evaluator artifacts with matching Nebius live deployment evidence into one bounded, hashed, redacted judge-facing PASS/FAIL summary.
+- `tools/Nvidea.DemoPackageValidator` plus `docs/demo-package.json` now make the final <=3-minute judging plan itself machine-checkable: timing, required demo beats, referenced assets, command targets, safe repository paths, explicit evidence classes, provider-live claim boundaries, and a basic secret scan are validated offline.
 
 ## Persistent Progress History
 
@@ -47,51 +48,53 @@ Added `ResearchCloudExecutionCoordinator`, `ResearchProductRuntime`, lifecycle-a
 ### 2026-09-11 — Production local semantic memory
 Added embedding provenance/model-space isolation, loopback-only Ollama `/api/embed`, bounded requests/batches, strict redirect refusal, explicit desktop opt-in, deterministic fallback, safe local embedding migration with high-sensitivity exclusion by default, WPF Memory maintenance, stale-consent protection, progress/cancellation, and deterministic semantic retrieval-quality fixtures.
 
-### 2026-09-11 — Deterministic Personal AI evaluators
-Added `tools/Nvidea.PersonalAiDemoEval` for positive end-to-end evidence over context, durable memory, clipboard withholding, cited research, browser approval + verification, restart-safe jobs, exact-scope approvals, audit, and local-vs-cloud privacy policy. Added `tools/Nvidea.PersonalAiAdversarialEval` for prompt-injection authority, denied approval, failed verification, invented citations, wrong approval scope, and ambiguous `Running` crash residue. Both emit machine-readable JSON and intentionally use synthetic external edges.
-
-### 2026-09-11 — Browser prompt-injection execution hardening
-Adversarial review exposed that prompt-injection-like pages could still permit otherwise-medium state-changing actions. Hardened `BrowserSafetyPolicy` so flagged-page Navigate/Click/Type/Select/Download operations become High-risk and approval-gated. Read/Back/Refresh remain usable; Upload and credential-sensitive rules keep their stricter independent behavior. Added focused policy tests.
+### 2026-09-11 — Deterministic Personal AI evaluators + browser hardening
+Added positive and adversarial cross-cutting evaluators. Adversarial review exposed that prompt-injection-like pages could still permit otherwise-medium state-changing actions; hardened `BrowserSafetyPolicy` so flagged-page Navigate/Click/Type/Select/Download operations become High-risk and approval-gated while independent stricter rules remain intact.
 
 ### 2026-09-11 — Unified judging evidence verifier
+Added `tools/Nvidea.JudgingEvidenceVerifier` to require exact evaluator check sets, strict bounded JSON, duplicate-property rejection, all-PASS state, positive metrics, exact artifact SHA-256 hashes, and matching redacted Nebius deployment/live PASS evidence through the existing canonical Nebius verifier. Success output separates synthetic and live evidence and excludes raw evaluator details, paths, credentials, provider errors, prompts/results, browser/session data, memory content, tokens, and key material.
+
+### 2026-09-11 — Deterministic judge demo package validation
 Completed:
-- Re-read this ledger completely and inspected the current positive evaluator schema, adversarial evaluator schema, Nebius evidence verifier, and repository/tool layout before implementation.
-- Added `tools/Nvidea.JudgingEvidenceVerifier/Nvidea.JudgingEvidenceVerifier.csproj` targeting .NET 8 with nullable checking and warnings-as-errors, referencing the existing Core project rather than duplicating Nebius verification logic.
-- Added `Program.cs` implementing a credential-free verifier that requires four artifacts: positive evaluator JSON, adversarial evaluator JSON, redacted Nebius deployment manifest, and redacted Nebius live PASS evidence.
-- The verifier enforces bounded input size (256 KiB each), strict JSON without comments/trailing commas, recursive duplicate-property rejection, evaluator schema version `1`, exact stable required check sets, unique check IDs, bounded check details, all checks passing, `overallPassed=true`, and the positive evaluator metrics object.
-- Reused `NebiusResearchDeploymentEvidenceVerifier.VerifyJson(...)` as the canonical live-cloud evidence boundary. This recomputes the redacted deployment fingerprint, compares it to the live PASS fingerprint, and validates PASS completion/count invariants without credentials or network calls.
-- Added SHA-256 hashes for all four exact artifact byte sequences to the resulting summary so the judge package can bind the summary to the reviewed evidence files.
-- The success output clearly labels positive/adversarial evidence as `synthetic` and Nebius evidence as `live`, and explicitly records claims that remain outside the evidence boundary.
-- The output deliberately excludes input paths, evaluator detail text, credentials, provider errors, prompts/results, browser session data, memory content, cookies, tokens, key material, and secret references.
-- Success output does not add verifier wall-clock time, keeping the summary stable for identical evidence inputs apart from platform newline handling when saved.
-- `--output` uses temp-file + same-directory replace semantics for atomic-ish artifact persistence; invalid/missing/mismatched artifacts fail closed with a bounded single-line error summary and nonzero exit code.
-- Added `docs/judging-evidence-verifier.md` with usage, validation boundary, redaction guarantees, evidence-class semantics, deterministic-output behavior, and explicit non-claims.
-- Static review found and fixed a completeness gap in the first pass: strict deserialization alone did not prove the positive metrics field existed, so the verifier now explicitly requires an object-valued metrics property.
+- Re-read this ledger completely, inspected the current README, docs/evaluator evidence structure, repository tree, and latest commits before implementation.
+- Added `tools/Nvidea.DemoPackageValidator/Nvidea.DemoPackageValidator.csproj`, targeting .NET 8 with nullable checking and warnings-as-errors and no provider/network dependency.
+- Added `tools/Nvidea.DemoPackageValidator/Program.cs` implementing strict offline validation for the final judging package.
+- Validator bounds the manifest to 128 KiB, rejects comments/trailing commas/duplicate JSON properties, requires schema version 1, enforces unique beat IDs and positive beat durations, and requires the seven intended demo beats: Windows invocation/context, durable memory, Tavily research, browser verification, permission gate, Nebius background work, and architecture proof.
+- Enforces both the declared manifest duration and a hard <=180-second limit.
+- Ensures all referenced feature/evidence/project paths are relative, cannot traverse outside the repository, and exist before the package can PASS.
+- Requires core judge assets (README, license, positive/adversarial evaluator docs/projects, and unified evidence verifier project).
+- Requires explicit evidence classification (`synthetic`, `local-live`, `provider-live`, `documentation`) and fails a `requiresProviderLive=true` beat unless that beat cites provider-live evidence, preventing synthetic-only artifacts from supporting a live-provider claim.
+- Validates that every declared demo command references its declared project path and scans manifest strings for common private-key/bearer/API-key/secret-prefix forms.
+- Emits machine-readable PASS/FAIL JSON plus SHA-256 of the exact demo manifest bytes; optional `--output` persistence uses temp-file then replace semantics.
+- Added canonical `docs/demo-package.json`: a 168-second seven-beat demo plan leaving 12 seconds of contingency under the 180-second cap. It explicitly avoids claiming live Nebius Serverless success while this repository still lacks a credential-backed live PASS.
+- Added `docs/demo-package.md` with validation command, evidence-class semantics, build/evidence generation order, recording/privacy checklist, and explicit instructions not to present synthetic evidence as live provider proof.
+- Static repository inspection confirmed the manifest's major referenced Core directories (`Desktop`, `Memory`, `Research`, `Browser`, `Capabilities`) exist and the intended evaluator/evidence docs are present.
 
 Engineering commits before this ledger update:
-- `3eaec159d42b74b6fcd2b1087558a63c73e47376` — add unified judging evidence verifier project.
-- `2455fd4b562bf3ae5b143efcb7dc165b2de72775` — implement unified judging evidence verification.
-- `9b09eedb4950a9af92adb695cfcc25a6d2b401f8` — harden judging evidence schema validation.
-- `c190d7ca08c09cad771f6adb31f5092d0c03a0d7` — document unified judging evidence verification.
+- `3720f7d8e8e2f56d1c88e0b29ea883d4057e6c22` — add deterministic demo package validator project.
+- `56613d76fbe1bfd3684af38d256fd2c259da1262` — implement deterministic demo package validation.
+- `0b765cbd350e9c8cf6e90ea322f9dcc0a079687b` — add deterministic hackathon demo manifest.
+- `e45b239893ba38472d9bf8bb3c7124d88efb6549` — document judge-ready demo package validation.
 
 Validation / evidence:
 - Repository identity was explicitly re-verified before every GitHub mutation. Every mutation targeted exactly `UnknownGod2011/NVIDEA`; no mutation was made to `keyboard.wtf` or any other repository.
-- Static compare from prior ledger head `f91674286876118b7df71cc51709ec0109b3851d` to engineering head `c190d7ca08c09cad771f6adb31f5092d0c03a0d7` is **4 commits ahead / 0 behind** across exactly three files: the new verifier project, verifier program, and documentation.
-- `command -v dotnet` and `dotnet --info` again produced no usable execution signal in the available runtime. Therefore Core/WPF/Worker compilation, XAML compilation, tests, evaluator binaries, and the new judge verifier are **not claimed as compiled/executed/passing**.
-- No GitHub Actions workflow was triggered merely to manufacture a green check.
+- Static compare from prior ledger head `8f137e4f86be4d107325cddca430f88efe70060b` to engineering head `e45b239893ba38472d9bf8bb3c7124d88efb6549` is **4 commits ahead / 0 behind**.
+- Planned demo duration is deterministically 168 seconds (`20+22+28+28+20+28+22`), leaving 12 seconds under the hard three-minute cap.
+- No usable .NET 8 execution signal is available in this environment. Therefore the new validator, Core/WPF/Worker compilation, XAML compilation, tests, evaluator binaries, and judging tools are **not claimed as compiled/executed/passing**.
+- No GitHub Actions workflow was triggered merely to manufacture a green result.
 - No live Nebius credentials/resources, Object Storage operations, Serverless jobs, Nemotron/Tavily calls, Playwright browser, Ollama runtime, or paid service was used by this run.
 
 Security / privacy / failure review:
-- The new judge verifier does not resolve secrets or perform network/provider calls; it consumes already-produced evidence only.
-- Raw evaluator detail fields are validated but never copied into the success summary, reducing the chance fixture/user text leaks into a judge package.
-- Input file paths are not emitted in success/failure JSON. Path/read errors are converted to generic artifact descriptions.
-- Nebius verification stays delegated to the existing production verifier, preserving its bounded parsing, duplicate-property rejection, deployment-fingerprint recomputation, fixed-time fingerprint comparison, and PASS-count validation.
-- SHA-256 hashes provide tamper-evident binding of the generated judge summary to the exact supplied artifact bytes; they are not signatures or third-party attestations.
-- Synthetic PASS remains explicitly separated from live Nebius evidence and must not be represented as proof of live Tavily, browser, Windows UI/speech, Ollama, Object Storage, or all Serverless behavior.
+- The new validator is offline and does not resolve provider credentials or perform network calls.
+- Repository path validation rejects rooted paths and `..` traversal and then verifies canonical resolved paths remain under the supplied repository root.
+- The manifest deliberately labels synthetic/documentation evidence separately and does not assert provider-live Nebius success.
+- The secret scan is intentionally conservative defense-in-depth, not a replacement for repository secret scanning.
+- SHA-256 binds the result to the exact manifest bytes but is not a signature or third-party attestation.
+- The current validator implementation is statically reviewed only; malformed-shape/null-field behavior and command-validation edge cases still need executable tests once .NET is available.
 
 ## Known Blockers / Risks
-- No usable .NET 8 execution signal is available in this environment; current Core/WPF/Worker code, XAML, tests, all evaluator tools, and the new judge evidence verifier are not compiled or executed here.
-- The unified verifier is statically reviewed but still requires a real .NET 8 restore/build/run against actual generated evaluator and Nebius evidence artifacts before its JSON can be treated as executable judging evidence.
+- No usable .NET 8 execution signal is available in this environment; current Core/WPF/Worker code, XAML, tests, evaluator tools, judging evidence verifier, and demo package validator are not compiled or executed here.
+- The new demo validator has not yet been run against `docs/demo-package.json`; a real .NET 8 build/run must be treated as mandatory before relying on its PASS output.
 - WPF maintenance/voice/readiness bindings and Windows-specific behavior require a real Windows .NET 8 build/run pass.
 - The prompt-injection detector is heuristic; false negatives remain possible, so planner/system-prompt defenses and downstream capability gates remain required defense-in-depth.
 - Real `embeddinggemma` semantic quality/ranking calibration still requires a local Ollama evaluation corpus.
@@ -101,4 +104,4 @@ Security / privacy / failure review:
 - Reproducibility hashes/fingerprints prove internal consistency, not third-party attestation.
 
 ## Single Best Next Task
-First obtain a .NET 8-capable Windows execution signal and restore/build `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, Nebius contract tools, `Nvidea.PersonalAiDemoEval`, `Nvidea.PersonalAiAdversarialEval`, and `Nvidea.JudgingEvidenceVerifier`; compile WPF/XAML; run focused memory/retrieval/migration, voice, readiness, lifecycle/research, browser authority/integration, API-surface, and security suites; generate both evaluator artifacts; run the unified verifier against real redacted Nebius preflight/PASS evidence; and fix every compile/runtime defect before treating the final summary as judging evidence. If executable validation remains unavailable, the next implementation target is a **judge-ready deterministic demo package specification + validation checklist** that maps each <=3-minute demo beat to concrete feature/evidence artifacts, prevents synthetic/live evidence overclaiming, checks README/setup/demo commands for consistency, and identifies any remaining missing hackathon submission assets without fabricating provider success.
+First obtain a .NET 8-capable Windows execution signal and restore/build `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, Nebius contract tools, `Nvidea.PersonalAiDemoEval`, `Nvidea.PersonalAiAdversarialEval`, `Nvidea.JudgingEvidenceVerifier`, and `Nvidea.DemoPackageValidator`; compile WPF/XAML; run focused memory/retrieval/migration, voice, readiness, lifecycle/research, browser authority/integration, API-surface, and security suites; run both evaluators and the demo-package validator; then fix every compile/runtime defect before treating generated evidence as judge-ready. If executable validation remains unavailable, the next implementation target is to harden `Nvidea.DemoPackageValidator` with deterministic unit tests for malformed/null manifests, path traversal, duration overflow, duplicate beats, missing assets, command mismatches, secret markers, and provider-live evidence overclaiming, and then reconcile stale README status text against the now-implemented voice/local-embedding/evidence features without overstating live provider validation.

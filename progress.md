@@ -19,8 +19,9 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Protected local state uses Windows CurrentUser DPAPI by default, durable job-store CAS, hash-chained/segmented audit, and OS-backed single-owner mutation leases.
 - Concrete privileged persistence/runtime boundaries are Core-only where appropriate: `JsonAgentJobStore`, `ResearchJobRuntime`, raw `BrowserHostRuntime` construction, privileged `BrowserGoalAgent(BrowserHostRuntime,...)` construction, raw persistent Playwright transport, path-backed `JsonBrowserGoalSessionStore`, `BrowserDownloadStagingGuard`, and `BrowserDownloadQuarantine` construction cannot be bootstrapped by ordinary external product/plugin code.
 - Product research flows through `ResearchProductRuntime`; provider-aware remote execution flows through `ResearchCloudExecutionCoordinator`; WPF durable research uses the lifecycle-aware facade and `ResearchProductUiState`.
-- Desktop Nebius research lifecycle is explicitly opt-in via `NVIDEA_DESKTOP_REMOTE_RESEARCH_LIFECYCLE=true`. It reuses full live deployment preflight and privately composes Object Storage, Serverless, signed remote runtime, lifecycle coordinator, and protected cloud audit. New paid dispatch is a separate opt-in via `NVIDEA_DESKTOP_REMOTE_RESEARCH_DISPATCH=true` and cannot be enabled without lifecycle recovery.
-- WPF can now deliberately dispatch an eligible local research checkpoint through a **separate one-shot approval dialog**. The UI discloses exact job/checkpoint scope, encrypted cloud-data boundary, potential Serverless/Nemotron/Tavily cost, and private-data restrictions; it re-reads durable state after confirmation and mints an in-memory authorization only if the exact reviewed checkpoint is still eligible.
+- Desktop Nebius research lifecycle is explicitly opt-in via `NVIDEA_DESKTOP_REMOTE_RESEARCH_LIFECYCLE=true`. It reuses full live deployment preflight and privately composes Object Storage, Serverless, signed remote runtime, lifecycle coordinator, and protected cloud audit. This lifecycle-only recovery surface can now be composed even when `TAVILY_API_KEY` is unavailable, so already-remote jobs can still be reconciled/cancelled without recreating local research authority.
+- New paid dispatch is a separate opt-in via `NVIDEA_DESKTOP_REMOTE_RESEARCH_DISPATCH=true`; it requires lifecycle support **and** an available local Tavily-backed research runtime. Missing Tavily credentials therefore fail closed all local execution and all new cloud dispatch while preserving safe recovery of existing Nebius work.
+- WPF can deliberately dispatch an eligible local research checkpoint through a **separate one-shot approval dialog**. The UI discloses exact job/checkpoint scope, encrypted cloud-data boundary, potential Serverless/Nemotron/Tavily cost, and private-data restrictions; it re-reads durable state after confirmation and mints an in-memory authorization only if the exact reviewed checkpoint is still eligible.
 - Browser product/UI flows through `BrowserProductRuntime`; WPF does not receive the raw host.
 - Remote research uses encrypted opaque work items, signed authoritative Nebius resource-ID bindings, two-phase dispatch, crash reconciliation, provider lifecycle reconciliation, durable cancellation, exact-once result ingestion, race-safe cleanup, and a non-root worker image.
 - Native Windows-side S3-compatible Object Storage transport and Serverless-mounted worker transport share one protected protocol. Deployment preflight enforces mount alignment, READ_WRITE transport, MysteryBox credentials, digest-pinned worker image, RSA identity consistency, bounded resources, and redacted deployment fingerprints.
@@ -52,48 +53,54 @@ Made concrete `ResearchJobRuntime` and `JsonAgentJobStore` construction assembly
 
 ### 2026-09-11 — One-shot Nebius research dispatch approval UX
 Completed:
-- Re-read this ledger completely and inspected current repo/head before changing code.
-- Chose the highest-value unfinished product task: make already-built Nebius stage dispatch usable from Windows without turning the desktop feature flag into implicit authorization.
-- Extended privacy-safe `ResearchJobStatus` with only the non-secret checkpoint step identifier plus a coarse `ContainsPrivateOsData` classification. The checkpoint payload, question, source URLs/content, provider IDs/errors, and approval material remain hidden from status UI.
-- Extended `ResearchProductUiState` with `DispatchEnabled`. New dispatch is offered only when the validated composition enables it and the durable job is pending, local, runnable, has a checkpoint identifier, has no unfinished remote provenance, and is not classified as containing private OS-local data.
-- Added `ResearchCloudDispatchDialog.xaml/.cs`. The modal dialog displays the exact job id, research stage and checkpoint identifier; explains that the checkpoint is encrypted on-device to the pinned worker key before Object Storage upload; explains that Serverless receives an opaque work-item id/lifecycle metadata rather than plaintext; warns that one Serverless job plus Nemotron/Tavily usage may incur cost; states that private OS-local research is ineligible and later stages require new consent; and requires a positive acknowledgement checkbox before `Approve once` is enabled.
-- Added `Run stage on Nebius` to the research control panel, disabled unless `ResearchProductUiState` says the exact current stage is eligible.
-- Added `ResearchDispatchButton_Click`. It retrieves the scope before showing the dialog, then **re-reads durable state after the modal confirmation** and refuses dispatch if state/location/checkpoint/privacy/reconciliation eligibility changed. Only after that revalidation does it construct a `ResearchCloudAuthorization` in memory with the exact job id, checkpoint step, current disclosure protocol version and current timestamp, and immediately pass it to `ResearchProductRuntime.DispatchCurrentStageAsync`.
-- Approval is never persisted, cached or reused. Existing cloud-side `ResearchCloudExecutionCoordinator` and `ResearchWorkItemProtector.ValidateAuthorization` still independently re-read/validate durable state and exact authorization at the execution/cryptographic boundaries.
-- Cancellation/failure copy is conservative: local cancellation of an in-flight dispatch never claims the remote job did not start; the UI directs lifecycle review/reconciliation before replay when provider acceptance may be ambiguous.
-- Added `ResearchDispatchUiStateTests.cs` covering safe pending-local eligibility, private OS-data rejection, missing-checkpoint rejection, busy-operation suppression, and unfinished-remote-lifecycle suppression.
+- Extended privacy-safe `ResearchJobStatus` with only the non-secret checkpoint step identifier plus a coarse `ContainsPrivateOsData` classification; checkpoint payload/question/source/provider/approval material remains hidden from status UI.
+- Added `ResearchProductUiState.DispatchEnabled`; new dispatch is offered only for an eligible pending local checkpoint with no unfinished remote provenance and no private OS-local data.
+- Added `ResearchCloudDispatchDialog.xaml/.cs` with exact job/stage/checkpoint scope, on-device encryption disclosure, opaque Serverless metadata boundary, cloud/provider cost warning, private-data restriction, and a positive acknowledgement checkbox.
+- Added `Run stage on Nebius` to WPF. After modal approval, the desktop re-reads durable state and refuses dispatch if state/location/checkpoint/privacy/reconciliation eligibility changed; only then is one in-memory `ResearchCloudAuthorization` minted and immediately consumed.
+- Existing coordinator/protector still independently re-read/validate exact authorization and durable state at the execution/cryptographic boundaries.
+- Added `ResearchDispatchUiStateTests.cs` covering eligible dispatch, private-data rejection, missing checkpoint, busy suppression, and unfinished remote lifecycle suppression.
+- Commits: `2e5b70ef1821702d6c060149c3e21a50e083a8f1`, `74df1f8461661f7c5f2f46e82fbdea024ea0b818`, `ef1229fa9d91dabc5e3cc58288e7310d3a097f4b`, `0fa352dc4dd820ba58d22882e07db9cdb62781d0`, `163a9751173dc19bd926aea5b107a005adbe5049`, `688d02f3ffc6c222d36de7d9ab221880cda5e422`, `c998e4a55c182e7bc370feea162262d362ea19fd`, ledger `6ecc23ad9d305b9f6915e958bf8eb9e208e59939`.
+
+### 2026-09-11 — Tavily-independent Nebius lifecycle recovery
+Completed:
+- Re-read this ledger completely, inspected the current composition/product/WPF/tests/docs, and selected the persisted highest-value fallback task because executable .NET validation remains unavailable.
+- `ResearchProductRuntime` now treats local execution and remote lifecycle as independent authorities. Its local runtime is nullable; `LocalExecutionAvailable` is explicit; shared durable List/Get remain available without Tavily; remote reconcile/provider cancellation remain available with only the cloud coordinator; local Create/Run/Recover/local Cancel/report-read fail closed through `RequireLocal()` when Tavily-backed execution is unavailable.
+- New remote dispatch cannot be enabled without **both** a cloud lifecycle coordinator and local research runtime. This prevents recovery-only composition from becoming an implicit paid-dispatch path.
+- `NvideaCompositionRoot` now parses cloud mode and builds the validated Nebius lifecycle graph independently of `TAVILY_API_KEY`. If lifecycle is enabled and live Nebius preflight passes, WPF can obtain a lifecycle-only `ResearchProductRuntime` even when Tavily is missing. If Tavily later exists, the same facade gains local research; dispatch remains enabled only when both policy and local runtime allow it.
+- WPF now keeps the research panel available in lifecycle-only mode, leaves Start/Resume/new dispatch/local cancellation/report reads locked, and keeps Reconcile plus provider-aware remote Cancel usable. Status/disclosure copy states that existing remote jobs can be recovered without local Tavily credentials.
+- `ResearchProductUiState` now explicitly supports this split: remote reconciliation/cancellation can be enabled while local controls stay disabled, and impossible `remoteDispatchEnabled` combinations still throw.
+- Added `ResearchLifecycleOnlyRuntimeTests.cs` covering reserved-work reconciliation, dispatched-job provider cancellation, local mutation fail-closed behavior, dispatch-without-local rejection, and UI projection for recovery-only mode.
+- Updated `docs/desktop-remote-research.md` so setup/safety guidance accurately documents recovery-only composition and the continued Tavily requirement for local/new-dispatch work.
 
 Commits this run:
-- `2e5b70ef1821702d6c060149c3e21a50e083a8f1` — expose safe research dispatch scope metadata.
-- `74df1f8461661f7c5f2f46e82fbdea024ea0b818` — project safe Nebius dispatch eligibility.
-- `ef1229fa9d91dabc5e3cc58288e7310d3a097f4b` — add explicit Nebius research dispatch consent dialog.
-- `0fa352dc4dd820ba58d22882e07db9cdb62781d0` — wire one-shot consent dialog.
-- `163a9751173dc19bd926aea5b107a005adbe5049` — wire one-shot research dispatch approval.
-- `688d02f3ffc6c222d36de7d9ab221880cda5e422` — add Nebius research stage dispatch control.
-- `c998e4a55c182e7bc370feea162262d362ea19fd` — test Nebius dispatch UI eligibility.
+- `3382dc0699ac087ee28849fe0597e8003a0117d6` — decouple remote research recovery from local Tavily runtime.
+- `4ddd47e4af606ae76de6840924b89c498ff16ac6` — compose Nebius lifecycle without requiring Tavily.
+- `47f14ad73770810ba834458bd95afddca0a9f834` / `76dee6246767911fd161dfa0fda58f655f142f48` — add lifecycle-only UI projection then preserve the existing projection call contract.
+- `912c85383acb667f721eb7899042288a3ba447fe` — keep Nebius recovery usable when local research is unavailable.
+- `341aa23e0cca0f7b6af5d62e567227c2d0bc40b9` / `f2b2a198d64a0ac5600ddba4932612d5ec295890` — add and tighten lifecycle-only recovery regression tests.
+- `cc78a35a17334b7c5bbba52a6325921463101bbb` — document Tavily-independent Nebius lifecycle recovery.
 
 Validation / evidence:
-- Repository identity was explicitly re-verified before every GitHub mutation; every write target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
-- Static compare from prior ledger head `0a722481f76caade4ae57bcc4780e0d48f65217b` to engineering head `c998e4a55c182e7bc370feea162262d362ea19fd` is **7 commits ahead / 0 behind** and changes exactly seven files: `ResearchJobStatus.cs`, `ResearchProductUiState.cs`, `MainWindow.Research.cs`, `MainWindow.xaml`, the new dispatch dialog XAML/code-behind, and the focused UI-state tests.
-- The existing remote execution path was reused rather than bypassed: `ResearchProductRuntime.DispatchCurrentStageAsync` still gates feature enablement; `ResearchCloudExecutionCoordinator` still requires a pending local stage and rejects private OS data, approval-bearing stages, unfinished remote provenance, and ineligible checkpoints; `ResearchWorkItemProtector.ValidateAuthorization` still validates exact job/checkpoint/disclosure/time and rejects private OS data again before cryptographic/provider work.
-- The execution container was checked again: `command -v dotnet` produced no path and `dotnet --info` produced no output. Core/WPF/Worker compilation, XAML compilation, and test execution are therefore **not claimed**.
-- No live Nebius credentials/resources, Object Storage operations, Serverless jobs, Nemotron/Tavily paid calls, or GitHub Actions workflow runs were used for this run.
+- Repository identity was explicitly verified before every mutation; every write target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
+- Static compare from prior ledger head `6ecc23ad9d305b9f6915e958bf8eb9e208e59939` to engineering head `cc78a35a17334b7c5bbba52a6325921463101bbb` is **8 commits ahead / 0 behind** and changes exactly six files: `NvideaCompositionRoot.cs`, `ResearchProductRuntime.cs`, `ResearchProductUiState.cs`, `MainWindow.Research.cs`, new `ResearchLifecycleOnlyRuntimeTests.cs`, and `docs/desktop-remote-research.md`.
+- The compare reports 361 additions / 87 deletions across those files; most additions are focused regression coverage and explicit safety/documentation paths rather than duplicated provider implementations.
+- `command -v dotnet` again returned no path and `dotnet --info` returned no output. Core/WPF/Worker compilation and test execution are therefore **not claimed**.
+- No live Nebius credentials/resources, Object Storage operations, Serverless jobs, Nemotron/Tavily paid calls, or GitHub Actions runs were used.
 
 Security / privacy / failure review:
-- The UI receives no checkpoint payload, question, source evidence, provider id, credential, worker private key, or transport object. It sees only the minimum non-secret scope needed for informed exact-stage approval.
-- Private OS-local data is filtered in the UI projection and rejected again by the authoritative coordinator/protector.
-- Consent is one-shot, exact-scope, in-memory and time-bound by the existing authorization validator; it is created only after the post-dialog durable-state re-read.
-- A checkpoint/state race between consent and dispatch fails closed. The coordinator then performs another lease-protected durable-state validation, preserving defense in depth.
-- Existing ambiguous-dispatch reconciliation, exact-once ingestion, cancellation, emergency stop, browser safety, memory, and Tavily evidence protections were not weakened or removed.
+- Recovery-only composition never constructs a Tavily client or local `ResearchJobRuntime`; it only exposes durable status plus the already-constrained Nebius lifecycle coordinator.
+- Missing Tavily cannot trigger local replay, local cancellation mutation, report reads, or a new cloud dispatch. All such routes fail closed before provider work.
+- Existing remote/ambiguous provenance remains authoritative: reserved dispatch must reconcile, dispatched work uses provider-aware cancellation, and no local fallback was introduced.
+- Existing live Nebius configuration validation, Object Storage protection, signed binding, exact-once result ingestion, shared mutation lease, cloud audit, private-data restrictions, one-shot dispatch authorization, and provider disposal paths remain intact.
+- The WPF recovery-only view receives no additional checkpoint payload, question, source evidence, provider credential, private key, or transport authority.
 
 ## Known Blockers / Risks
-- No usable .NET 8 execution signal is available in this environment; the new Core/WPF code, XAML and tests are not compiled or executed here.
+- No usable .NET 8 execution signal is available in this environment; the current Core/WPF/Worker code, XAML and tests are not compiled or executed here.
 - No live Object Storage bucket/static key, digest-pinned registry image, MysteryBox refs, subnet, Serverless access token, or real Serverless job has been provisioned/validated here.
 - Exact provider acceptance of the Serverless Object Storage `Source`/`SourcePath` still requires a real job.
-- Desktop lifecycle mode currently depends on durable local research being composed, which requires `TAVILY_API_KEY`; a cloud-only recovery bootstrap would improve failure recovery when local research credentials are absent.
 - The dry run cannot prove that the worker-private-key MysteryBox version corresponds to the configured worker public key without resolving the secret; the real worker protocol remains authoritative proof.
 - Local voice/transcription and a verified production embedding adapter remain absent.
 - Reproducibility evidence proves internal consistency, not third-party attestation.
 
 ## Single Best Next Task
-First obtain a .NET 8-capable execution signal and compile `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, and the Nebius contract tools; run the focused research lifecycle/dispatch, desktop cloud-mode, browser authority/integration, and API-surface suites and fix every compile/XAML/runtime defect. If executable validation remains unavailable, decouple **remote lifecycle recovery from `TAVILY_API_KEY`** so the desktop can safely reconcile/cancel an already-dispatched Nebius job even when local research credentials are missing, while continuing to keep new local research/dispatch unavailable until their required provider configuration is present.
+First obtain a .NET 8-capable execution signal and compile `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, and the Nebius contract tools; run the focused lifecycle-only recovery, research dispatch/cloud-mode, browser authority/integration, API-surface, and WPF/XAML suites and fix every compile/runtime defect. If executable validation remains unavailable, add a **credential-safe desktop startup diagnostics surface** that reports local research / Nebius lifecycle / new-dispatch readiness and exact redacted preflight blockers without exposing secrets or weakening fail-closed startup, so judges/users can understand why a capability is locked and how to make the demo deployment ready.

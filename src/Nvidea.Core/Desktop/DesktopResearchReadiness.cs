@@ -92,17 +92,58 @@ public sealed record DesktopResearchReadiness(
 
     public string ToStatusText()
     {
-        static string State(bool requested, bool ready) => ready ? "ready" : requested ? "blocked" : "locked";
-
-        var local = LocalResearchReady ? "ready" : "blocked";
-        var lifecycle = State(NebiusLifecycleRequested, NebiusLifecycleReady);
-        var dispatch = State(NebiusDispatchRequested, NebiusDispatchReady);
-        var summary = $"Local research: {local} · Nebius lifecycle: {lifecycle} · New Nebius dispatch: {dispatch}.";
+        var summary = $"Local research: {LocalStateText()} · Nebius lifecycle: {LifecycleStateText()} · New Nebius dispatch: {DispatchStateText()}.";
 
         return Blockers.Count == 0
             ? summary
             : summary + " " + string.Join(" ", Blockers.Take(3));
     }
+
+    /// <summary>
+    /// Returns a successful-start diagnostics view suitable for direct desktop display. It only
+    /// contains coarse capability state and the already-sanitized blocker strings produced by this
+    /// readiness model; it never performs provider calls or reads secret values into the output.
+    /// </summary>
+    public string ToDetailsText()
+    {
+        var lines = new List<string>
+        {
+            "NVIDEA research readiness",
+            string.Empty,
+            $"Local Tavily research: {LocalStateText()}",
+            $"Nebius lifecycle recovery: {LifecycleStateText()}",
+            $"New Nebius Serverless dispatch: {DispatchStateText()}",
+            string.Empty,
+            "State meanings:",
+            "• ready — the capability is available in this running desktop composition.",
+            "• blocked — the capability was requested but prerequisites or validated runtime readiness are missing.",
+            "• locked — the capability was not requested and no provider authority was created for it."
+        };
+
+        if (Blockers.Count > 0)
+        {
+            lines.Add(string.Empty);
+            lines.Add("Actionable blockers (configuration names only):");
+            lines.AddRange(Blockers.Select(static blocker => $"• {blocker}"));
+        }
+        else
+        {
+            lines.Add(string.Empty);
+            lines.Add("No readiness blockers were detected for the capabilities enabled in this process.");
+        }
+
+        lines.Add(string.Empty);
+        lines.Add("This view is read-only. It does not probe providers, mint approvals, start jobs, or expose secret values.");
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private string LocalStateText() => LocalResearchReady ? "ready" : "blocked";
+
+    private string LifecycleStateText() =>
+        NebiusLifecycleReady ? "ready" : NebiusLifecycleRequested ? "blocked" : "locked";
+
+    private string DispatchStateText() =>
+        NebiusDispatchReady ? "ready" : NebiusDispatchRequested ? "blocked" : "locked";
 
     private static bool HasValue(string? value) => !string.IsNullOrWhiteSpace(value);
 }

@@ -33,9 +33,11 @@ public partial class MainWindow
     private async void ResearchStartButton_Click(object sender, RoutedEventArgs e)
     {
         var runtime = _root.Research;
-        if (runtime is null)
+        if (runtime is null || !runtime.LocalExecutionAvailable)
         {
-            ResearchStatusText.Text = "Durable research unavailable — configure TAVILY_API_KEY.";
+            ResearchStatusText.Text = runtime is null
+                ? "Durable research unavailable — configure TAVILY_API_KEY."
+                : "Local research is unavailable — configure TAVILY_API_KEY. Existing Nebius lifecycle recovery remains available.";
             return;
         }
         if (_researchRunning || string.IsNullOrWhiteSpace(PromptBox.Text))
@@ -64,6 +66,11 @@ public partial class MainWindow
         var runtime = _root.Research;
         if (runtime is null || _activeResearchJobId is not { } jobId || _researchRunning)
             return;
+        if (!runtime.LocalExecutionAvailable)
+        {
+            ResearchStatusText.Text = "Local research is unavailable. Reconcile/cancel existing Nebius work or restore TAVILY_API_KEY before local execution.";
+            return;
+        }
 
         SetResearchRunning(true);
         try
@@ -240,6 +247,11 @@ public partial class MainWindow
                 ResearchStatusText.Text = "Remote cancellation is unavailable until the validated Nebius lifecycle runtime is composed. Local fallback is blocked.";
                 return;
             }
+            if (!current.RequiresRemoteReconciliation && !runtime.LocalExecutionAvailable)
+            {
+                ResearchStatusText.Text = "Local cancellation is unavailable until TAVILY_API_KEY restores the local research runtime. Durable state was not changed.";
+                return;
+            }
 
             var status = await runtime.CancelAsync(jobId);
             ApplyResearchStatus(status);
@@ -288,14 +300,16 @@ public partial class MainWindow
             if (active is null)
             {
                 _activeResearchJobId = null;
-                ResearchStatusText.Text = "No durable research job yet.";
+                ResearchStatusText.Text = runtime.LocalExecutionAvailable
+                    ? "No durable research job yet."
+                    : "Nebius lifecycle recovery is ready. Local research remains locked until TAVILY_API_KEY is configured.";
                 UpdateResearchControls(null);
                 return;
             }
 
             _activeResearchJobId = active.JobId;
             ApplyResearchStatus(active);
-            if (active.Stage == ResearchJobStage.Completed)
+            if (active.Stage == ResearchJobStage.Completed && runtime.LocalExecutionAvailable)
             {
                 var report = await runtime.ReadCompletedReportAsync(active.JobId);
                 OutputBox.Text = report.AnswerMarkdown;
@@ -351,7 +365,7 @@ public partial class MainWindow
         var runtime = _root.Research;
         return ResearchProductUiState.Project(
             status,
-            runtimeAvailable: runtime is not null,
+            runtimeAvailable: runtime?.LocalExecutionAvailable == true,
             operationInProgress: _researchRunning,
             hasActiveJob: _activeResearchJobId.HasValue,
             remoteLifecycleAvailable: runtime?.RemoteLifecycleAvailable == true,

@@ -19,8 +19,10 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Protected local state uses Windows CurrentUser DPAPI by default, durable job-store CAS, hash-chained/segmented audit, and OS-backed single-owner mutation leases.
 - Remote research uses encrypted opaque work items, signed Nebius resource-ID bindings, two-phase dispatch, crash/lifecycle reconciliation, durable cancellation, exact-once result ingestion, and race-safe cleanup.
 - Native Nebius Object Storage transport and Serverless-mounted worker transport share one protected protocol; preflight validates mount alignment, READ_WRITE transport, MysteryBox credentials, digest-pinned image, RSA identity consistency, bounded resources, and redacted fingerprints.
-- Credential-bearing desktop provider clients now use an explicit no-auto-redirect HTTP policy; the remote worker and live Nebius contract-probe tool apply the same rule.
-- Nebius Serverless production endpoints require exact `api.nebius.cloud`, absolute HTTPS, no URI user-info, and the standard HTTPS port. HTTPS loopback remains available only for contract-test injection.
+- Credential-bearing desktop provider clients use an explicit no-auto-redirect HTTP policy; the remote worker, model-catalog checker, and live Nebius contract-probe follow the same fail-closed redirect posture.
+- Token Factory endpoints require HTTPS/443, no URI user-info, and exact `nebius.com` or genuine `*.nebius.com` DNS boundaries. Endpoint trust is validated before API-key lookup in the environment-based production path.
+- Nebius Serverless production endpoints require exact `api.nebius.cloud`, HTTPS/443, and no URI user-info. HTTPS loopback remains available only for isolated contract-test injection.
+- Nebius Object Storage static-key clients now require the exact regional origin `https://storage.<region>.nebius.cloud:443/`, bind the hostname to the configured region, reject paths/query/fragment/user-info, and reject malformed region identifiers.
 - Windows voice invocation is local and review-first. Windows Memory maintenance safely re-indexes stale/missing embeddings with privacy-safe previews and explicit Sensitive/Restricted opt-ins.
 - `tools/Nvidea.PersonalAiDemoEval` and `tools/Nvidea.PersonalAiAdversarialEval` provide deterministic positive/negative cross-cutting evidence.
 - `tools/Nvidea.JudgingEvidenceVerifier` combines positive/adversarial artifacts, matching Nebius live deployment evidence, and a fresh live Token Factory catalog PASS.
@@ -41,87 +43,50 @@ Added research/browser product runtimes, WPF lifecycle-aware research, restart-s
 ### 2026-09-11 — Current Nemotron routing + catalog readiness
 Verified current Token Factory model IDs and set Nano / Super / Ultra defaults for Fast / Standard / Deep. Added routing tests, README reconciliation, zero-inference model-catalog readiness, strict bounded catalog parsing, SHA-256 evidence binding, fresh-live catalog requirements in the judging chain, and standalone catalog DNS/user-info/redirect credential-boundary hardening.
 
-### 2026-09-12 — Production Token Factory credential-boundary hardening
+### 2026-09-12 — Provider credential and redirect hardening
+Completed a systematic production/provider trust review:
+- Fixed Token Factory suffix-lookalike acceptance (`evilnebius.com`) and required HTTPS/443 with no URI user-info.
+- Reordered Token Factory environment loading so endpoint trust is established before `NEBIUS_API_KEY` is read.
+- Added a Core no-auto-redirect HTTP factory and wired desktop Token Factory, Tavily, and Nebius Serverless clients through it.
+- Applied no-auto-redirect behavior to the remote worker and live Nebius contract probe.
+- Hardened Serverless to exact `api.nebius.cloud` over HTTPS/443 with no user-info while preserving explicit HTTPS loopback test injection.
+- Hardened Tavily to exact `api.tavily.com` over HTTPS/443 with no user-info and added request-observation regressions proving invalid configuration fails before provider traffic.
+
+Representative commits:
+- `18943f9f5b325cbe3549537bc35510dcb0184497` / `64285c0a2451826eca9dc3bc09cae821ba8826a0` — production Token Factory trust boundary and regressions.
+- `8460e6898631a7eebf90e10e1f1cb33b5a4082b8` / `053feb527ef638c58b2a11ba4aa4073e9e3adf3c` / `4c791fca61ea4af558810f9b56b8b34462327458` — no-redirect provider HTTP construction.
+- `9b6e03a9cff7f04ab65226f348fff8123fc1bdb6` — Serverless endpoint boundary.
+- `117b89aa126909f6ed89d6cb43c2dc6dcaaab891` — remote Worker redirect hardening.
+- `e0362868160b87ae9012794192a67486042f77fb` / `15e24a26a9c1bb5f5fd27ff14789d2ca8c604d1a` — Tavily endpoint trust and regressions.
+- `7eaf01318fd1814dc22d8b86a67a8387b75e18a8` — live contract-probe redirect hardening.
+
+### 2026-09-12 — Nebius Object Storage static-credential boundary hardening
 Completed:
-- Re-read this ledger and inspected current repo state before changes.
-- Audited the production Token Factory, Tavily, Ollama, Serverless, and composition-root HTTP trust surfaces.
-- Found a real production credential-boundary defect in `NebiusOptions.Validate()`: `Host.EndsWith("nebius.com")` accepted suffix lookalikes such as `evilnebius.com`, even though the standalone catalog checker had already been hardened.
-- Replaced the production Token Factory host test with the exact DNS boundary: only `nebius.com` or a real `*.nebius.com` subdomain is accepted.
-- Added absolute-HTTPS, no-URI-user-info, and standard TLS port 443 requirements for the Token Factory base URI.
-- Reordered `NebiusOptions.FromEnvironment()` so the endpoint is parsed and trusted **before** `NEBIUS_API_KEY` is read. A malicious `NVIDEA_NEBIUS_BASE_URL` therefore fails before credential loading or Authorization-header construction.
-- Added focused regression coverage for exact-domain/real-subdomain acceptance and rejection of HTTP, suffix lookalikes, domain-confusion (`nebius.com.evil.example`), embedded user-info, and non-standard TLS ports.
-- Added a direct trust-boundary regression proving `evilnebius.com` is rejected by the production validator before request construction.
+- Re-read this ledger and audited the remaining native provider/tool HTTP construction surfaces instead of repeating already-hardened desktop/Worker paths.
+- Identified a real remaining static-credential egress risk in `NebiusObjectStorageClient`: the S3-compatible client accepted any absolute HTTPS origin while holding Nebius Object Storage access-key credentials.
+- Verified Nebius' documented regional S3 endpoint form (`https://storage.<region>.nebius.cloud:443`) from current official Nebius material before changing the trust rule.
+- Hardened `NebiusObjectStorageClient` so production Object Storage now requires the exact regional origin `storage.<configured-region>.nebius.cloud`, HTTPS, port 443, no URI user-info, no path beyond `/`, no query, and no fragment.
+- Bound endpoint hostname to the separately configured region so a valid Nebius endpoint for a different region cannot silently receive the configured static credentials.
+- Restricted region identifiers to bounded lowercase ASCII letters, digits, and interior hyphens to prevent region text from widening or confusing the trusted hostname construction.
+- Added `NebiusObjectStorageEndpointTrustTests` covering the valid regional origin plus HTTP, alternate port, URI user-info, arbitrary host, Nebius-domain confusion, prefix lookalike, path/query injection, region mismatch, and malformed region identifiers.
 
 Engineering commits before this ledger update:
-- `18943f9f5b325cbe3549537bc35510dcb0184497` — harden Token Factory credential endpoint trust.
-- `64285c0a2451826eca9dc3bc09cae821ba8826a0` — cover Token Factory endpoint trust boundary.
+- `66181222e88fd5a373b0b0e5a55b4e603d90a481` — harden Nebius Object Storage endpoint trust boundary.
+- `92ec271c50249e5f80fe732b2746932fe9626b9a` — cover Object Storage endpoint trust boundary.
 
 Validation / evidence:
-- GitHub compare from prior ledger head `3ab4cde5c32c88844f01e2bb64f4047320e82caf` to engineering head `64285c0a2451826eca9dc3bc09cae821ba8826a0` reports **2 commits ahead / 0 behind** and only the production Token Factory client plus its focused tests changed.
-- Static inspection confirms endpoint validation now occurs before environment API-key lookup and before client construction can attach a bearer token.
-- No GitHub Actions workflow was triggered merely to manufacture a green result.
-- The automation environment still has no usable .NET 8 execution signal, so the changed Core code and xUnit tests are **not claimed as compiled or passing**.
-- No live Nebius/Tavily/Ollama/Playwright/Object Storage/Serverless operation or paid inference was used.
-
-Security / privacy / failure review:
-- `evilnebius.com`, `not-nebius.com`, `nebius.com.evil.example`, HTTP endpoints, user-info URLs, and non-443 Token Factory endpoints now fail closed before credential use.
-- The production inference path now matches the standalone model-catalog checker’s Nebius DNS-boundary semantics.
-
-### 2026-09-12 — Provider redirect and Serverless endpoint hardening
-Completed:
-- Re-read the complete ledger and inspected current commits, composition-root construction, Serverless client validation, Tavily endpoint validation, Ollama behavior, and the remote worker before mutation.
-- Added `ProviderHttpClientFactory` in Core. It constructs owned `HttpClientHandler` instances with `AllowAutoRedirect = false` so credential-bearing requests do not automatically replay prompts, research content, API-key bodies, or other private request data to a redirect target.
-- Wired the desktop composition root’s Token Factory, Tavily, and Nebius Serverless clients through the no-redirect factory rather than default `new HttpClient()` instances.
-- Added focused factory tests asserting automatic redirects are disabled.
-- Found a second path outside the desktop composition root: `Nvidea.Worker` used one default auto-redirecting client for both Token Factory and Tavily. Replaced it with an explicitly no-redirect client so remote Nebius research execution receives the same egress protection.
-- Hardened `NebiusServerlessJobClient` endpoint validation: production accepts only exact `api.nebius.cloud` over HTTPS, rejects URI user-info, rejects non-standard production ports, and continues to permit HTTPS localhost/127.0.0.1 overrides for isolated contract tests only.
-- Added Serverless endpoint trust tests covering exact production acceptance, user-info rejection, alternate-port rejection, HTTP rejection, provider-lookalike rejection, domain-confusion rejection, and explicit HTTPS loopback test endpoints.
-
-Engineering commits before this ledger update:
-- `8460e6898631a7eebf90e10e1f1cb33b5a4082b8` — add no-redirect provider HTTP factory.
-- `053feb527ef638c58b2a11ba4aa4073e9e3adf3c` — cover provider no-redirect policy.
-- `4c791fca61ea4af558810f9b56b8b34462327458` — wire desktop providers to no-redirect clients.
-- `00e78234c0f184f452665b018813bf70ca46b601` / `9c13f30f935e7cc4ca90795476d9d9a61d2f49ef` — add and correct Serverless endpoint trust regressions while preserving the existing HTTPS-only loopback contract.
-- `9b6e03a9cff7f04ab65226f348fff8123fc1bdb6` — harden Serverless endpoint trust boundary.
-- `117b89aa126909f6ed89d6cb43c2dc6dcaaab891` — disable redirects in the remote worker provider client.
-
-Validation / evidence:
-- GitHub compare from prior ledger head `2adacba7d534450588862d5e80f39b54aadf171e` to engineering head `117b89aa126909f6ed89d6cb43c2dc6dcaaab891` reports **7 commits ahead / 0 behind**.
-- The compare is confined to six intended files: desktop composition, Serverless client, provider HTTP factory, worker program, and two focused test files.
-- Static inspection confirms the desktop path no longer creates default redirecting clients for Token Factory/Tavily/Serverless, and the remote worker no longer uses a default redirecting provider client.
-- `command -v dotnet` still produces no usable .NET execution signal here. Therefore no compile or test PASS is claimed.
-- No GitHub Actions workflow was triggered, and no live Nebius, Tavily, Ollama, Playwright, Object Storage, Serverless, or paid inference operation was used.
-
-Security / privacy / failure review:
-- Redirect handling is now fail-closed at the trusted HTTP construction boundary for the desktop provider graph and remote worker provider graph.
-- Serverless endpoint configuration can no longer smuggle URI credentials or select an alternate production port while retaining the trusted hostname.
-- Redirect responses will now surface to provider clients as ordinary non-success responses rather than being transparently followed; existing sanitized error handling remains responsible for not exposing provider bodies.
-- The worker currently carries a tiny local copy of the no-redirect handler construction because the Core factory is intentionally internal; this avoids unnecessarily expanding Core’s public API but should stay covered by a real Worker build.
-
-### 2026-09-12 — Tavily endpoint and live probe egress hardening
-Completed:
-- Re-read the full persistent ledger and current repository tree before mutation; the selected unfinished task was the documented Tavily URI-consistency gap plus remaining tool-level redirect audit.
-- Hardened `TavilyOptions.Validate()` so production Tavily traffic requires an absolute `https://api.tavily.com/` URI on port 443 with **no URI user-info**. Alternate ports, embedded credentials, HTTP, subdomain lookalikes, and domain-confusion URLs now fail closed before any request is sent.
-- Added `TavilyEndpointTrustTests` covering exact production acceptance; HTTP, port 444, embedded user-info, subdomain lookalike, suffix/domain-confusion, and bare-domain rejection; and a regression proving invalid Tavily configuration is rejected before the HTTP handler can observe a request.
-- Audited the live Nebius contract probe and found two remaining default `HttpClient()` constructions: the structured Token Factory planner probe and the live Serverless probe.
-- Added a local no-redirect HTTP client constructor to `Nvidea.NebiusContractProbe` and applied it to both credential-bearing paths. Redirect responses now remain visible as non-success provider responses instead of being followed with bearer/private request context.
-
-Engineering commits before this ledger update:
-- `e0362868160b87ae9012794192a67486042f77fb` — harden Tavily endpoint trust boundary.
-- `15e24a26a9c1bb5f5fd27ff14789d2ca8c604d1a` — cover Tavily endpoint trust boundary.
-- `7eaf01318fd1814dc22d8b86a67a8387b75e18a8` — disable redirects in live Nebius contract probe.
-
-Validation / evidence:
-- Static re-fetch of `TavilyResearch.cs` confirms exact host, absolute HTTPS, port 443, and empty `UserInfo` are enforced in the production validator.
-- Static re-fetch of the new focused test file confirms the malicious user-info URL is rejected during client construction and before its counting HTTP handler can receive a request.
-- `command -v dotnet` still returns no executable path in this runtime; therefore no compile, unit-test, WPF, Worker, or tool PASS is claimed.
+- GitHub compare from prior ledger head `8c7f9e4e58ba4df0b239c916d3e9deaaef2cff00` to engineering head `92ec271c50249e5f80fe732b2746932fe9626b9a` reports **2 commits ahead / 0 behind** and only the Object Storage client plus its focused trust-boundary test were changed.
+- Static re-fetch confirms the constructor calls `ValidateOptions` before constructing `BasicAWSCredentials` / `AmazonS3Client`.
+- Static re-fetch confirms endpoint host equality is derived from the separately validated region rather than using a suffix match.
+- `command -v dotnet` still produced no executable path in this runtime. Therefore no compile/unit-test/WPF/Worker/tool PASS is claimed.
 - No GitHub Actions workflow was triggered merely to obtain a green result.
-- No live Nebius, Tavily, Ollama, Playwright, Object Storage, Serverless, or paid inference operation was performed.
+- No live Nebius, Tavily, Object Storage, Serverless, Playwright, Ollama, or paid inference operation was performed.
 
 Security / privacy / failure review:
-- The remaining production Tavily endpoint now matches the stricter credential-boundary posture already applied to Token Factory and Serverless.
-- The judge/live contract probe no longer bypasses the application’s redirect-hardening intent when handling Token Factory or Serverless credentials.
-- Redirect disabling is defense-in-depth; endpoint trust validation remains independently required because redirects are not the only path by which a misconfigured base URI could exfiltrate credentials.
+- Static S3 credentials can no longer be configured against an arbitrary HTTPS origin through `NebiusObjectStorageClientOptions`.
+- Region/endpoint disagreement fails closed before the AWS SDK client is constructed.
+- Provider response bodies remain excluded from the client's sanitized storage exceptions.
+- One remaining defense-in-depth opportunity exists in the live environment loader: it currently reads several live credentials before the final aggregate preflight validates every endpoint. The Object Storage constructor itself is safe, but environment-read ordering could be improved so untrusted endpoint configuration is rejected before the corresponding static credential variables are read.
 
 ## Known Blockers / Risks
 - No usable .NET 8 execution signal is available in this automation environment; Core/WPF/Worker code, XAML, tests, evaluator tools, evidence verifier, demo validator, catalog checker, and focused tests still require a real restore/build/run.
@@ -133,7 +98,7 @@ Security / privacy / failure review:
 - Real `embeddinggemma` semantic quality/ranking calibration still requires a local Ollama evaluation corpus.
 - No live Object Storage bucket/static key, digest-pinned registry image, MysteryBox refs, subnet, Serverless access token, or real Serverless job has been provisioned/validated here.
 - Exact provider acceptance of Serverless Object Storage `Source`/`SourcePath` still requires a real job.
-- Tool-level HTTP construction still deserves a final repository-wide pass for any credential-bearing `HttpClient` paths not covered by desktop, Worker, model-catalog checker, or contract probe.
+- The AWS SDK's own redirect/transport behavior is not directly controlled by `ProviderHttpClientFactory`; exact-origin validation significantly narrows initial credential egress, but a real integration test should verify redirect behavior for the specific AWSSDK.S3 version used by NVIDEA.
 
 ## Single Best Next Task
-First obtain a .NET 8-capable Windows execution signal and restore/build `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, all evidence/evaluator tools, and focused tests; fix every compile/runtime defect before treating evidence as judge-ready. If executable validation remains unavailable, complete a final repository-wide HTTP construction audit across remaining tools and native provider clients, then harden any credential-bearing default-redirect or endpoint-trust drift found without broadening provider trust.
+First obtain a .NET 8-capable Windows execution signal and restore/build `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, all evidence/evaluator tools, and focused tests; fix every compile/runtime defect before treating evidence as judge-ready. If executable validation remains unavailable, refactor the live Nebius configuration loader so Object Storage endpoint/region trust is validated before `NVIDEA_LIVE_OBJECT_STORAGE_ACCESS_KEY_ID` and `NVIDEA_LIVE_OBJECT_STORAGE_SECRET_ACCESS_KEY` are read, then add a counting environment-reader regression proving invalid endpoint configuration cannot cause those credential variables to be accessed.

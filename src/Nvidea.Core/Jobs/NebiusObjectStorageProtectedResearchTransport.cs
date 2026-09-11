@@ -206,17 +206,32 @@ public sealed class NebiusObjectStorageClient : IProtectedResearchObjectStoreCli
 
     private static void ValidateOptions(NebiusObjectStorageClientOptions options)
     {
+        if (string.IsNullOrWhiteSpace(options.Region)
+            || options.Region.Length > 64
+            || options.Region.Any(static ch => !(char.IsLower(ch) || char.IsDigit(ch) || ch == '-'))
+            || options.Region[0] == '-'
+            || options.Region[^1] == '-')
+        {
+            throw new ArgumentException("A bounded Nebius Object Storage region identifier is required.", nameof(options));
+        }
+
         if (!Uri.TryCreate(options.Endpoint, UriKind.Absolute, out var endpoint)
             || endpoint.Scheme != Uri.UriSchemeHttps
             || !string.IsNullOrEmpty(endpoint.UserInfo)
+            || endpoint.Port != 443
             || !string.IsNullOrEmpty(endpoint.Query)
-            || !string.IsNullOrEmpty(endpoint.Fragment))
+            || !string.IsNullOrEmpty(endpoint.Fragment)
+            || endpoint.AbsolutePath != "/")
         {
-            throw new ArgumentException("Nebius Object Storage endpoint must be an HTTPS origin URL.", nameof(options));
+            throw new ArgumentException("Nebius Object Storage endpoint must be its HTTPS regional origin on port 443.", nameof(options));
         }
 
-        if (string.IsNullOrWhiteSpace(options.Region) || options.Region.Length > 64)
-            throw new ArgumentException("A bounded Object Storage region is required.", nameof(options));
+        var expectedHost = $"storage.{options.Region}.nebius.cloud";
+        if (!string.Equals(endpoint.Host, expectedHost, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException("Nebius Object Storage endpoint must match the configured Nebius region.", nameof(options));
+        }
+
         if (string.IsNullOrWhiteSpace(options.Bucket) || options.Bucket.Length > 63)
             throw new ArgumentException("A bounded Object Storage bucket name is required.", nameof(options));
         if (string.IsNullOrWhiteSpace(options.AccessKeyId) || string.IsNullOrWhiteSpace(options.SecretAccessKey))

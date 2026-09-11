@@ -119,13 +119,13 @@ public sealed class DemoPackageValidatorTests
             Root = Path.Combine(Path.GetTempPath(), "nvidea-demo-validator-tests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(Root);
             foreach (var asset in RequiredAssets)
-                Touch(asset);
-            Touch("src/Nvidea.Core/Desktop");
-            Touch("src/Nvidea.Core/Memory");
-            Touch("src/Nvidea.Core/Research");
-            Touch("src/Nvidea.Core/Browser");
-            Touch("src/Nvidea.Core/Capabilities");
-            Touch("docs/evidence.json");
+                WriteFixtureFile(asset);
+            Directory.CreateDirectory(Path.Combine(Root, "src/Nvidea.Core/Desktop"));
+            Directory.CreateDirectory(Path.Combine(Root, "src/Nvidea.Core/Memory"));
+            Directory.CreateDirectory(Path.Combine(Root, "src/Nvidea.Core/Research"));
+            Directory.CreateDirectory(Path.Combine(Root, "src/Nvidea.Core/Browser"));
+            Directory.CreateDirectory(Path.Combine(Root, "src/Nvidea.Core/Capabilities"));
+            WriteFixtureFile("docs/evidence.json");
         }
 
         public string Root { get; }
@@ -188,18 +188,11 @@ public sealed class DemoPackageValidatorTests
             return await ((Task<int>)result!).ConfigureAwait(false);
         }
 
-        private void Touch(string relativePath)
+        private void WriteFixtureFile(string relativePath)
         {
             var fullPath = Path.Combine(Root, relativePath.Replace('/', Path.DirectorySeparatorChar));
-            if (Path.HasExtension(fullPath))
-            {
-                Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
-                File.WriteAllText(fullPath, "fixture");
-            }
-            else
-            {
-                Directory.CreateDirectory(fullPath);
-            }
+            Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+            File.WriteAllText(fullPath, "fixture");
         }
 
         public void Dispose()

@@ -9,6 +9,15 @@ static int Fail(string category, string detail)
     return 1;
 }
 
+static HttpClient CreateNoRedirectHttpClient()
+{
+    var handler = new HttpClientHandler
+    {
+        AllowAutoRedirect = false
+    };
+    return new HttpClient(handler, disposeHandler: true);
+}
+
 static void ValidateArtifactDestinations(NebiusResearchLiveConfiguration configuration)
 {
     NebiusResearchArtifactDestinationPreflight.ValidatePaths(
@@ -39,7 +48,7 @@ static async Task<int> RunPlannerProbeAsync()
     var options = NebiusOptions.FromEnvironment();
     options.Validate();
 
-    using var httpClient = new HttpClient();
+    using var httpClient = CreateNoRedirectHttpClient();
     var inference = new NebiusTokenFactoryClient(httpClient, options);
     var planner = new NemotronBrowserPlanner(inference);
 
@@ -103,12 +112,7 @@ static int RunLiveResearchPreflight()
 
 static async Task<int> RunLiveResearchProbeAsync()
 {
-    // The loader runs the same zero-cost fail-closed deployment gate used by preflight before any
-    // Object Storage, Serverless, Nemotron or Tavily client is constructed or dispatched.
     var configuration = NebiusResearchLiveConfigurationLoader.LoadFromEnvironment();
-    // Validate once before persisting the preflight manifest, then enforce the same exact parsed
-    // destinations again at the provider-factory boundary. The second gate makes ordering testable:
-    // provider construction cannot be reached when final artifact destinations are unsafe.
     ValidateArtifactDestinations(configuration);
     PersistRedactedManifestIfRequested(configuration);
 
@@ -122,7 +126,7 @@ static async Task<int> RunLiveResearchProbeAsync()
             {
                 objectStorage = new NebiusObjectStorageClient(configuration.ObjectStorageOptions);
                 var transport = new S3ProtectedResearchTransport(objectStorage);
-                serverlessHttp = new HttpClient();
+                serverlessHttp = CreateNoRedirectHttpClient();
                 var serverless = new NebiusServerlessJobClient(
                     serverlessHttp,
                     new NebiusServerlessOptions(

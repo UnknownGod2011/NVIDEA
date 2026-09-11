@@ -22,6 +22,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     private readonly IAgentInferenceClient _inference;
     private readonly JsonFileMemoryStore _memoryStore;
     private readonly PersonalMemoryService _memory;
+    private readonly LocalOllamaMemoryEmbeddingProvider? _memoryEmbeddingProvider;
     private readonly string _stateDirectory;
     private readonly SemaphoreSlim _browserGate = new(1, 1);
     private BrowserHostRuntime? _browser;
@@ -36,6 +37,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         IAgentInferenceClient inference,
         JsonFileMemoryStore memoryStore,
         PersonalMemoryService memory,
+        LocalOllamaMemoryEmbeddingProvider? memoryEmbeddingProvider,
         DesktopInvocationService desktop,
         DesktopSessionController session,
         ResearchProductRuntime? research,
@@ -48,6 +50,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         _inference = inference;
         _memoryStore = memoryStore;
         _memory = memory;
+        _memoryEmbeddingProvider = memoryEmbeddingProvider;
         _stateDirectory = stateDirectory;
         Desktop = desktop;
         Session = session;
@@ -86,7 +89,9 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         var inference = new NebiusTokenFactoryClient(nebiusHttp, nebiusOptions);
 
         var memoryStore = new JsonFileMemoryStore(Path.Combine(dataDirectory, "memory.json"));
-        var memory = new PersonalMemoryService(memoryStore);
+        var memoryEmbeddingConfiguration = LocalMemoryEmbeddingConfiguration.FromEnvironment();
+        var memoryEmbeddingProvider = memoryEmbeddingConfiguration.CreateProvider();
+        var memory = new PersonalMemoryService(memoryStore, embeddingProvider: memoryEmbeddingProvider);
         await memory.InitializeAsync(cancellationToken).ConfigureAwait(false);
 
         HttpClient? tavilyHttp = null;
@@ -188,6 +193,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
             inference,
             memoryStore,
             memory,
+            memoryEmbeddingProvider,
             desktop,
             session,
             research,
@@ -297,6 +303,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
 
         Session.Dispose();
         _memory.Dispose();
+        _memoryEmbeddingProvider?.Dispose();
         _memoryStore.Dispose();
         _researchServerlessHttp?.Dispose();
         _researchObjectStorage?.Dispose();

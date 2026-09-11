@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 
 namespace Nvidea.Core.Memory;
 
-public sealed class PersonalMemoryService : IDisposable
+public sealed partial class PersonalMemoryService : IDisposable
 {
     private static readonly IReadOnlySet<MemorySensitivity> DefaultAllowedSensitivities =
         new HashSet<MemorySensitivity> { MemorySensitivity.Public, MemorySensitivity.Personal };

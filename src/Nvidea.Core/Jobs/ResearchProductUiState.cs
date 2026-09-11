@@ -26,6 +26,7 @@ public sealed record ResearchProductUiState(
     public static ResearchProductUiState Project(
         ResearchJobStatus? status,
         bool runtimeAvailable,
+        bool localExecutionAvailable,
         bool operationInProgress,
         bool hasActiveJob,
         bool remoteLifecycleAvailable,
@@ -37,8 +38,14 @@ public sealed record ResearchProductUiState(
                 "Remote dispatch cannot be enabled when provider lifecycle support is unavailable.",
                 nameof(remoteDispatchEnabled));
         }
+        if (remoteDispatchEnabled && !localExecutionAvailable)
+        {
+            throw new ArgumentException(
+                "Remote dispatch cannot be enabled when the local research runtime is unavailable.",
+                nameof(remoteDispatchEnabled));
+        }
 
-        var cloudDisclosure = CloudDisclosure(remoteLifecycleAvailable, remoteDispatchEnabled);
+        var cloudDisclosure = CloudDisclosure(localExecutionAvailable, remoteLifecycleAvailable, remoteDispatchEnabled);
         var resumeLabel = status?.CanRecoverInterrupted == true
             ? RearmInterruptedStageLabel
             : ResumeNextStageLabel;
@@ -58,13 +65,15 @@ public sealed record ResearchProductUiState(
         }
 
         var requiresReconciliation = status?.RequiresRemoteReconciliation == true;
-        var resumeEnabled = status is not null
+        var resumeEnabled = localExecutionAvailable
+            && status is not null
             && !requiresReconciliation
             && (status.CanRunNextStep || status.CanRecoverInterrupted);
         var reconcileEnabled = requiresReconciliation && remoteLifecycleAvailable;
         var cancelEnabled = status?.CanCancel == true
-            && (!requiresReconciliation || remoteLifecycleAvailable);
-        var dispatchEnabled = remoteDispatchEnabled
+            && (requiresReconciliation ? remoteLifecycleAvailable : localExecutionAvailable);
+        var dispatchEnabled = localExecutionAvailable
+            && remoteDispatchEnabled
             && status is
             {
                 State: AgentJobState.Pending,
@@ -76,7 +85,7 @@ public sealed record ResearchProductUiState(
             && !string.IsNullOrWhiteSpace(status.CheckpointStep);
 
         return new ResearchProductUiState(
-            StartEnabled: runtimeAvailable,
+            StartEnabled: localExecutionAvailable,
             ResumeEnabled: resumeEnabled,
             ResumeLabel: resumeLabel,
             ReconcileEnabled: reconcileEnabled,
@@ -87,11 +96,21 @@ public sealed record ResearchProductUiState(
         };
     }
 
-    private static string CloudDisclosure(bool remoteLifecycleAvailable, bool remoteDispatchEnabled)
+    private static string CloudDisclosure(
+        bool localExecutionAvailable,
+        bool remoteLifecycleAvailable,
+        bool remoteDispatchEnabled)
     {
         if (!remoteLifecycleAvailable)
         {
-            return "Cloud execution is locked: local Nemotron + Tavily research is available, but Nebius lifecycle controls remain disabled until the live deployment contract is proven and composed.";
+            return localExecutionAvailable
+                ? "Cloud execution is locked: local Nemotron + Tavily research is available, but Nebius lifecycle controls remain disabled until the live deployment contract is proven and composed."
+                : "Durable research is unavailable until TAVILY_API_KEY is configured or Nebius lifecycle recovery is explicitly composed.";
+        }
+
+        if (!localExecutionAvailable)
+        {
+            return "Nebius lifecycle recovery is available without local Tavily credentials. Existing remote jobs can be reconciled/cancelled; local research and all new Serverless dispatch remain locked.";
         }
 
         return remoteDispatchEnabled

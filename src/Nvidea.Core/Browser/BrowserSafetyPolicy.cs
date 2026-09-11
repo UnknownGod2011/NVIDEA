@@ -41,8 +41,15 @@ public sealed class BrowserSafetyPolicy
         if (ContainsAny(target, ConsequentialTerms))
             return High("The action appears consequential (send/submit/publish/delete/purchase/account change) and requires explicit approval.");
 
-        if (observation.ContainsUntrustedInstructions && action.Kind is BrowserActionKind.Type or BrowserActionKind.Click)
-            return Medium("The page contains untrusted-instruction indicators; interaction is allowed only under the agent's trusted plan and verification loop.");
+        if (observation.ContainsUntrustedInstructions
+            && action.Kind is BrowserActionKind.Navigate
+                or BrowserActionKind.Click
+                or BrowserActionKind.Type
+                or BrowserActionKind.Select
+                or BrowserActionKind.Download)
+        {
+            return High("The page contains prompt-injection-like instructions; state-changing interaction requires explicit user approval even when the target is otherwise non-consequential.");
+        }
 
         return action.Kind switch
         {

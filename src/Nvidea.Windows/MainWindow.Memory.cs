@@ -12,7 +12,7 @@ public partial class MainWindow
 
     private async void MemoryPreviewButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_running || _browserRunning || _memoryMigrationRunning)
+        if (IsAnyNonMemoryOperationRunning() || _memoryMigrationRunning)
             return;
 
         await RefreshMemoryMigrationPreviewAsync(showFailureInOutput: true);
@@ -20,7 +20,7 @@ public partial class MainWindow
 
     private async void MemoryMigrateButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_running || _browserRunning || _memoryMigrationRunning || _memoryMigrationPreview is null)
+        if (IsAnyNonMemoryOperationRunning() || _memoryMigrationRunning || _memoryMigrationPreview is null)
             return;
 
         var options = BuildMemoryMigrationOptions();
@@ -75,6 +75,7 @@ public partial class MainWindow
         MemoryMigrationProgressText.Visibility = Visibility.Visible;
         StatusText.Text = "Memory — local re-index running";
         UpdateBusyControls();
+        UpdateResearchControls(null);
 
         var progress = new Progress<MemoryEmbeddingMigrationProgress>(value =>
         {
@@ -107,6 +108,7 @@ public partial class MainWindow
             _memoryMigrationCts?.Dispose();
             _memoryMigrationCts = null;
             UpdateBusyControls();
+            UpdateResearchControls(null);
             await RefreshMemoryMigrationPreviewAsync(showFailureInOutput: false);
         }
     }
@@ -189,13 +191,16 @@ public partial class MainWindow
         if (!IsInitialized)
             return;
 
-        var otherBusy = _running || _browserRunning;
+        var otherBusy = IsAnyNonMemoryOperationRunning();
         MemoryPreviewButton.IsEnabled = !otherBusy && !_memoryMigrationRunning;
         MemoryMigrateButton.IsEnabled = !otherBusy && !_memoryMigrationRunning && _memoryMigrationPreview?.TotalCandidates > 0;
         MemoryMigrationCancelButton.IsEnabled = _memoryMigrationRunning;
         MemoryIncludeSensitiveCheck.IsEnabled = !otherBusy && !_memoryMigrationRunning;
         MemoryIncludeRestrictedCheck.IsEnabled = !otherBusy && !_memoryMigrationRunning;
     }
+
+    private bool IsAnyNonMemoryOperationRunning() =>
+        _running || _browserRunning || _researchRunning || _voiceRunning;
 
     private static bool MigrationPlansMatch(MemoryEmbeddingMigrationPlan expected, MemoryEmbeddingMigrationPlan actual)
     {

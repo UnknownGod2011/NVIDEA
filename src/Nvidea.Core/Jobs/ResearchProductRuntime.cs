@@ -41,35 +41,48 @@ public interface IResearchCloudExecutionCoordinator
 /// routed by durable provenance and delegated to runtimes that revalidate state under the shared
 /// state-directory lease.
 ///
+/// Local research and remote lifecycle authority are deliberately independent. A desktop can recover,
+/// reconcile, or cancel already-dispatched Nebius work even when the local Tavily-backed executor is
+/// temporarily unavailable; in that mode every local mutation fails closed instead of replaying work.
+///
 /// Remote dispatch is independently feature-gated. A product can safely compose this facade before
 /// the first credential-backed Serverless PASS while still gaining correct reconciliation/cancellation
 /// semantics for records created by contract probes or future enabled builds.
 /// </summary>
 public sealed class ResearchProductRuntime
 {
-    private readonly ILocalResearchRuntime _local;
+    private readonly ILocalResearchRuntime? _local;
     private readonly IResearchCloudExecutionCoordinator? _cloud;
     private readonly JsonAgentJobStore _store;
 
     public ResearchProductRuntime(
         string stateDirectory,
-        ILocalResearchRuntime local,
+        ILocalResearchRuntime? local,
         IResearchCloudExecutionCoordinator? cloud = null,
         bool remoteDispatchEnabled = false)
     {
         if (string.IsNullOrWhiteSpace(stateDirectory))
             throw new ArgumentException("Research state directory is required.", nameof(stateDirectory));
 
-        _local = local ?? throw new ArgumentNullException(nameof(local));
+        _local = local;
         _cloud = cloud;
         RemoteDispatchEnabled = remoteDispatchEnabled;
         if (RemoteDispatchEnabled && _cloud is null)
             throw new ArgumentException("Remote dispatch cannot be enabled without a cloud execution coordinator.", nameof(cloud));
+        if (RemoteDispatchEnabled && _local is null)
+            throw new ArgumentException("Remote dispatch cannot be enabled without the local research runtime that creates and validates eligible checkpoints.", nameof(local));
 
         var root = Path.GetFullPath(stateDirectory);
         Directory.CreateDirectory(root);
         _store = new JsonAgentJobStore(Path.Combine(root, "research-jobs.json"));
     }
+
+    /// <summary>
+    /// True when the Tavily-backed in-process research executor is composed. This is intentionally
+    /// separate from <see cref="RemoteLifecycleAvailable"/> so recovery of existing cloud work does
+    /// not depend on local research credentials.
+    /// </summary>
+    public bool LocalExecutionAvailable => _local is not null;
 
     public bool RemoteDispatchEnabled { get; }
 
@@ -84,7 +97,7 @@ public sealed class ResearchProductRuntime
     public Task<ResearchJobStatus> CreateAsync(
         string question,
         CancellationToken cancellationToken = default) =>
-        _local.CreateAsync(question, cancellationToken);
+        RequireLocal().CreateAsync(question, cancellationToken);
 
     public async Task<IReadOnlyList<ResearchJobStatus>> ListAsync(
         CancellationToken cancellationToken = default)
@@ -112,7 +125,7 @@ public sealed class ResearchProductRuntime
         if (current.ExecutionLocation != JobExecutionLocation.Local)
             throw new InvalidOperationException("Only local research can run through the local product action.");
 
-        return await _local.RunNextStepAsync(jobId, cancellationToken).ConfigureAwait(false);
+        return await RequireLocal().RunNextStepAsync(jobId, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<ResearchJobStatus> RecoverInterruptedAsync(
@@ -122,7 +135,7 @@ public sealed class ResearchProductRuntime
         var current = await GetRequiredResearchAsync(jobId, cancellationToken).ConfigureAwait(false);
         if (ResearchJobStatus.HasUnfinishedRemoteProvenance(current))
             throw new InvalidOperationException("Remote or ambiguous research must be reconciled instead of locally recovered.");
-        return await _local.RecoverInterruptedAsync(jobId, cancellationToken).ConfigureAwait(false);
+        return await RequireLocal().RecoverInterruptedAsync(jobId, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<ResearchJobStatus> DispatchCurrentStageAsync(
@@ -132,7 +145,7 @@ public sealed class ResearchProductRuntime
         CancellationToken cancellationToken = default)
     {
         if (!RemoteDispatchEnabled)
-            throw new InvalidOperationException("Nebius Serverless research dispatch is disabled until the live deployment contract is explicitly enabled.");
+            throw new InvalidOperationException("Nebius Serverless research dispatch is disabled until the live deployment contract and local research runtime are explicitly enabled.");
 
         var cloud = RequireCloud();
         return await cloud.DispatchCurrentStageAsync(
@@ -175,13 +188,17 @@ public sealed class ResearchProductRuntime
         if (current.ExecutionLocation != JobExecutionLocation.Local)
             throw new InvalidOperationException("Non-local research without a supported remote lifecycle cannot be cancelled locally.");
 
-        return await _local.CancelAsync(jobId, cancellationToken).ConfigureAwait(false);
+        return await RequireLocal().CancelAsync(jobId, cancellationToken).ConfigureAwait(false);
     }
 
     public Task<ResearchReport> ReadCompletedReportAsync(
         Guid jobId,
         CancellationToken cancellationToken = default) =>
-        _local.ReadCompletedReportAsync(jobId, cancellationToken);
+        RequireLocal().ReadCompletedReportAsync(jobId, cancellationToken);
+
+    private ILocalResearchRuntime RequireLocal() =>
+        _local ?? throw new InvalidOperationException(
+            "Local research execution is unavailable; configure TAVILY_API_KEY. Existing Nebius lifecycle reconciliation/cancellation remains available when composed.");
 
     private IResearchCloudExecutionCoordinator RequireCloud() =>
         _cloud ?? throw new InvalidOperationException(

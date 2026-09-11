@@ -1,4 +1,5 @@
 using Nvidea.Core.Browser;
+using Nvidea.Core.Capabilities;
 using Nvidea.Core.Jobs;
 using Nvidea.Core.Memory;
 using Nvidea.Core.Nebius;
@@ -16,6 +17,8 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
 {
     private readonly HttpClient _nebiusHttp;
     private readonly HttpClient? _tavilyHttp;
+    private readonly HttpClient? _researchServerlessHttp;
+    private readonly NebiusObjectStorageClient? _researchObjectStorage;
     private readonly IAgentInferenceClient _inference;
     private readonly JsonFileMemoryStore _memoryStore;
     private readonly PersonalMemoryService _memory;
@@ -28,6 +31,8 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     private NvideaCompositionRoot(
         HttpClient nebiusHttp,
         HttpClient? tavilyHttp,
+        HttpClient? researchServerlessHttp,
+        NebiusObjectStorageClient? researchObjectStorage,
         IAgentInferenceClient inference,
         JsonFileMemoryStore memoryStore,
         PersonalMemoryService memory,
@@ -38,6 +43,8 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     {
         _nebiusHttp = nebiusHttp;
         _tavilyHttp = tavilyHttp;
+        _researchServerlessHttp = researchServerlessHttp;
+        _researchObjectStorage = researchObjectStorage;
         _inference = inference;
         _memoryStore = memoryStore;
         _memory = memory;
@@ -54,9 +61,9 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
 
     /// <summary>
     /// Lifecycle-aware durable research surface intended for product/UI use. It is available only
-    /// when Tavily is configured. Serverless dispatch is deliberately disabled in this desktop
-    /// composition until the credential-backed deployment contract has passed and a cloud
-    /// coordinator is explicitly composed.
+    /// when Tavily is configured. Remote lifecycle support is explicit opt-in and requires the same
+    /// fail-closed live Nebius deployment preflight as the contract probe; new remote dispatch is a
+    /// separate opt-in so recovery/cancellation does not silently authorize additional paid work.
     /// </summary>
     public ResearchProductRuntime? Research { get; }
 
@@ -82,6 +89,8 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         await memory.InitializeAsync(cancellationToken).ConfigureAwait(false);
 
         HttpClient? tavilyHttp = null;
+        HttpClient? researchServerlessHttp = null;
+        NebiusObjectStorageClient? researchObjectStorage = null;
         ResearchEngine? researchEngine = null;
         ResearchProductRuntime? research = null;
         var tavilyKey = Environment.GetEnvironmentVariable("TAVILY_API_KEY");
@@ -92,11 +101,69 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
             researchEngine = new ResearchEngine(inference, tavily);
             var researchDirectory = Path.Combine(dataDirectory, "research");
             var localResearch = new ResearchJobRuntime(researchDirectory, researchEngine);
+            var cloudMode = DesktopResearchCloudMode.FromEnvironment();
+            IResearchCloudExecutionCoordinator? cloud = null;
+
+            if (cloudMode.LifecycleEnabled)
+            {
+                var configuration = NebiusResearchLiveConfigurationLoader.LoadFromEnvironment();
+                try
+                {
+                    var providers = NebiusResearchLiveProviderStartup.CreateAfterDestinationPreflight(
+                        configuration,
+                        () =>
+                        {
+                            var objectStorage = new NebiusObjectStorageClient(configuration.ObjectStorageOptions);
+                            try
+                            {
+                                var serverlessHttp = new HttpClient();
+                                var transport = new S3ProtectedResearchTransport(objectStorage);
+                                var serverless = new NebiusServerlessJobClient(
+                                    serverlessHttp,
+                                    new NebiusServerlessOptions(
+                                        configuration.ServerlessAccessToken,
+                                        configuration.ProjectId,
+                                        RequestTimeout: TimeSpan.FromSeconds(30),
+                                        MaxRetries: 2));
+                                return (ObjectStorage: objectStorage, ServerlessHttp: serverlessHttp, Transport: transport, Serverless: serverless);
+                            }
+                            catch
+                            {
+                                objectStorage.Dispose();
+                                throw;
+                            }
+                        });
+
+                    researchObjectStorage = providers.ObjectStorage;
+                    researchServerlessHttp = providers.ServerlessHttp;
+                    var store = new JsonAgentJobStore(Path.Combine(researchDirectory, "research-jobs.json"));
+                    IAuditTrail audit = new JsonLinesAuditTrail(Path.Combine(researchDirectory, "research-cloud-audit.jsonl"));
+                    var remote = NebiusResearchLiveRuntimeFactory.Create(
+                        store,
+                        providers.Serverless,
+                        providers.Transport,
+                        providers.Transport,
+                        providers.Transport,
+                        configuration.DispatchOptions,
+                        configuration.ClientPrivateKeyPem,
+                        audit);
+                    cloud = new ResearchCloudExecutionCoordinator(researchDirectory, remote);
+                }
+                catch
+                {
+                    researchServerlessHttp?.Dispose();
+                    researchObjectStorage?.Dispose();
+                    researchServerlessHttp = null;
+                    researchObjectStorage = null;
+                    throw;
+                }
+            }
+
             research = new ResearchProductRuntime(
                 researchDirectory,
                 localResearch,
-                cloud: null,
-                remoteDispatchEnabled: false);
+                cloud,
+                remoteDispatchEnabled: cloudMode.DispatchEnabled);
         }
 
         var desktop = new DesktopInvocationService(inference, memory, researchEngine);
@@ -104,6 +171,8 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         return new NvideaCompositionRoot(
             nebiusHttp,
             tavilyHttp,
+            researchServerlessHttp,
+            researchObjectStorage,
             inference,
             memoryStore,
             memory,
@@ -217,6 +286,8 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         Session.Dispose();
         _memory.Dispose();
         _memoryStore.Dispose();
+        _researchServerlessHttp?.Dispose();
+        _researchObjectStorage?.Dispose();
         _tavilyHttp?.Dispose();
         _nebiusHttp.Dispose();
         _browserGate.Dispose();

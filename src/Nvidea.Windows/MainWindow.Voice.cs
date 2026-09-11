@@ -81,7 +81,7 @@ public partial class MainWindow
 
     private async Task StartVoiceCaptureAsync()
     {
-        if (_running || _browserRunning || _researchRunning || _voiceRunning)
+        if (_running || _browserRunning || _researchRunning || _voiceRunning || _memoryMigrationRunning)
             return;
 
         if (!_voiceTranscriber.IsAvailable)
@@ -189,11 +189,12 @@ public partial class MainWindow
             ResearchReconcileButton.IsEnabled = false;
             ResearchCancelButton.IsEnabled = false;
             StopButton.IsEnabled = true;
+            UpdateMemoryMaintenanceControls();
             return;
         }
 
         UpdateBusyControls();
         if (_voiceButton is not null)
-            _voiceButton.IsEnabled = !_running && !_browserRunning && !_researchRunning;
+            _voiceButton.IsEnabled = !_running && !_browserRunning && !_researchRunning && !_memoryMigrationRunning;
     }
 }

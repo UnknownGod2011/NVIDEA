@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Controls;
 using Nvidea.Core.Desktop;
 
 namespace Nvidea.Windows;
@@ -7,8 +8,36 @@ public partial class MainWindow
 {
     private readonly ILocalVoiceTranscriber _voiceTranscriber = new SystemSpeechLocalTranscriber();
     private CancellationTokenSource? _voiceCts;
+    private Button? _voiceButton;
     private bool _voiceRunning;
     private bool _voiceWindowHooksAttached;
+
+    private void InitializeVoiceUi()
+    {
+        if (_voiceButton is not null || Content is not Grid root)
+            return;
+
+        var commandRow = root.Children
+            .OfType<Grid>()
+            .FirstOrDefault(child => Grid.GetRow(child) == 2);
+        if (commandRow is null || commandRow.ColumnDefinitions.Count < 5)
+            return;
+
+        commandRow.ColumnDefinitions.Insert(3, new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(StopButton, 4);
+        Grid.SetColumn(InvokeButton, 5);
+
+        _voiceButton = new Button
+        {
+            Content = "Voice",
+            Padding = new Thickness(14, 6, 14, 6),
+            Margin = new Thickness(0, 0, 8, 0),
+            ToolTip = "One-shot local Windows speech recognition. Audio is not sent to a cloud speech service and the transcript is reviewed before Run."
+        };
+        _voiceButton.Click += VoiceButton_Click;
+        Grid.SetColumn(_voiceButton, 3);
+        commandRow.Children.Add(_voiceButton);
+    }
 
     private async void VoiceButton_Click(object sender, RoutedEventArgs e)
     {
@@ -107,7 +136,8 @@ public partial class MainWindow
         if (running)
         {
             InvokeButton.IsEnabled = false;
-            VoiceButton.IsEnabled = false;
+            if (_voiceButton is not null)
+                _voiceButton.IsEnabled = false;
             BrowserButton.IsEnabled = false;
             BrowserUrlBox.IsEnabled = false;
             PromptBox.IsEnabled = false;
@@ -124,5 +154,7 @@ public partial class MainWindow
         }
 
         UpdateBusyControls();
+        if (_voiceButton is not null)
+            _voiceButton.IsEnabled = !_running && !_browserRunning && !_researchRunning;
     }
 }

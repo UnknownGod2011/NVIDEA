@@ -28,12 +28,13 @@ public sealed class LocalOllamaMemoryEmbeddingProviderTests
 
         var result = await provider.EmbedWithMetadataAsync("  remember this  ");
 
-        Assert.Equal(new float[] { 0.25f, 0.5f, 0.75f }, result.Vector);
+        Assert.Equal(new float[] { 0.25f, 0.5f, 0.75f }, result.Vector.ToArray());
         Assert.Equal("ollama-local", result.Provenance.Provider);
         Assert.Equal("embeddinggemma:latest", result.Provenance.Model);
         Assert.Equal(3, result.Provenance.Dimensions);
         Assert.True(result.Provenance.IsLocal);
-        Assert.Contains("\"truncate\":false", requestBody, StringComparison.OrdinalIgnoreCase);
+        Assert.NotNull(requestBody);
+        Assert.Contains("\"truncate\":false", requestBody!, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("remember this", requestBody, StringComparison.Ordinal);
     }
 

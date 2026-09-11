@@ -1,14 +1,19 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Interop;
 using Nvidea.Core.Desktop;
 
 namespace Nvidea.Windows;
 
 public partial class MainWindow
 {
+    private const int VoiceHotKeyId = 0x4E57;
+    private const uint VkV = 0x56;
+
     private readonly ILocalVoiceTranscriber _voiceTranscriber = new SystemSpeechLocalTranscriber();
     private CancellationTokenSource? _voiceCts;
     private Button? _voiceButton;
+    private HwndSource? _voiceSource;
     private bool _voiceRunning;
     private bool _voiceWindowHooksAttached;
 
@@ -32,14 +37,49 @@ public partial class MainWindow
             Content = "Voice",
             Padding = new Thickness(14, 6, 14, 6),
             Margin = new Thickness(0, 0, 8, 0),
-            ToolTip = "One-shot local Windows speech recognition. Audio is not sent to a cloud speech service and the transcript is reviewed before Run."
+            ToolTip = "Ctrl+Shift+V. One-shot local Windows speech recognition; audio is not sent to a cloud speech service and the transcript is reviewed before Run."
         };
         _voiceButton.Click += VoiceButton_Click;
         Grid.SetColumn(_voiceButton, 3);
         commandRow.Children.Add(_voiceButton);
+
+        if (!_voiceWindowHooksAttached)
+        {
+            StopButton.Click += VoiceEmergencyStop_Click;
+            Closed += VoiceWindow_Closed;
+            _voiceWindowHooksAttached = true;
+        }
+
+        var handle = new WindowInteropHelper(this).Handle;
+        if (handle == IntPtr.Zero)
+            return;
+
+        _voiceSource = HwndSource.FromHwnd(handle);
+        _voiceSource?.AddHook(VoiceWndProc);
+        if (!RegisterHotKey(handle, VoiceHotKeyId, ModControl | ModShift, VkV))
+            _voiceButton.ToolTip += " Global voice hotkey registration failed on this Windows session; the Voice button still works.";
     }
 
-    private async void VoiceButton_Click(object sender, RoutedEventArgs e)
+    private IntPtr VoiceWndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        const int WmHotKey = 0x0312;
+        if (msg != WmHotKey || wParam.ToInt32() != VoiceHotKeyId)
+            return IntPtr.Zero;
+
+        // Match the text hotkey privacy boundary: capture the foreground app before NVIDEA activates.
+        _pendingContext = WindowsContextCapture.Capture(ClipboardCheck.IsChecked == true);
+        UpdateContextLabel(_pendingContext);
+        Show();
+        Activate();
+        handled = true;
+
+        _ = Dispatcher.InvokeAsync(async () => await StartVoiceCaptureAsync());
+        return IntPtr.Zero;
+    }
+
+    private async void VoiceButton_Click(object sender, RoutedEventArgs e) => await StartVoiceCaptureAsync();
+
+    private async Task StartVoiceCaptureAsync()
     {
         if (_running || _browserRunning || _researchRunning || _voiceRunning)
             return;
@@ -67,13 +107,6 @@ public partial class MainWindow
         {
             StatusText.Text = "Voice — microphone not started";
             return;
-        }
-
-        if (!_voiceWindowHooksAttached)
-        {
-            StopButton.Click += VoiceEmergencyStop_Click;
-            Closed += VoiceWindow_Closed;
-            _voiceWindowHooksAttached = true;
         }
 
         _voiceCts?.Dispose();
@@ -128,6 +161,12 @@ public partial class MainWindow
         _voiceCts?.Cancel();
         _voiceCts?.Dispose();
         _voiceCts = null;
+
+        var handle = new WindowInteropHelper(this).Handle;
+        if (handle != IntPtr.Zero)
+            _ = UnregisterHotKey(handle, VoiceHotKeyId);
+        _voiceSource?.RemoveHook(VoiceWndProc);
+        _voiceSource = null;
     }
 
     private void SetVoiceRunning(bool running)

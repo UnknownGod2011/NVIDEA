@@ -7,7 +7,7 @@ using Nvidea.Core.Nebius;
 
 namespace Nvidea.JudgingEvidenceVerifier;
 
-internal static class Program
+public static class Program
 {
     private const int MaximumArtifactLength = 256 * 1024;
     private const int MaximumJsonDepth = 32;
@@ -91,13 +91,13 @@ internal static class Program
                     "synthetic",
                     positive.GeneratedAt,
                     positive.Checks!.Count,
-                    positive.Checks.Select(static check => check.Id).Order(StringComparer.Ordinal).ToArray(),
+                    positive.Checks!.Select(static check => check.Id).Order(StringComparer.Ordinal).ToArray(),
                     positiveArtifact.Sha256),
                 AdversarialEvaluator: new EvaluatorSummary(
                     "synthetic",
                     adversarial.GeneratedAt,
                     adversarial.Checks!.Count,
-                    adversarial.Checks.Select(static check => check.Id).Order(StringComparer.Ordinal).ToArray(),
+                    adversarial.Checks!.Select(static check => check.Id).Order(StringComparer.Ordinal).ToArray(),
                     adversarialArtifact.Sha256),
                 NebiusLiveEvidence: new NebiusSummary(
                     "provider-live",
@@ -124,7 +124,7 @@ internal static class Program
         }
     }
 
-    internal static CatalogSummary ValidateModelCatalogEvidence(ModelCatalogEvidence catalog, DateTimeOffset now, string artifactSha256)
+    public static CatalogSummary ValidateModelCatalogEvidence(ModelCatalogEvidence catalog, DateTimeOffset now, string artifactSha256)
     {
         ArgumentNullException.ThrowIfNull(catalog);
         if (!string.Equals(catalog.SchemaVersion, "nvidea.nebius-model-catalog-check.v1", StringComparison.Ordinal))
@@ -363,12 +363,12 @@ internal static class Program
     private sealed record EvalCheck(string Id, bool Passed, string? Detail);
     private sealed record PositiveEvidence(int SchemaVersion, DateTimeOffset GeneratedAt, bool OverallPassed, IReadOnlyList<EvalCheck>? Checks, JsonElement Metrics);
     private sealed record AdversarialEvidence(int SchemaVersion, DateTimeOffset GeneratedAt, bool OverallPassed, IReadOnlyList<EvalCheck>? Checks);
-    internal sealed record RequiredModelEvidence(string Tier, string Model, bool Present);
-    internal sealed record ModelCatalogEvidence(string SchemaVersion, DateTimeOffset ObservedAtUtc, string Mode, bool Passed, string? CatalogSha256, int? CatalogModelCount, string? EndpointHost, IReadOnlyList<RequiredModelEvidence>? RequiredModels, IReadOnlyList<string>? FailureCodes);
+    public sealed record RequiredModelEvidence(string Tier, string Model, bool Present);
+    public sealed record ModelCatalogEvidence(string SchemaVersion, DateTimeOffset ObservedAtUtc, string Mode, bool Passed, string? CatalogSha256, int? CatalogModelCount, string? EndpointHost, IReadOnlyList<RequiredModelEvidence>? RequiredModels, IReadOnlyList<string>? FailureCodes);
     private sealed record EvidenceBoundary(bool SyntheticEvidenceVerified, bool LiveNebiusEvidenceVerified, bool CurrentNebiusModelCatalogVerified, IReadOnlyList<string> ClaimsExcluded);
     private sealed record EvaluatorSummary(string EvidenceClass, DateTimeOffset GeneratedAt, int CheckCount, IReadOnlyList<string> CheckIds, string ArtifactSha256);
     private sealed record NebiusSummary(string EvidenceClass, DateTimeOffset CompletedAt, string DeploymentFingerprintSha256, int RemoteStageCount, int EvidenceItemCount, int ValidatedCitationCount, string ManifestSha256, string PassEvidenceSha256);
-    internal sealed record CatalogSummary(string EvidenceClass, DateTimeOffset ObservedAtUtc, int MaximumAgeSeconds, string EndpointHost, string CatalogSha256, int CatalogModelCount, IReadOnlyList<RequiredModelEvidence> RequiredModels, string ArtifactSha256);
+    public sealed record CatalogSummary(string EvidenceClass, DateTimeOffset ObservedAtUtc, int MaximumAgeSeconds, string EndpointHost, string CatalogSha256, int CatalogModelCount, IReadOnlyList<RequiredModelEvidence> RequiredModels, string ArtifactSha256);
     private sealed record JudgeEvidenceSummary(int SchemaVersion, bool OverallPassed, EvidenceBoundary EvidenceBoundary, EvaluatorSummary PositiveEvaluator, EvaluatorSummary AdversarialEvaluator, NebiusSummary NebiusLiveEvidence, CatalogSummary NebiusModelCatalog);
     private sealed record FailureSummary(int SchemaVersion, bool OverallPassed, string Failure);
 }

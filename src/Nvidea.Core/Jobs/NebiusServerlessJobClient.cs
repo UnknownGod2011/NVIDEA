@@ -254,8 +254,18 @@ public sealed class NebiusServerlessJobClient : INebiusServerlessJobClient
 
     private static void ValidateBaseUri(Uri uri)
     {
-        if (!uri.IsAbsoluteUri || !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)) throw new ArgumentException("Nebius Serverless base URI must be absolute HTTPS.");
-        if (!string.Equals(uri.Host, "api.nebius.cloud", StringComparison.OrdinalIgnoreCase) && !string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase) && !string.Equals(uri.Host, "127.0.0.1", StringComparison.OrdinalIgnoreCase)) throw new ArgumentException("Nebius Serverless base URI must target api.nebius.cloud (or localhost for contract tests).", nameof(uri));
+        if (!uri.IsAbsoluteUri || !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("Nebius Serverless base URI must be absolute HTTPS.", nameof(uri));
+        if (!string.IsNullOrEmpty(uri.UserInfo))
+            throw new ArgumentException("Nebius Serverless base URI must not contain URI user-info.", nameof(uri));
+
+        var isOfficial = string.Equals(uri.Host, "api.nebius.cloud", StringComparison.OrdinalIgnoreCase);
+        var isLoopback = string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(uri.Host, "127.0.0.1", StringComparison.OrdinalIgnoreCase);
+        if (!isOfficial && !isLoopback)
+            throw new ArgumentException("Nebius Serverless base URI must target api.nebius.cloud (or localhost for contract tests).", nameof(uri));
+        if (isOfficial && !uri.IsDefaultPort)
+            throw new ArgumentException("Nebius Serverless production endpoint must use the standard HTTPS port.", nameof(uri));
     }
 
     private static bool IsTransient(HttpStatusCode statusCode) => statusCode == HttpStatusCode.TooManyRequests || (int)statusCode >= 500;

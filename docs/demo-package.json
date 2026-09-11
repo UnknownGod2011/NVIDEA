@@ -74,7 +74,8 @@
       "evidence": [
         {"evidenceClass": "documentation", "path": "docs/nebius-contract-probe.md", "claim": "Documents zero-cost preflight and explicit paid live contract execution."},
         {"evidenceClass": "documentation", "path": "docs/judging-evidence.md", "claim": "Defines the redacted deployment fingerprint and live PASS evidence boundary."},
-        {"evidenceClass": "documentation", "path": "docs/judging-evidence-verifier.md", "claim": "Unified verifier keeps synthetic and live evidence classes separate."}
+        {"evidenceClass": "documentation", "path": "docs/nebius-model-catalog-check.md", "claim": "Defines zero-inference model-catalog readiness evidence and captured-vs-live semantics."},
+        {"evidenceClass": "documentation", "path": "docs/judging-evidence-verifier.md", "claim": "Unified verifier rejects captured or stale catalog evidence as current provider readiness."}
       ]
     },
     {
@@ -86,7 +87,7 @@
       "featurePaths": ["README.md", "tools/Nvidea.JudgingEvidenceVerifier"],
       "evidence": [
         {"evidenceClass": "documentation", "path": "README.md", "claim": "Architecture and safety contract."},
-        {"evidenceClass": "documentation", "path": "docs/judging-evidence-verifier.md", "claim": "Judge-facing evidence-class separation and non-claims."}
+        {"evidenceClass": "documentation", "path": "docs/judging-evidence-verifier.md", "claim": "Judge-facing evidence-class separation, freshness gate, and non-claims."}
       ]
     }
   ],
@@ -102,9 +103,14 @@
       "command": "dotnet run --project tools/Nvidea.PersonalAiAdversarialEval/Nvidea.PersonalAiAdversarialEval.csproj -- --output artifacts/personal-ai-adversarial.json"
     },
     {
+      "label": "Fresh live Nebius model catalog readiness",
+      "projectPath": "tools/Nvidea.NebiusModelCatalogCheck/Nvidea.NebiusModelCatalogCheck.csproj",
+      "command": "dotnet run --project tools/Nvidea.NebiusModelCatalogCheck/Nvidea.NebiusModelCatalogCheck.csproj -- --live --output artifacts/nebius-model-catalog-live.json"
+    },
+    {
       "label": "Unified judging evidence verifier",
       "projectPath": "tools/Nvidea.JudgingEvidenceVerifier/Nvidea.JudgingEvidenceVerifier.csproj",
-      "command": "dotnet run --project tools/Nvidea.JudgingEvidenceVerifier/Nvidea.JudgingEvidenceVerifier.csproj -- artifacts/personal-ai-positive.json artifacts/personal-ai-adversarial.json artifacts/nebius-manifest.json artifacts/nebius-pass.json --output artifacts/judging-summary.json"
+      "command": "dotnet run --project tools/Nvidea.JudgingEvidenceVerifier/Nvidea.JudgingEvidenceVerifier.csproj -- artifacts/personal-ai-positive.json artifacts/personal-ai-adversarial.json artifacts/nebius-manifest.json artifacts/nebius-pass.json artifacts/nebius-model-catalog-live.json --output artifacts/judging-summary.json"
     },
     {
       "label": "Demo package validator",

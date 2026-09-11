@@ -31,6 +31,17 @@ public sealed record MemoryProvenance(
     string? SourceUri = null,
     DateTimeOffset? ObservedAt = null);
 
+public sealed record MemoryEmbeddingProvenance(
+    string Provider,
+    string Model,
+    int Dimensions,
+    bool IsLocal,
+    DateTimeOffset CreatedAt);
+
+public sealed record MemoryEmbeddingVector(
+    IReadOnlyList<float> Vector,
+    MemoryEmbeddingProvenance Provenance);
+
 public sealed record MemoryRecord
 {
     public required string Id { get; init; }
@@ -48,6 +59,7 @@ public sealed record MemoryRecord
     public DateTimeOffset LastAccessedAt { get; init; }
     public DateTimeOffset? ExpiresAt { get; init; }
     public IReadOnlyList<float>? Embedding { get; init; }
+    public MemoryEmbeddingProvenance? EmbeddingProvenance { get; init; }
 }
 
 public sealed record MemoryWriteRequest
@@ -97,6 +109,18 @@ public sealed class MemoryWriteRejectedException : InvalidOperationException
 public interface IMemoryEmbeddingProvider
 {
     Task<IReadOnlyList<float>> EmbedAsync(string text, CancellationToken cancellationToken = default);
+}
+
+public interface IProvenancedMemoryEmbeddingProvider : IMemoryEmbeddingProvider
+{
+    Task<MemoryEmbeddingVector> EmbedWithMetadataAsync(string text, CancellationToken cancellationToken = default);
+}
+
+public interface IMemoryBatchEmbeddingProvider : IProvenancedMemoryEmbeddingProvider
+{
+    Task<IReadOnlyList<MemoryEmbeddingVector>> EmbedBatchWithMetadataAsync(
+        IReadOnlyList<string> texts,
+        CancellationToken cancellationToken = default);
 }
 
 public interface IMemoryStore

@@ -171,6 +171,47 @@ public sealed class NebiusTokenFactoryClientTests
         Assert.False(error.ResponseExcerpt.Contains("test-key", StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData("https://nebius.com/v1/")]
+    [InlineData("https://api.tokenfactory.us-central1.nebius.com/v1/")]
+    [InlineData("https://subdomain.nebius.com/v1/")]
+    public void Options_accept_exact_nebius_domain_or_true_subdomain_on_standard_tls_port(string baseUri)
+    {
+        var options = new NebiusOptions
+        {
+            ApiKey = "test-key",
+            BaseUri = new Uri(baseUri)
+        };
+
+        options.Validate();
+    }
+
+    [Theory]
+    [InlineData("http://api.tokenfactory.us-central1.nebius.com/v1/")]
+    [InlineData("https://evilnebius.com/v1/")]
+    [InlineData("https://not-nebius.com/v1/")]
+    [InlineData("https://nebius.com.evil.example/v1/")]
+    [InlineData("https://user:password@api.tokenfactory.us-central1.nebius.com/v1/")]
+    [InlineData("https://api.tokenfactory.us-central1.nebius.com:444/v1/")]
+    public void Options_reject_untrusted_or_ambiguous_credential_destinations(string baseUri)
+    {
+        var options = new NebiusOptions
+        {
+            ApiKey = "test-key",
+            BaseUri = new Uri(baseUri)
+        };
+
+        Assert.Throws<InvalidOperationException>(options.Validate);
+    }
+
+    [Fact]
+    public void Trusted_base_uri_validation_rejects_suffix_lookalike_before_request_construction()
+    {
+        var lookalike = new Uri("https://evilnebius.com/v1/");
+
+        Assert.Throws<InvalidOperationException>(() => NebiusOptions.ValidateTrustedBaseUri(lookalike));
+    }
+
     [Fact]
     public void Options_reject_non_https_or_non_nebius_endpoint()
     {

@@ -10,18 +10,18 @@ namespace Nvidea.Core.Tests;
 public sealed class NebiusTokenFactoryClientTests
 {
     [Fact]
-    public void Router_falls_back_to_verified_super_when_optional_tiers_are_unset()
+    public void Router_uses_current_verified_nemotron_tiers_by_default()
     {
         var options = TestOptions();
         var router = new NemotronModelRouter(options);
 
-        Assert.Equal(NebiusOptions.VerifiedNemotronSuperModel, router.Resolve(WorkloadKind.Fast));
+        Assert.Equal(NebiusOptions.VerifiedNemotronNanoModel, router.Resolve(WorkloadKind.Fast));
         Assert.Equal(NebiusOptions.VerifiedNemotronSuperModel, router.Resolve(WorkloadKind.Standard));
-        Assert.Equal(NebiusOptions.VerifiedNemotronSuperModel, router.Resolve(WorkloadKind.Deep));
+        Assert.Equal(NebiusOptions.VerifiedNemotronUltraModel, router.Resolve(WorkloadKind.Deep));
     }
 
     [Fact]
-    public void Router_uses_explicit_tier_overrides_without_guessing_model_ids()
+    public void Router_uses_explicit_tier_overrides()
     {
         var options = new NebiusOptions
         {
@@ -34,6 +34,23 @@ public sealed class NebiusTokenFactoryClientTests
         var router = new NemotronModelRouter(options);
         Assert.Equal("nvidia/verified-fast-model", router.Resolve(WorkloadKind.Fast));
         Assert.Equal("nvidia/verified-deep-model", router.Resolve(WorkloadKind.Deep));
+    }
+
+    [Fact]
+    public void Router_falls_back_to_standard_when_an_optional_tier_is_explicitly_disabled()
+    {
+        var options = new NebiusOptions
+        {
+            ApiKey = "test-key",
+            FastModel = null,
+            StandardModel = NebiusOptions.VerifiedNemotronSuperModel,
+            DeepModel = " "
+        };
+
+        var router = new NemotronModelRouter(options);
+
+        Assert.Equal(NebiusOptions.VerifiedNemotronSuperModel, router.Resolve(WorkloadKind.Fast));
+        Assert.Equal(NebiusOptions.VerifiedNemotronSuperModel, router.Resolve(WorkloadKind.Deep));
     }
 
     [Fact]
@@ -83,6 +100,31 @@ public sealed class NebiusTokenFactoryClientTests
         Assert.Equal("auto", sent.RootElement.GetProperty("tool_choice").GetString());
         Assert.Equal(1.0, sent.RootElement.GetProperty("temperature").GetDouble());
         Assert.Equal(0.95, sent.RootElement.GetProperty("top_p").GetDouble());
+    }
+
+    [Theory]
+    [InlineData(WorkloadKind.Fast, NebiusOptions.VerifiedNemotronNanoModel)]
+    [InlineData(WorkloadKind.Deep, NebiusOptions.VerifiedNemotronUltraModel)]
+    public async Task Client_serializes_verified_tier_model_for_routed_workloads(
+        WorkloadKind workload,
+        string expectedModel)
+    {
+        string? requestBody = null;
+        var handler = new StubHandler(request =>
+        {
+            requestBody = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            return JsonResponse(HttpStatusCode.OK, """
+                {"choices":[{"finish_reason":"stop","message":{"content":"ready"}}]}
+                """);
+        });
+
+        using var httpClient = new HttpClient(handler);
+        var client = new NebiusTokenFactoryClient(httpClient, TestOptions());
+        await client.CompleteAsync(new AgentRequest([new ChatMessage("user", "hello")], workload));
+
+        Assert.NotNull(requestBody);
+        using var sent = JsonDocument.Parse(requestBody!);
+        Assert.Equal(expectedModel, sent.RootElement.GetProperty("model").GetString());
     }
 
     [Fact]

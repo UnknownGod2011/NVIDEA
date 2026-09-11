@@ -16,6 +16,13 @@ public sealed record ResearchProductUiState(
     public const string ResumeNextStageLabel = "Resume next stage";
     public const string RearmInterruptedStageLabel = "Re-arm interrupted stage";
 
+    /// <summary>
+    /// True only when the currently displayed durable checkpoint is eligible to be offered for a
+    /// new Nebius Serverless dispatch. This controls whether the UI may present the separate,
+    /// one-shot cloud-consent dialog; it does not itself grant cloud authorization.
+    /// </summary>
+    public bool DispatchEnabled { get; init; }
+
     public static ResearchProductUiState Project(
         ResearchJobStatus? status,
         bool runtimeAvailable,
@@ -44,7 +51,10 @@ public sealed record ResearchProductUiState(
                 ResumeLabel: resumeLabel,
                 ReconcileEnabled: false,
                 CancelEnabled: runtimeAvailable && hasActiveJob,
-                CloudDisclosureText: cloudDisclosure);
+                CloudDisclosureText: cloudDisclosure)
+            {
+                DispatchEnabled = false
+            };
         }
 
         var requiresReconciliation = status?.RequiresRemoteReconciliation == true;
@@ -54,6 +64,16 @@ public sealed record ResearchProductUiState(
         var reconcileEnabled = requiresReconciliation && remoteLifecycleAvailable;
         var cancelEnabled = status?.CanCancel == true
             && (!requiresReconciliation || remoteLifecycleAvailable);
+        var dispatchEnabled = remoteDispatchEnabled
+            && status is
+            {
+                State: AgentJobState.Pending,
+                ExecutionLocation: JobExecutionLocation.Local,
+                CanRunNextStep: true,
+                RequiresRemoteReconciliation: false,
+                ContainsPrivateOsData: false
+            }
+            && !string.IsNullOrWhiteSpace(status.CheckpointStep);
 
         return new ResearchProductUiState(
             StartEnabled: runtimeAvailable,
@@ -61,7 +81,10 @@ public sealed record ResearchProductUiState(
             ResumeLabel: resumeLabel,
             ReconcileEnabled: reconcileEnabled,
             CancelEnabled: cancelEnabled,
-            CloudDisclosureText: cloudDisclosure);
+            CloudDisclosureText: cloudDisclosure)
+        {
+            DispatchEnabled = dispatchEnabled
+        };
     }
 
     private static string CloudDisclosure(bool remoteLifecycleAvailable, bool remoteDispatchEnabled)
@@ -72,7 +95,7 @@ public sealed record ResearchProductUiState(
         }
 
         return remoteDispatchEnabled
-            ? "Nebius lifecycle + new dispatch are enabled in this composition. Consequential cloud execution still requires explicit scoped approval."
+            ? "Nebius lifecycle + new dispatch are enabled. Every Serverless stage requires a separate one-shot approval after exact job/checkpoint, encrypted-data boundary, and potential cloud/provider cost are disclosed."
             : "Nebius lifecycle reconciliation is available; new Serverless dispatch remains locked.";
     }
 }

@@ -25,7 +25,8 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Native Windows-side S3-compatible Object Storage transport and Serverless-mounted worker transport share one protected protocol. Deployment preflight enforces mount alignment, READ_WRITE transport, MysteryBox credentials, digest-pinned worker image, RSA identity consistency, bounded resources, and redacted deployment fingerprints.
 - `Nvidea.NebiusContractProbe` supports planner, zero-cost live preflight, explicit paid live research, redacted PASS evidence, and offline fail-closed verification.
 - Desktop diagnostics use `DesktopResearchReadiness`: startup failure and successful-start UI report capability state plus missing configuration **names only**. Secret values, PEM material, provider IDs, research payloads, and raw provider exception text are not surfaced.
-- Successful-start WPF now keeps a compact research-readiness strip visible and offers a read-only Details view distinguishing `ready`, `blocked`, and `locked` capabilities without constructing new provider authority.
+- Successful-start WPF keeps a compact research-readiness strip visible and offers a read-only Details view distinguishing `ready`, `blocked`, and `locked` capabilities without constructing new provider authority.
+- Windows voice invocation now exists as a local, review-first path: `Ctrl+Shift+V` or the Voice button asks for explicit microphone consent, transcribes with the installed Windows desktop speech recognizer, and places text into the prompt for review without auto-running it or routing audio to Nebius/Tavily/cloud speech.
 
 ## Persistent Progress History
 
@@ -56,73 +57,68 @@ Made concrete `ResearchJobRuntime` and `JsonAgentJobStore` construction assembly
 - `NvideaCompositionRoot` can compose validated Nebius lifecycle independently of `TAVILY_API_KEY`.
 - WPF recovery-only mode keeps Start/Resume/new dispatch locked while preserving Reconcile and remote Cancel.
 - Added `ResearchLifecycleOnlyRuntimeTests.cs` and updated remote-research docs.
-- Engineering commits: `3382dc0699ac087ee28849fe0597e8003a0117d6`, `4ddd47e4af606ae76de6840924b89c498ff16ac6`, `47f14ad73770810ba834458bd95afddca0a9f834`, `76dee6246767911fd161dfa0fda58f655f142f48`, `912c85383acb667f721eb7899042288a3ba447fe`, `341aa23e0cca0f7b6af5d62e567227c2d0bc40b9`, `f2b2a198d64a0ac5600ddba4932612d5ec295890`, `cc78a35a17334b7c5bbba52a6325921463101bbb`; ledger `0042f11059232234ff6e176aa4c5e6ef6b1b5a3c`.
 
 ### 2026-09-11 — Credential-safe desktop readiness diagnostics
+- Added `DesktopResearchReadiness`, a side-effect-free projection for local Tavily research, Nebius lifecycle recovery, and new Nebius dispatch.
+- Missing configuration is disclosed by documented variable **name only**; configured secret values and raw provider exceptions are never echoed.
+- WPF startup stopped showing raw `ex.Message` for composition failures and instead uses sanitized readiness guidance.
+- Added successful-start readiness strip + Details surface based only on already-composed runtime capabilities; no provider client/network side effect is introduced by viewing readiness.
+- Added focused regression tests for ready/blocked/locked projection and non-disclosure.
+
+### 2026-09-11 — Local review-first Windows voice invocation
 Completed:
-- Re-read this ledger completely, verified current repository/head, inspected desktop composition, live Nebius configuration/preflight, WPF research controls, and startup behavior, then selected the persisted fallback priority because no usable .NET SDK is exposed in this execution environment.
-- Added `src/Nvidea.Core/Desktop/DesktopResearchReadiness.cs`, a side-effect-free readiness projection for local Tavily research, Nebius lifecycle recovery, and new Nebius dispatch.
-- Readiness inspection returns capability state and missing environment-variable **names only**. It never returns environment values, access tokens, S3 credentials, PEM/key material, MysteryBox identifiers beyond configuration field names, provider resource IDs, research payloads, or provider SDK exception text.
-- Runtime readiness remains distinct from configuration presence: lifecycle/dispatch cannot report ready until the actual validated runtime says they are ready; opt-in remains required; new dispatch still requires both lifecycle and local Tavily-backed research.
-- Added a generic cloud-preflight-failure blocker directing operators to the existing redacted Nebius contract probe instead of echoing arbitrary provider exceptions.
-- Hardened `src/Nvidea.Windows/App.xaml.cs`: desktop startup no longer displays `ex.Message`. Startup failure now emits a credential-safe capability summary and named configuration blockers, with a generic fallback when even cloud-mode parsing is invalid.
-- Added `tests/Nvidea.Core.Tests/DesktopResearchReadinessTests.cs` covering secret-value non-disclosure, exact missing-name reporting, requested+validated readiness requirements, and generic cloud-failure text.
-
-Commits this run before this ledger update:
-- `70cb1aa566cb7fadc25a2de6b4dc525e70dc8328` — add credential-safe desktop research readiness model.
-- `62817dfb07478631d9a37b780d8d8d4398ac222e` — test credential-safe desktop research readiness.
-- `75fdc25ab385aa4d66d93a1af7aed4ace4b9cda7` — show credential-safe startup research diagnostics.
-
-Validation / evidence:
-- Repository identity was explicitly verified before every mutation; every write target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
-- Static compare from prior ledger head `0042f11059232234ff6e176aa4c5e6ef6b1b5a3c` to engineering head `75fdc25ab385aa4d66d93a1af7aed4ace4b9cda7` is **3 commits ahead / 0 behind** and changes exactly three files: new `DesktopResearchReadiness.cs`, new `DesktopResearchReadinessTests.cs`, and `App.xaml.cs`.
-- `Nvidea.Core.csproj` targets `net8.0` with implicit usings enabled, nullable enabled, and warnings-as-errors; the new readiness implementation only uses BCL APIs already covered by that project configuration.
-- `command -v dotnet` and `dotnet --info` again produced no usable .NET signal. Compilation, WPF/XAML compilation, and test execution are therefore **not claimed**.
-- No live Nebius credentials/resources, Object Storage operations, Serverless jobs, Nemotron/Tavily paid calls, or GitHub Actions runs were used.
-
-Security / privacy / failure review:
-- Diagnostics are read-only and do not construct provider clients, make network calls, mint approvals, mutate jobs, or weaken fail-closed startup.
-- Missing configuration is disclosed by documented variable name only; configured secret values are never interpolated into blocker text.
-- Raw startup exception messages are no longer shown to the user, reducing accidental leakage from provider/configuration exceptions.
-- Cloud readiness cannot become true merely because variables are present: runtime validation remains authoritative.
-- Existing local/private-data restrictions, exact cloud authorization, lifecycle reconciliation, cancellation semantics, encrypted transport, audit trail, and emergency-stop behavior are unchanged.
-
-### 2026-09-11 — Successful-start readiness/details surface
-Completed:
-- Re-read this ledger fully and inspected the current WPF shell, durable research controls, composition root, and credential-safe readiness model before changing code.
-- Extended `DesktopResearchReadiness` with a reusable `ToDetailsText()` projection. It explains `ready`, `blocked`, and `locked` states and emits only coarse capability state plus already-sanitized blocker strings.
-- Added `src/Nvidea.Windows/MainWindow.Readiness.cs`. On successful startup it projects readiness from the current environment opt-in flags plus the **already-composed runtime capabilities** (`LocalExecutionAvailable`, `RemoteLifecycleAvailable`, `RemoteDispatchEnabled`). It does not instantiate provider clients, re-run Nebius preflight, create approvals, or start jobs.
-- Added an always-visible `Research readiness` strip to `MainWindow.xaml` with a Details action. This makes local Tavily, Nebius lifecycle-recovery, and new Serverless-dispatch readiness legible to users/judges even when startup succeeds.
-- The Details dialog explicitly states that it is read-only and never shows secret values, provider IDs, payloads, or raw provider errors. A malformed post-start environment mutation falls back to a generic restart/configuration message instead of echoing the invalid value or exception.
-- Added `DesktopResearchReadinessDetailsTests.cs` covering ready/blocked/locked projection and non-disclosure of configured Tavily/provider secret values.
+- Re-read this ledger fully, verified the current NVIDEA head/recent history, inspected the WPF hotkey/context/emergency-stop path and current project dependencies, and selected the persisted voice/transcription fallback because no usable .NET SDK is exposed in this execution environment.
+- Added `src/Nvidea.Core/Desktop/LocalVoiceTranscription.cs` with a least-authority `ILocalVoiceTranscriber` contract and `LocalVoiceTranscript` review boundary. Transcript preparation trims only outer whitespace, rejects blank text, rejects invalid confidence values, and fails closed on oversized transcripts rather than silently truncating them.
+- Added `src/Nvidea.Windows/SystemSpeechLocalTranscriber.cs`, a one-shot local Windows speech implementation using the installed `System.Speech` / SAPI recognizer and default microphone. It prefers the current UI culture, falls back to the matching language, then to the first installed recognizer.
+- Added bounded recognition (20 seconds at the desktop call site), cancellation through a linked token, explicit timeout behavior, and generic failure handling. Captured audio is not intentionally sent to Nebius, Tavily, Token Factory, or a cloud speech service.
+- Added stable `System.Speech` package reference (`9.0.8`) to the Windows project after checking current package compatibility; the package explicitly supports .NET 8 and Windows speech recognition.
+- Added `src/Nvidea.Windows/MainWindow.Voice.cs`. The successful-start desktop dynamically exposes a Voice button without disturbing existing XAML layout ownership, plus a real global `Ctrl+Shift+V` hotkey registered against the existing WPF HWND.
+- The global voice hotkey mirrors the existing text-hotkey privacy boundary: it captures foreground app/window/selection context before NVIDEA activates. Clipboard capture still obeys the existing opt-in checkbox.
+- Every capture requires an explicit microphone disclosure/confirmation. Declining does not start recognition. The transcript is placed in `PromptBox` for user review and **never auto-runs**.
+- Emergency stop cancels the active recognition operation. Window close also cancels and disposes recognition state, unregisters the voice hotkey, and removes its Win32 hook.
+- Low-confidence recognition remains reviewable but is visibly labelled low-confidence. Empty/invalid/oversized results fail closed.
+- Added `tests/Nvidea.Core.Tests/LocalVoiceTranscriptionTests.cs` covering trim semantics, blank rejection, oversize rejection, and invalid confidence rejection.
+- Added `docs/local-voice.md` documenting usage, privacy boundary, Windows prerequisites, cancellation/failure semantics, and why the path is local-only.
 
 Engineering commits before this ledger update:
-- `091659fb69b85200d8bb103e218279cd98630ec4` — add safe desktop readiness details projection.
-- `d9954415925e9e9c0b437262a64c609c366a287f` — surface validated research readiness in desktop.
-- `e84930a2530de2a55862065e541a1b76b89a9ed7` — show research readiness on successful desktop startup.
-- `96903663d9e61c3b638225a88a26a573bf55ced6` — test successful-start readiness details.
+- `aa8151ab8878b8141bea989f5b37afeadca9a862` — add least-authority local voice transcription contract.
+- `365118666a152c37f411e06fd2cfa27485adadc2` — add offline Windows speech transcriber.
+- `30f9eeee2ba92195cf9768e8f90fbc7140238cf6` — reference Windows offline speech recognition.
+- `2d5654c9dca1436dff29cbc655461260dac2f9ce` — integrate explicit local voice capture flow.
+- `a27a9175218f8d19e7702bf633741d7fed300242` — wire local voice capture into desktop controls.
+- `fee7a50106838f39fa1673c6469c47bba56c0436` — initialize local voice entry point on desktop load.
+- `8f5bb53ff2d5c17ef362fb403084fbecbdd63b01` — test local voice transcript review boundary.
+- `43e313cf3bdc39c11613a635831c99cbef575675` — add global review-first voice invocation hotkey.
+- `f4715e332f9b5c8a0610010857929923d46e283c` — harden offline speech recognizer result handling.
+- `114cfa3d2a2751d07eb9b1c580c525f01bd541af` — document local review-first voice invocation.
 
 Validation / evidence:
-- Repository identity was explicitly verified before every GitHub mutation; every mutation targeted exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
-- Static compare from prior ledger head `f1b74a7f5fd0f4f439be84762f67dad7d010b4e0` to engineering head `96903663d9e61c3b638225a88a26a573bf55ced6` is **4 commits ahead / 0 behind**, changing exactly four focused files: `DesktopResearchReadiness.cs`, new `MainWindow.Readiness.cs`, `MainWindow.xaml`, and new `DesktopResearchReadinessDetailsTests.cs`.
-- The successful-start readiness path only reads environment presence/flags and runtime booleans from the already-built trusted composition. No network/provider operation is added to window load or Details display.
-- `command -v dotnet` and `dotnet --info` again returned no usable .NET signal. Compilation, WPF/XAML compilation, and test execution are therefore **not claimed**.
-- No GitHub Actions workflow was triggered, and no live Nebius credentials/resources, Object Storage operations, Serverless jobs, or paid Nemotron/Tavily calls were used.
+- Repository identity was explicitly verified before every GitHub mutation; every mutation targeted exactly `UnknownGod2011/NVIDEA`. No mutation was performed against `keyboard.wtf` or any other repository.
+- Static compare from prior ledger head `6bf584f763e1c09b5c9681c1ccec0144db5275bc` to engineering head `114cfa3d2a2751d07eb9b1c580c525f01bd541af` is **10 commits ahead / 0 behind** and changes exactly seven focused files: the Core voice contract, Windows local transcriber, Windows voice integration, one successful-start initialization line, the Windows project package reference, Core tests, and local-voice documentation.
+- Current NuGet/Microsoft documentation was checked before choosing the speech dependency: `System.Speech` is Windows speech recognition and package `9.0.8` explicitly supports .NET 8.
+- `command -v dotnet` and `dotnet --info` again produced no usable .NET signal in this automation environment. Core/Windows compilation, WPF runtime behavior, package restore, SAPI microphone capture, and test execution are therefore **not claimed**.
+- No GitHub Actions workflow was triggered merely to manufacture a green check.
+- No live Nebius credentials/resources, Object Storage operations, Serverless jobs, Nemotron/Tavily paid calls, or cloud speech calls were used.
 
 Security / privacy / failure review:
-- The visible summary and Details output never interpolate environment values; blocker text remains configuration-name-only.
-- `ready` for Nebius lifecycle/dispatch depends on the validated runtime actually present in `_root.Research`, not merely on environment-variable presence.
-- The diagnostics surface is side-effect-free and cannot mint cloud authorization, mutate durable research state, create provider clients, or bypass the existing one-shot dispatch confirmation.
-- Existing local/private-data classification, exact-checkpoint dispatch authorization, remote reconciliation, cancellation, encrypted transport, audit, browser safeguards, and emergency-stop semantics remain unchanged.
+- Voice capture is one-shot and explicitly consent-gated per attempt; microphone use does not begin on hotkey press until the user confirms the disclosure.
+- The speech implementation has no Nebius/Tavily/provider dependency and receives only microphone audio; it does not receive durable research state, browser credentials, provider credentials, memory stores, or approval capabilities.
+- The transcript is review-only until the existing Run action is separately invoked; no voice transcript can directly trigger a consequential tool action.
+- Emergency stop and window close cancel microphone recognition; the global hotkey is unregistered on close.
+- Existing clipboard disclosure remains opt-in. Foreground context capture occurs before app activation to preserve the current text-hotkey semantics.
+- Generic voice failure messaging avoids echoing raw device/SAPI exceptions into the UI.
+- Existing research dispatch approvals, private-data restrictions, browser permission gates, audit trail, cloud lifecycle semantics, and emergency-stop behavior remain unchanged.
 
 ## Known Blockers / Risks
 - No usable .NET 8 execution signal is available in this environment; current Core/WPF/Worker code, XAML and tests are not compiled or executed here.
+- The new `System.Speech` dependency has been documentation-checked but package restore and Windows runtime behavior still need a real .NET 8 Windows build/test pass.
+- A real Windows machine still needs microphone permission plus an installed desktop speech recognizer/language; absence of either must be verified against the actual packaged app.
 - No live Object Storage bucket/static key, digest-pinned registry image, MysteryBox refs, subnet, Serverless access token, or real Serverless job has been provisioned/validated here.
 - Exact provider acceptance of the Serverless Object Storage `Source`/`SourcePath` still requires a real job.
 - The dry run cannot prove that the worker-private-key MysteryBox version corresponds to the configured worker public key without resolving the secret; the real worker protocol remains authoritative proof.
-- Successful-start readiness intentionally reflects the startup composition plus current opt-in/configuration presence; it does not continuously poll provider health or create background cloud authority.
-- Local voice/transcription and a verified production embedding adapter remain absent.
+- Successful-start readiness intentionally reflects startup composition plus current opt-in/configuration presence; it does not continuously poll provider health or create background cloud authority.
+- A verified production embedding adapter remains absent.
 - Reproducibility evidence proves internal consistency, not third-party attestation.
 
 ## Single Best Next Task
-First obtain a .NET 8-capable execution signal and compile `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, and the Nebius contract tools; run the focused readiness, lifecycle-only recovery, research dispatch/cloud-mode, browser authority/integration, API-surface, and WPF/XAML suites and fix every compile/runtime defect. If executable validation remains unavailable, implement the missing **local Windows voice/transcription invocation path** behind a least-authority abstraction with explicit microphone disclosure/cancellation and no mandatory cloud speech dependency, then integrate it into the existing orb/hotkey desktop shell without weakening emergency-stop or context privacy semantics.
+First obtain a .NET 8-capable Windows execution signal and restore/build `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, and the Nebius contract tools; compile WPF/XAML; run the focused voice, readiness, lifecycle-only recovery, research dispatch/cloud-mode, browser authority/integration, API-surface, and security suites; then exercise a real local microphone recognition/cancel/timeout cycle and fix every compile/runtime defect. If executable validation remains unavailable, implement the missing **production embedding provider abstraction + real local/on-device embedding adapter** for semantic memory retrieval, with deterministic fallback, privacy-aware routing, model/version provenance, bounded batching, and retrieval-quality tests so memory no longer depends on an unverified placeholder-quality embedding path.

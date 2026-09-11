@@ -444,7 +444,7 @@ internal static class Program
         public bool ConsumedExactApproval { get; private set; }
 
         public Task<JobStepResult> ExecuteStepAsync(AgentJobRecord job, CancellationToken cancellationToken = default) =>
-            ExecuteStepAsync(job, new JobExecutionContextProxy(), cancellationToken);
+            throw new NotSupportedException("The demo handler requires the orchestrator's context-aware execution path.");
 
         public Task<JobStepResult> ExecuteStepAsync(
             AgentJobRecord job,
@@ -478,13 +478,6 @@ internal static class Program
                 Completed: true,
                 CheckpointStep: "completed",
                 CheckpointPayload: "fixture:verified"));
-        }
-
-        private sealed class JobExecutionContextProxy : JobExecutionContext
-        {
-            public JobExecutionContextProxy() : base(Guid.Empty, null)
-            {
-            }
         }
     }
 }

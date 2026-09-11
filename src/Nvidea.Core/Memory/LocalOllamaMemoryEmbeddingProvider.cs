@@ -14,7 +14,7 @@ public sealed record LocalOllamaMemoryEmbeddingOptions
     public TimeSpan RequestTimeout { get; init; } = TimeSpan.FromSeconds(20);
 }
 
-public sealed class LocalOllamaMemoryEmbeddingProvider : IProvenancedMemoryEmbeddingProvider, IMemoryBatchEmbeddingProvider, IDisposable
+public sealed class LocalOllamaMemoryEmbeddingProvider : IMemoryEmbeddingMigrationProvider, IDisposable
 {
     private const int AbsoluteMaximumDimensions = 32_768;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -38,6 +38,28 @@ public sealed class LocalOllamaMemoryEmbeddingProvider : IProvenancedMemoryEmbed
         _options = ValidateOptions(options ?? throw new ArgumentNullException(nameof(options)));
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _ownsHttpClient = ownsHttpClient;
+    }
+
+    public MemoryEmbeddingMigrationTarget MigrationTarget => new(
+        Provider: "ollama-local",
+        Model: _options.Model,
+        IsLocal: true,
+        ExpectedDimensions: _options.ExpectedDimensions);
+
+    public bool IsCurrentEmbedding(MemoryEmbeddingProvenance provenance)
+    {
+        ArgumentNullException.ThrowIfNull(provenance);
+        if (!provenance.IsLocal || !string.Equals(provenance.Provider, "ollama-local", StringComparison.Ordinal))
+            return false;
+        if (_options.ExpectedDimensions is { } expected && provenance.Dimensions != expected)
+            return false;
+
+        var configuredModel = _options.Model;
+        if (string.Equals(provenance.Model, configuredModel, StringComparison.Ordinal))
+            return true;
+        if (configuredModel.Contains(':', StringComparison.Ordinal))
+            return false;
+        return provenance.Model.StartsWith($"{configuredModel}:", StringComparison.Ordinal);
     }
 
     public async Task<IReadOnlyList<float>> EmbedAsync(string text, CancellationToken cancellationToken = default)

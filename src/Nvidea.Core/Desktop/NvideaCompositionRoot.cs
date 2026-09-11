@@ -4,6 +4,7 @@ using Nvidea.Core.Jobs;
 using Nvidea.Core.Memory;
 using Nvidea.Core.Nebius;
 using Nvidea.Core.Research;
+using Nvidea.Core.Security;
 
 namespace Nvidea.Core.Desktop;
 
@@ -85,7 +86,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         Directory.CreateDirectory(dataDirectory);
 
         var nebiusOptions = NebiusOptions.FromEnvironment();
-        var nebiusHttp = new HttpClient();
+        var nebiusHttp = ProviderHttpClientFactory.CreateNoRedirectClient();
         var inference = new NebiusTokenFactoryClient(nebiusHttp, nebiusOptions);
 
         var memoryStore = new JsonFileMemoryStore(Path.Combine(dataDirectory, "memory.json"));
@@ -107,7 +108,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         var tavilyKey = Environment.GetEnvironmentVariable("TAVILY_API_KEY");
         if (!string.IsNullOrWhiteSpace(tavilyKey))
         {
-            tavilyHttp = new HttpClient();
+            tavilyHttp = ProviderHttpClientFactory.CreateNoRedirectClient();
             var tavily = new TavilyResearchClient(tavilyHttp, new TavilyOptions { ApiKey = tavilyKey });
             researchEngine = new ResearchEngine(inference, tavily);
             localResearch = new ResearchJobRuntime(researchDirectory, researchEngine);
@@ -127,7 +128,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
                         try
                         {
                             objectStorage = new NebiusObjectStorageClient(configuration.ObjectStorageOptions);
-                            serverlessHttp = new HttpClient();
+                            serverlessHttp = ProviderHttpClientFactory.CreateNoRedirectClient();
                             var transport = new S3ProtectedResearchTransport(objectStorage);
                             var serverless = new NebiusServerlessJobClient(
                                 serverlessHttp,

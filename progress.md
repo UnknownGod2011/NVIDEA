@@ -16,7 +16,7 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Layered personal memory with privacy-aware writes, durable provenance, hybrid lexical/semantic/recency/importance retrieval, edit/delete/retention controls, deterministic fallback, retrieval-quality fixtures, loopback-only Ollama embeddings, vector-space provenance isolation, and local-only migration/re-index maintenance.
 - Tavily Search + Extract research with canonical deduplication, quality/freshness/diversity ranking, untrusted-evidence boundaries, machine-verifiable citations, and restart-safe staged checkpoints.
 - Safe browser agent includes persistent Chromium state, popup/new-tab tracking, plan/act/observe/verify execution, prompt-injection detection, consequential-action gates, durable download quarantine, emergency stop, and crash recovery.
-- Browser pages flagged by the Playwright prompt-injection detector now require explicit user approval for otherwise non-consequential state-changing Navigate/Click/Type/Select/Download actions; Read/Back/Refresh remain available, Upload remains independently approval-gated, and credential typing remains blocked.
+- Browser pages flagged by the Playwright prompt-injection detector require explicit approval for state-changing Navigate/Click/Type/Select/Download actions; Read/Back/Refresh remain usable, Upload remains independently approval-gated, and credential typing remains blocked.
 - Protected local state uses Windows CurrentUser DPAPI by default, durable job-store CAS, hash-chained/segmented audit, and OS-backed single-owner mutation leases.
 - Product research flows through `ResearchProductRuntime`; provider-aware remote execution through `ResearchCloudExecutionCoordinator`; WPF durable research uses lifecycle-aware product/UI projections.
 - Desktop remote-research lifecycle and paid dispatch are separately opt-in. Lifecycle-only recovery remains available without Tavily; new paid dispatch requires local research availability plus exact one-shot approval.
@@ -27,7 +27,8 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Windows voice invocation is local and review-first: `Ctrl+Shift+V` / Voice asks for microphone consent, transcribes through installed Windows speech recognition, and places text into the prompt without auto-running it or routing audio to cloud speech.
 - Windows Memory maintenance previews and safely re-indexes stale/missing local embeddings with explicit Sensitive/Restricted opt-ins, stale-preview revalidation, progress/cancellation, and aggregate-only UI disclosure.
 - `tools/Nvidea.PersonalAiDemoEval` provides deterministic, credential-free positive cross-cutting evidence over real Core contracts.
-- `tools/Nvidea.PersonalAiAdversarialEval` now provides deterministic, credential-free negative-path evidence for prompt-injection authority, approval denial, verification failure, citation hallucination, exact approval scope, and ambiguous crash recovery.
+- `tools/Nvidea.PersonalAiAdversarialEval` provides deterministic, credential-free negative-path evidence for prompt-injection authority, approval denial, verification failure, citation hallucination, exact approval scope, and ambiguous crash recovery.
+- `tools/Nvidea.JudgingEvidenceVerifier` now combines positive/adversarial synthetic evaluator artifacts with matching Nebius live deployment evidence into one bounded, hashed, redacted judge-facing PASS/FAIL summary.
 
 ## Persistent Progress History
 
@@ -46,58 +47,58 @@ Added `ResearchCloudExecutionCoordinator`, `ResearchProductRuntime`, lifecycle-a
 ### 2026-09-11 — Production local semantic memory
 Added embedding provenance/model-space isolation, loopback-only Ollama `/api/embed`, bounded requests/batches, strict redirect refusal, explicit desktop opt-in, deterministic fallback, safe local embedding migration with high-sensitivity exclusion by default, WPF Memory maintenance, stale-consent protection, progress/cancellation, and deterministic semantic retrieval-quality fixtures.
 
-### 2026-09-11 — Deterministic positive Personal AI evaluator
-Added `tools/Nvidea.PersonalAiDemoEval` and `docs/personal-ai-demo-eval.md`. It exercises real Core contracts for context + durable memory recall, clipboard withholding, cited research, browser approval + post-action verification, restart-safe durable jobs, single-use exact-scope approvals, audit transitions, and local-vs-cloud privacy policy. Output is machine-readable JSON with stable check IDs and optional `--output` persistence. It uses synthetic external edges and is explicitly not live-provider evidence.
+### 2026-09-11 — Deterministic Personal AI evaluators
+Added `tools/Nvidea.PersonalAiDemoEval` for positive end-to-end evidence over context, durable memory, clipboard withholding, cited research, browser approval + verification, restart-safe jobs, exact-scope approvals, audit, and local-vs-cloud privacy policy. Added `tools/Nvidea.PersonalAiAdversarialEval` for prompt-injection authority, denied approval, failed verification, invented citations, wrong approval scope, and ambiguous `Running` crash residue. Both emit machine-readable JSON and intentionally use synthetic external edges.
 
-### 2026-09-11 — Adversarial evaluator + stronger prompt-injection execution boundary
+### 2026-09-11 — Browser prompt-injection execution hardening
+Adversarial review exposed that prompt-injection-like pages could still permit otherwise-medium state-changing actions. Hardened `BrowserSafetyPolicy` so flagged-page Navigate/Click/Type/Select/Download operations become High-risk and approval-gated. Read/Back/Refresh remain usable; Upload and credential-sensitive rules keep their stricter independent behavior. Added focused policy tests.
+
+### 2026-09-11 — Unified judging evidence verifier
 Completed:
-- Re-read this ledger completely and inspected current browser executor/safety policy, Playwright prompt-injection detection, research citation validation, durable approval semantics, and ambiguous `Running` recovery before implementation.
-- Added `tools/Nvidea.PersonalAiAdversarialEval/Nvidea.PersonalAiAdversarialEval.csproj` and `Program.cs` as a deterministic .NET 8 negative-path quality gate over real `Nvidea.Core` contracts.
-- Added six stable adversarial checks:
-  - `prompt-injection-cannot-authorize`: hostile page text claiming the user already approved a consequential action cannot mint execution authority; external approval is still required and the driver remains untouched when denied.
-  - `denied-browser-approval-prevents-mutation`: denied Upload approval prevents any driver mutation/local-data trust-boundary crossing.
-  - `failed-verification-stops-plan`: driver success without fresh verification stops `ExecutePlanAsync` before a second action.
-  - `unknown-research-citation-is-flagged`: invented `[src:...]` output is excluded from `UsedCitations` and produces an explicit unknown-source warning.
-  - `wrong-approval-scope-fails-closed`: a mismatched durable approval scope is rejected without changing the persisted wait or running the consequential step.
-  - `ambiguous-running-job-does-not-replay`: a durable `Running` record is returned unchanged and its handler is not auto-replayed after possible crash residue.
-- Added `docs/personal-ai-adversarial-eval.md` describing scope, command, stable checks, privacy boundary, and explicit non-claims about live providers/Windows integration.
-- Adversarial review exposed a product-level gap: Playwright already marks prompt-injection-like pages, but otherwise-medium state-changing interactions could still execute without approval. Hardened `BrowserSafetyPolicy` so flagged-page Navigate/Click/Type/Select/Download operations are High-risk and require explicit user approval. Read/Back/Refresh remain usable; Upload and credential-sensitive rules retain their stricter independent behavior.
-- Added focused `BrowserAgentTests` proving a generic Click on a prompt-injection-flagged page becomes High-risk/approval-gated while Read remains Low-risk and approval-free.
+- Re-read this ledger completely and inspected the current positive evaluator schema, adversarial evaluator schema, Nebius evidence verifier, and repository/tool layout before implementation.
+- Added `tools/Nvidea.JudgingEvidenceVerifier/Nvidea.JudgingEvidenceVerifier.csproj` targeting .NET 8 with nullable checking and warnings-as-errors, referencing the existing Core project rather than duplicating Nebius verification logic.
+- Added `Program.cs` implementing a credential-free verifier that requires four artifacts: positive evaluator JSON, adversarial evaluator JSON, redacted Nebius deployment manifest, and redacted Nebius live PASS evidence.
+- The verifier enforces bounded input size (256 KiB each), strict JSON without comments/trailing commas, recursive duplicate-property rejection, evaluator schema version `1`, exact stable required check sets, unique check IDs, bounded check details, all checks passing, `overallPassed=true`, and the positive evaluator metrics object.
+- Reused `NebiusResearchDeploymentEvidenceVerifier.VerifyJson(...)` as the canonical live-cloud evidence boundary. This recomputes the redacted deployment fingerprint, compares it to the live PASS fingerprint, and validates PASS completion/count invariants without credentials or network calls.
+- Added SHA-256 hashes for all four exact artifact byte sequences to the resulting summary so the judge package can bind the summary to the reviewed evidence files.
+- The success output clearly labels positive/adversarial evidence as `synthetic` and Nebius evidence as `live`, and explicitly records claims that remain outside the evidence boundary.
+- The output deliberately excludes input paths, evaluator detail text, credentials, provider errors, prompts/results, browser session data, memory content, cookies, tokens, key material, and secret references.
+- Success output does not add verifier wall-clock time, keeping the summary stable for identical evidence inputs apart from platform newline handling when saved.
+- `--output` uses temp-file + same-directory replace semantics for atomic-ish artifact persistence; invalid/missing/mismatched artifacts fail closed with a bounded single-line error summary and nonzero exit code.
+- Added `docs/judging-evidence-verifier.md` with usage, validation boundary, redaction guarantees, evidence-class semantics, deterministic-output behavior, and explicit non-claims.
+- Static review found and fixed a completeness gap in the first pass: strict deserialization alone did not prove the positive metrics field existed, so the verifier now explicitly requires an object-valued metrics property.
 
 Engineering commits before this ledger update:
-- `d659a309d1b68c739cc40d91fb40eb4413372645` — add adversarial personal AI evaluator project.
-- `e2967fa40de689d4926aa66202f38a0e2eb25597` — implement adversarial personal AI safety evaluator.
-- `105295efdac168301567128305b13ac795d6c4e2` — document adversarial personal AI evaluator.
-- `2a94ff9802a0df1692d4b08ab8edacd51727bd24` — gate flagged prompt-injection browser mutations.
-- `ed69858eaa59e690cb9eb1c7eccdf0589487250d` — test prompt-injection mutation approval gates.
+- `3eaec159d42b74b6fcd2b1087558a63c73e47376` — add unified judging evidence verifier project.
+- `2455fd4b562bf3ae5b143efcb7dc165b2de72775` — implement unified judging evidence verification.
+- `9b09eedb4950a9af92adb695cfcc25a6d2b401f8` — harden judging evidence schema validation.
+- `c190d7ca08c09cad771f6adb31f5092d0c03a0d7` — document unified judging evidence verification.
 
 Validation / evidence:
 - Repository identity was explicitly re-verified before every GitHub mutation. Every mutation targeted exactly `UnknownGod2011/NVIDEA`; no mutation was made to `keyboard.wtf` or any other repository.
-- Static compare from prior ledger head `eef21ccaa27c1c6412d3fe49a116efee95b0c0fe` to engineering head `ed69858eaa59e690cb9eb1c7eccdf0589487250d` is **5 commits ahead / 0 behind** across exactly five focused files: the adversarial evaluator project/program/docs plus `BrowserSafetyPolicy.cs` and `BrowserAgentTests.cs`.
-- `command -v dotnet` / `dotnet --info` again produced no usable .NET execution signal in the available runtime. Therefore Core/WPF/Worker compilation, XAML compilation, tests, and both evaluator binaries are **not claimed as executed or passing**.
+- Static compare from prior ledger head `f91674286876118b7df71cc51709ec0109b3851d` to engineering head `c190d7ca08c09cad771f6adb31f5092d0c03a0d7` is **4 commits ahead / 0 behind** across exactly three files: the new verifier project, verifier program, and documentation.
+- `command -v dotnet` and `dotnet --info` again produced no usable execution signal in the available runtime. Therefore Core/WPF/Worker compilation, XAML compilation, tests, evaluator binaries, and the new judge verifier are **not claimed as compiled/executed/passing**.
 - No GitHub Actions workflow was triggered merely to manufacture a green check.
 - No live Nebius credentials/resources, Object Storage operations, Serverless jobs, Nemotron/Tavily calls, Playwright browser, Ollama runtime, or paid service was used by this run.
 
 Security / privacy / failure review:
-- Both evaluators use synthetic fixtures only and intentionally avoid real user memories, cookies, account sessions, API keys, provider resource IDs, cloud errors, or paid/network dependencies.
-- The new prompt-injection gate applies at browser execution policy, downstream of model planning, so hostile webpage text cannot reduce its own approval requirement even if it influences the planner.
-- Credential/OTP/payment/private-key typing remains blocked rather than merely approval-gated.
-- Upload remains independently High-risk because it crosses a local-data boundary even on non-injection pages.
-- Failed fresh post-action verification halts the remaining plan; driver-reported success alone is not treated as proof.
-- Unknown research source IDs remain warnings and are not promoted into validated citation objects.
-- Wrong exact approval scope leaves durable approval state unchanged; ambiguous Running jobs remain non-replayable without trusted reconciliation.
-- Synthetic PASS evidence must not be presented as proof that live Nebius, Tavily, Playwright, WPF, speech, Ollama, Object Storage, or Serverless integration is healthy.
+- The new judge verifier does not resolve secrets or perform network/provider calls; it consumes already-produced evidence only.
+- Raw evaluator detail fields are validated but never copied into the success summary, reducing the chance fixture/user text leaks into a judge package.
+- Input file paths are not emitted in success/failure JSON. Path/read errors are converted to generic artifact descriptions.
+- Nebius verification stays delegated to the existing production verifier, preserving its bounded parsing, duplicate-property rejection, deployment-fingerprint recomputation, fixed-time fingerprint comparison, and PASS-count validation.
+- SHA-256 hashes provide tamper-evident binding of the generated judge summary to the exact supplied artifact bytes; they are not signatures or third-party attestations.
+- Synthetic PASS remains explicitly separated from live Nebius evidence and must not be represented as proof of live Tavily, browser, Windows UI/speech, Ollama, Object Storage, or all Serverless behavior.
 
 ## Known Blockers / Risks
-- No usable .NET 8 execution signal is available in this environment; current Core/WPF/Worker code, XAML, tests, and both evaluator tools are not compiled or executed here.
-- The new adversarial evaluator and prompt-injection policy change are statically reviewed but require a real .NET 8 restore/build/test before their JSON/test results can be treated as executable evidence.
-- The prompt-injection detector is heuristic; false negatives remain possible. The strengthened approval gate only applies when `ContainsUntrustedInstructions` is set, so planner/system-prompt defenses and downstream capability gates remain necessary defense-in-depth.
+- No usable .NET 8 execution signal is available in this environment; current Core/WPF/Worker code, XAML, tests, all evaluator tools, and the new judge evidence verifier are not compiled or executed here.
+- The unified verifier is statically reviewed but still requires a real .NET 8 restore/build/run against actual generated evaluator and Nebius evidence artifacts before its JSON can be treated as executable judging evidence.
 - WPF maintenance/voice/readiness bindings and Windows-specific behavior require a real Windows .NET 8 build/run pass.
+- The prompt-injection detector is heuristic; false negatives remain possible, so planner/system-prompt defenses and downstream capability gates remain required defense-in-depth.
 - Real `embeddinggemma` semantic quality/ranking calibration still requires a local Ollama evaluation corpus.
 - A real Windows machine still needs microphone permission plus an installed speech recognizer/language for voice validation.
 - No live Object Storage bucket/static key, digest-pinned registry image, MysteryBox refs, subnet, Serverless access token, or real Serverless job has been provisioned/validated here.
 - Exact provider acceptance of Serverless Object Storage `Source`/`SourcePath` still requires a real job.
-- Reproducibility evidence proves internal consistency, not third-party attestation.
+- Reproducibility hashes/fingerprints prove internal consistency, not third-party attestation.
 
 ## Single Best Next Task
-First obtain a .NET 8-capable Windows execution signal and restore/build `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, Nebius contract tools, `Nvidea.PersonalAiDemoEval`, and `Nvidea.PersonalAiAdversarialEval`; compile WPF/XAML; run focused memory/retrieval/migration, voice, readiness, lifecycle/research, browser authority/integration, API-surface, and security suites; run both evaluators with `--output`; then fix every compile/runtime defect before treating JSON as judging evidence. If executable validation remains unavailable, build a **single deterministic judging-evidence manifest/validator** that ingests positive/adversarial evaluator artifacts plus Nebius contract evidence, verifies schema/check completeness and artifact hashes, reports live-vs-synthetic evidence boundaries, and emits one redacted judge-facing PASS/FAIL summary without credentials or provider secrets.
+First obtain a .NET 8-capable Windows execution signal and restore/build `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, Nebius contract tools, `Nvidea.PersonalAiDemoEval`, `Nvidea.PersonalAiAdversarialEval`, and `Nvidea.JudgingEvidenceVerifier`; compile WPF/XAML; run focused memory/retrieval/migration, voice, readiness, lifecycle/research, browser authority/integration, API-surface, and security suites; generate both evaluator artifacts; run the unified verifier against real redacted Nebius preflight/PASS evidence; and fix every compile/runtime defect before treating the final summary as judging evidence. If executable validation remains unavailable, the next implementation target is a **judge-ready deterministic demo package specification + validation checklist** that maps each <=3-minute demo beat to concrete feature/evidence artifacts, prevents synthetic/live evidence overclaiming, checks README/setup/demo commands for consistency, and identifies any remaining missing hackathon submission assets without fabricating provider success.

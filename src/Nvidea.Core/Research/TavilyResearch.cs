@@ -86,8 +86,14 @@ public sealed class TavilyOptions
     {
         if (string.IsNullOrWhiteSpace(ApiKey))
             throw new InvalidOperationException("Tavily API key cannot be empty.");
-        if (BaseUri.Scheme != Uri.UriSchemeHttps || !BaseUri.Host.Equals("api.tavily.com", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("Tavily endpoint must be https://api.tavily.com/.");
+        if (!BaseUri.IsAbsoluteUri
+            || BaseUri.Scheme != Uri.UriSchemeHttps
+            || !BaseUri.Host.Equals("api.tavily.com", StringComparison.OrdinalIgnoreCase)
+            || !string.IsNullOrEmpty(BaseUri.UserInfo)
+            || BaseUri.Port != 443)
+        {
+            throw new InvalidOperationException("Tavily endpoint must be exactly https://api.tavily.com/ on the standard HTTPS port with no URI user-info.");
+        }
         if (RequestTimeout <= TimeSpan.Zero || RequestTimeout > TimeSpan.FromMinutes(2))
             throw new InvalidOperationException("RequestTimeout is outside the supported range.");
         if (MaxAttempts is < 1 or > 6)

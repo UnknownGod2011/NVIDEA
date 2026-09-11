@@ -219,11 +219,13 @@ public static class NebiusModelCatalogChecker
     private const int MaxModelIdLength = 512;
 
     public static ModelCatalogCheckResult Evaluate(
-        ReadOnlySpan<byte> utf8Json,
+        byte[] utf8Json,
         string mode,
         RequiredModelSet required,
         string? endpointHost)
     {
+        ArgumentNullException.ThrowIfNull(utf8Json);
+        ArgumentNullException.ThrowIfNull(required);
         if (utf8Json.Length == 0)
             throw new CatalogCheckException("catalog_empty");
         if (utf8Json.Length > 2 * 1024 * 1024)

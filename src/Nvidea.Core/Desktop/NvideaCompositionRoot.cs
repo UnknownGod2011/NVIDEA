@@ -60,10 +60,11 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     public PersonalMemoryService Memory => _memory;
 
     /// <summary>
-    /// Lifecycle-aware durable research surface intended for product/UI use. It is available only
-    /// when Tavily is configured. Remote lifecycle support is explicit opt-in and requires the same
-    /// fail-closed live Nebius deployment preflight as the contract probe; new remote dispatch is a
-    /// separate opt-in so recovery/cancellation does not silently authorize additional paid work.
+    /// Lifecycle-aware durable research surface intended for product/UI use. Local research is
+    /// available when Tavily is configured. Remote lifecycle recovery is independently available
+    /// when explicitly enabled and successfully preflighted, so an already-dispatched Nebius job
+    /// can still be reconciled/cancelled if the local Tavily credential is temporarily unavailable.
+    /// New remote dispatch remains a separate opt-in and requires local research availability.
     /// </summary>
     public ResearchProductRuntime? Research { get; }
 
@@ -93,80 +94,88 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         NebiusObjectStorageClient? researchObjectStorage = null;
         ResearchEngine? researchEngine = null;
         ResearchProductRuntime? research = null;
+        ILocalResearchRuntime? localResearch = null;
+        IResearchCloudExecutionCoordinator? cloudResearch = null;
+        var researchDirectory = Path.Combine(dataDirectory, "research");
+        var cloudMode = DesktopResearchCloudMode.FromEnvironment();
+
         var tavilyKey = Environment.GetEnvironmentVariable("TAVILY_API_KEY");
         if (!string.IsNullOrWhiteSpace(tavilyKey))
         {
             tavilyHttp = new HttpClient();
             var tavily = new TavilyResearchClient(tavilyHttp, new TavilyOptions { ApiKey = tavilyKey });
             researchEngine = new ResearchEngine(inference, tavily);
-            var researchDirectory = Path.Combine(dataDirectory, "research");
-            var localResearch = new ResearchJobRuntime(researchDirectory, researchEngine);
-            var cloudMode = DesktopResearchCloudMode.FromEnvironment();
-            IResearchCloudExecutionCoordinator? cloud = null;
+            localResearch = new ResearchJobRuntime(researchDirectory, researchEngine);
+        }
 
-            if (cloudMode.LifecycleEnabled)
+        if (cloudMode.LifecycleEnabled)
+        {
+            var configuration = NebiusResearchLiveConfigurationLoader.LoadFromEnvironment();
+            try
             {
-                var configuration = NebiusResearchLiveConfigurationLoader.LoadFromEnvironment();
-                try
-                {
-                    var providers = NebiusResearchLiveProviderStartup.CreateAfterDestinationPreflight(
-                        configuration,
-                        () =>
+                var providers = NebiusResearchLiveProviderStartup.CreateAfterDestinationPreflight(
+                    configuration,
+                    () =>
+                    {
+                        NebiusObjectStorageClient? objectStorage = null;
+                        HttpClient? serverlessHttp = null;
+                        try
                         {
-                            NebiusObjectStorageClient? objectStorage = null;
-                            HttpClient? serverlessHttp = null;
-                            try
-                            {
-                                objectStorage = new NebiusObjectStorageClient(configuration.ObjectStorageOptions);
-                                serverlessHttp = new HttpClient();
-                                var transport = new S3ProtectedResearchTransport(objectStorage);
-                                var serverless = new NebiusServerlessJobClient(
-                                    serverlessHttp,
-                                    new NebiusServerlessOptions(
-                                        configuration.ServerlessAccessToken,
-                                        configuration.ProjectId,
-                                        RequestTimeout: TimeSpan.FromSeconds(30),
-                                        MaxRetries: 2));
-                                return (ObjectStorage: objectStorage, ServerlessHttp: serverlessHttp, Transport: transport, Serverless: serverless);
-                            }
-                            catch
-                            {
-                                serverlessHttp?.Dispose();
-                                objectStorage?.Dispose();
-                                throw;
-                            }
-                        });
+                            objectStorage = new NebiusObjectStorageClient(configuration.ObjectStorageOptions);
+                            serverlessHttp = new HttpClient();
+                            var transport = new S3ProtectedResearchTransport(objectStorage);
+                            var serverless = new NebiusServerlessJobClient(
+                                serverlessHttp,
+                                new NebiusServerlessOptions(
+                                    configuration.ServerlessAccessToken,
+                                    configuration.ProjectId,
+                                    RequestTimeout: TimeSpan.FromSeconds(30),
+                                    MaxRetries: 2));
+                            return (ObjectStorage: objectStorage, ServerlessHttp: serverlessHttp, Transport: transport, Serverless: serverless);
+                        }
+                        catch
+                        {
+                            serverlessHttp?.Dispose();
+                            objectStorage?.Dispose();
+                            throw;
+                        }
+                    });
 
-                    researchObjectStorage = providers.ObjectStorage;
-                    researchServerlessHttp = providers.ServerlessHttp;
-                    var store = new JsonAgentJobStore(Path.Combine(researchDirectory, "research-jobs.json"));
-                    IAuditTrail audit = new JsonLinesAuditTrail(Path.Combine(researchDirectory, "research-cloud-audit.jsonl"));
-                    var remote = NebiusResearchLiveRuntimeFactory.Create(
-                        store,
-                        providers.Serverless,
-                        providers.Transport,
-                        providers.Transport,
-                        providers.Transport,
-                        configuration.DispatchOptions,
-                        configuration.ClientPrivateKeyPem,
-                        audit);
-                    cloud = new ResearchCloudExecutionCoordinator(researchDirectory, remote);
-                }
-                catch
-                {
-                    researchServerlessHttp?.Dispose();
-                    researchObjectStorage?.Dispose();
-                    researchServerlessHttp = null;
-                    researchObjectStorage = null;
-                    throw;
-                }
+                researchObjectStorage = providers.ObjectStorage;
+                researchServerlessHttp = providers.ServerlessHttp;
+                var store = new JsonAgentJobStore(Path.Combine(researchDirectory, "research-jobs.json"));
+                IAuditTrail audit = new JsonLinesAuditTrail(Path.Combine(researchDirectory, "research-cloud-audit.jsonl"));
+                var remote = NebiusResearchLiveRuntimeFactory.Create(
+                    store,
+                    providers.Serverless,
+                    providers.Transport,
+                    providers.Transport,
+                    providers.Transport,
+                    configuration.DispatchOptions,
+                    configuration.ClientPrivateKeyPem,
+                    audit);
+                cloudResearch = new ResearchCloudExecutionCoordinator(researchDirectory, remote);
             }
+            catch
+            {
+                researchServerlessHttp?.Dispose();
+                researchObjectStorage?.Dispose();
+                researchServerlessHttp = null;
+                researchObjectStorage = null;
+                throw;
+            }
+        }
 
+        if (localResearch is not null || cloudResearch is not null)
+        {
+            // A missing local Tavily key must never strand already-running Nebius work. In that
+            // lifecycle-only composition reads/reconciliation/cancellation stay available, while
+            // every local execution path and all new paid dispatch fail closed.
             research = new ResearchProductRuntime(
                 researchDirectory,
                 localResearch,
-                cloud,
-                remoteDispatchEnabled: cloudMode.DispatchEnabled);
+                cloudResearch,
+                remoteDispatchEnabled: cloudMode.DispatchEnabled && localResearch is not null);
         }
 
         var desktop = new DesktopInvocationService(inference, memory, researchEngine);

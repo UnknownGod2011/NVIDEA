@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Nvidea.Core.Jobs;
@@ -58,11 +59,13 @@ internal static class Program
             var positive = Deserialize<PositiveEvidence>(positiveArtifact.Bytes, "positive evaluator evidence");
             var adversarial = Deserialize<AdversarialEvidence>(adversarialArtifact.Bytes, "adversarial evaluator evidence");
             ValidateEvaluator(positive.SchemaVersion, positive.GeneratedAt, positive.OverallPassed, positive.Checks, RequiredPositiveChecks, "positive evaluator");
+            if (positive.Metrics.ValueKind != JsonValueKind.Object)
+                throw new InvalidDataException("The positive evaluator metrics object is missing or invalid.");
             ValidateEvaluator(adversarial.SchemaVersion, adversarial.GeneratedAt, adversarial.OverallPassed, adversarial.Checks, RequiredAdversarialChecks, "adversarial evaluator");
 
             var nebius = NebiusResearchDeploymentEvidenceVerifier.VerifyJson(
-                System.Text.Encoding.UTF8.GetString(manifestArtifact.Bytes),
-                System.Text.Encoding.UTF8.GetString(passArtifact.Bytes));
+                Encoding.UTF8.GetString(manifestArtifact.Bytes),
+                Encoding.UTF8.GetString(passArtifact.Bytes));
 
             var summary = new JudgeEvidenceSummary(
                 SchemaVersion: 1,
@@ -103,7 +106,7 @@ internal static class Program
                 await WriteAtomicAsync(options.OutputPath, json + Environment.NewLine).ConfigureAwait(false);
             return 0;
         }
-        catch (Exception exception) when (exception is InvalidDataException or ArgumentException or IOException or UnauthorizedAccessException or JsonException)
+        catch (Exception exception) when (exception is InvalidDataException or ArgumentException or IOException or UnauthorizedAccessException or NotSupportedException or JsonException)
         {
             var failure = new FailureSummary(1, false, SanitizeFailure(exception.Message));
             Console.Error.WriteLine(JsonSerializer.Serialize(failure, new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
@@ -215,7 +218,19 @@ internal static class Program
 
     private static async Task WriteAtomicAsync(string path, string content)
     {
-        var fullPath = Path.GetFullPath(path);
+        if (string.IsNullOrWhiteSpace(path))
+            throw new ArgumentException("An output path is required.", nameof(path));
+
+        string fullPath;
+        try
+        {
+            fullPath = Path.GetFullPath(path);
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            throw new InvalidDataException("The output path is invalid.");
+        }
+
         var directory = Path.GetDirectoryName(fullPath);
         if (!string.IsNullOrWhiteSpace(directory))
             Directory.CreateDirectory(directory);

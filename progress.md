@@ -14,11 +14,10 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - .NET 8 core in `src/Nvidea.Core`; WPF host in `src/Nvidea.Windows`; deployable remote worker in `src/Nvidea.Worker`.
 - NVIDIA Nemotron through Nebius Token Factory with structured reasoning/tool boundaries, retries, timeout/cancellation, and conservative routing.
 - Layered personal memory with privacy-aware writes, durable provenance, hybrid lexical/semantic/recency/importance retrieval, edit/delete/retention controls, and deterministic fallback when embeddings are unavailable.
-- Optional production local semantic embeddings now use a loopback-only Ollama `/api/embed` adapter with bounded requests/batches, redirect refusal, model/dimension provenance, incompatible-vector-space protection, and explicit desktop opt-in.
+- Optional production local semantic embeddings use a loopback-only Ollama `/api/embed` adapter with bounded requests/batches, redirect refusal, model/dimension provenance, incompatible-vector-space protection, explicit desktop opt-in, and a local-only migration/re-index path for stale/provenance-less memories.
 - Tavily Search + Extract research with canonical deduplication, evidence quality/freshness/diversity, provenance, untrusted-evidence handling, validated citations, and restart-safe staged checkpoints.
 - Safe browser agent includes persistent Chromium state, popup/new-tab tracking, iterative verification, prompt-injection/tool-output trust boundaries, permission gates, durable download quarantine, emergency stop, and crash recovery.
 - Protected local state uses Windows CurrentUser DPAPI by default, durable job-store CAS, hash-chained/segmented audit, and OS-backed single-owner mutation leases.
-- Concrete privileged persistence/runtime boundaries are Core-only where appropriate, including durable agent/research stores, raw browser-host/session construction, goal-session storage, persistent Playwright transport, and download staging/quarantine authorities.
 - Product research flows through `ResearchProductRuntime`; provider-aware remote execution flows through `ResearchCloudExecutionCoordinator`; WPF durable research uses lifecycle-aware product/UI projections.
 - Desktop Nebius research lifecycle is explicitly opt-in via `NVIDEA_DESKTOP_REMOTE_RESEARCH_LIFECYCLE=true`; lifecycle-only recovery remains available without Tavily so already-remote work can still be reconciled/cancelled.
 - New paid dispatch is separately opt-in via `NVIDEA_DESKTOP_REMOTE_RESEARCH_DISPATCH=true`; it requires lifecycle support, local research availability, and one-shot exact-checkpoint approval in WPF.
@@ -42,65 +41,65 @@ Added native S3-compatible protected transport, exact S3 ↔ Serverless mount ma
 ### 2026-09-10 to 2026-09-11 — Product lifecycle and authority hardening
 Added `ResearchCloudExecutionCoordinator`, `ResearchProductRuntime`, WPF lifecycle-aware research, explicit reconciliation/disclosure UX, `ResearchProductUiState`, `BrowserProductRuntime`, restart-safe browser-goal recovery, and assembly-internal construction for privileged persistence/browser/runtime authorities with API-surface regression tests.
 
-### 2026-09-11 — Desktop Nebius lifecycle, dispatch, and diagnostics
-Added strict lifecycle/dispatch environment gates, Tavily-independent remote recovery, validated Nebius provider composition, one-shot exact-checkpoint paid dispatch approval, credential-safe readiness diagnostics, successful-start readiness strip/details, and focused lifecycle/dispatch/readiness tests plus docs.
-
-### 2026-09-11 — Local review-first Windows voice invocation
-Added least-authority local voice contracts, `System.Speech`/SAPI one-shot transcription, explicit microphone consent, `Ctrl+Shift+V`, 20-second bound, emergency-stop/window-close cancellation, low-confidence review labeling, transcript validation tests, and `docs/local-voice.md`. Voice transcripts never auto-execute.
+### 2026-09-11 — Desktop Nebius lifecycle, dispatch, diagnostics, and voice
+Added strict lifecycle/dispatch environment gates, Tavily-independent remote recovery, validated Nebius provider composition, one-shot exact-checkpoint paid dispatch approval, credential-safe readiness diagnostics, successful-start readiness strip/details, focused lifecycle/dispatch/readiness tests, and local review-first Windows voice invocation with explicit microphone consent, cancellation, and no cloud speech dependency.
 
 ### 2026-09-11 — Production local semantic memory embeddings
+Added embedding provenance contracts, model-space isolation in semantic scoring, loopback-only Ollama `/api/embed` support, bounded requests and batches, finite/dimension/result validation, strict redirect refusal, explicit `NVIDEA_LOCAL_EMBEDDINGS=true` opt-in, trusted desktop composition, regression tests, and `docs/local-memory-embeddings.md`. Old/unavailable/incompatible embeddings fall back to lexical/recency/importance retrieval rather than breaking memory.
+
+### 2026-09-11 — Safe local embedding migration / re-index
 Completed:
-- Re-read this ledger completely and inspected the current memory models, `PersonalMemoryService`, desktop composition root, tests, and recent commits before implementation.
-- Verified current official Ollama `/api/embed` behavior: POST endpoint, text-or-array input, returned model/vector arrays, optional dimensions, and `truncate=false` fail behavior rather than silent truncation.
-- Added `MemoryEmbeddingProvenance` and `MemoryEmbeddingVector` plus provenanced/batch embedding interfaces while preserving the original `IMemoryEmbeddingProvider` compatibility surface.
-- Extended `MemoryRecord` with optional embedding provenance so old persisted records remain loadable while new vectors carry provider/model/dimension/locality/time metadata.
-- Updated `PersonalMemoryService` to persist provenance and compare semantic vectors only when provider, model, and dimensions match. A model switch can no longer cause cosine comparison across incompatible semantic spaces; those records fall back to lexical/recency/importance scoring.
-- Kept deterministic retrieval fallback: provider failures, timeouts, malformed vectors, missing vectors, or incompatible provenance do not make memory unavailable.
-- Added `LocalOllamaMemoryEmbeddingProvider`, a real loopback local adapter for Ollama `/api/embed` with `truncate=false`, bounded input length, bounded batch size, bounded timeout, max-dimension guard, finite-value validation, result-count validation, consistent-dimension validation, optional expected-dimension pinning, credential-in-URI rejection, HTTP(S)-only loopback restriction, and redirect refusal.
-- Corrected the JSON contract during static review to use web/camel-case serialization options for both request and response and fixed the named `Truncate` argument before recording the run.
-- Hardened constructor resource ownership so options are validated before allocating the owned HTTP client.
-- Added `LocalMemoryEmbeddingConfiguration` with explicit `NVIDEA_LOCAL_EMBEDDINGS=true` opt-in and optional endpoint/model/dimension environment settings. Disabled/missing opt-in leaves existing lexical/recency behavior unchanged.
-- Wired the optional local provider into the trusted `NvideaCompositionRoot`; WPF/plugin code continues to receive `PersonalMemoryService`, not raw embedding HTTP transport. The root owns and disposes the provider.
-- Added `LocalOllamaMemoryEmbeddingProviderTests.cs` covering loopback API contract/provenance, remote-endpoint rejection, dimension mismatch, redirect rejection, durable provenance, and the crucial no-cross-model-comparison invariant.
-- Added `docs/local-memory-embeddings.md` with setup, safety, provenance, fallback, and demo guidance.
+- Re-read this ledger completely and inspected the current memory models, store, local Ollama provider, `PersonalMemoryService`, recent commits, and focused tests before changing code.
+- Added explicit migration contracts: migration target metadata, bounded options, coarse preview candidates/reasons, progress, and result records.
+- Added `IMemoryEmbeddingMigrationProvider`; the production Ollama provider now exposes its local migration target, provider batch ceiling, expected dimensions, and compatibility check for current vectors.
+- Model compatibility accepts an exact configured tag and, when the configured model is untagged, the corresponding tagged runtime response (for example `embeddinggemma` -> `embeddinggemma:latest`) while still rejecting another provider/model space.
+- Converted `PersonalMemoryService` to a partial class without changing existing behavior and added `PersonalMemoryService.Migration.cs` as a cohesive maintenance surface sharing the existing mutation gate.
+- Added `PreviewEmbeddingMigrationAsync`, which reports only record ID/layer/coarse sensitivity/reason and target metadata; it does not disclose memory content.
+- Default migration excludes `Sensitive` and `Restricted` records. They require separate explicit opt-ins. Session-only memory is never included in the durable migration plan.
+- Added `MigrateEmbeddingsAsync` with provider-bounded batching, progress reporting, cancellation, local-only enforcement, strict vector/provenance validation, and no cloud fallback.
+- Each successful batch is persisted through the existing protected memory store before the next batch starts. A crash or cancellation therefore leaves completed work durable, and a later preview naturally resumes from the remaining stale records.
+- Migration changes only `Embedding` and `EmbeddingProvenance`; it preserves memory content, source provenance, timestamps, sensitivity, retention, confidence, and importance.
+- Embedding inference runs outside the main memory mutation gate. Before applying each vector, migration verifies that the immutable record instance is still the exact snapshot embedded. A concurrent edit/search/delete/replacement causes that vector to be discarded and counted as a concurrent-change skip instead of overwriting newer state.
+- Added `MemoryEmbeddingMigrationTests.cs` covering default high-sensitivity exclusion, provider batch-bound persistence/resumability, concurrent-edit protection, and rejection of non-local migration providers.
+- Added `docs/memory-embedding-migration.md` documenting privacy, resumability, cancellation, concurrent-edit safety, and stale-space detection.
 
 Engineering commits before this ledger update:
-- `486ca3f771ae38c04cc304c0d8ad85dfdc2d3c4e` — add loopback local memory embedding provider.
-- `c05c647fe1b969915faebaf28186848c4e2f7a85` — add embedding provenance contracts.
-- `bd656ab2c9ad280afa0a5af86350a94270113caa` — persist embedding provenance and prevent model mixing.
-- `f99d2e675f5f82b645c0f198fb1e5352cc487718` — test local embedding provider safety and provenance.
-- `bf83a443fac86dc5d721eedeb776e9adc4e4625e` — fix local embedding JSON contract parsing.
-- `1f1fb02373cd92e4bea223a9071cc57978f2faea` — tighten local embedding regression tests.
-- `8550860c2a6d4113c125cdce30d258b1597baf4e` — add explicit local embedding configuration.
-- `c349c872edc1f043aa98c1f5ae382580b5cfe36c` — wire opt-in local embeddings into desktop memory.
-- `6869098efc679f1e715c9e5fd7657ba6367cf173` — validate local embedding options before allocation.
-- `bbdd9c95be0e402f678626b4871cdc4159ce6eeb` — document local semantic memory embeddings.
+- `04a85f38d393345379adc4bd6bfc2550f7b28da8` — add safe embedding migration contracts.
+- `69d911c46a1984f690fe4d505918a607bba886ed` — expose local embedding migration target.
+- `07cc785b130ba40b6658d015d71e3fb7008b7100` — enable safe memory migration extension.
+- `dd0c8cef7b9db8da61e9e9c76e08d70e328c8c36` — bound embedding migration batches.
+- `d750db4c1be0401ad2ee172c1a4db63aaa567e37` — bound local embedding migration metadata and correct tagged-model compatibility code.
+- `d3003e600b499a0336a6d64b26c637774536ebe1` — add resumable local embedding migration.
+- `bb96829fdfeb49ac068c209064f6cf3baa28e385` — test safe local embedding migration.
+- `a5ec9397fd28893ed4d5d0522dcecfd0782d364d` — document safe embedding migration.
 
 Validation / evidence:
 - Repository identity was explicitly re-verified before every GitHub mutation. Every mutation targeted exactly `UnknownGod2011/NVIDEA`; no mutation was made to `keyboard.wtf` or any other repository.
-- Static compare from prior ledger head `f6f3241e9e89732a88c5142839ef12cc80e93e49` to engineering head `bbdd9c95be0e402f678626b4871cdc4159ce6eeb` is **10 commits ahead / 0 behind** and changes exactly seven focused files: embedding docs, composition wiring, local configuration, local provider, memory contracts, memory service scoring/provenance, and focused tests.
-- Current official Ollama docs were checked on 2026-09-11 before implementing the HTTP contract.
-- `command -v dotnet` and `dotnet --info` again produced no usable .NET SDK signal in this execution environment. Compilation and test execution are therefore **not claimed**.
+- Static compare from prior ledger head `c3a9d76d7a8094ae9cd49f943d12fbe7ba90a481` to engineering head `a5ec9397fd28893ed4d5d0522dcecfd0782d364d` is **8 commits ahead / 0 behind** and changes exactly six focused files: migration docs, Ollama migration metadata, memory contracts, the migration partial, the one-line partial declaration change, and focused migration tests.
+- The execution environment again exposes no usable `dotnet` command or SDK output. Compilation and test execution are therefore **not claimed**.
 - No GitHub Actions workflow was triggered merely to manufacture a green check.
 - No live Nebius credentials/resources, Object Storage operations, Serverless jobs, paid Nemotron/Tavily calls, or remote embedding services were used.
 
 Security / privacy / failure review:
-- Desktop embeddings are disabled by default and opt-in only.
-- The production adapter accepts only HTTP(S) loopback endpoints and refuses redirects, reducing SSRF/data-exfiltration risk from the personal-memory path.
-- The adapter sends only embedding text to the configured local loopback runtime; it does not receive Nebius/Tavily credentials, browser credentials, approval grants, durable research state, or cloud signing keys.
-- Model/version and dimension provenance is durable. Semantic scoring refuses cross-provider/cross-model/cross-dimension comparison.
-- Malformed/non-finite/empty/oversized vectors and inconsistent batch shapes fail closed into the existing deterministic retrieval path.
-- Existing memory sensitivity/write policy, retention/delete controls, research/browser permission gates, audit semantics, emergency stop, and cloud lifecycle behavior remain unchanged.
+- Migration refuses providers that do not explicitly declare a local target; the production target remains the loopback-only Ollama adapter.
+- No automatic cloud fallback exists for re-indexing personal memory.
+- Sensitive and Restricted records are fail-closed by default and require separate explicit options.
+- Preview/progress surfaces do not include memory content.
+- Returned embeddings must be finite, dimensionally consistent, locally provenanced, and compatible with the approved target before persistence.
+- Provider errors stop the explicit migration operation; existing memory remains available through the normal deterministic retrieval fallback.
+- Cancellation propagates to local inference and prevents subsequent batches.
+- Per-batch persistence provides restart-safe progress; concurrent user/runtime changes are skipped rather than overwritten.
+- Existing memory write policy, edit/delete/retention controls, browser/research permission gates, audit semantics, emergency stop, and cloud lifecycle behavior remain unchanged.
 
 ## Known Blockers / Risks
 - No usable .NET 8 execution signal is available in this environment; current Core/WPF/Worker code, XAML and tests are not compiled or executed here.
-- The local Ollama adapter and its JSON/test contract require a real .NET 8 build/test pass before they can be claimed executable.
+- The local Ollama adapter and migration path require a real .NET 8 build/test pass before they can be claimed executable.
 - A real Windows machine still needs microphone permission plus an installed desktop speech recognizer/language for voice validation.
-- Local semantic embedding quality still needs retrieval evaluation against a real embedding-capable model; tests currently validate contracts/safety/model-space correctness, not model quality.
-- Existing persisted vectors without the new provenance intentionally stop contributing semantic cosine score until rewritten/re-embedded; lexical/recency/importance retrieval remains available.
+- Local semantic embedding quality still needs retrieval evaluation against a real embedding-capable model; tests currently validate contracts/safety/model-space correctness rather than model quality.
+- Migration is currently a Core API and documented maintenance surface; it is not yet exposed as a polished WPF preview/progress/cancel workflow.
 - No live Object Storage bucket/static key, digest-pinned registry image, MysteryBox refs, subnet, Serverless access token, or real Serverless job has been provisioned/validated here.
 - Exact provider acceptance of the Serverless Object Storage `Source`/`SourcePath` still requires a real job.
 - Reproducibility evidence proves internal consistency, not third-party attestation.
 
 ## Single Best Next Task
-First obtain a .NET 8-capable Windows execution signal and restore/build `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, and the Nebius contract tools; compile WPF/XAML; run the focused local-embedding, memory, voice, readiness, lifecycle-only recovery, research dispatch/cloud-mode, browser authority/integration, API-surface, and security suites; then run a real Ollama `embeddinggemma` retrieval-quality evaluation plus microphone recognition/cancel/timeout cycle and fix every compile/runtime defect. If executable validation remains unavailable, add a **bounded embedding migration/re-index service** that can re-embed provenance-less or stale-model memories locally with preview/progress/cancellation, per-sensitivity safeguards, crash-safe persistence, and no automatic cloud fallback.
+First obtain a .NET 8-capable Windows execution signal and restore/build `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, and the Nebius contract tools; compile WPF/XAML; run the focused memory migration/local-embedding, memory, voice, readiness, lifecycle-only recovery, research dispatch/cloud-mode, browser authority/integration, API-surface, and security suites; then run a real Ollama `embeddinggemma` retrieval-quality evaluation plus microphone recognition/cancel/timeout cycle and fix every compile/runtime defect. If executable validation remains unavailable, integrate the migration API into a **polished WPF Memory maintenance flow** with privacy-safe preview counts, explicit Sensitive/Restricted opt-ins, progress/cancel, and no content disclosure, then add deterministic retrieval-quality fixtures/evals that compare lexical-only vs semantic ranking without relying on a live model.

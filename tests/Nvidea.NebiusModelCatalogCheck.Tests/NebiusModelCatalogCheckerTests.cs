@@ -135,6 +135,48 @@ public sealed class NebiusModelCatalogCheckerTests
         Assert.Equal("api.tokenfactory.us-central1.nebius.com", result.EndpointHost);
     }
 
+    [Theory]
+    [InlineData("nebius.com")]
+    [InlineData("api.nebius.com")]
+    [InlineData("api.tokenfactory.us-central1.nebius.com")]
+    [InlineData("API.TOKENFACTORY.US-CENTRAL1.NEBIUS.COM")]
+    public void IsTrustedNebiusHost_AcceptsOnlyExactDomainOrRealSubdomain(string host)
+    {
+        Assert.True(Program.IsTrustedNebiusHost(host));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("evilnebius.com")]
+    [InlineData("nebius.com.evil.example")]
+    [InlineData("api.tokenfactory.us-central1.nebius.com.evil.example")]
+    [InlineData("not-nebius.com")]
+    public void IsTrustedNebiusHost_RejectsLookalikes(string host)
+    {
+        Assert.False(Program.IsTrustedNebiusHost(host));
+    }
+
+    [Fact]
+    public void ValidateTrustedEndpoint_RejectsSuffixLookalikeBeforeCredentialedRequestPath()
+    {
+        var exception = Assert.Throws<CatalogCheckException>(() =>
+            Program.ValidateTrustedEndpoint(new Uri("https://evilnebius.com/v1/")));
+
+        Assert.Equal("untrusted_nebius_endpoint", exception.Code);
+    }
+
+    [Fact]
+    public void ValidateTrustedEndpoint_RejectsHttpAndEmbeddedUserInfo()
+    {
+        var httpException = Assert.Throws<CatalogCheckException>(() =>
+            Program.ValidateTrustedEndpoint(new Uri("http://api.tokenfactory.us-central1.nebius.com/v1/")));
+        var userInfoException = Assert.Throws<CatalogCheckException>(() =>
+            Program.ValidateTrustedEndpoint(new Uri("https://user:pass@api.tokenfactory.us-central1.nebius.com/v1/")));
+
+        Assert.Equal("untrusted_nebius_endpoint", httpException.Code);
+        Assert.Equal("untrusted_nebius_endpoint", userInfoException.Code);
+    }
+
     private static string Catalog(params string[] ids)
     {
         var entries = string.Join(",", ids.Select(id => $"{{\"id\":\"{id}\",\"object\":\"model\"}}"));

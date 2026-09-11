@@ -11,5 +11,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Nvidea.Core\Nvidea.Core.csproj" />
+    <PackageReference Include="System.Speech" Version="9.0.8" />
   </ItemGroup>
 </Project>

@@ -1,150 +1,132 @@
 # NVIDEA
 
-NVIDEA is the open-source hackathon edition of a Windows-first personal AI operating layer inspired by keyboard.wtf. The goal is not another chat wrapper: NVIDEA is being built as a permissioned agent that can understand desktop context, remember useful information over time, research with provenance, execute multi-step browser and computer workflows, and hand off appropriate long-running work to Nebius infrastructure.
+NVIDEA is an open-source, Windows-first **Personal AI operating layer** for the Nebius x NVIDIA Global AI Hackathon. It is inspired by interaction patterns that proved useful in keyboard.wtf, but it is a separate project with an NVIDIA/Nebius-first intelligence stack, durable personal memory, Tavily research, safe browser automation, long-running work, verification, and explicit permission boundaries.
 
 ## Hackathon target
 
 - **Nebius x NVIDIA Global AI Hackathon**
 - Primary track: **Personal AI**
 - Bonus target: **Best Use of Tavily**
-- Core runtime: **NVIDIA Nemotron on Nebius Token Factory / Nebius AI Cloud**
+- Core reasoning runtime: **NVIDIA Nemotron on Nebius Token Factory / Nebius AI Cloud**
 
-## Current status
+## What is implemented
 
-The repository is being built in layers. `src/Nvidea.Core` contains the NVIDIA/Nebius inference foundation, privacy-aware personal memory, a Tavily-backed research core connected to Nemotron planning/synthesis, durable research checkpoints, a safety-focused browser runtime, and an explicit Nebius Serverless research contract path. `src/Nvidea.Windows` exposes the trusted Windows shell, including restart-resumable research controls. `src/Nvidea.Worker` is the non-root remote worker used by the explicit Serverless contract path.
+### NVIDIA / Nebius reasoning
 
-Implemented now:
+`src/Nvidea.Core/Nebius` contains a direct `HttpClient` Token Factory adapter with structured tool calling, optional JSON-schema output, retry handling, cancellation, timeouts, endpoint validation, and secret-safe provider errors.
 
-- OpenAI-compatible Nebius Token Factory client implemented directly over `HttpClient`.
-- Verified default model: `nvidia/nemotron-3-super-120b-a12b`.
-- Structured tool/function definitions and tool-call parsing.
-- Optional JSON-schema structured-output requests.
-- Retry handling for timeouts, HTTP 429 and 5xx responses.
-- Per-request timeout and cancellation support.
-- Endpoint validation and secret-safe API errors.
-- Workload routing abstraction for fast/standard/deep tasks without inventing unverified model IDs.
-- Typed personal-memory layers: working, episodic, semantic, project and skill memory.
-- Memory provenance, importance, confidence, sensitivity and retention metadata.
-- Hybrid retrieval combining semantic similarity (when an embedding provider is configured), lexical relevance, recency and importance.
-- Deterministic lexical fallback when embeddings are unavailable; unrelated recent memories are filtered rather than returned simply because they are recent.
-- Privacy-aware write policy: likely credentials/private keys/tokens are never persisted; sensitive and indefinite-retention memories require explicit approval.
-- Session memory is held in process and deliberately excluded from persistent storage.
-- Atomic JSON persistence, expiry cleanup, update-in-place by layer/key, deletion controls and embedding-provider abstraction.
-- Tavily research provider with multi-query batching, `general`/`news` topic support, date bounds, domain filters, bounded retries/timeouts/cancellation and usage-credit tracking.
-- Query-focused Tavily Extract enrichment for top-ranked sources using advanced extraction, bounded URL/chunk counts, markdown output and exact usage-credit accounting.
-- Extraction failures degrade to the original search evidence rather than discarding the research run; per-source extraction failures remain explicit warnings.
-- Canonical URL normalization and source deduplication that strips common tracking parameters and retains the stronger provider result.
-- Deterministic evidence-quality ranking that combines Tavily relevance with conservative authority heuristics, timestamp/date-window freshness evidence and cross-host diversity penalties before synthesis.
-- Freshness is never fabricated: when the provider has no publication timestamp, NVIDEA distinguishes a bounded search-window signal from unknown freshness and emits explicit warnings for unverified or stale news evidence.
-- Authority scoring is intentionally heuristic and modest; syntactic `.gov`/`.edu`/country-code institutional suffixes are recognized, while deceptive subdomains such as `gov.example.com` are not treated as government sources.
-- Typed source provenance/citation objects instead of reducing research to a plain answer string.
-- An explicit untrusted-web-content envelope for prompt-injection resistance before evidence reaches Nemotron.
-- Nemotron-powered query planning through the existing Nebius structured-output path.
-- Nemotron research synthesis that receives deterministic quality metadata separately from untrusted web text, prefers extracted evidence, requires `[src:SOURCE_ID]` markers and validates referenced IDs against the collected evidence set.
-- Durable research checkpoints at remote-work boundaries: request -> Nemotron plan -> Tavily Search/Extract + ranking -> saved evidence -> Nemotron synthesis -> completed report.
-- Saved evidence includes exact ranked provenance, quality metadata, uncertainty warnings and Tavily credit usage so a normal resume does not re-search, re-extract or rerank evidence.
-- `ResearchJobRuntime` persists research jobs and audit records under the local application state directory; on Windows the existing stores use CurrentUser DPAPI protection by default.
-- The Windows shell can create durable research, recover the latest unfinished job after restart, run one explicit stage at a time, cancel work, and recover completed reports.
-- Research status UI is intentionally payload-free: it shows coarse Nemotron/Tavily stages, attempts and execution location without rendering saved questions, source contents/URLs, raw provider errors or checkpoint JSON.
-- Persistent Playwright browser sessions with iterative post-action verification, permission gates, prompt-injection/tool-output trust boundaries, crash-safe download quarantine/recovery and single-owner durable browser state.
-- Native S3-compatible protected Object Storage transport for encrypted remote work items, bindings, and results.
-- Explicit Nebius Serverless research contract path with two-phase dispatch, signed resource-ID binding, durable cancellation/reconciliation, exact-once result ingestion, and a non-root worker image.
-- Zero-cost `--live-research-preflight` mode that validates the exact live deployment inputs before any provider work.
-- Deployment preflight enforces digest-pinned worker images, exact Object Storage ↔ Serverless mount alignment, MysteryBox-backed worker credentials, bounded compute/storage configuration, RSA key strength/roles, and signing-identity consistency.
-- Redacted deterministic deployment manifests and machine-readable live PASS evidence tied by the same SHA-256 deployment fingerprint.
-- `tools/Nvidea.NebiusEvidenceVerifier` independently recomputes the manifest fingerprint and verifies a later PASS artifact without credentials or network access.
-- Strict judging-evidence ingestion rejects unknown/duplicate JSON members, comments, trailing commas, excessive nesting, malformed files, and oversized artifacts.
-- Contract-focused tests using in-memory HTTP/memory/inference/provider fakes; no real cloud credentials are required for the test suite.
+Current default workload routing uses Token Factory model identifiers verified in the official Nebius cookbook:
 
-The important readiness distinction is: the **explicit Serverless contract path is implemented**, but a credential-backed live Serverless PASS has not yet been demonstrated in this repository, and the production WPF `ResearchJobRuntime` still deliberately avoids claiming remote execution until that contract is proven. This keeps the project technically ambitious without overstating validation.
+| Workload | Default model |
+| --- | --- |
+| Fast / lightweight | `nvidia/nvidia-nemotron-3-nano-30b-a3b` |
+| Standard | `nvidia/nemotron-3-super-120b-a12b` |
+| Deep / difficult | `nvidia/Nemotron-3-Ultra-550b-a55b` |
 
-Still under active development: a verified production embedding adapter, memory compaction/summarization, production WPF integration of the proven remote path, credential-backed Nebius Serverless validation, browser automation polish, broader skills, production Windows validation, packaging and the final hackathon demo.
+All three remain overrideable through environment variables so a provider catalog change does not require an architectural rewrite. If an optional fast/deep tier is deliberately disabled in code, routing fails safely back to the standard model rather than inventing an ID.
 
-## Why model routing is conservative
+### Windows interaction shell
 
-Nebius currently documents Nemotron 3 Nano, Super and Ultra for different workload classes. NVIDEA only hard-codes the exact model identifier that has been verified in current Nebius documentation: Nemotron 3 Super. Fast/deep model IDs are configuration values until their exact Token Factory identifiers are verified. This prevents silent breakage from guessed or stale model names.
+`src/Nvidea.Windows` provides the trusted desktop surface with:
 
-## Configuration
+- global text invocation and active-app context capture;
+- selected-text and opt-in clipboard context paths;
+- local review-first voice invocation (`Ctrl+Shift+V` / Voice);
+- Windows speech recognition without routing microphone audio to a cloud speech provider;
+- emergency stop and cancellation;
+- approval dialogs for consequential actions;
+- durable research controls, readiness state, audit UI and browser-download handoff;
+- Memory maintenance for local semantic embedding re-indexing.
 
-Required environment variables for live cloud use:
+Voice recognition places the transcript into the prompt for user review rather than auto-executing it.
 
-```powershell
-$env:NEBIUS_API_KEY = "your-token-factory-key"
-$env:TAVILY_API_KEY = "your-tavily-key"
-```
+### Personal memory
 
-Optional overrides:
+NVIDEA implements typed working, episodic, semantic, project/entity and skill memory with provenance, confidence, importance, sensitivity and retention metadata.
 
-```powershell
-$env:NVIDEA_NEBIUS_BASE_URL = "https://api.tokenfactory.us-central1.nebius.com/v1/"
-$env:NVIDEA_MODEL_STANDARD = "nvidia/nemotron-3-super-120b-a12b"
-$env:NVIDEA_MODEL_FAST = "<verified-token-factory-model-id>"
-$env:NVIDEA_MODEL_DEEP = "<verified-token-factory-model-id>"
-```
+The retrieval path combines lexical relevance, semantic similarity when compatible embeddings exist, recency and importance. Vector comparisons are isolated by provider/model/dimension provenance so vectors from incompatible embedding spaces are never silently mixed.
 
-Do not commit API keys. Provider secrets stay outside durable research checkpoints. On Windows, durable research job/audit state uses the existing CurrentUser DPAPI-backed local-state protection path.
+A production local embedding adapter is available through Ollama's `/api/embed` endpoint. It is **opt-in**, loopback-only, bounded, redirect-refusing and failure-tolerant. If Ollama is absent or embedding fails, memory remains usable through deterministic lexical/recency/importance retrieval.
 
-The explicit live Serverless contract uses additional `NVIDEA_LIVE_*` variables for Object Storage, Serverless deployment shape, public/private key files and MysteryBox references. See [`docs/nebius-contract-probe.md`](docs/nebius-contract-probe.md) rather than copying credentials into scripts or source files.
+Memory re-indexing is local-only and resumable. Sensitive and Restricted memories are excluded by default and require separate explicit opt-ins. The Windows maintenance flow previews aggregate scope, revalidates stale consent before execution, supports cancellation, and persists completed batches safely.
 
-## Build and test
+See:
 
-Prerequisite: .NET 8 SDK.
+- [`docs/local-memory-embeddings.md`](docs/local-memory-embeddings.md)
+- [`docs/memory-embedding-migration.md`](docs/memory-embedding-migration.md)
 
-```powershell
-dotnet build .\src\Nvidea.Core\Nvidea.Core.csproj
-dotnet build .\src\Nvidea.Windows\Nvidea.Windows.csproj
-dotnet test .\tests\Nvidea.Core.Tests\Nvidea.Core.Tests.csproj
-```
+### Tavily research with provenance
 
-The tests mock network/storage dependencies and cover request structure, model routing, bearer authentication, tool-call parsing, retry behavior, endpoint safety, memory privacy policy, session-only persistence, hybrid retrieval, embedding failure fallback, expiry, deduplicated updates, JSON round trips, Tavily Search/Extract request shapes, canonical URL deduplication, rate-limit retries, extraction fallback behavior, prompt-injection boundaries, research planning, deterministic authority/freshness/diversity ranking, citation-ID validation, durable research stage transitions, restart recovery from saved evidence, zero-repeat Tavily search after an evidence checkpoint, terminal cancellation behavior, Serverless deployment contracts, live-configuration bounds, RSA key roles, and judging-evidence verification.
+The research pipeline is deliberately staged instead of being one opaque model call:
 
-## Durable research workflow
+1. Nemotron creates a bounded structured query plan.
+2. Tavily Search performs discovery with topic/date/domain controls.
+3. Top evidence is enriched through Tavily Extract.
+4. URLs are canonicalized and deduplicated.
+5. Evidence is ranked with explicit relevance, modest authority heuristics, freshness signals and source diversity.
+6. Web content is wrapped as **untrusted evidence** before model synthesis.
+7. Nemotron synthesizes with required `[src:SOURCE_ID]` markers.
+8. Only source IDs present in collected evidence become validated citations.
 
-The judging-visible long-running research path is deliberately staged rather than one opaque request:
+Durable checkpoints preserve plan, ranked evidence, warnings, Tavily usage and completed reports. A normal resume does not repeat Tavily search/extract once evidence is safely checkpointed.
 
-1. **Save request** — create a durable local job.
-2. **Nemotron plan** — persist the validated structured research plan.
-3. **Tavily evidence** — Search, Extract, deduplicate and rank evidence; persist exact provenance, warnings and credit usage.
-4. **Nemotron synthesis** — resume from the saved evidence checkpoint without repeating Tavily discovery/extraction.
-5. **Completed report** — persist and recover the final citation-validated report.
+### Safe complex browser automation
 
-The Windows panel executes one stage per explicit Start/Resume action and can rediscover an unfinished job after process restart. User cancellation is terminal. The Windows production path remains local while the explicit Serverless contract is validated independently; this avoids silently routing private desktop work to cloud infrastructure before the remote contract is proven.
+The browser subsystem uses persistent Playwright/Chromium sessions with a plan → act → observe → verify loop. It includes:
 
-## Personal memory contract
+- DOM/accessibility-oriented observation and robust action execution;
+- post-action state verification rather than trusting driver success;
+- prompt-injection heuristics and untrusted-page boundaries;
+- approval gates for consequential actions;
+- additional High-risk approval gating for state-changing actions on prompt-injection-flagged pages;
+- credential/OTP/payment/private-key typing blocks;
+- durable download quarantine and explicit handoff;
+- cancellation, emergency stop, crash recovery and ambiguous-action fail-closed behavior;
+- single-owner profile/state leases to prevent concurrent mutation.
 
-Memory is a product/security boundary, not just a larger prompt buffer:
+NVIDEA does not bypass CAPTCHA, login, site, browser or OS safeguards.
 
-- `Working`: current-session context; session retention is never persisted.
-- `Episodic`: interactions and completed actions with provenance.
-- `Semantic`: stable preferences/profile facts.
-- `Project`: durable project/entity context.
-- `Skill`: reusable workflow/skill knowledge.
+### Skills, permissions and audit
 
-Search defaults to public/personal memories. Sensitive/restricted memories are excluded unless the caller explicitly expands the allowed sensitivity set. Credential-like material is denied by the write policy even if a caller requests indefinite retention.
+The capability layer includes a registry, risk classification, scoped approvals, single-use job approval context, and durable audit infrastructure. Consequential operations such as send/submit/publish/delete/purchase/account/security/financial changes require explicit authority rather than being inferred from model text or web content.
 
-Embedding generation is intentionally behind `IMemoryEmbeddingProvider`. Until a production embedding model is verified for the Nebius stack, memory remains useful via deterministic lexical + recency + importance retrieval rather than coupling the core to an unverified model/API.
+Protected local state uses Windows CurrentUser DPAPI by default where applicable, and audit storage is hash-chained/segmented and bounded.
 
-## Research safety and provenance contract
+### Long-running Nebius execution
 
-Research is implemented as a pipeline rather than a single opaque search call:
+`src/Nvidea.Worker` and the Core job/runtime components implement an explicit remote research path for Nebius infrastructure:
 
-1. Nemotron creates a bounded, structured query plan.
-2. `TavilyResearchClient` executes those searches with cancellation, retry and endpoint controls.
-3. Results are normalized and deduplicated by canonical URL while preserving source IDs and provider scores.
-4. The strongest bounded subset is re-read through query-focused **Tavily Extract** so synthesis can rely on source-page evidence rather than snippets alone.
-5. Extracted content replaces only the matching source's evidence; failed extraction retains the original search evidence and emits a warning.
-6. `ResearchEvidenceRanker` deterministically reorders evidence using relevance, conservative host authority, publication/search-window freshness and host diversity. Unknown freshness and stale current-event evidence become explicit warnings rather than silently high-confidence facts.
-7. Quality metadata is labeled as a local heuristic and kept separate from source text; web text itself is wrapped as **untrusted evidence**, explicitly preventing source text from becoming agent instructions.
-8. Nemotron synthesizes only from the evidence and is instructed to emit exact `[src:SOURCE_ID]` markers.
-9. The engine resolves only markers that actually exist in collected evidence and surfaces unknown/missing markers as warnings.
+- encrypted opaque work items;
+- two-phase dispatch;
+- signed resource-ID binding;
+- S3-compatible Nebius Object Storage transport;
+- Serverless-mounted worker transport;
+- crash/lifecycle reconciliation and durable cancellation;
+- exact-once result ingestion;
+- non-root worker image;
+- deployment preflight for mount alignment, MysteryBox-backed credentials, resource bounds, RSA identity consistency and digest-pinned images.
 
-This makes provenance machine-checkable, keeps Tavily central to both discovery and evidence acquisition, and creates a security boundary that the autonomous browser/skill system can reuse.
+The repository also includes `Nvidea.NebiusContractProbe` and evidence verification tooling for zero-cost preflight, explicit paid live research, redacted deployment fingerprints and offline validation.
 
-## Target architecture
+**Important validation boundary:** the Serverless contract path is implemented, but this repository does **not** claim that a credential-backed live Nebius Serverless PASS has been demonstrated until a matching live PASS artifact is actually generated and verified.
+
+## Deterministic judging evidence
+
+The repository includes credential-free evidence tools that exercise real Core contracts without pretending synthetic evidence is a live-provider result:
+
+- `tools/Nvidea.PersonalAiDemoEval` — positive cross-cutting Personal AI scenarios.
+- `tools/Nvidea.PersonalAiAdversarialEval` — negative-path security and fail-closed scenarios.
+- `tools/Nvidea.JudgingEvidenceVerifier` — combines synthetic evaluator artifacts with matching Nebius live deployment evidence and emits a bounded, hashed, redacted PASS/FAIL summary.
+- `tools/Nvidea.DemoPackageValidator` — validates the final ≤3-minute judging package, required demo beats, evidence classes, asset paths, commands, provider-live claim boundaries and secret markers.
+- `tests/Nvidea.DemoPackageValidator.Tests` — adversarial regression cases against the actual validator CLI.
+
+The canonical recording plan is [`docs/demo-package.json`](docs/demo-package.json), currently budgeted below the 180-second limit. See [`docs/demo-package.md`](docs/demo-package.md).
+
+## Architecture
 
 ```text
 Windows interaction shell
-  hotkeys / voice / text / active-app context
+  hotkeys / voice / text / selected context
                     |
                     v
               Personal AI core
@@ -154,7 +136,8 @@ Windows interaction shell
       Memory       Skills       Risk/approval
          \           |              /
           \          v             /
-             Nemotron routing
+          Nemotron model routing
+       Nano / Super / Ultra tiers
                     |
           Nebius Token Factory
                     |
@@ -162,50 +145,90 @@ Windows interaction shell
       |                           |
       v                           v
  Tavily research             Tool execution
-                              browser / OS
+ provenance/citations         browser / OS
       |                           |
       +-------------+-------------+
                     v
           verified task outcome
 
-Long-running cloud-safe research -> explicit Nebius Serverless contract path
-Private OS/browser actions       -> local Windows runtime
-Production Windows research      -> local until remote contract is live-validated
+Cloud-safe long-running research -> explicit Nebius remote contract
+Private OS/browser operations   -> local Windows runtime
 ```
 
-## Personal AI safety contract
+## Configuration
+
+Live Token Factory + Tavily usage requires secrets supplied outside the repository:
+
+```powershell
+$env:NEBIUS_API_KEY = "your-token-factory-key"
+$env:TAVILY_API_KEY = "your-tavily-key"
+```
+
+Current defaults can be overridden explicitly:
+
+```powershell
+$env:NVIDEA_NEBIUS_BASE_URL = "https://api.tokenfactory.us-central1.nebius.com/v1/"
+$env:NVIDEA_MODEL_FAST = "nvidia/nvidia-nemotron-3-nano-30b-a3b"
+$env:NVIDEA_MODEL_STANDARD = "nvidia/nemotron-3-super-120b-a12b"
+$env:NVIDEA_MODEL_DEEP = "nvidia/Nemotron-3-Ultra-550b-a55b"
+```
+
+Local semantic memory embeddings are deliberately opt-in. See [`docs/local-memory-embeddings.md`](docs/local-memory-embeddings.md) for the Ollama endpoint/model settings and privacy behavior.
+
+The explicit Serverless contract uses additional `NVIDEA_LIVE_*` configuration for Object Storage, deployment shape, key files and MysteryBox references. See [`docs/nebius-contract-probe.md`](docs/nebius-contract-probe.md). Never commit API keys, private keys or provider credentials.
+
+## Build and validation
+
+Prerequisite: **.NET 8 SDK**. Windows/WPF validation requires Windows.
+
+```powershell
+dotnet build .\src\Nvidea.Core\Nvidea.Core.csproj
+dotnet build .\src\Nvidea.Windows\Nvidea.Windows.csproj
+dotnet build .\src\Nvidea.Worker\Nvidea.Worker.csproj
+dotnet test .\tests\Nvidea.Core.Tests\Nvidea.Core.Tests.csproj
+dotnet test .\tests\Nvidea.DemoPackageValidator.Tests\Nvidea.DemoPackageValidator.Tests.csproj
+```
+
+Credential-free evaluators can then be run locally:
+
+```powershell
+dotnet run --project .\tools\Nvidea.PersonalAiDemoEval\Nvidea.PersonalAiDemoEval.csproj -- --output .\artifacts\personal-ai-positive.json
+dotnet run --project .\tools\Nvidea.PersonalAiAdversarialEval\Nvidea.PersonalAiAdversarialEval.csproj -- --output .\artifacts\personal-ai-adversarial.json
+dotnet run --project .\tools\Nvidea.DemoPackageValidator\Nvidea.DemoPackageValidator.csproj -- .\docs\demo-package.json
+```
+
+These commands are validation instructions, not claims that a particular environment has already produced a green result. See [`progress.md`](progress.md) for the latest executed/unexecuted evidence boundary.
+
+## Privacy and safety contract
 
 NVIDEA is designed around least privilege:
 
-- read-only observation should be separated from actions;
-- consequential actions such as send, submit, publish, purchase, deletion, account/security changes and financial actions require explicit approval;
-- browser content and tool output are untrusted input and must not silently redefine system policy;
-- CAPTCHA, login, browser/OS permission boundaries and site safeguards must never be bypassed;
-- every autonomous action should become auditable and cancellable;
-- cloud inference should receive only the data required for the current task;
-- credentials and authentication secrets must not be stored as personal memory.
+- observe separately from act;
+- require explicit approval for consequential operations;
+- treat web pages, retrieved text and tool output as untrusted data, not authority;
+- never treat prompt-injection content as authorization;
+- send cloud inference only the data required for the current task;
+- keep credentials/authentication secrets out of personal memory;
+- expose cancellation and emergency stop;
+- maintain an audit trail;
+- keep private OS-local actions on-device;
+- do not bypass CAPTCHA/login/site/OS safeguards.
 
-## Reproducible judging evidence
+## Current verification gaps
 
-The Serverless demo path has a deliberate zero-secret evidence workflow so a successful live run can be tied back to the exact deployment that was preflighted:
+Meaningful implementation remains, but the project is **not declared finished**. The most important outstanding verification is a real .NET 8 Windows restore/build/test pass covering Core, WPF/XAML, Worker, voice, local embeddings, browser integration and evaluator tooling. Live Nebius Object Storage/Serverless infrastructure and production provider behavior also require credential-backed validation before being represented as live evidence.
 
-1. Configure the live deployment using a digest-pinned worker image and MysteryBox-backed worker secrets.
-2. Run the **zero-cost** `--live-research-preflight` mode and save the redacted deployment manifest.
-3. Run the explicit `--live-research` contract only when credentials/infrastructure are intentionally available.
-4. A PASS artifact may be persisted only after remote completion and validated research citations.
-5. Run `tools/Nvidea.NebiusEvidenceVerifier` over the preflight manifest and PASS artifact. It recomputes the canonical redacted manifest fingerprint and requires the PASS fingerprint to match.
-
-This verification requires no Nebius token, Object Storage key, MysteryBox resolution, private PEM, or network connection. It proves internal deployment reproducibility consistency, **not** third-party Nebius attestation. Full commands, redaction guarantees and limitations are documented in [`docs/judging-evidence.md`](docs/judging-evidence.md).
+Other ongoing work includes memory compaction/summarization quality, broader reusable skills, browser UX polish, packaging/onboarding, local embedding quality calibration, and final judge-facing demo execution.
 
 ## Relationship to keyboard.wtf
 
-keyboard.wtf is used as read-only reference material for the interaction patterns that already work well: Windows hotkeys, voice UI, local speech, allow-listed actions, context capture, workflows and permission concepts. NVIDEA is a separate repository and is intended to materially upgrade the backend architecture, especially memory, research, complex browser automation, long-running work and open-model infrastructure.
+keyboard.wtf is read-only reference material for useful interaction patterns such as Windows hotkeys, voice UI, local speech, workflows and permission concepts. NVIDEA is a separate repository and materially changes the backend architecture around NVIDIA/Nebius reasoning, memory, research, browser automation, durable work and safety.
 
-No automation working on NVIDEA is permitted to mutate the keyboard.wtf repository.
+Automation working on NVIDEA is not permitted to mutate the keyboard.wtf repository.
 
 ## Development ledger
 
-See [`progress.md`](progress.md) for the current architecture decisions, verified progress, known gaps, risks and next engineering priority.
+See [`progress.md`](progress.md) for current architecture decisions, exact completed work, evidence, known blockers, risks and the next engineering priority.
 
 ## License
 

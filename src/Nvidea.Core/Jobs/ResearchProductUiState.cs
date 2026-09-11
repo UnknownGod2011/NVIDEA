@@ -26,7 +26,6 @@ public sealed record ResearchProductUiState(
     public static ResearchProductUiState Project(
         ResearchJobStatus? status,
         bool runtimeAvailable,
-        bool localExecutionAvailable,
         bool operationInProgress,
         bool hasActiveJob,
         bool remoteLifecycleAvailable,
@@ -38,14 +37,14 @@ public sealed record ResearchProductUiState(
                 "Remote dispatch cannot be enabled when provider lifecycle support is unavailable.",
                 nameof(remoteDispatchEnabled));
         }
-        if (remoteDispatchEnabled && !localExecutionAvailable)
+        if (remoteDispatchEnabled && !runtimeAvailable)
         {
             throw new ArgumentException(
                 "Remote dispatch cannot be enabled when the local research runtime is unavailable.",
                 nameof(remoteDispatchEnabled));
         }
 
-        var cloudDisclosure = CloudDisclosure(localExecutionAvailable, remoteLifecycleAvailable, remoteDispatchEnabled);
+        var cloudDisclosure = CloudDisclosure(runtimeAvailable, remoteLifecycleAvailable, remoteDispatchEnabled);
         var resumeLabel = status?.CanRecoverInterrupted == true
             ? RearmInterruptedStageLabel
             : ResumeNextStageLabel;
@@ -65,14 +64,14 @@ public sealed record ResearchProductUiState(
         }
 
         var requiresReconciliation = status?.RequiresRemoteReconciliation == true;
-        var resumeEnabled = localExecutionAvailable
+        var resumeEnabled = runtimeAvailable
             && status is not null
             && !requiresReconciliation
             && (status.CanRunNextStep || status.CanRecoverInterrupted);
         var reconcileEnabled = requiresReconciliation && remoteLifecycleAvailable;
         var cancelEnabled = status?.CanCancel == true
-            && (requiresReconciliation ? remoteLifecycleAvailable : localExecutionAvailable);
-        var dispatchEnabled = localExecutionAvailable
+            && (requiresReconciliation ? remoteLifecycleAvailable : runtimeAvailable);
+        var dispatchEnabled = runtimeAvailable
             && remoteDispatchEnabled
             && status is
             {
@@ -85,7 +84,7 @@ public sealed record ResearchProductUiState(
             && !string.IsNullOrWhiteSpace(status.CheckpointStep);
 
         return new ResearchProductUiState(
-            StartEnabled: localExecutionAvailable,
+            StartEnabled: runtimeAvailable,
             ResumeEnabled: resumeEnabled,
             ResumeLabel: resumeLabel,
             ReconcileEnabled: reconcileEnabled,

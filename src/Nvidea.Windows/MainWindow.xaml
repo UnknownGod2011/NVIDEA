@@ -130,6 +130,9 @@
                             Click="ResearchStartButton_Click"/>
                     <Button x:Name="ResearchResumeButton" Content="Resume next step" Padding="14,5" Margin="0,6,0,0"
                             Click="ResearchResumeButton_Click" IsEnabled="False"/>
+                    <Button x:Name="ResearchDispatchButton" Content="Run stage on Nebius" Padding="14,5" Margin="0,6,0,0"
+                            Click="ResearchDispatchButton_Click" IsEnabled="False"
+                            ToolTip="Creates one Nebius Serverless job only after a separate one-shot approval for the exact current checkpoint."/>
                     <Button x:Name="ResearchReconcileButton" Content="Reconcile Nebius state" Padding="14,5" Margin="0,6,0,0"
                             Click="ResearchReconcileButton_Click" IsEnabled="False"
                             ToolTip="Provider-aware reconciliation only; never replays ambiguous remote work locally."/>

@@ -38,13 +38,18 @@ public sealed record AgentCompletion(
 
 public sealed class NebiusOptions
 {
+    // Current Token Factory identifiers verified against the official Nebius
+    // Token Factory cookbook. Keep environment overrides available because
+    // provider catalogs can evolve independently of this binary.
+    public const string VerifiedNemotronNanoModel = "nvidia/nvidia-nemotron-3-nano-30b-a3b";
     public const string VerifiedNemotronSuperModel = "nvidia/nemotron-3-super-120b-a12b";
+    public const string VerifiedNemotronUltraModel = "nvidia/Nemotron-3-Ultra-550b-a55b";
 
     public Uri BaseUri { get; init; } = new("https://api.tokenfactory.us-central1.nebius.com/v1/");
     public required string ApiKey { get; init; }
     public string StandardModel { get; init; } = VerifiedNemotronSuperModel;
-    public string? FastModel { get; init; }
-    public string? DeepModel { get; init; }
+    public string? FastModel { get; init; } = VerifiedNemotronNanoModel;
+    public string? DeepModel { get; init; } = VerifiedNemotronUltraModel;
     public TimeSpan RequestTimeout { get; init; } = TimeSpan.FromSeconds(90);
     public int MaxAttempts { get; init; } = 3;
 
@@ -63,10 +68,9 @@ public sealed class NebiusOptions
         {
             ApiKey = apiKey,
             BaseUri = baseUri,
-            StandardModel = Environment.GetEnvironmentVariable("NVIDEA_MODEL_STANDARD")
-                ?? VerifiedNemotronSuperModel,
-            FastModel = Environment.GetEnvironmentVariable("NVIDEA_MODEL_FAST"),
-            DeepModel = Environment.GetEnvironmentVariable("NVIDEA_MODEL_DEEP")
+            StandardModel = EnvironmentOrDefault("NVIDEA_MODEL_STANDARD", VerifiedNemotronSuperModel),
+            FastModel = EnvironmentOrDefault("NVIDEA_MODEL_FAST", VerifiedNemotronNanoModel),
+            DeepModel = EnvironmentOrDefault("NVIDEA_MODEL_DEEP", VerifiedNemotronUltraModel)
         };
     }
 
@@ -84,6 +88,12 @@ public sealed class NebiusOptions
             throw new InvalidOperationException("MaxAttempts must be between 1 and 6.");
         if (RequestTimeout <= TimeSpan.Zero || RequestTimeout > TimeSpan.FromMinutes(10))
             throw new InvalidOperationException("RequestTimeout is outside the supported range.");
+    }
+
+    private static string EnvironmentOrDefault(string variableName, string fallback)
+    {
+        var value = Environment.GetEnvironmentVariable(variableName);
+        return string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
     }
 }
 

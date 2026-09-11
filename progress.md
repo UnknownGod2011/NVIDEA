@@ -12,8 +12,8 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 
 ## Current Product / Architecture State
 - .NET 8 core in `src/Nvidea.Core`; WPF host in `src/Nvidea.Windows`; deployable remote worker in `src/Nvidea.Worker`.
-- NVIDIA Nemotron through Nebius Token Factory with structured reasoning/tool boundaries, retries, timeout/cancellation, endpoint validation, and current default routing: Nano for Fast, Super for Standard, Ultra for Deep; all tiers remain environment-overridable and explicitly disabled optional tiers fail safely to Standard.
-- Layered personal memory with privacy-aware writes, durable provenance, hybrid lexical/semantic/recency/importance retrieval, loopback-only local Ollama embeddings, vector-space provenance isolation, safe local-only migration/re-index maintenance, WPF maintenance UI, and deterministic retrieval-quality fixtures.
+- NVIDIA Nemotron through Nebius Token Factory with structured reasoning/tool boundaries, retries, timeout/cancellation, endpoint validation, and current default routing: Nano for Fast, Super for Standard, Ultra for Deep; all tiers remain environment-overridable and optional Fast/Deep tiers fail safely to Standard when deliberately disabled.
+- Layered personal memory with privacy-aware writes, provenance, hybrid lexical/semantic/recency/importance retrieval, loopback-only local Ollama embeddings, vector-space isolation, local-only migration/re-indexing, WPF maintenance UI, and deterministic retrieval-quality fixtures.
 - Tavily Search + Extract research with canonical deduplication, source quality/freshness/diversity ranking, untrusted-evidence boundaries, machine-verifiable citations, and restart-safe staged checkpoints.
 - Safe browser agent with persistent Chromium state, popup/new-tab tracking, plan/act/observe/verify, prompt-injection detection, consequential-action gates, durable download quarantine, emergency stop, crash recovery, and explicit approval for state-changing actions on prompt-injection-flagged pages.
 - Protected local state uses Windows CurrentUser DPAPI by default, durable job-store CAS, hash-chained/segmented audit, and OS-backed single-owner mutation leases.
@@ -23,9 +23,9 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Windows voice invocation is local and review-first: `Ctrl+Shift+V` / Voice asks for microphone consent, transcribes through installed Windows speech recognition, and places text into the prompt without auto-running it or routing audio to cloud speech.
 - Windows Memory maintenance safely re-indexes stale/missing local embeddings with privacy-safe previews, explicit Sensitive/Restricted opt-ins, stale-preview revalidation, progress/cancellation, and aggregate-only disclosure.
 - `tools/Nvidea.PersonalAiDemoEval` and `tools/Nvidea.PersonalAiAdversarialEval` provide deterministic positive and negative-path cross-cutting evidence over real Core contracts.
-- `tools/Nvidea.JudgingEvidenceVerifier` now combines positive/adversarial artifacts, matching Nebius live deployment evidence, and a **fresh live** Token Factory model-catalog PASS into one bounded judge-facing summary.
-- `tools/Nvidea.DemoPackageValidator` plus `docs/demo-package.json` make the final <=3-minute judging plan machine-checkable; its adversarial regression suite covers timing, path, command, secret, and provider-live claim failures.
-- `tools/Nvidea.NebiusModelCatalogCheck` provides a zero-inference model-catalog readiness gate for the configured Nano / Super / Ultra tier IDs using either a captured or live authenticated `GET /v1/models` response.
+- `tools/Nvidea.JudgingEvidenceVerifier` combines positive/adversarial artifacts, matching Nebius live deployment evidence, and a **fresh live** Token Factory model-catalog PASS into one bounded judge-facing summary.
+- `tools/Nvidea.DemoPackageValidator` plus `docs/demo-package.json` make the final <=3-minute judging plan machine-checkable; adversarial regression coverage includes timing, path, command, secret, and provider-live claim failures.
+- `tools/Nvidea.NebiusModelCatalogCheck` provides captured and live zero-inference model-catalog readiness checks for the configured Nano / Super / Ultra tiers with strict provider endpoint trust.
 
 ## Persistent Progress History
 
@@ -39,7 +39,7 @@ Added Tavily Extract enrichment, evidence quality/staleness/diversity, restart-s
 Added native S3-compatible protected transport, exact S3 ↔ Serverless mount mapping, digest-pinned worker requirements, live runtime modes, reproducible redacted deployment fingerprints, MysteryBox validation, machine-readable evidence, atomic artifact persistence, RSA role checks, destination preflight, and fail-closed provider construction.
 
 ### 2026-09-10 to 2026-09-11 — Product lifecycle / authority hardening
-Added `ResearchCloudExecutionCoordinator`, `ResearchProductRuntime`, lifecycle-aware WPF research, `BrowserProductRuntime`, restart-safe browser-goal recovery, assembly-internal privileged construction, lifecycle/dispatch readiness, one-shot cloud approval, Tavily-independent remote recovery, and local review-first Windows voice invocation.
+Added research and browser product runtimes, lifecycle-aware WPF research, restart-safe browser-goal recovery, assembly-internal privileged construction, lifecycle/dispatch readiness, one-shot cloud approval, Tavily-independent remote recovery, and local review-first Windows voice invocation.
 
 ### 2026-09-11 — Production local semantic memory
 Added embedding provenance/model-space isolation, loopback-only Ollama `/api/embed`, bounded requests/batches, redirect refusal, explicit desktop opt-in, deterministic fallback, safe local embedding migration, WPF Memory maintenance, stale-consent protection, progress/cancellation, and deterministic semantic retrieval-quality fixtures.
@@ -51,65 +51,49 @@ Added positive and adversarial cross-cutting evaluators. Adversarial review expo
 Added `Nvidea.JudgingEvidenceVerifier`, strict bounded JSON and artifact hashing, canonical Nebius deployment/PASS verification, `Nvidea.DemoPackageValidator`, canonical 168-second `docs/demo-package.json`, provider-live claim boundaries, and adversarial CLI-level validator tests. Found and fixed a real command-validation boolean-precedence fail-open and hardened cross-platform path handling.
 
 ### 2026-09-11 — Current verified Nemotron tier routing + README reconciliation
-Verified current official Nebius Token Factory model identifiers and changed fresh-install routing to Nano / Super / Ultra for Fast / Standard / Deep while preserving explicit environment overrides and safe Standard fallback for programmatically disabled optional tiers. Added routing/request-payload tests and reconciled README status/validation boundaries.
+Verified current official Nebius Token Factory model identifiers and changed fresh-install routing to Nano / Super / Ultra for Fast / Standard / Deep while preserving explicit environment overrides and safe Standard fallback for deliberately disabled optional tiers. Added routing/request-payload tests and reconciled README status/validation boundaries.
 
-### 2026-09-11 — Nebius model-catalog drift readiness gate
-Added `Nvidea.NebiusModelCatalogCheck` with captured and live zero-inference modes, exact case-sensitive configured-tier matching, bounded/strict catalog parsing, SHA-256 evidence binding, redirect refusal, HTTPS/provider-host validation, bounded streaming, sanitized failures, atomic evidence output, tests, and documentation. A catalog PASS proves model IDs were listed, not quota or inference success.
+### 2026-09-11 — Nebius model-catalog drift readiness + judge-chain freshness
+Added `Nvidea.NebiusModelCatalogCheck` with captured/live zero-inference modes, exact configured-tier matching, bounded strict parsing, SHA-256 evidence binding, redirect refusal, HTTPS/provider-host validation, bounded streaming, sanitized failures, atomic evidence output, tests, and docs. Integrated catalog evidence into `Nvidea.JudgingEvidenceVerifier` as a fifth required artifact. Unified judging accepts only `mode: live`, requires <=15-minute freshness, <=2-minute future skew, exact current tier bindings, all tiers present, zero failure codes, trusted Nebius hostname, and keeps captured snapshots from being misrepresented as current provider readiness.
 
-### 2026-09-11 — Fresh live catalog evidence integrated into judge chain
+### 2026-09-11 — Standalone live catalog credential-boundary hardening
 Completed:
-- Re-read this ledger completely and inspected the current NVIDEA repository, recent commits, judging verifier, model-catalog checker, demo package, and existing test conventions before changing anything.
-- Re-verified repository identity before every mutation; all writes targeted exactly `UnknownGod2011/NVIDEA`.
-- Upgraded `tools/Nvidea.JudgingEvidenceVerifier` from schema 1 to schema 2 output and added a fifth required input: the model-catalog evidence artifact.
-- The unified verifier now accepts **only `mode: live`** catalog evidence for current provider-readiness claims. Captured catalog snapshots are explicitly rejected even when they previously passed the standalone catalog checker.
-- Added a hard catalog freshness window of **15 minutes** and a maximum tolerated future clock skew of **2 minutes**. A once-valid but stale artifact therefore cannot be presented to judges as current Token Factory readiness.
-- Bound catalog evidence to the exact currently configured Fast / Standard / Deep model IDs using the same `NVIDEA_MODEL_FAST`, `NVIDEA_MODEL_STANDARD`, and `NVIDEA_MODEL_DEEP` override semantics as production routing.
-- Added strict validation for catalog schema, PASS state, zero failure codes, bounded model count, lowercase SHA-256, exactly three unique required tiers, all tiers present, and trusted Nebius endpoint host.
-- Host trust in the unified evidence gate uses an exact DNS suffix boundary (`nebius.com` or `*.nebius.com`), so lookalikes such as `evilnebius.com` are rejected.
-- The judge summary now exposes the catalog evidence class (`provider-live-readiness`), observation timestamp, 900-second freshness limit, endpoint hostname, catalog hash/model count, exact required model bindings, and artifact hash while excluding full catalog contents, credentials, provider error bodies, and paths.
-- Kept explicit non-claims: a fresh live catalog proves recent provider listing only; it does not prove quota, feature support, tool calling, context length, chat completion success, or Serverless execution.
-- Made the catalog evidence validator callable directly for deterministic regression tests without requiring live credentials or a complete Nebius deployment artifact.
-- Added `tests/Nvidea.JudgingEvidenceVerifier.Tests` with focused cases for:
-  - fresh live catalog PASS;
-  - captured snapshot rejection;
-  - stale (>15 minute) evidence rejection;
-  - excessive future clock skew rejection;
-  - `evilnebius.com` suffix-lookalike rejection;
-  - mismatched configured-model binding rejection; and
-  - contradictory PASS evidence containing failure codes.
-- Updated `docs/judging-evidence-verifier.md` with the fresh-live evidence contract, recommended execution order, strict captured-vs-live semantics, freshness policy, redaction boundary, non-claims, and regression coverage.
-- Updated canonical `docs/demo-package.json` so the pre-demo command sequence creates `artifacts/nebius-model-catalog-live.json` via `--live` immediately before the unified verifier, and passes that artifact into the judge summary command.
-- Static review caught and corrected a nullable-flow risk in the first verifier integration before finalizing the run.
+- Re-read `progress.md` completely and inspected current `NVIDEA` head, recent commits, standalone model-catalog checker, tests, and operator docs before changing anything.
+- Re-verified repository identity before each mutation; every write targeted exactly `UnknownGod2011/NVIDEA`.
+- Found a real mismatch between the judge verifier and standalone checker: standalone `ValidateTrustedEndpoint` used `Host.EndsWith("nebius.com")`, which would accept DNS suffix lookalikes such as `evilnebius.com`.
+- Replaced that fail-open suffix check with an exact DNS boundary: only `nebius.com` or a host ending in `.nebius.com` is trusted, case-insensitively.
+- Kept HTTPS mandatory and URI user-info forbidden.
+- Moved endpoint parsing/trust validation ahead of reading `NEBIUS_API_KEY`; an untrusted `NVIDEA_NEBIUS_BASE_URL` now fails before the API key is read or any Authorization header/request can be constructed.
+- Exposed only the trust-validation internals to the focused test assembly via `InternalsVisibleTo`; production API surface remains unchanged.
+- Expanded `Nvidea.NebiusModelCatalogCheck.Tests` with exact-domain/real-subdomain acceptance, `evilnebius.com`, `not-nebius.com`, `nebius.com.evil.example`, HTTP, and embedded-user-info rejection.
+- Added a direct regression asserting the suffix-lookalike is rejected by `ValidateTrustedEndpoint` before the credentialed request path.
+- Updated `docs/nebius-model-catalog-check.md` to document the exact DNS boundary, validation-before-credential order, explicit lookalike examples, and regression scope.
 
 Engineering commits before this ledger update:
-- `8514f60ebb0453baf3167b8ba29de704773cc5be` — require fresh live Nebius catalog evidence.
-- `9746fb1ac9c08bdcbf4154ed7adf623b9cf596ce` — make catalog evidence gate regression-testable and correct nullable-flow handling.
-- `79d7a4199e5318fb8be6b251116bd6135167494f` — add judging catalog evidence regression test project.
-- `061fbb6352d47f30037d66a1da3987ab1b97dee6` — cover live catalog freshness and binding rules.
-- `4640ffc12096c2da89f4b0dc2a7b4698ba1280ac` — document fresh live catalog evidence boundary.
-- `eade678ea350dbee0dc2408157e6dad91eb0d787` — add live catalog gate to judge demo package.
+- `1c7e9a4428097621c2c8f448cec7fb384715627a` — harden Nebius catalog endpoint trust boundary.
+- `71627c750a57cdc427025e1f9265083af49322fb` — expose catalog trust internals to focused tests.
+- `8fc05868b257a709ae50397b0df9150288e5df8d` — cover Nebius catalog endpoint trust boundary.
+- `44e7f4e132554d4cc4070b681215ce23ec97091c` — document strict Nebius endpoint trust boundary.
 
 Validation / evidence:
-- GitHub compare from prior ledger head `38f96a4e7d70baa78587cd2b50485692be1b150d` to engineering head `eade678ea350dbee0dc2408157e6dad91eb0d787` reports **6 commits ahead / 0 behind** across five focused files.
-- Re-fetched the updated verifier and regression suite after mutation for static review.
-- `command -v dotnet` / `dotnet --info` still reports `dotnet: command not found` in this execution environment. Therefore the updated verifier and new xUnit project are **not claimed as compiled or passing**.
+- GitHub compare from prior ledger head `330c47e625bd814419f57480bc0acfd00dc01c83` to engineering head `44e7f4e132554d4cc4070b681215ce23ec97091c` reports **4 commits ahead / 0 behind**.
+- Re-fetched the changed checker after mutation and statically verified endpoint validation executes before API-key lookup/request construction and exact host matching is `nebius.com` or `.nebius.com` only.
 - No GitHub Actions workflow was triggered merely to manufacture a green result.
-- No live Nebius API key, paid inference, chat completion, Tavily call, Object Storage operation, Serverless job, Playwright browser, Ollama runtime, or other paid provider resource was used in this run.
+- This execution environment still has no trusted usable .NET 8 runtime signal from prior runs; therefore the changed checker and xUnit suite are **not claimed as compiled or passing**.
+- No live Nebius request, bearer credential, paid inference, Tavily call, Object Storage operation, Serverless job, Playwright browser, or Ollama runtime was used in this run.
 
 Security / privacy / failure review:
-- Captured catalog evidence remains useful for offline development but cannot be elevated into a current-readiness judge PASS.
-- Freshness is checked at verification time; successful output does not add a new wall-clock timestamp, so reviewed evidence remains bounded and mostly deterministic while naturally expiring.
-- Exact current model bindings prevent a PASS generated for different configured tiers from being silently reused after routing changes.
-- The catalog artifact remains separately SHA-bound; the judge summary does not expose its file path or complete provider model list.
-- The unified host boundary rejects DNS suffix lookalikes before accepting catalog evidence as provider-live readiness.
-- Synthetic evaluator evidence, live deployment evidence, and live provider-readiness evidence remain separate classes with explicit non-claims.
+- A malicious environment override such as `https://evilnebius.com/v1/` can no longer pass the standalone catalog checker’s host gate.
+- Endpoint trust is established before secret lookup and before Authorization header construction, reducing credential exfiltration risk from configuration tampering.
+- Redirects remain disabled; an accepted Nebius endpoint cannot redirect the bearer token to another host through this client.
+- Live evidence still emits only the trusted endpoint host and never the API key, Authorization header, path/query/user-info, raw provider error body, or full catalog.
+- The standalone checker and unified judge verifier now use the same DNS trust semantics for Nebius-host evidence.
 
 ## Known Blockers / Risks
-- No usable .NET 8 execution signal is available in this environment; current Core/WPF/Worker code, XAML, tests, evaluator tools, evidence verifier, demo validator, catalog checker, and new judging-verifier tests are not compiled or executed here.
+- No usable .NET 8 execution signal has been available in this automation environment; Core/WPF/Worker code, XAML, tests, evaluator tools, evidence verifier, demo validator, catalog checker, and focused tests still require a real restore/build/run.
 - A real Windows/.NET 8 restore/build/run remains mandatory before relying on generated PASS evidence.
-- The standalone catalog checker’s live endpoint validation should receive the same exact DNS-boundary regression scrutiny as the unified verifier; the judge gate itself now rejects suffix lookalikes.
-- Provider catalogs can change after a catalog check; the 15-minute gate reduces but cannot eliminate this race. Run it immediately before demo/judging.
-- A model appearing in `/v1/models` does not prove every required capability or quota; a real inference smoke test remains necessary.
+- Provider catalogs can change after a check; the 15-minute judging gate reduces but cannot eliminate this race. Run it immediately before demo/judging.
+- A model appearing in `/v1/models` does not prove quota, inference success, tool calling, context length, or every required capability; a real inference smoke test remains necessary.
 - WPF maintenance/voice/readiness bindings and Windows-specific behavior require a real Windows execution pass.
 - Prompt-injection detection remains heuristic; capability gates and approval boundaries remain required defense-in-depth.
 - Real `embeddinggemma` semantic quality/ranking calibration still requires a local Ollama evaluation corpus.
@@ -118,4 +102,4 @@ Security / privacy / failure review:
 - Reproducibility hashes/fingerprints prove internal consistency, not third-party attestation.
 
 ## Single Best Next Task
-First obtain a .NET 8-capable Windows execution signal and restore/build `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, all Nebius contract/evidence tools, both Personal AI evaluators, `Nvidea.JudgingEvidenceVerifier`, `Nvidea.DemoPackageValidator`, `Nvidea.NebiusModelCatalogCheck`, and all focused tests; compile WPF/XAML; then fix every compile/runtime defect before treating evidence as judge-ready. If executable validation remains unavailable, next harden the standalone catalog checker’s live endpoint host validation to the same exact DNS-suffix boundary as the judge verifier and add a credential-safe regression that proves a malicious lookalike host is rejected before any HTTP request can carry the bearer token.
+First obtain a .NET 8-capable Windows execution signal and restore/build `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, all Nebius contract/evidence tools, both Personal AI evaluators, `Nvidea.JudgingEvidenceVerifier`, `Nvidea.DemoPackageValidator`, `Nvidea.NebiusModelCatalogCheck`, and all focused tests; compile WPF/XAML; then fix every compile/runtime defect before treating evidence as judge-ready. If executable validation remains unavailable, next perform a systematic **endpoint/redirect/secret-egress trust audit across every Nebius/Tavily/Ollama HTTP client** and centralize duplicated provider-host validation where doing so improves consistency without weakening provider-specific policies.

@@ -24,8 +24,10 @@ public sealed class LocalOllamaMemoryEmbeddingProvider : IProvenancedMemoryEmbed
     private bool _disposed;
 
     public LocalOllamaMemoryEmbeddingProvider(LocalOllamaMemoryEmbeddingOptions? options = null)
-        : this(options ?? new LocalOllamaMemoryEmbeddingOptions(), CreateLoopbackHttpClient(), ownsHttpClient: true)
     {
+        _options = ValidateOptions(options ?? new LocalOllamaMemoryEmbeddingOptions());
+        _httpClient = CreateLoopbackHttpClient();
+        _ownsHttpClient = true;
     }
 
     internal LocalOllamaMemoryEmbeddingProvider(

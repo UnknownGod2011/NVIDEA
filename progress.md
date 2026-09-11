@@ -24,7 +24,8 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Remote research uses encrypted opaque work items, signed authoritative Nebius resource-ID bindings, two-phase dispatch, crash reconciliation, provider lifecycle reconciliation, durable cancellation, exact-once result ingestion, race-safe cleanup, and a non-root worker image.
 - Native Windows-side S3-compatible Object Storage transport and Serverless-mounted worker transport share one protected protocol. Deployment preflight enforces mount alignment, READ_WRITE transport, MysteryBox credentials, digest-pinned worker image, RSA identity consistency, bounded resources, and redacted deployment fingerprints.
 - `Nvidea.NebiusContractProbe` supports planner, zero-cost live preflight, explicit paid live research, redacted PASS evidence, and offline fail-closed verification.
-- Desktop startup diagnostics now use `DesktopResearchReadiness`: readiness is reported as capability state plus missing configuration **names only**. Secret values, PEM material, provider IDs, research payloads, and raw provider exception text are not surfaced to startup UI.
+- Desktop diagnostics use `DesktopResearchReadiness`: startup failure and successful-start UI report capability state plus missing configuration **names only**. Secret values, PEM material, provider IDs, research payloads, and raw provider exception text are not surfaced.
+- Successful-start WPF now keeps a compact research-readiness strip visible and offers a read-only Details view distinguishing `ready`, `blocked`, and `locked` capabilities without constructing new provider authority.
 
 ## Persistent Progress History
 
@@ -86,14 +87,42 @@ Security / privacy / failure review:
 - Cloud readiness cannot become true merely because variables are present: runtime validation remains authoritative.
 - Existing local/private-data restrictions, exact cloud authorization, lifecycle reconciliation, cancellation semantics, encrypted transport, audit trail, and emergency-stop behavior are unchanged.
 
+### 2026-09-11 — Successful-start readiness/details surface
+Completed:
+- Re-read this ledger fully and inspected the current WPF shell, durable research controls, composition root, and credential-safe readiness model before changing code.
+- Extended `DesktopResearchReadiness` with a reusable `ToDetailsText()` projection. It explains `ready`, `blocked`, and `locked` states and emits only coarse capability state plus already-sanitized blocker strings.
+- Added `src/Nvidea.Windows/MainWindow.Readiness.cs`. On successful startup it projects readiness from the current environment opt-in flags plus the **already-composed runtime capabilities** (`LocalExecutionAvailable`, `RemoteLifecycleAvailable`, `RemoteDispatchEnabled`). It does not instantiate provider clients, re-run Nebius preflight, create approvals, or start jobs.
+- Added an always-visible `Research readiness` strip to `MainWindow.xaml` with a Details action. This makes local Tavily, Nebius lifecycle-recovery, and new Serverless-dispatch readiness legible to users/judges even when startup succeeds.
+- The Details dialog explicitly states that it is read-only and never shows secret values, provider IDs, payloads, or raw provider errors. A malformed post-start environment mutation falls back to a generic restart/configuration message instead of echoing the invalid value or exception.
+- Added `DesktopResearchReadinessDetailsTests.cs` covering ready/blocked/locked projection and non-disclosure of configured Tavily/provider secret values.
+
+Engineering commits before this ledger update:
+- `091659fb69b85200d8bb103e218279cd98630ec4` — add safe desktop readiness details projection.
+- `d9954415925e9e9c0b437262a64c609c366a287f` — surface validated research readiness in desktop.
+- `e84930a2530de2a55862065e541a1b76b89a9ed7` — show research readiness on successful desktop startup.
+- `96903663d9e61c3b638225a88a26a573bf55ced6` — test successful-start readiness details.
+
+Validation / evidence:
+- Repository identity was explicitly verified before every GitHub mutation; every mutation targeted exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
+- Static compare from prior ledger head `f1b74a7f5fd0f4f439be84762f67dad7d010b4e0` to engineering head `96903663d9e61c3b638225a88a26a573bf55ced6` is **4 commits ahead / 0 behind**, changing exactly four focused files: `DesktopResearchReadiness.cs`, new `MainWindow.Readiness.cs`, `MainWindow.xaml`, and new `DesktopResearchReadinessDetailsTests.cs`.
+- The successful-start readiness path only reads environment presence/flags and runtime booleans from the already-built trusted composition. No network/provider operation is added to window load or Details display.
+- `command -v dotnet` and `dotnet --info` again returned no usable .NET signal. Compilation, WPF/XAML compilation, and test execution are therefore **not claimed**.
+- No GitHub Actions workflow was triggered, and no live Nebius credentials/resources, Object Storage operations, Serverless jobs, or paid Nemotron/Tavily calls were used.
+
+Security / privacy / failure review:
+- The visible summary and Details output never interpolate environment values; blocker text remains configuration-name-only.
+- `ready` for Nebius lifecycle/dispatch depends on the validated runtime actually present in `_root.Research`, not merely on environment-variable presence.
+- The diagnostics surface is side-effect-free and cannot mint cloud authorization, mutate durable research state, create provider clients, or bypass the existing one-shot dispatch confirmation.
+- Existing local/private-data classification, exact-checkpoint dispatch authorization, remote reconciliation, cancellation, encrypted transport, audit, browser safeguards, and emergency-stop semantics remain unchanged.
+
 ## Known Blockers / Risks
 - No usable .NET 8 execution signal is available in this environment; current Core/WPF/Worker code, XAML and tests are not compiled or executed here.
 - No live Object Storage bucket/static key, digest-pinned registry image, MysteryBox refs, subnet, Serverless access token, or real Serverless job has been provisioned/validated here.
 - Exact provider acceptance of the Serverless Object Storage `Source`/`SourcePath` still requires a real job.
 - The dry run cannot prove that the worker-private-key MysteryBox version corresponds to the configured worker public key without resolving the secret; the real worker protocol remains authoritative proof.
-- Successful-start WPF currently does not yet expose a dedicated always-visible full readiness/details view; this run primarily secures and improves startup-failure diagnostics plus provides the reusable Core readiness model.
+- Successful-start readiness intentionally reflects the startup composition plus current opt-in/configuration presence; it does not continuously poll provider health or create background cloud authority.
 - Local voice/transcription and a verified production embedding adapter remain absent.
 - Reproducibility evidence proves internal consistency, not third-party attestation.
 
 ## Single Best Next Task
-First obtain a .NET 8-capable execution signal and compile `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, and the Nebius contract tools; run the focused readiness, lifecycle-only recovery, research dispatch/cloud-mode, browser authority/integration, API-surface, and WPF/XAML suites and fix every compile/runtime defect. If executable validation remains unavailable, integrate `DesktopResearchReadiness` into an **always-visible successful-start WPF readiness/details surface** that distinguishes configured/requested/validated state, keeps secret values redacted, and gives judges/users actionable setup guidance without constructing new provider authority or weakening fail-closed behavior.
+First obtain a .NET 8-capable execution signal and compile `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, and the Nebius contract tools; run the focused readiness, lifecycle-only recovery, research dispatch/cloud-mode, browser authority/integration, API-surface, and WPF/XAML suites and fix every compile/runtime defect. If executable validation remains unavailable, implement the missing **local Windows voice/transcription invocation path** behind a least-authority abstraction with explicit microphone disclosure/cancellation and no mandatory cloud speech dependency, then integrate it into the existing orb/hotkey desktop shell without weakening emergency-stop or context privacy semantics.

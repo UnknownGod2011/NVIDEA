@@ -28,17 +28,27 @@ The validator is offline and credential-free. It checks:
 
 - schema version and strict JSON parsing;
 - duplicate JSON-property rejection;
+- required/non-null manifest arrays and bounded collection sizes;
 - unique/stable demo beat IDs;
 - the required seven judging beats;
 - aggregate timing <= the declared cap and <=180 seconds;
 - that every referenced feature/evidence/project path exists inside the repository;
+- safe repository-relative paths, including explicit rejection of traversal, control characters, drive-relative path forms, and rooted paths;
 - required README/license/evaluator assets;
-- that demo commands point at their declared project files;
+- that demo commands have a label, safe project path, and actually point at their declared project files;
 - explicit evidence classes: `synthetic`, `local-live`, `provider-live`, or `documentation`;
 - that a beat marked `requiresProviderLive=true` has at least one `provider-live` evidence reference; and
 - a conservative manifest secret scan for common key/token forms.
 
 The output includes the SHA-256 of the exact manifest bytes, so a recorded validation can be tied to the reviewed demo plan.
+
+A deterministic regression suite specifically attacks the validator's fail-closed boundary:
+
+```powershell
+dotnet test tests/Nvidea.DemoPackageValidator.Tests/Nvidea.DemoPackageValidator.Tests.csproj
+```
+
+It covers a valid package plus null required arrays, traversal, Windows drive-relative paths, duration overflow, duplicate beat IDs, missing required assets, command-label bypass attempts, secret markers, and synthetic-to-provider-live overclaims. These tests use only temporary local fixture files and do not require provider credentials or network access.
 
 ## Evidence classes are claims boundaries
 
@@ -59,6 +69,7 @@ The current `nebius-background` beat intentionally has `requiresProviderLive=fal
 dotnet build .\src\Nvidea.Core\Nvidea.Core.csproj
 dotnet build .\src\Nvidea.Windows\Nvidea.Windows.csproj
 dotnet build .\src\Nvidea.Worker\Nvidea.Worker.csproj
+dotnet test .\tests\Nvidea.DemoPackageValidator.Tests\Nvidea.DemoPackageValidator.Tests.csproj
 
 # 2. Generate deterministic positive + adversarial evidence.
 dotnet run --project tools/Nvidea.PersonalAiDemoEval/Nvidea.PersonalAiDemoEval.csproj -- --output artifacts/personal-ai-positive.json

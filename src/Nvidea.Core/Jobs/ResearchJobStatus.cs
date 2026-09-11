@@ -42,6 +42,19 @@ public sealed record ResearchJobStatus(
     /// </summary>
     public bool RequiresRemoteReconciliation { get; init; }
 
+    /// <summary>
+    /// Non-secret protocol identifier for the current durable checkpoint. The checkpoint payload is
+    /// intentionally not exposed. Product UI uses this value only to bind a one-shot cloud approval
+    /// to the exact stage the user reviewed.
+    /// </summary>
+    public string? CheckpointStep { get; init; }
+
+    /// <summary>
+    /// Coarse privacy classification used by product UI to fail closed before offering cloud dispatch.
+    /// No private OS-local contents are surfaced by this projection.
+    /// </summary>
+    public bool ContainsPrivateOsData { get; init; }
+
     public static ResearchJobStatus FromRecord(AgentJobRecord record)
     {
         ArgumentNullException.ThrowIfNull(record);
@@ -78,7 +91,9 @@ public sealed record ResearchJobStatus(
             terminal,
             Display(record, stage))
         {
-            RequiresRemoteReconciliation = HasUnfinishedRemoteProvenance(record)
+            RequiresRemoteReconciliation = HasUnfinishedRemoteProvenance(record),
+            CheckpointStep = record.Checkpoint?.Step,
+            ContainsPrivateOsData = record.Definition.ContainsPrivateOsData
         };
     }
 

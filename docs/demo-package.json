@@ -1,0 +1,115 @@
+{
+  "schemaVersion": 1,
+  "title": "NVIDEA Personal AI — judge demo package",
+  "maxDurationSeconds": 180,
+  "beats": [
+    {
+      "id": "invoke-context",
+      "label": "Invoke anywhere on Windows with bounded desktop context",
+      "durationSeconds": 20,
+      "judgeClaim": "Show global invocation and active-app/selection context without silently sending clipboard content.",
+      "requiresProviderLive": false,
+      "featurePaths": ["src/Nvidea.Windows", "src/Nvidea.Core/Desktop"],
+      "evidence": [
+        {"evidenceClass": "synthetic", "path": "docs/personal-ai-demo-eval.md", "claim": "Deterministic evaluator verifies context inclusion and clipboard withholding."},
+        {"evidenceClass": "documentation", "path": "docs/local-voice.md", "claim": "Voice invocation is local, consented, cancellable, and review-first."}
+      ]
+    },
+    {
+      "id": "durable-memory",
+      "label": "Durable personal memory changes the later answer",
+      "durationSeconds": 22,
+      "judgeClaim": "Show a remembered preference/project fact influencing a later invocation while preserving sensitivity controls.",
+      "requiresProviderLive": false,
+      "featurePaths": ["src/Nvidea.Core/Memory"],
+      "evidence": [
+        {"evidenceClass": "synthetic", "path": "docs/personal-ai-demo-eval.md", "claim": "Cross-cutting evaluator verifies durable memory recall."},
+        {"evidenceClass": "documentation", "path": "docs/local-memory-embeddings.md", "claim": "Local semantic embeddings preserve provider/model provenance and privacy boundaries."}
+      ]
+    },
+    {
+      "id": "tavily-research",
+      "label": "Tavily research with visible sources and citation validation",
+      "durationSeconds": 28,
+      "judgeClaim": "Show multi-source research, provenance, explicit uncertainty, and citations that map back to collected evidence.",
+      "requiresProviderLive": false,
+      "featurePaths": ["src/Nvidea.Core/Research"],
+      "evidence": [
+        {"evidenceClass": "synthetic", "path": "docs/personal-ai-demo-eval.md", "claim": "Synthetic evaluator proves citation plumbing and research-engine invariants, not live Tavily availability."},
+        {"evidenceClass": "synthetic", "path": "docs/personal-ai-adversarial-eval.md", "claim": "Adversarial evaluator rejects invented citation identifiers."}
+      ]
+    },
+    {
+      "id": "browser-verify",
+      "label": "Complex browser task uses act-observe-verify rather than blind clicks",
+      "durationSeconds": 28,
+      "judgeClaim": "Show a multi-step browser action and visible post-action verification; failed verification must halt the plan.",
+      "requiresProviderLive": false,
+      "featurePaths": ["src/Nvidea.Core/Browser"],
+      "evidence": [
+        {"evidenceClass": "synthetic", "path": "docs/personal-ai-demo-eval.md", "claim": "Positive evaluator requires post-action verification."},
+        {"evidenceClass": "synthetic", "path": "docs/personal-ai-adversarial-eval.md", "claim": "Negative evaluator proves verification failure stops the plan."},
+        {"evidenceClass": "documentation", "path": "docs/browser-integration-harness.md", "claim": "Browser integration harness documents live browser validation boundaries."}
+      ]
+    },
+    {
+      "id": "permission-gate",
+      "label": "Consequential action pauses for explicit approval",
+      "durationSeconds": 20,
+      "judgeClaim": "Show send/submit-style authority remaining locked until an exact-scope user approval is granted.",
+      "requiresProviderLive": false,
+      "featurePaths": ["src/Nvidea.Core/Capabilities", "src/Nvidea.Core/Browser"],
+      "evidence": [
+        {"evidenceClass": "synthetic", "path": "docs/personal-ai-demo-eval.md", "claim": "Positive evaluator verifies consequential browser approval."},
+        {"evidenceClass": "synthetic", "path": "docs/personal-ai-adversarial-eval.md", "claim": "Denied/wrong-scope approval cannot mutate state; prompt injection cannot self-authorize."}
+      ]
+    },
+    {
+      "id": "nebius-background",
+      "label": "Long-running research has an explicit Nebius Serverless contract",
+      "durationSeconds": 28,
+      "judgeClaim": "Show resumable long-running work and the redacted Nebius deployment/evidence contract. Claim live provider execution only when a matching live PASS artifact has actually been generated and verified.",
+      "requiresProviderLive": false,
+      "featurePaths": ["src/Nvidea.Core", "src/Nvidea.Worker"],
+      "evidence": [
+        {"evidenceClass": "documentation", "path": "docs/nebius-contract-probe.md", "claim": "Documents zero-cost preflight and explicit paid live contract execution."},
+        {"evidenceClass": "documentation", "path": "docs/judging-evidence.md", "claim": "Defines the redacted deployment fingerprint and live PASS evidence boundary."},
+        {"evidenceClass": "documentation", "path": "docs/judging-evidence-verifier.md", "claim": "Unified verifier keeps synthetic and live evidence classes separate."}
+      ]
+    },
+    {
+      "id": "architecture-proof",
+      "label": "Close on the architecture and evidence boundary",
+      "durationSeconds": 22,
+      "judgeClaim": "Show that Nemotron/Nebius/Tavily are architectural dependencies, private OS actions stay local, and synthetic evidence is never presented as live provider proof.",
+      "requiresProviderLive": false,
+      "featurePaths": ["README.md", "tools/Nvidea.JudgingEvidenceVerifier"],
+      "evidence": [
+        {"evidenceClass": "documentation", "path": "README.md", "claim": "Architecture and safety contract."},
+        {"evidenceClass": "documentation", "path": "docs/judging-evidence-verifier.md", "claim": "Judge-facing evidence-class separation and non-claims."}
+      ]
+    }
+  ],
+  "commands": [
+    {
+      "label": "Positive cross-cutting evaluator",
+      "projectPath": "tools/Nvidea.PersonalAiDemoEval/Nvidea.PersonalAiDemoEval.csproj",
+      "command": "dotnet run --project tools/Nvidea.PersonalAiDemoEval/Nvidea.PersonalAiDemoEval.csproj -- --output artifacts/personal-ai-positive.json"
+    },
+    {
+      "label": "Adversarial evaluator",
+      "projectPath": "tools/Nvidea.PersonalAiAdversarialEval/Nvidea.PersonalAiAdversarialEval.csproj",
+      "command": "dotnet run --project tools/Nvidea.PersonalAiAdversarialEval/Nvidea.PersonalAiAdversarialEval.csproj -- --output artifacts/personal-ai-adversarial.json"
+    },
+    {
+      "label": "Unified judging evidence verifier",
+      "projectPath": "tools/Nvidea.JudgingEvidenceVerifier/Nvidea.JudgingEvidenceVerifier.csproj",
+      "command": "dotnet run --project tools/Nvidea.JudgingEvidenceVerifier/Nvidea.JudgingEvidenceVerifier.csproj -- artifacts/personal-ai-positive.json artifacts/personal-ai-adversarial.json artifacts/nebius-manifest.json artifacts/nebius-pass.json --output artifacts/judging-summary.json"
+    },
+    {
+      "label": "Demo package validator",
+      "projectPath": "tools/Nvidea.DemoPackageValidator/Nvidea.DemoPackageValidator.csproj",
+      "command": "dotnet run --project tools/Nvidea.DemoPackageValidator/Nvidea.DemoPackageValidator.csproj -- . docs/demo-package.json --output artifacts/demo-package-validation.json"
+    }
+  ]
+}

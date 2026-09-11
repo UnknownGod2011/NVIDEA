@@ -11,7 +11,7 @@ internal static class Program
         try
         {
             var options = WorkerCommandLine.Parse(args);
-            using var http = new HttpClient();
+            using var http = CreateProviderHttpClient();
 
             var inference = new NebiusTokenFactoryClient(http, NebiusOptions.FromEnvironment());
             var tavily = new TavilyResearchClient(http, TavilyOptions.FromEnvironment());
@@ -46,6 +46,19 @@ internal static class Program
             Console.Error.WriteLine($"nvidea_worker_failed error_type={ex.GetType().Name}");
             return 1;
         }
+    }
+
+    /// <summary>
+    /// Provider requests can contain bearer credentials, Tavily API keys, prompts and research
+    /// evidence. Automatic redirects are disabled so those values cannot be replayed to a different
+    /// origin if a provider or intermediary returns a redirect.
+    /// </summary>
+    internal static HttpClient CreateProviderHttpClient()
+    {
+        return new HttpClient(new HttpClientHandler
+        {
+            AllowAutoRedirect = false
+        }, disposeHandler: true);
     }
 
     private static string GetRequiredEnvironment(string name)

@@ -55,14 +55,18 @@ public sealed class NebiusOptions
 
     public static NebiusOptions FromEnvironment()
     {
-        var apiKey = Environment.GetEnvironmentVariable("NEBIUS_API_KEY");
-        if (string.IsNullOrWhiteSpace(apiKey))
-            throw new InvalidOperationException("NEBIUS_API_KEY is required.");
-
         var baseUriText = Environment.GetEnvironmentVariable("NVIDEA_NEBIUS_BASE_URL");
         var baseUri = string.IsNullOrWhiteSpace(baseUriText)
             ? new Uri("https://api.tokenfactory.us-central1.nebius.com/v1/")
             : new Uri(baseUriText, UriKind.Absolute);
+
+        // Validate the destination before reading the bearer credential. This keeps a
+        // tampered endpoint override from ever reaching credential-loading/request code.
+        ValidateTrustedBaseUri(baseUri);
+
+        var apiKey = Environment.GetEnvironmentVariable("NEBIUS_API_KEY");
+        if (string.IsNullOrWhiteSpace(apiKey))
+            throw new InvalidOperationException("NEBIUS_API_KEY is required.");
 
         return new NebiusOptions
         {
@@ -76,18 +80,33 @@ public sealed class NebiusOptions
 
     public void Validate()
     {
+        ValidateTrustedBaseUri(BaseUri);
         if (string.IsNullOrWhiteSpace(ApiKey))
             throw new InvalidOperationException("Nebius API key cannot be empty.");
-        if (BaseUri.Scheme != Uri.UriSchemeHttps)
-            throw new InvalidOperationException("Nebius endpoint must use HTTPS.");
-        if (!BaseUri.Host.EndsWith("nebius.com", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("Nebius endpoint must be hosted on nebius.com.");
         if (string.IsNullOrWhiteSpace(StandardModel))
             throw new InvalidOperationException("A standard Nemotron model is required.");
         if (MaxAttempts is < 1 or > 6)
             throw new InvalidOperationException("MaxAttempts must be between 1 and 6.");
         if (RequestTimeout <= TimeSpan.Zero || RequestTimeout > TimeSpan.FromMinutes(10))
             throw new InvalidOperationException("RequestTimeout is outside the supported range.");
+    }
+
+    internal static void ValidateTrustedBaseUri(Uri baseUri)
+    {
+        ArgumentNullException.ThrowIfNull(baseUri);
+        if (!baseUri.IsAbsoluteUri || !string.Equals(baseUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Nebius endpoint must use absolute HTTPS.");
+        if (baseUri.UserInfo.Length > 0)
+            throw new InvalidOperationException("Nebius endpoint cannot contain URI user-info.");
+        if (baseUri.Port != 443)
+            throw new InvalidOperationException("Nebius endpoint must use the standard HTTPS port 443.");
+
+        var host = baseUri.Host;
+        if (!host.Equals("nebius.com", StringComparison.OrdinalIgnoreCase)
+            && !host.EndsWith(".nebius.com", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Nebius endpoint must be hosted on nebius.com or a true subdomain of nebius.com.");
+        }
     }
 
     private static string EnvironmentOrDefault(string variableName, string fallback)

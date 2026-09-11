@@ -17,6 +17,7 @@ public sealed record LocalOllamaMemoryEmbeddingOptions
 public sealed class LocalOllamaMemoryEmbeddingProvider : IProvenancedMemoryEmbeddingProvider, IMemoryBatchEmbeddingProvider, IDisposable
 {
     private const int AbsoluteMaximumDimensions = 32_768;
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly LocalOllamaMemoryEmbeddingOptions _options;
     private readonly HttpClient _httpClient;
     private readonly bool _ownsHttpClient;
@@ -68,7 +69,7 @@ public sealed class LocalOllamaMemoryEmbeddingProvider : IProvenancedMemoryEmbed
 
         using var request = new HttpRequestMessage(HttpMethod.Post, _options.Endpoint)
         {
-            Content = JsonContent.Create(new OllamaEmbedRequest(_options.Model, normalized, truncate: false)),
+            Content = JsonContent.Create(new OllamaEmbedRequest(_options.Model, normalized, Truncate: false), options: JsonOptions),
         };
         request.Headers.Accept.ParseAdd("application/json");
 
@@ -84,7 +85,8 @@ public sealed class LocalOllamaMemoryEmbeddingProvider : IProvenancedMemoryEmbed
         await using var responseStream = await response.Content.ReadAsStreamAsync(timeoutCts.Token).ConfigureAwait(false);
         var payload = await JsonSerializer.DeserializeAsync<OllamaEmbedResponse>(
             responseStream,
-            cancellationToken: timeoutCts.Token).ConfigureAwait(false)
+            JsonOptions,
+            timeoutCts.Token).ConfigureAwait(false)
             ?? throw new InvalidOperationException("Local embedding endpoint returned an empty response.");
 
         if (payload.Embeddings is null || payload.Embeddings.Count != normalized.Length)

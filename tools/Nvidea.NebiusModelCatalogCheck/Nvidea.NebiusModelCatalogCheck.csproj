@@ -12,4 +12,8 @@
     <ProjectReference Include="../../src/Nvidea.Core/Nvidea.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Nvidea.NebiusModelCatalogCheck.Tests" />
+  </ItemGroup>
+
 </Project>

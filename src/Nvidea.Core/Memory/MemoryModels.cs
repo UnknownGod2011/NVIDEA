@@ -54,6 +54,7 @@ public sealed record MemoryEmbeddingMigrationTarget(
     string Provider,
     string Model,
     bool IsLocal,
+    int MaxBatchSize,
     int? ExpectedDimensions = null);
 
 public sealed record MemoryEmbeddingMigrationOptions

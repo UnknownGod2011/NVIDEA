@@ -38,7 +38,9 @@ dotnet run --project tools/Nvidea.NebiusModelCatalogCheck -- \
   --output .\artifacts\nebius-model-catalog-check.json
 ```
 
-Live mode performs an authenticated **GET** of `models`; it does not call `chat/completions` and is not intended to consume inference tokens. The request is bounded to 20 seconds and 2 MiB, refuses redirects, and only accepts HTTPS endpoints whose host ends in `nebius.com` and contains no URI user-info.
+Live mode performs an authenticated **GET** of `models`; it does not call `chat/completions` and is not intended to consume inference tokens. The request is bounded to 20 seconds and 2 MiB and refuses redirects.
+
+The destination trust boundary is deliberately strict. The checker accepts only HTTPS endpoints whose host is exactly `nebius.com` or a real DNS subdomain ending in `.nebius.com`, with no URI user-info. Lookalikes such as `evilnebius.com`, `not-nebius.com`, or `nebius.com.evil.example` are rejected. Endpoint validation occurs before the tool reads the Nebius API key or constructs an Authorization header, so an untrusted `NVIDEA_NEBIUS_BASE_URL` cannot enter the credentialed request path.
 
 A live PASS is useful immediately before recording the demo. It still does **not** prove that a subsequent inference request will succeed, that quota is sufficient, or that every model supports every requested feature. Keep the contract probe and an actual pre-demo inference smoke test as separate evidence.
 
@@ -74,8 +76,12 @@ The tool never emits the Nebius API key, Authorization header, raw HTTP error bo
 - duplicate model IDs;
 - duplicate JSON properties;
 - malformed catalog shape;
-- captured evidence endpoint redaction; and
-- live evidence limiting endpoint disclosure to the host supplied by the trusted live path.
+- captured evidence endpoint redaction;
+- live evidence limiting endpoint disclosure to the host supplied by the trusted live path;
+- exact `nebius.com` and real `*.nebius.com` acceptance;
+- DNS suffix-lookalike rejection including `evilnebius.com`;
+- HTTP and embedded-user-info rejection; and
+- direct validation of an untrusted endpoint before the credentialed HTTP path can be reached.
 
 Run with:
 

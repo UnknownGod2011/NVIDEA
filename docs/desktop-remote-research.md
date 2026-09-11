@@ -10,7 +10,7 @@ NVIDEA treats recovery of an already-remote durable job as a different authority
 - `NVIDEA_DESKTOP_REMOTE_RESEARCH_DISPATCH=true` additionally permits the `ResearchProductRuntime` remote-dispatch path. It is rejected unless lifecycle support is also enabled.
 - Omitting both variables keeps the desktop local-only.
 
-The desktop still requires `TAVILY_API_KEY` to compose durable research at all.
+`TAVILY_API_KEY` is required for **local research execution and all new Serverless dispatch**, but it is no longer required merely to recover an already-dispatched Nebius job. When lifecycle support is enabled and its Nebius deployment configuration passes preflight, the desktop can compose a lifecycle-only research surface with no Tavily credential. That surface can inspect durable research state, reconcile remote/ambiguous jobs, and request provider-aware cancellation. It cannot create, resume, re-arm, cancel local jobs, read completed local reports, or start any new cloud dispatch until the local research runtime is restored.
 
 ## Fail-closed provider startup
 
@@ -24,7 +24,7 @@ The desktop then privately composes:
 2. `NebiusServerlessJobClient` for provider lifecycle operations.
 3. `NebiusResearchClientRuntime` for two-phase dispatch, reconciliation, exact-once result ingestion, and cancellation.
 4. `ResearchCloudExecutionCoordinator` for the product-facing lease/provenance/authorization boundary.
-5. `ResearchProductRuntime` as the only research authority exposed to WPF.
+5. `ResearchProductRuntime` as the only research authority exposed to WPF. Its local executor is optional specifically for recovery-only composition.
 
 Raw provider clients, access tokens, Object Storage credentials, signing private keys, and mutable transport handles are not exposed through `NvideaCompositionRoot`.
 
@@ -38,6 +38,8 @@ With lifecycle enabled and new dispatch still disabled, the existing WPF researc
 - reconcile an outstanding cancellation request;
 - continue blocking all local replay while unfinished remote provenance exists.
 
+These lifecycle operations remain available when `TAVILY_API_KEY` is missing. In that recovery-only state the UI keeps Start, Resume, local cancellation, completed-report reads, and new Serverless dispatch locked rather than trying to reconstruct local provider authority.
+
 The emergency stop cancels the current local reconciliation request, but cancellation of the HTTP request does **not** claim that the provider-side job stopped. Durable remote state remains authoritative and must be reconciled again.
 
 ## Enabling the lifecycle path
@@ -50,13 +52,16 @@ Then set:
 NVIDEA_DESKTOP_REMOTE_RESEARCH_LIFECYCLE=true
 ```
 
-Do not set `NVIDEA_DESKTOP_REMOTE_RESEARCH_DISPATCH=true` merely to recover existing remote work. Enable it only when the product flow intentionally supports new Serverless dispatch and the per-stage `ResearchCloudAuthorization` approval path is being used.
+If the purpose is only to recover existing remote work, `TAVILY_API_KEY` may be absent and `NVIDEA_DESKTOP_REMOTE_RESEARCH_DISPATCH` should remain unset/false.
+
+Do not set `NVIDEA_DESKTOP_REMOTE_RESEARCH_DISPATCH=true` merely to recover existing remote work. Enable it only when `TAVILY_API_KEY` is present, local durable research is available, the product intentionally supports new Serverless dispatch, and the per-stage `ResearchCloudAuthorization` approval path is being used.
 
 ## Safety invariants
 
 - Remote research containing private OS-local data remains ineligible for cloud dispatch.
 - Approval-bearing stages cannot be dispatched remotely.
 - Remote/ambiguous records cannot fall back to local execution.
+- Missing Tavily credentials do not strand already-remote durable work, but they do fail closed every local research mutation and every new cloud dispatch.
 - A `DispatchReserved` outcome must be reconciled before cancellation or retry.
 - Consequential provider transitions run under the shared research state-directory mutation lease.
 - Object Storage and Serverless clients are disposed with the desktop composition root, including partial-startup failure paths.

@@ -36,9 +36,9 @@ public sealed class NebiusServerlessEndpointTrustTests
     }
 
     [Theory]
-    [InlineData("http://localhost/")]
-    [InlineData("http://127.0.0.1:5000/")]
-    public void Constructor_AllowsLoopbackHttpForExplicitContractTests(string endpoint)
+    [InlineData("https://localhost/")]
+    [InlineData("https://127.0.0.1:5000/")]
+    public void Constructor_AllowsHttpsLoopbackForExplicitContractTests(string endpoint)
     {
         using var http = new HttpClient(new StubHandler());
 

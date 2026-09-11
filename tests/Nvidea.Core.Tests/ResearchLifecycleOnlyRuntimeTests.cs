@@ -16,7 +16,7 @@ public sealed class ResearchLifecycleOnlyRuntimeTests
             var record = CreateRecord(RemoteResearchProvenanceState.DispatchReserved, AgentJobState.Running, JobExecutionLocation.Local);
             await SaveAsync(directory, record);
             var cloud = new RecordingCloudCoordinator(record);
-            var product = new ResearchProductRuntime(directory, local: null, cloud);
+            var product = new ResearchProductRuntime(directory, local: null, cloud: cloud);
 
             var status = await product.ReconcileRemoteAsync(record.JobId);
 
@@ -41,7 +41,7 @@ public sealed class ResearchLifecycleOnlyRuntimeTests
             var record = CreateRecord(RemoteResearchProvenanceState.Dispatched, AgentJobState.Running, JobExecutionLocation.NebiusServerless);
             await SaveAsync(directory, record);
             var cloud = new RecordingCloudCoordinator(record);
-            var product = new ResearchProductRuntime(directory, local: null, cloud);
+            var product = new ResearchProductRuntime(directory, local: null, cloud: cloud);
 
             await product.CancelAsync(record.JobId);
 
@@ -61,7 +61,10 @@ public sealed class ResearchLifecycleOnlyRuntimeTests
         {
             var record = CreateRecord(remoteState: null, AgentJobState.Pending, JobExecutionLocation.Local);
             await SaveAsync(directory, record);
-            var product = new ResearchProductRuntime(directory, local: null, new RecordingCloudCoordinator(record));
+            var product = new ResearchProductRuntime(
+                directory,
+                local: null,
+                cloud: new RecordingCloudCoordinator(record));
 
             var runError = await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 product.RunNextLocalStepAsync(record.JobId));
@@ -89,7 +92,7 @@ public sealed class ResearchLifecycleOnlyRuntimeTests
             var cloud = new RecordingCloudCoordinator(record);
 
             var error = Assert.Throws<ArgumentException>(() =>
-                new ResearchProductRuntime(directory, local: null, cloud, remoteDispatchEnabled: true));
+                new ResearchProductRuntime(directory, local: null, cloud: cloud, remoteDispatchEnabled: true));
 
             Assert.Contains("local research runtime", error.Message, StringComparison.OrdinalIgnoreCase);
         }

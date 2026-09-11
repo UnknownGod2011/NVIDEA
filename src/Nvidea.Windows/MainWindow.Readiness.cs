@@ -9,6 +9,7 @@ public partial class MainWindow
 
     private void ResearchReadinessWindow_Loaded(object sender, RoutedEventArgs e)
     {
+        InitializeVoiceUi();
         RefreshResearchReadiness();
         ResearchWindow_Loaded(sender, e);
     }

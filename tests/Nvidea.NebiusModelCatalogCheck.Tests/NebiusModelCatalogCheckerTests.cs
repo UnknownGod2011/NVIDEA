@@ -103,7 +103,7 @@ public sealed class NebiusModelCatalogCheckerTests
     {
         var exception = Assert.Throws<CatalogCheckException>(() =>
             NebiusModelCatalogChecker.Evaluate(
-                "{}"u8,
+                Encoding.UTF8.GetBytes("{}"),
                 "captured",
                 Required,
                 endpointHost: null));

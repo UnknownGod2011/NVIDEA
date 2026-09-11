@@ -44,6 +44,7 @@ public sealed class LocalOllamaMemoryEmbeddingProvider : IMemoryEmbeddingMigrati
         Provider: "ollama-local",
         Model: _options.Model,
         IsLocal: true,
+        MaxBatchSize: _options.MaxBatchSize,
         ExpectedDimensions: _options.ExpectedDimensions);
 
     public bool IsCurrentEmbedding(MemoryEmbeddingProvenance provenance)
@@ -57,7 +58,7 @@ public sealed class LocalOllamaMemoryEmbeddingProvider : IMemoryEmbeddingMigrati
         var configuredModel = _options.Model;
         if (string.Equals(provenance.Model, configuredModel, StringComparison.Ordinal))
             return true;
-        if (configuredModel.Contains(':', StringComparison.Ordinal))
+        if (configuredModel.Contains(':'))
             return false;
         return provenance.Model.StartsWith($"{configuredModel}:", StringComparison.Ordinal);
     }

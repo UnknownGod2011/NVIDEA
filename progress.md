@@ -19,6 +19,8 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Protected local state uses Windows CurrentUser DPAPI by default, durable job-store CAS, hash-chained/segmented audit, and OS-backed single-owner mutation leases.
 - Remote research uses encrypted opaque work items, signed Nebius resource-ID bindings, two-phase dispatch, crash/lifecycle reconciliation, durable cancellation, exact-once result ingestion, and race-safe cleanup.
 - Native Nebius Object Storage transport and Serverless-mounted worker transport share one protected protocol; preflight validates mount alignment, READ_WRITE transport, MysteryBox credentials, digest-pinned image, RSA identity consistency, bounded resources, and redacted fingerprints.
+- Credential-bearing desktop provider clients now use an explicit no-auto-redirect HTTP policy; the remote worker applies the same rule to its shared Nemotron/Tavily client.
+- Nebius Serverless production endpoints require exact `api.nebius.cloud`, absolute HTTPS, no URI user-info, and the standard HTTPS port. HTTPS loopback remains available only for contract-test injection.
 - Windows voice invocation is local and review-first. Windows Memory maintenance safely re-indexes stale/missing embeddings with privacy-safe previews and explicit Sensitive/Restricted opt-ins.
 - `tools/Nvidea.PersonalAiDemoEval` and `tools/Nvidea.PersonalAiAdversarialEval` provide deterministic positive/negative cross-cutting evidence.
 - `tools/Nvidea.JudgingEvidenceVerifier` combines positive/adversarial artifacts, matching Nebius live deployment evidence, and a fresh live Token Factory catalog PASS.
@@ -64,8 +66,38 @@ Validation / evidence:
 Security / privacy / failure review:
 - `evilnebius.com`, `not-nebius.com`, `nebius.com.evil.example`, HTTP endpoints, user-info URLs, and non-443 Token Factory endpoints now fail closed before credential use.
 - The production inference path now matches the standalone model-catalog checker’s Nebius DNS-boundary semantics.
-- Tavily already pins the exact `api.tavily.com` host, and Ollama’s production constructor already uses strict loopback validation plus a no-redirect owned `HttpClient`. The remaining notable HTTP trust gap is composition-root/provider `HttpClient` redirect policy: Token Factory, Tavily, and Serverless are currently constructed with default `HttpClient()` instances, so redirect behavior should be made explicitly no-redirect at the trusted composition boundary rather than relying on runtime defaults.
-- Nebius Serverless already pins `api.nebius.cloud` (with localhost only for contract tests), but its URI-user-info/port rules should be made explicit for consistency.
+
+### 2026-09-12 — Provider redirect and Serverless endpoint hardening
+Completed:
+- Re-read the complete ledger and inspected current commits, composition-root construction, Serverless client validation, Tavily endpoint validation, Ollama behavior, and the remote worker before mutation.
+- Added `ProviderHttpClientFactory` in Core. It constructs owned `HttpClientHandler` instances with `AllowAutoRedirect = false` so credential-bearing requests do not automatically replay prompts, research content, API-key bodies, or other private request data to a redirect target.
+- Wired the desktop composition root’s Token Factory, Tavily, and Nebius Serverless clients through the no-redirect factory rather than default `new HttpClient()` instances.
+- Added focused factory tests asserting automatic redirects are disabled.
+- Found a second path outside the desktop composition root: `Nvidea.Worker` used one default auto-redirecting client for both Token Factory and Tavily. Replaced it with an explicitly no-redirect client so remote Nebius research execution receives the same egress protection.
+- Hardened `NebiusServerlessJobClient` endpoint validation: production accepts only exact `api.nebius.cloud` over HTTPS, rejects URI user-info, rejects non-standard production ports, and continues to permit HTTPS localhost/127.0.0.1 overrides for isolated contract tests only.
+- Added Serverless endpoint trust tests covering exact production acceptance, user-info rejection, alternate-port rejection, HTTP rejection, provider-lookalike rejection, domain-confusion rejection, and explicit HTTPS loopback test endpoints.
+
+Engineering commits before this ledger update:
+- `8460e6898631a7eebf90e10e1f1cb33b5a4082b8` — add no-redirect provider HTTP factory.
+- `053feb527ef638c58b2a11ba4aa4073e9e3adf3c` — cover provider no-redirect policy.
+- `4c791fca61ea4af558810f9b56b8b34462327458` — wire desktop providers to no-redirect clients.
+- `00e78234c0f184f452665b018813bf70ca46b601` / `9c13f30f935e7cc4ca90795476d9d9a61d2f49ef` — add and correct Serverless endpoint trust regressions while preserving the existing HTTPS-only loopback contract.
+- `9b6e03a9cff7f04ab65226f348fff8123fc1bdb6` — harden Serverless endpoint trust boundary.
+- `117b89aa126909f6ed89d6cb43c2dc6dcaaab891` — disable redirects in the remote worker provider client.
+
+Validation / evidence:
+- GitHub compare from prior ledger head `2adacba7d534450588862d5e80f39b54aadf171e` to engineering head `117b89aa126909f6ed89d6cb43c2dc6dcaaab891` reports **7 commits ahead / 0 behind**.
+- The compare is confined to six intended files: desktop composition, Serverless client, provider HTTP factory, worker program, and two focused test files.
+- Static inspection confirms the desktop path no longer creates default redirecting clients for Token Factory/Tavily/Serverless, and the remote worker no longer uses a default redirecting provider client.
+- `command -v dotnet` still produces no usable .NET execution signal here. Therefore no compile or test PASS is claimed.
+- No GitHub Actions workflow was triggered, and no live Nebius, Tavily, Ollama, Playwright, Object Storage, Serverless, or paid inference operation was used.
+
+Security / privacy / failure review:
+- Redirect handling is now fail-closed at the trusted HTTP construction boundary for the desktop provider graph and remote worker provider graph.
+- Serverless endpoint configuration can no longer smuggle URI credentials or select an alternate production port while retaining the trusted hostname.
+- Redirect responses will now surface to provider clients as ordinary non-success responses rather than being transparently followed; existing sanitized error handling remains responsible for not exposing provider bodies.
+- Tavily already requires the exact `api.tavily.com` hostname and HTTPS, but its option validator still does not explicitly reject URI user-info or non-default HTTPS ports. This is now the main remaining provider-URI consistency gap.
+- The worker currently carries a tiny local copy of the no-redirect handler construction because the Core factory is intentionally internal; this avoids unnecessarily expanding Core’s public API but should stay covered by a real Worker build.
 
 ## Known Blockers / Risks
 - No usable .NET 8 execution signal is available in this automation environment; Core/WPF/Worker code, XAML, tests, evaluator tools, evidence verifier, demo validator, catalog checker, and focused tests still require a real restore/build/run.
@@ -77,6 +109,7 @@ Security / privacy / failure review:
 - Real `embeddinggemma` semantic quality/ranking calibration still requires a local Ollama evaluation corpus.
 - No live Object Storage bucket/static key, digest-pinned registry image, MysteryBox refs, subnet, Serverless access token, or real Serverless job has been provisioned/validated here.
 - Exact provider acceptance of Serverless Object Storage `Source`/`SourcePath` still requires a real job.
+- Tavily’s exact-host HTTPS validator should still be tightened to reject URI user-info and non-default production ports for consistency with the other credential-bearing provider boundaries.
 
 ## Single Best Next Task
-First obtain a .NET 8-capable Windows execution signal and restore/build `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, all evidence/evaluator tools, and focused tests; fix every compile/runtime defect before treating evidence as judge-ready. If executable validation remains unavailable, harden the **trusted composition-root HTTP clients to disable redirects explicitly** for Token Factory, Tavily, and Nebius Serverless, add redirect-regression tests, and make Serverless user-info/port validation explicit so credentials and private prompts/research payloads cannot leave their intended provider origin through redirect/configuration mistakes.
+First obtain a .NET 8-capable Windows execution signal and restore/build `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, all evidence/evaluator tools, and focused tests; fix every compile/runtime defect before treating evidence as judge-ready. If executable validation remains unavailable, harden **Tavily endpoint validation** to reject URI user-info and non-default HTTPS ports, add focused regression coverage, then audit any remaining provider/client construction sites (including tool executables) for default redirect behavior or endpoint trust drift.

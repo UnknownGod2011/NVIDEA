@@ -89,15 +89,17 @@ public static class Program
 
     private static async Task<ModelCatalogCheckResult> CheckLiveAsync(RequiredModelSet required)
     {
-        var apiKey = Environment.GetEnvironmentVariable("NEBIUS_API_KEY");
-        if (string.IsNullOrWhiteSpace(apiKey))
-            throw new CatalogCheckException("missing_nebius_api_key");
-
         var baseUriText = Environment.GetEnvironmentVariable("NVIDEA_NEBIUS_BASE_URL");
         var baseUri = string.IsNullOrWhiteSpace(baseUriText)
             ? new Uri("https://api.tokenfactory.us-central1.nebius.com/v1/")
             : ParseTrustedBaseUri(baseUriText);
         ValidateTrustedEndpoint(baseUri);
+
+        // Validate the destination before reading or attaching any credential. This keeps a
+        // malicious endpoint override from ever reaching the bearer-token construction path.
+        var apiKey = Environment.GetEnvironmentVariable("NEBIUS_API_KEY");
+        if (string.IsNullOrWhiteSpace(apiKey))
+            throw new CatalogCheckException("missing_nebius_api_key");
 
         using var handler = new HttpClientHandler { AllowAutoRedirect = false };
         using var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
@@ -130,15 +132,24 @@ public static class Program
         return uri;
     }
 
-    private static void ValidateTrustedEndpoint(Uri uri)
+    internal static void ValidateTrustedEndpoint(Uri uri)
     {
+        ArgumentNullException.ThrowIfNull(uri);
         if (uri.Scheme != Uri.UriSchemeHttps
-            || string.IsNullOrWhiteSpace(uri.Host)
-            || !uri.Host.EndsWith("nebius.com", StringComparison.OrdinalIgnoreCase)
+            || !IsTrustedNebiusHost(uri.Host)
             || !string.IsNullOrEmpty(uri.UserInfo))
         {
             throw new CatalogCheckException("untrusted_nebius_endpoint");
         }
+    }
+
+    internal static bool IsTrustedNebiusHost(string? host)
+    {
+        if (string.IsNullOrWhiteSpace(host))
+            return false;
+
+        return string.Equals(host, "nebius.com", StringComparison.OrdinalIgnoreCase)
+            || host.EndsWith(".nebius.com", StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task<byte[]> ReadBoundedFileAsync(string path, int maxBytes)

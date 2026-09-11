@@ -14,12 +14,12 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - .NET 8 core in `src/Nvidea.Core`; WPF host in `src/Nvidea.Windows`; deployable remote worker in `src/Nvidea.Worker`.
 - NVIDIA Nemotron through Nebius Token Factory with retries, timeout/cancellation, structured tool calling, response-schema support, and default routing: Nano for Fast, Super for Standard, Ultra for Deep. Environment overrides remain supported.
 - Layered personal memory with privacy-aware writes, provenance, hybrid lexical/semantic/recency/importance retrieval, local Ollama embeddings, vector-space isolation, migration/re-indexing, WPF maintenance UI, and deterministic retrieval-quality fixtures.
-- Tavily Search + Extract research with canonical deduplication, source quality/freshness/diversity ranking, untrusted-evidence boundaries, machine-verifiable citations, and restart-safe staged checkpoints.
+- Tavily Search + Extract research with canonical deduplication, source quality/freshness/diversity ranking, untrusted-evidence boundaries, machine-verifiable citations, restart-safe staged checkpoints, and an exact production endpoint boundary (`api.tavily.com`, HTTPS/443, no URI user-info).
 - Safe browser agent with persistent Chromium state, popup/new-tab tracking, plan/act/observe/verify, prompt-injection detection, consequential-action gates, durable download quarantine, emergency stop, and crash recovery.
 - Protected local state uses Windows CurrentUser DPAPI by default, durable job-store CAS, hash-chained/segmented audit, and OS-backed single-owner mutation leases.
 - Remote research uses encrypted opaque work items, signed Nebius resource-ID bindings, two-phase dispatch, crash/lifecycle reconciliation, durable cancellation, exact-once result ingestion, and race-safe cleanup.
 - Native Nebius Object Storage transport and Serverless-mounted worker transport share one protected protocol; preflight validates mount alignment, READ_WRITE transport, MysteryBox credentials, digest-pinned image, RSA identity consistency, bounded resources, and redacted fingerprints.
-- Credential-bearing desktop provider clients now use an explicit no-auto-redirect HTTP policy; the remote worker applies the same rule to its shared Nemotron/Tavily client.
+- Credential-bearing desktop provider clients now use an explicit no-auto-redirect HTTP policy; the remote worker and live Nebius contract-probe tool apply the same rule.
 - Nebius Serverless production endpoints require exact `api.nebius.cloud`, absolute HTTPS, no URI user-info, and the standard HTTPS port. HTTPS loopback remains available only for contract-test injection.
 - Windows voice invocation is local and review-first. Windows Memory maintenance safely re-indexes stale/missing embeddings with privacy-safe previews and explicit Sensitive/Restricted opt-ins.
 - `tools/Nvidea.PersonalAiDemoEval` and `tools/Nvidea.PersonalAiAdversarialEval` provide deterministic positive/negative cross-cutting evidence.
@@ -96,8 +96,32 @@ Security / privacy / failure review:
 - Redirect handling is now fail-closed at the trusted HTTP construction boundary for the desktop provider graph and remote worker provider graph.
 - Serverless endpoint configuration can no longer smuggle URI credentials or select an alternate production port while retaining the trusted hostname.
 - Redirect responses will now surface to provider clients as ordinary non-success responses rather than being transparently followed; existing sanitized error handling remains responsible for not exposing provider bodies.
-- Tavily already requires the exact `api.tavily.com` hostname and HTTPS, but its option validator still does not explicitly reject URI user-info or non-default HTTPS ports. This is now the main remaining provider-URI consistency gap.
 - The worker currently carries a tiny local copy of the no-redirect handler construction because the Core factory is intentionally internal; this avoids unnecessarily expanding Core’s public API but should stay covered by a real Worker build.
+
+### 2026-09-12 — Tavily endpoint and live probe egress hardening
+Completed:
+- Re-read the full persistent ledger and current repository tree before mutation; the selected unfinished task was the documented Tavily URI-consistency gap plus remaining tool-level redirect audit.
+- Hardened `TavilyOptions.Validate()` so production Tavily traffic requires an absolute `https://api.tavily.com/` URI on port 443 with **no URI user-info**. Alternate ports, embedded credentials, HTTP, subdomain lookalikes, and domain-confusion URLs now fail closed before any request is sent.
+- Added `TavilyEndpointTrustTests` covering exact production acceptance; HTTP, port 444, embedded user-info, subdomain lookalike, suffix/domain-confusion, and bare-domain rejection; and a regression proving invalid Tavily configuration is rejected before the HTTP handler can observe a request.
+- Audited the live Nebius contract probe and found two remaining default `HttpClient()` constructions: the structured Token Factory planner probe and the live Serverless probe.
+- Added a local no-redirect HTTP client constructor to `Nvidea.NebiusContractProbe` and applied it to both credential-bearing paths. Redirect responses now remain visible as non-success provider responses instead of being followed with bearer/private request context.
+
+Engineering commits before this ledger update:
+- `e0362868160b87ae9012794192a67486042f77fb` — harden Tavily endpoint trust boundary.
+- `15e24a26a9c1bb5f5fd27ff14789d2ca8c604d1a` — cover Tavily endpoint trust boundary.
+- `7eaf01318fd1814dc22d8b86a67a8387b75e18a8` — disable redirects in live Nebius contract probe.
+
+Validation / evidence:
+- Static re-fetch of `TavilyResearch.cs` confirms exact host, absolute HTTPS, port 443, and empty `UserInfo` are enforced in the production validator.
+- Static re-fetch of the new focused test file confirms the malicious user-info URL is rejected during client construction and before its counting HTTP handler can receive a request.
+- `command -v dotnet` still returns no executable path in this runtime; therefore no compile, unit-test, WPF, Worker, or tool PASS is claimed.
+- No GitHub Actions workflow was triggered merely to obtain a green result.
+- No live Nebius, Tavily, Ollama, Playwright, Object Storage, Serverless, or paid inference operation was performed.
+
+Security / privacy / failure review:
+- The remaining production Tavily endpoint now matches the stricter credential-boundary posture already applied to Token Factory and Serverless.
+- The judge/live contract probe no longer bypasses the application’s redirect-hardening intent when handling Token Factory or Serverless credentials.
+- Redirect disabling is defense-in-depth; endpoint trust validation remains independently required because redirects are not the only path by which a misconfigured base URI could exfiltrate credentials.
 
 ## Known Blockers / Risks
 - No usable .NET 8 execution signal is available in this automation environment; Core/WPF/Worker code, XAML, tests, evaluator tools, evidence verifier, demo validator, catalog checker, and focused tests still require a real restore/build/run.
@@ -109,7 +133,7 @@ Security / privacy / failure review:
 - Real `embeddinggemma` semantic quality/ranking calibration still requires a local Ollama evaluation corpus.
 - No live Object Storage bucket/static key, digest-pinned registry image, MysteryBox refs, subnet, Serverless access token, or real Serverless job has been provisioned/validated here.
 - Exact provider acceptance of Serverless Object Storage `Source`/`SourcePath` still requires a real job.
-- Tavily’s exact-host HTTPS validator should still be tightened to reject URI user-info and non-default production ports for consistency with the other credential-bearing provider boundaries.
+- Tool-level HTTP construction still deserves a final repository-wide pass for any credential-bearing `HttpClient` paths not covered by desktop, Worker, model-catalog checker, or contract probe.
 
 ## Single Best Next Task
-First obtain a .NET 8-capable Windows execution signal and restore/build `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, all evidence/evaluator tools, and focused tests; fix every compile/runtime defect before treating evidence as judge-ready. If executable validation remains unavailable, harden **Tavily endpoint validation** to reject URI user-info and non-default HTTPS ports, add focused regression coverage, then audit any remaining provider/client construction sites (including tool executables) for default redirect behavior or endpoint trust drift.
+First obtain a .NET 8-capable Windows execution signal and restore/build `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, all evidence/evaluator tools, and focused tests; fix every compile/runtime defect before treating evidence as judge-ready. If executable validation remains unavailable, complete a final repository-wide HTTP construction audit across remaining tools and native provider clients, then harden any credential-bearing default-redirect or endpoint-trust drift found without broadening provider trust.

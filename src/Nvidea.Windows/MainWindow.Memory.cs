@@ -75,7 +75,7 @@ public partial class MainWindow
         MemoryMigrationProgressText.Visibility = Visibility.Visible;
         StatusText.Text = "Memory — local re-index running";
         UpdateBusyControls();
-        UpdateResearchControls(null);
+        DisableNonMemoryMaintenanceControls();
 
         var progress = new Progress<MemoryEmbeddingMigrationProgress>(value =>
         {
@@ -108,7 +108,9 @@ public partial class MainWindow
             _memoryMigrationCts?.Dispose();
             _memoryMigrationCts = null;
             UpdateBusyControls();
-            UpdateResearchControls(null);
+            await RefreshResearchAsync();
+            if (_voiceButton is not null)
+                _voiceButton.IsEnabled = !_running && !_browserRunning && !_researchRunning && !_voiceRunning;
             await RefreshMemoryMigrationPreviewAsync(showFailureInOutput: false);
         }
     }
@@ -197,6 +199,17 @@ public partial class MainWindow
         MemoryMigrationCancelButton.IsEnabled = _memoryMigrationRunning;
         MemoryIncludeSensitiveCheck.IsEnabled = !otherBusy && !_memoryMigrationRunning;
         MemoryIncludeRestrictedCheck.IsEnabled = !otherBusy && !_memoryMigrationRunning;
+    }
+
+    private void DisableNonMemoryMaintenanceControls()
+    {
+        ResearchStartButton.IsEnabled = false;
+        ResearchResumeButton.IsEnabled = false;
+        ResearchDispatchButton.IsEnabled = false;
+        ResearchReconcileButton.IsEnabled = false;
+        ResearchCancelButton.IsEnabled = false;
+        if (_voiceButton is not null)
+            _voiceButton.IsEnabled = false;
     }
 
     private bool IsAnyNonMemoryOperationRunning() =>

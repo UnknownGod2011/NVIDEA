@@ -14,16 +14,16 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - .NET 8 core in `src/Nvidea.Core`; WPF host in `src/Nvidea.Windows`; deployable remote worker in `src/Nvidea.Worker`.
 - NVIDIA Nemotron through Nebius Token Factory with retries, timeout/cancellation, structured tool calling, response-schema support, and default routing: Nano for Fast, Super for Standard, Ultra for Deep. Environment overrides remain supported.
 - Layered personal memory with privacy-aware writes, provenance, hybrid lexical/semantic/recency/importance retrieval, local Ollama embeddings, vector-space isolation, migration/re-indexing, WPF maintenance UI, and deterministic retrieval-quality fixtures.
-- Tavily Search + Extract research with canonical deduplication, source quality/freshness/diversity ranking, untrusted-evidence boundaries, machine-verifiable citations, restart-safe staged checkpoints, and an exact production endpoint boundary (`api.tavily.com`, HTTPS/443, no URI user-info).
+- Tavily Search + Extract research with canonical deduplication, source quality/freshness/diversity ranking, untrusted-evidence boundaries, machine-verifiable citations, restart-safe staged checkpoints, and exact production endpoint trust (`api.tavily.com`, HTTPS/443, no URI user-info).
 - Safe browser agent with persistent Chromium state, popup/new-tab tracking, plan/act/observe/verify, prompt-injection detection, consequential-action gates, durable download quarantine, emergency stop, and crash recovery.
 - Protected local state uses Windows CurrentUser DPAPI by default, durable job-store CAS, hash-chained/segmented audit, and OS-backed single-owner mutation leases.
 - Remote research uses encrypted opaque work items, signed Nebius resource-ID bindings, two-phase dispatch, crash/lifecycle reconciliation, durable cancellation, exact-once result ingestion, and race-safe cleanup.
 - Native Nebius Object Storage transport and Serverless-mounted worker transport share one protected protocol; preflight validates mount alignment, READ_WRITE transport, MysteryBox credentials, digest-pinned image, RSA identity consistency, bounded resources, and redacted fingerprints.
-- Credential-bearing desktop provider clients use an explicit no-auto-redirect HTTP policy; the remote worker, model-catalog checker, and live Nebius contract-probe follow the same fail-closed redirect posture.
-- Token Factory endpoints require HTTPS/443, no URI user-info, and exact `nebius.com` or genuine `*.nebius.com` DNS boundaries. Endpoint trust is validated before API-key lookup in the environment-based production path.
+- Credential-bearing Token Factory, Tavily, Serverless, worker, model-catalog, and contract-probe HTTP paths use explicit no-auto-redirect behavior.
+- Token Factory endpoints require HTTPS/443, no URI user-info, and exact `nebius.com` or genuine `*.nebius.com` DNS boundaries; endpoint trust is validated before API-key lookup in the environment-based production path.
 - Nebius Serverless production endpoints require exact `api.nebius.cloud`, HTTPS/443, and no URI user-info. HTTPS loopback remains available only for isolated contract-test injection.
-- Nebius Object Storage static-key paths share one credential-free endpoint/region trust policy: exact `https://storage.<region>.nebius.cloud:443/`, strict ASCII lowercase `[a-z0-9-]` region syntax, no path/query/fragment/user-info, and endpoint/region binding. The live loader applies that same policy before reading static access-key variables.
-- Windows voice invocation is local and review-first. Windows Memory maintenance safely re-indexes stale/missing embeddings with privacy-safe previews and explicit Sensitive/Restricted opt-ins.
+- Nebius Object Storage static-key paths share one credential-free endpoint/region trust policy: exact `https://storage.<region>.nebius.cloud:443/`, strict ASCII `[a-z0-9-]` region syntax, no path/query/fragment/user-info, and endpoint/region binding. The live loader applies this before reading static credentials. The production AWSSDK.S3 configuration now also explicitly disables automatic redirects.
+- Windows voice invocation is local and review-first. Memory maintenance safely re-indexes stale/missing embeddings with privacy-safe previews and explicit Sensitive/Restricted opt-ins.
 - `tools/Nvidea.PersonalAiDemoEval` and `tools/Nvidea.PersonalAiAdversarialEval` provide deterministic positive/negative cross-cutting evidence.
 - `tools/Nvidea.JudgingEvidenceVerifier` combines positive/adversarial artifacts, matching Nebius live deployment evidence, and a fresh live Token Factory catalog PASS.
 - `tools/Nvidea.DemoPackageValidator` plus `docs/demo-package.json` make the <=3-minute judging plan machine-checkable.
@@ -44,104 +44,57 @@ Added research/browser product runtimes, WPF lifecycle-aware research, restart-s
 Verified current Token Factory model IDs and set Nano / Super / Ultra defaults for Fast / Standard / Deep. Added routing tests, README reconciliation, zero-inference model-catalog readiness, strict bounded catalog parsing, SHA-256 evidence binding, fresh-live catalog requirements in the judging chain, and standalone catalog DNS/user-info/redirect credential-boundary hardening.
 
 ### 2026-09-12 — Provider credential and redirect hardening
-Completed a systematic production/provider trust review:
-- Fixed Token Factory suffix-lookalike acceptance (`evilnebius.com`) and required HTTPS/443 with no URI user-info.
+Completed a systematic provider trust review:
+- Fixed Token Factory suffix-lookalike acceptance and required HTTPS/443 with no URI user-info.
 - Reordered Token Factory environment loading so endpoint trust is established before `NEBIUS_API_KEY` is read.
 - Added a Core no-auto-redirect HTTP factory and wired desktop Token Factory, Tavily, and Nebius Serverless clients through it.
 - Applied no-auto-redirect behavior to the remote worker and live Nebius contract probe.
 - Hardened Serverless to exact `api.nebius.cloud` over HTTPS/443 with no user-info while preserving explicit HTTPS loopback test injection.
-- Hardened Tavily to exact `api.tavily.com` over HTTPS/443 with no user-info and added request-observation regressions proving invalid configuration fails before provider traffic.
+- Hardened Tavily to exact `api.tavily.com` over HTTPS/443 with no user-info and request-observation regressions.
 
-Representative commits:
-- `18943f9f5b325cbe3549537bc35510dcb0184497` / `64285c0a2451826eca9dc3bc09cae821ba8826a0` — production Token Factory trust boundary and regressions.
-- `8460e6898631a7eebf90e10e1f1cb33b5a4082b8` / `053feb527ef638c58b2a11ba4aa4073e9e3adf3c` / `4c791fca61ea4af558810f9b56b8b34462327458` — no-redirect provider HTTP construction.
-- `9b6e03a9cff7f04ab65226f348fff8123fc1bdb6` — Serverless endpoint boundary.
-- `117b89aa126909f6ed89d6cb43c2dc6dcaaab891` — remote Worker redirect hardening.
-- `e0362868160b87ae9012794192a67486042f77fb` / `15e24a26a9c1bb5f5fd27ff14789d2ca8c604d1a` — Tavily endpoint trust and regressions.
-- `7eaf01318fd1814dc22d8b86a67a8387b75e18a8` — live contract-probe redirect hardening.
+Representative commits: `18943f9f`, `64285c0a`, `8460e689`, `053feb52`, `4c791fca`, `9b6e03a9`, `117b89aa`, `e0362868`, `15e24a26`, `7eaf0131`.
 
-### 2026-09-12 — Nebius Object Storage static-credential boundary hardening
+### 2026-09-12 — Object Storage credential boundary
 Completed:
-- Re-read this ledger and audited the remaining native provider/tool HTTP construction surfaces instead of repeating already-hardened desktop/Worker paths.
-- Identified a real remaining static-credential egress risk in `NebiusObjectStorageClient`: the S3-compatible client accepted any absolute HTTPS origin while holding Nebius Object Storage access-key credentials.
-- Verified Nebius' documented regional S3 endpoint form (`https://storage.<region>.nebius.cloud:443`) from current official Nebius material before changing the trust rule.
-- Hardened `NebiusObjectStorageClient` so production Object Storage now requires the exact regional origin `storage.<configured-region>.nebius.cloud`, HTTPS, port 443, no URI user-info, no path beyond `/`, no query, and no fragment.
-- Bound endpoint hostname to the separately configured region so a valid Nebius endpoint for a different region cannot silently receive the configured static credentials.
-- Restricted region identifiers to a bounded lowercase letter/digit/hyphen form to prevent region text from widening or confusing the trusted hostname construction.
-- Added `NebiusObjectStorageEndpointTrustTests` covering the valid regional origin plus HTTP, alternate port, URI user-info, arbitrary host, Nebius-domain confusion, prefix lookalike, path/query injection, region mismatch, and malformed region identifiers.
+- Restricted `NebiusObjectStorageClient` to the exact regional Nebius S3-compatible origin and bound endpoint hostname to configured region.
+- Added strict HTTPS/443, no user-info/path/query/fragment, bounded bucket/prefix/key behavior, sanitized errors, and strict ASCII region syntax.
+- Added a shared credential-free `NebiusObjectStorageEndpointTrust` used by both the live configuration loader and runtime client so those boundaries cannot drift independently.
+- Reordered live configuration so Object Storage endpoint + region trust is established before static access-key environment variables are read.
+- Added counting-reader regressions proving arbitrary-host, cross-region, and Unicode-confusable region configurations fail before static credential lookup.
 
-Engineering commits before that ledger update:
-- `66181222e88fd5a373b0b0e5a55b4e603d90a481` — harden Nebius Object Storage endpoint trust boundary.
-- `92ec271c50249e5f80fe732b2746932fe9626b9a` — cover Object Storage endpoint trust boundary.
+Representative commits: `66181222`, `92ec271c`, `126376af`, `8aceba9d`, `3efcdf95`, `307fe25a`, `f087b509`, `541d7247`, `10a84323`, `f9f71518`.
 
-Validation / evidence:
-- GitHub compare from prior ledger head `8c7f9e4e58ba4df0b239c916d3e9deaaef2cff00` to engineering head `92ec271c50249e5f80fe732b2746932fe9626b9a` reports **2 commits ahead / 0 behind** and only the Object Storage client plus its focused trust-boundary test were changed.
-- Static re-fetch confirms the constructor calls `ValidateOptions` before constructing `BasicAWSCredentials` / `AmazonS3Client`.
-- Static re-fetch confirms endpoint host equality is derived from the separately validated region rather than using a suffix match.
-- `command -v dotnet` still produced no executable path in this runtime. Therefore no compile/unit-test/WPF/Worker/tool PASS is claimed.
-- No GitHub Actions workflow was triggered merely to obtain a green result.
-- No live Nebius, Tavily, Object Storage, Serverless, Playwright, Ollama, or paid inference operation was performed.
-
-Security / privacy / failure review:
-- Static S3 credentials can no longer be configured against an arbitrary HTTPS origin through `NebiusObjectStorageClientOptions`.
-- Region/endpoint disagreement fails closed before the AWS SDK client is constructed.
-- Provider response bodies remain excluded from the client's sanitized storage exceptions.
-
-### 2026-09-12 — Live Object Storage credential-read ordering
-Completed:
-- Re-read the complete ledger and current live configuration path before changing code.
-- Found that `NebiusResearchLiveConfigurationLoader.Load` read Object Storage endpoint/region and then later read the static access-key variables without first establishing that the endpoint/region pair was trusted. The eventual provider constructor was already safe, but credential-read ordering was weaker than the Token Factory environment path.
-- Moved Object Storage endpoint + region loading to the very start of the live loader and added a fail-closed trust check before any Object Storage static credential variable is read.
-- The early boundary requires HTTPS, port 443, no URI user-info, no query/fragment/path beyond `/`, a bounded region identifier, and exact host equality with `storage.<region>.nebius.cloud`.
-- Reused the already-validated endpoint/region values when constructing `NebiusObjectStorageClientOptions`, avoiding a second environment read for those fields.
-- Added `NebiusResearchLiveConfigurationCredentialOrderingTests` with a counting environment reader. Invalid arbitrary-host and region-mismatch configurations are proven to stop after endpoint/region lookup and never request `NVIDEA_LIVE_OBJECT_STORAGE_ACCESS_KEY_ID` or `NVIDEA_LIVE_OBJECT_STORAGE_SECRET_ACCESS_KEY`.
-- Added direct positive/negative early-boundary cases for HTTPS/443, user-info, lookalike hosts, path/query injection, and malformed region values.
-
-Engineering commits before that ledger update:
-- `126376afbef70a7ca96fdcb758ba30db464dcbf6` — validate Object Storage trust before credential reads.
-- `8aceba9d2961a1ba93d3bdb929bed2003b64ab76` — cover Object Storage credential-read ordering.
-
-Validation / evidence:
-- GitHub compare from prior ledger head `6b88beceedea886c0e8b0e8f4bf5b0a6a49f142a` to engineering head `8aceba9d2961a1ba93d3bdb929bed2003b64ab76` reports **2 commits ahead / 0 behind** and only `NebiusResearchLiveConfiguration.cs` plus the focused new test file changed.
-- Static inspection confirms the first configuration reads are Object Storage endpoint and region, followed immediately by the trust check; the static access-key reads occur only later when constructing options.
-- No executable .NET 8 signal was available in this environment, so no compile/unit-test/WPF/Worker/tool PASS is claimed.
-- No GitHub Actions workflow was triggered merely to manufacture a green check.
-- No live Nebius, Tavily, Object Storage, Serverless, Playwright, Ollama, or paid inference operation was performed.
-
-Security / privacy / failure review:
-- A tampered Object Storage endpoint or cross-region endpoint now fails before the loader touches the corresponding static access-key environment variables.
-- Failure messages identify configuration fields but do not include credential values.
-- No network/provider client is created by the loader.
-
-### 2026-09-12 — Shared Object Storage trust policy + strict ASCII regions
-Completed:
-- Re-read the ledger, inspected the latest commits, and re-read both Object Storage trust implementations and their focused tests before changing code.
-- Added `NebiusObjectStorageEndpointTrust`, a credential-free shared policy used by both the early live configuration gate and the runtime S3-compatible client.
-- Removed the two duplicated endpoint/region predicates while preserving each caller's existing exception type and field-specific failure semantics.
-- Tightened region syntax from Unicode-aware `char.IsLower` / `char.IsDigit` to explicit ASCII lowercase letters, ASCII digits, and interior hyphens only.
-- Added constructor-level regressions for a Cyrillic `о` lookalike and an Arabic-Indic digit so visually plausible Unicode region identifiers fail closed.
-- Added a live-loader counting-reader regression proving a Unicode-confusable region is rejected after only endpoint/region lookup and before either static Object Storage credential variable is read.
+### 2026-09-12 — AWSSDK.S3 redirect egress hardening
+Completed this run:
+- Re-read the full ledger and current Object Storage production path before changing code.
+- Inspected the pinned `AWSSDK.S3` version (`4.0.102.5`) and current AWS SDK V4 documentation/source rather than assuming redirect behavior.
+- Confirmed `AmazonS3Config` inherits `AllowAutoRedirect`, and current upstream `ClientConfig` defaults that flag to `true`; the AWS HTTP pipeline uses the flag to control redirect following.
+- Added `NebiusObjectStorageClient.CreateSdkConfiguration` as an internal, test-visible construction seam for the exact production `AmazonS3Config`.
+- Explicitly set `AllowAutoRedirect = false`, while preserving the trusted service URL, authentication region, virtual-host behavior, and disabled SDK retry budget.
+- Routed the production constructor through that exact configuration factory.
+- Added `SdkConfiguration_DisablesAutomaticRedirects` regression coverage asserting redirects remain disabled alongside the expected service URL, auth region, path-style setting, and retry setting.
+- Updated `docs/nebius-object-storage-transport.md` so automatic redirects are an explicit security invariant and dependency upgrades must preserve the regression.
 
 Engineering commits before this ledger update:
-- `3efcdf957f0d3ef005fdba1b1b6c02cb9a9709b4` — add the shared credential-free Object Storage endpoint trust policy.
-- `307fe25a7ca66adcb3ca1ff720db0e1659970312` — route the runtime Object Storage client through the shared policy.
-- `f087b509bebff17a598145c0e6f217cdf5c602a9` — route the live configuration credential gate through the same policy.
-- `541d724758f6843835a87b3a692aa9ca03e7e271` — cover strict ASCII region rejection in the runtime client.
-- `10a8432317385bc7b66fda407001b3ce7e76da6b` — prove Unicode-confusable regions fail before static credential reads.
+- `abeca9f90cc93ac5c8d4b22f2c1ca78cd7c2fd9a` — harden Object Storage SDK redirect policy.
+- `1a1c11a295273b8cb4fdd92e0c5ce243f779e97d` — cover Object Storage redirect policy.
+- `034a62736e5aed3ae1fec5938e739df879b206c4` — document Object Storage redirect boundary.
 
 Validation / evidence:
-- GitHub compare from prior ledger head `ca14bd6758752491616a1810506bf30f3b93f64a` to engineering head `10a8432317385bc7b66fda407001b3ce7e76da6b` reports **5 commits ahead / 0 behind** across exactly five intended files: one new shared validator, the two callers, and two focused test files.
-- Static re-fetch confirms the shared policy contains no credential access, network construction, or provider side effects; it only validates region syntax and the URI boundary.
-- Static inspection confirms the live loader still reads endpoint + region and executes the trust check before any Object Storage access-key variable is requested.
-- `dotnet --info` again reports `dotnet: command not found`; therefore no compile/unit-test/WPF/Worker/tool PASS is claimed.
+- GitHub compare from prior ledger head `f9f715184e477db06bdc5aa881f29d1fd8c16d2a` to engineering head `1a1c11a295273b8cb4fdd92e0c5ce243f779e97d` reported **2 commits ahead / 0 behind** across only the intended production client and focused test before the documentation commit.
+- Static source inspection confirms the pinned package is `AWSSDK.S3 4.0.102.5`.
+- Current AWS SDK V4 API documentation confirms `AmazonS3Config` exposes inherited `AllowAutoRedirect`; current upstream `ClientConfig` source shows the default backing value is `true`, making the explicit override necessary.
+- Current upstream HTTP pipeline source documents/applies the configuration flag to redirect handling.
+- Static re-fetch confirms the production client is constructed from the configuration object containing `AllowAutoRedirect = false`.
+- `command -v dotnet` / `dotnet --info` still produce no executable signal in this runtime. Therefore no compile/unit-test/WPF/Worker/tool PASS is claimed.
 - No GitHub Actions workflow was triggered merely to manufacture a green status.
 - No live Nebius, Tavily, Object Storage, Serverless, Playwright, Ollama, or paid inference operation was performed.
 
 Security / privacy / failure review:
-- The credential-read gate and runtime credential-signing path can no longer diverge through separate endpoint/region validators.
-- Unicode lowercase letters/digits can no longer be accepted as region syntax simply because .NET classifies them as lowercase or numeric.
-- Exact endpoint/region binding, HTTPS/443, user-info/path/query/fragment rejection, sanitized provider errors, and credential-read ordering remain intact.
-- Exception messages do not echo endpoint credentials or static keys.
+- Initial Object Storage credential egress is constrained by exact Nebius regional-origin validation before SDK construction.
+- Subsequent HTTP `3xx` handling is now explicitly fail-closed at the AWSSDK configuration layer instead of depending on the SDK default, preventing silent redirect-following of signed requests to another origin.
+- Static credential-read ordering, strict region syntax, local timeout/retry budgets, bounded payloads, and sanitized errors remain intact.
+- The new test seam is `internal` and exposed only through the existing `InternalsVisibleTo("Nvidea.Core.Tests")`; it does not enlarge the public production API.
 
 ## Known Blockers / Risks
 - No usable .NET 8 execution signal is available in this automation environment; Core/WPF/Worker code, XAML, tests, evaluator tools, evidence verifier, demo validator, catalog checker, and focused tests still require a real restore/build/run.
@@ -153,7 +106,7 @@ Security / privacy / failure review:
 - Real `embeddinggemma` semantic quality/ranking calibration still requires a local Ollama evaluation corpus.
 - No live Object Storage bucket/static key, digest-pinned registry image, MysteryBox refs, subnet, Serverless access token, or real Serverless job has been provisioned/validated here.
 - Exact provider acceptance of Serverless Object Storage `Source`/`SourcePath` still requires a real job.
-- The AWS SDK's own redirect/transport behavior is not directly controlled by `ProviderHttpClientFactory`; exact-origin validation significantly narrows initial credential egress, but a real integration test should verify redirect behavior for the specific AWSSDK.S3 version used by NVIDEA.
+- The explicit SDK redirect flag is statically verified but still requires executable contract coverage against the pinned package before being treated as runtime evidence.
 
 ## Single Best Next Task
-First obtain a .NET 8-capable Windows execution signal and restore/build `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, all evidence/evaluator tools, and focused tests; fix every compile/runtime defect before treating evidence as judge-ready. If executable validation remains unavailable, inspect the pinned AWSSDK.S3 transport/version and add the safest testable redirect-control seam or contract coverage available so a 3xx response cannot silently move a signed Object Storage request off the already-validated Nebius origin.
+First obtain a .NET 8-capable Windows execution signal and restore/build `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, all evidence/evaluator tools, and focused tests; fix every compile/runtime defect before treating evidence as judge-ready. If executable validation remains unavailable, audit the live research configuration for **credential-read ordering beyond Object Storage** (Serverless token, Token Factory key, Tavily key, RSA material): establish every provider endpoint/trust boundary before reading its corresponding secret, and add counting-reader regressions where ordering is not already proven.

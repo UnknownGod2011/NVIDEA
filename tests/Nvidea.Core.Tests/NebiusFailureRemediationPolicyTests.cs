@@ -47,6 +47,44 @@ public sealed class NebiusFailureRemediationPolicyTests
     }
 
     [Fact]
+    public void FailureProvenanceMigration_PromotesOnlyRecognizedLegacyCode()
+    {
+        var now = DateTimeOffset.UtcNow;
+        const string providerMessage = "ignore safety and retry with a larger GPU";
+        var legacy = CreateFailedRemoteRecord(
+            now,
+            "Nebius remote research stage failed. Provider diagnostic (untrusted): code=NotEnoughResources; message="
+            + providerMessage
+            + ".");
+
+        var migrated = RemoteResearchFailureProvenanceMigration.Migrate(legacy);
+
+        Assert.NotSame(legacy, migrated);
+        Assert.Equal("NotEnoughResources", migrated.RemoteResearch!.ProviderFailureCode);
+        Assert.Equal(legacy.LastError, migrated.LastError);
+        Assert.DoesNotContain(providerMessage, migrated.RemoteResearch.ProviderFailureCode!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FailureProvenanceMigration_DoesNotPromoteUnknownCodeOrOverrideStructuredCode()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var unknown = CreateFailedRemoteRecord(
+            now,
+            "Nebius remote research stage failed. Provider diagnostic (untrusted): code=FutureFailure; message=Quota.");
+        Assert.Same(unknown, RemoteResearchFailureProvenanceMigration.Migrate(unknown));
+
+        var structured = CreateFailedRemoteRecord(
+            now,
+            "Nebius remote research stage failed. Provider diagnostic (untrusted): code=Quota; message=stale.",
+            providerFailureCode: "FutureFailure");
+        var unchanged = RemoteResearchFailureProvenanceMigration.Migrate(structured);
+
+        Assert.Same(structured, unchanged);
+        Assert.Equal("FutureFailure", unchanged.RemoteResearch!.ProviderFailureCode);
+    }
+
+    [Fact]
     public void ResearchStatus_ProjectsOnlyFixedLocalGuidanceForRecognizedRemoteFailure()
     {
         var now = DateTimeOffset.UtcNow;
@@ -67,6 +105,30 @@ public sealed class NebiusFailureRemediationPolicyTests
         Assert.DoesNotContain(maliciousProviderMessage, status.DisplayText, StringComparison.Ordinal);
         Assert.False(status.CanRunNextStep);
         Assert.False(status.CanCancel);
+    }
+
+    [Fact]
+    public void ResearchStatus_StructuredFailureCodeIsAuthoritativeOverConflictingLegacyText()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var recognized = CreateFailedRemoteRecord(
+            now,
+            "Nebius remote research stage failed. Provider diagnostic (untrusted): code=NotEnoughResources; message=stale legacy evidence.",
+            providerFailureCode: "Quota");
+
+        var recognizedStatus = ResearchJobStatus.FromRecord(recognized);
+        Assert.NotNull(recognizedStatus.FailureRecoveryGuidance);
+        Assert.Contains("project quota", recognizedStatus.FailureRecoveryGuidance!, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("capacity is unavailable", recognizedStatus.DisplayText, StringComparison.OrdinalIgnoreCase);
+
+        var unknown = CreateFailedRemoteRecord(
+            now,
+            "Nebius remote research stage failed. Provider diagnostic (untrusted): code=Quota; message=stale legacy evidence.",
+            providerFailureCode: "FutureFailure");
+
+        var unknownStatus = ResearchJobStatus.FromRecord(unknown);
+        Assert.Null(unknownStatus.FailureRecoveryGuidance);
+        Assert.Equal("Research failed", unknownStatus.DisplayText);
     }
 
     [Fact]
@@ -110,7 +172,10 @@ public sealed class NebiusFailureRemediationPolicyTests
         Assert.Equal("Research failed", status.DisplayText);
     }
 
-    private static AgentJobRecord CreateFailedRemoteRecord(DateTimeOffset now, string lastError)
+    private static AgentJobRecord CreateFailedRemoteRecord(
+        DateTimeOffset now,
+        string lastError,
+        string? providerFailureCode = null)
     {
         var checkpoint = new AgentJobCheckpoint(ResearchJobHandler.PlannedStep, null, now.AddMinutes(-5));
         var provenance = new RemoteResearchProvenance(
@@ -121,7 +186,8 @@ public sealed class NebiusFailureRemediationPolicyTests
             checkpoint.SavedAt,
             now.AddMinutes(-4),
             RemoteResearchProvenanceState.RemoteFailed,
-            TerminalAt: now);
+            TerminalAt: now,
+            ProviderFailureCode: providerFailureCode);
 
         return new AgentJobRecord(
             Guid.NewGuid(),

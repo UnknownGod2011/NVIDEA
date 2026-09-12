@@ -134,10 +134,21 @@ public sealed class NebiusResearchWorkerRuntimeConfigurationTests
 
     private static void AssertReadBefore(IReadOnlyList<string> reads, string earlier, string later)
     {
-        var earlierIndex = reads.IndexOf(earlier);
-        var laterIndex = reads.IndexOf(later);
+        var earlierIndex = FindIndex(reads, earlier);
+        var laterIndex = FindIndex(reads, later);
         Assert.True(earlierIndex >= 0, $"Expected '{earlier}' to be read.");
         Assert.True(laterIndex >= 0, $"Expected '{later}' to be read.");
         Assert.True(earlierIndex < laterIndex, $"Expected '{earlier}' to be read before '{later}'.");
+    }
+
+    private static int FindIndex(IReadOnlyList<string> values, string expected)
+    {
+        for (var index = 0; index < values.Count; index++)
+        {
+            if (string.Equals(values[index], expected, StringComparison.Ordinal))
+                return index;
+        }
+
+        return -1;
     }
 }

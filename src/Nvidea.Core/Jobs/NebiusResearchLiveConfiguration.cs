@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-
 namespace Nvidea.Core.Jobs;
 
 public sealed record NebiusResearchLiveConfiguration(
@@ -113,23 +111,11 @@ public static class NebiusResearchLiveConfigurationLoader
             WorkerPublicKeyPem = workerPublicKeyPem
         };
 
-        // Only now load the client signing private key and derive the public identity that the
-        // worker verifies. The final full preflight below still requires this derived public key.
+        // Only now load the client signing private key. Validate its size and actual private signing
+        // capability immediately, before any Serverless/Object Storage credential is accessed, then
+        // use the canonical derived public identity for the worker-side dispatch binding.
         var clientPrivateKeyPem = ReadRequiredPemFile(environmentReader, "NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE");
-        string clientPublicKeyPem;
-        using (var clientRsa = RSA.Create())
-        {
-            try
-            {
-                clientRsa.ImportFromPem(clientPrivateKeyPem);
-            }
-            catch (Exception exception) when (exception is CryptographicException or ArgumentException)
-            {
-                throw new InvalidOperationException("NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE does not contain a valid RSA private key.");
-            }
-
-            clientPublicKeyPem = clientRsa.ExportSubjectPublicKeyInfoPem();
-        }
+        var clientPublicKeyPem = NebiusResearchLiveDryRunPreflight.ValidateAndDeriveClientPublicKey(clientPrivateKeyPem);
 
         var finalPlainEnvironment = new Dictionary<string, string>(topologyPlainEnvironment, StringComparer.Ordinal)
         {

@@ -6,15 +6,21 @@ namespace Nvidea.Core.Jobs;
 /// </summary>
 public sealed record NebiusResearchWorkerBootstrapTrust(
     string TransportRoot,
-    string ClientVerificationPublicKeyPem)
+    string ClientVerificationPublicKeyPem,
+    string ClientResultEncryptionPublicKeyPem)
 {
     public const string TransportRootEnvironmentVariable = "NVIDEA_TRANSPORT_ROOT";
     public const string ClientPublicKeyEnvironmentVariable = "NVIDEA_CLIENT_PUBLIC_KEY_PEM";
+    public const string ClientResultPublicKeyEnvironmentVariable = "NVIDEA_CLIENT_RESULT_PUBLIC_KEY_PEM";
 
     /// <summary>
     /// Loads and validates only non-secret worker bootstrap configuration. Callers should invoke
     /// this before loading Token Factory, Tavily, or worker private-key credentials so malformed
     /// public configuration fails without touching provider secrets.
+    ///
+    /// Dispatch verification and result encryption deliberately use distinct RSA identities. This
+    /// prevents compromise or future policy drift in one protocol role from silently conferring
+    /// authority in the other role.
     /// </summary>
     public static NebiusResearchWorkerBootstrapTrust Load(Func<string, string?>? environmentReader = null)
     {
@@ -33,7 +39,20 @@ public sealed record NebiusResearchWorkerBootstrapTrust(
         var canonicalClientPublicKey = NebiusResearchDeploymentPreflight
             .ValidateClientVerificationPublicKey(clientPublicKey);
 
-        return new NebiusResearchWorkerBootstrapTrust(transportRoot, canonicalClientPublicKey);
+        var clientResultPublicKey = Require(read, ClientResultPublicKeyEnvironmentVariable);
+        var canonicalClientResultPublicKey = ClientResultEnvelopePublicKeyTrust
+            .ValidateAndCanonicalize(clientResultPublicKey);
+
+        if (string.Equals(canonicalClientPublicKey, canonicalClientResultPublicKey, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Client dispatch-verification and result-encryption RSA identities must be distinct.");
+        }
+
+        return new NebiusResearchWorkerBootstrapTrust(
+            transportRoot,
+            canonicalClientPublicKey,
+            canonicalClientResultPublicKey);
     }
 
     private static string Require(Func<string, string?> read, string name)

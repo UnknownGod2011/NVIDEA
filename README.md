@@ -104,7 +104,9 @@ Protected local state uses Windows CurrentUser DPAPI by default where applicable
 - crash/lifecycle reconciliation and durable cancellation;
 - exact-once result ingestion;
 - non-root worker image;
-- deployment preflight for mount alignment, MysteryBox-backed credentials, resource bounds, RSA identity consistency and digest-pinned images.
+- deployment preflight for mount alignment, MysteryBox-backed credentials, resource bounds, separated RSA identities and digest-pinned images.
+
+The remote protocol separates three RSA purposes: worker work-item decryption, client dispatch signing, and client result decryption. The two client identities are required to be distinct; Serverless receives only their public halves.
 
 The repository also includes `Nvidea.NebiusContractProbe` and evidence verification tooling for zero-cost preflight, explicit paid live research, redacted deployment fingerprints and offline validation.
 
@@ -175,7 +177,40 @@ $env:NVIDEA_MODEL_DEEP = "nvidia/Nemotron-3-Ultra-550b-a55b"
 
 Local semantic memory embeddings are deliberately opt-in. See [`docs/local-memory-embeddings.md`](docs/local-memory-embeddings.md) for the Ollama endpoint/model settings and privacy behavior.
 
-The explicit Serverless contract uses additional `NVIDEA_LIVE_*` configuration for Object Storage, deployment shape, key files and MysteryBox references. See [`docs/nebius-contract-probe.md`](docs/nebius-contract-probe.md). Never commit API keys, private keys or provider credentials.
+### Live Nebius research keys
+
+The Serverless research contract uses three independent RSA keypairs. Production validation requires RSA-2048 or stronger and rejects reuse of the same client keypair for dispatch signing and result encryption/decryption.
+
+```bash
+# Worker work-item encryption/decryption
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out worker-private.pem
+openssl pkey -in worker-private.pem -pubout -out worker-public.pem
+
+# Client dispatch signing/verification
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out client-signing-private.pem
+openssl pkey -in client-signing-private.pem -pubout -out client-signing-public.pem
+
+# Client result encryption/decryption — MUST be a different keypair
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out client-result-private.pem
+openssl pkey -in client-result-private.pem -pubout -out client-result-public.pem
+```
+
+For live client composition:
+
+```powershell
+$env:NVIDEA_LIVE_WORKER_PUBLIC_KEY_PEM_FILE = "C:\secure\worker-public.pem"
+$env:NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE = "C:\secure\client-signing-private.pem"
+$env:NVIDEA_LIVE_CLIENT_RESULT_PRIVATE_KEY_PEM_FILE = "C:\secure\client-result-private.pem"
+```
+
+The worker receives only the two distinct client public identities:
+
+- `NVIDEA_CLIENT_PUBLIC_KEY_PEM` — dispatch-binding verification only.
+- `NVIDEA_CLIENT_RESULT_PUBLIC_KEY_PEM` — protected-result encryption only.
+
+The client dispatch-signing private key and client result-decryption private key remain local. The worker private key should be supplied through Nebius MysteryBox. Never commit any private key or provider credential.
+
+The explicit Serverless contract uses additional `NVIDEA_LIVE_*` configuration for Object Storage, deployment shape, MysteryBox references and immutable worker images. See [`docs/nebius-contract-probe.md`](docs/nebius-contract-probe.md) and [`docs/nebius-research-worker.md`](docs/nebius-research-worker.md).
 
 ## Build and validation
 

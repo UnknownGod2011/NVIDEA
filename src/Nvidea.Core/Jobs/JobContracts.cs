@@ -45,7 +45,14 @@ public sealed record AgentJobRecord(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     DateTimeOffset? NextAttemptAt = null,
-    RemoteResearchProvenance? RemoteResearch = null);
+    RemoteResearchProvenance? RemoteResearch = null)
+{
+    /// <summary>
+    /// Privacy-safe, locally generated recovery guidance. This must never contain raw provider,
+    /// tool, webpage, or model text and must never itself authorize automatic retry or mutation.
+    /// </summary>
+    public string? FailureRecoveryGuidance { get; init; }
+}
 
 public sealed record JobStepResult(
     bool Completed,

@@ -17,6 +17,7 @@ public static class NebiusResearchDeploymentPreflight
 {
     public const string TransportRootEnvironmentVariable = "NVIDEA_TRANSPORT_ROOT";
     public const string ClientPublicKeyEnvironmentVariable = "NVIDEA_CLIENT_PUBLIC_KEY_PEM";
+    public const string ClientResultPublicKeyEnvironmentVariable = "NVIDEA_CLIENT_RESULT_PUBLIC_KEY_PEM";
 
     private static readonly string[] RequiredSecretEnvironmentVariables =
     {
@@ -98,6 +99,11 @@ public static class NebiusResearchDeploymentPreflight
                 throw new InvalidOperationException(
                     $"'{ClientPublicKeyEnvironmentVariable}' is a public verification identity and must be supplied as validated plaintext public-only RSA material, not as a secret reference.");
             }
+            if (secrets.ContainsKey(ClientResultPublicKeyEnvironmentVariable))
+            {
+                throw new InvalidOperationException(
+                    $"'{ClientResultPublicKeyEnvironmentVariable}' is a public result-encryption identity and must be supplied as validated plaintext public-only RSA material, not as a secret reference.");
+            }
 
             if (!plaintext.TryGetValue(ClientPublicKeyEnvironmentVariable, out var publicKey)
                 || string.IsNullOrWhiteSpace(publicKey))
@@ -105,8 +111,20 @@ public static class NebiusResearchDeploymentPreflight
                 throw new InvalidOperationException(
                     $"Live Nebius research requires '{ClientPublicKeyEnvironmentVariable}' so the worker can verify authoritative dispatch bindings.");
             }
+            if (!plaintext.TryGetValue(ClientResultPublicKeyEnvironmentVariable, out var resultPublicKey)
+                || string.IsNullOrWhiteSpace(resultPublicKey))
+            {
+                throw new InvalidOperationException(
+                    $"Live Nebius research requires '{ClientResultPublicKeyEnvironmentVariable}' so the worker can encrypt protected research results for the client.");
+            }
 
-            ValidateClientVerificationPublicKey(publicKey);
+            var canonicalVerificationPublicKey = ValidateClientVerificationPublicKey(publicKey);
+            var canonicalResultPublicKey = ClientResultEnvelopePublicKeyTrust.ValidateAndCanonicalize(resultPublicKey);
+            if (string.Equals(canonicalVerificationPublicKey, canonicalResultPublicKey, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "Client dispatch-signing and result-envelope encryption identities must use distinct RSA key pairs.");
+            }
         }
 
         if (plaintext.ContainsKey("NVIDEA_WORKER_PRIVATE_KEY_PEM"))

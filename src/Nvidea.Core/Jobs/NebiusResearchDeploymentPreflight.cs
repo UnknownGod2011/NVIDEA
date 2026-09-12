@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+
 namespace Nvidea.Core.Jobs;
 
 /// <summary>
@@ -107,6 +109,11 @@ public static class NebiusResearchDeploymentPreflight
             throw new InvalidOperationException("The worker private key must remain secret-backed.");
     }
 
+    /// <summary>
+    /// Enforces the single immutable-image policy used by credential-free deployment validation
+    /// and final live dry-run validation. Keeping this predicate here prevents the paid-run gate
+    /// and the early secret-read gate from drifting apart.
+    /// </summary>
     public static void ValidateDigestPinnedWorkerImage(string workerImage)
     {
         if (string.IsNullOrWhiteSpace(workerImage)
@@ -130,6 +137,37 @@ public static class NebiusResearchDeploymentPreflight
             throw new InvalidOperationException(
                 "Live Nebius research requires a digest-pinned worker image in registry/path@sha256:<64-hex> form; mutable tags are not accepted by the preflight.");
         }
+    }
+
+    /// <summary>
+    /// Validates the worker envelope key before any client signing key or provider credential is
+    /// required. Private PEM material is rejected explicitly because this value is propagated
+    /// through deployment/evidence plumbing that must remain public-only.
+    /// </summary>
+    public static void ValidateWorkerPublicKey(string pem)
+    {
+        if (string.IsNullOrWhiteSpace(pem)
+            || pem.Length > 65536
+            || pem.Any(char.IsControl))
+        {
+            throw new InvalidOperationException("The worker envelope public key is missing or invalid.");
+        }
+
+        if (pem.Contains("PRIVATE KEY", StringComparison.Ordinal))
+            throw new InvalidOperationException("The worker envelope public key must contain public-only RSA key material.");
+
+        using var rsa = RSA.Create();
+        try
+        {
+            rsa.ImportFromPem(pem);
+        }
+        catch (Exception exception) when (exception is CryptographicException or ArgumentException)
+        {
+            throw new InvalidOperationException("The worker envelope public key is not a valid RSA public key PEM.");
+        }
+
+        if (rsa.KeySize < 2048)
+            throw new InvalidOperationException("The worker envelope public key must be at least 2048 bits.");
     }
 
     /// <summary>

@@ -48,13 +48,7 @@ public sealed class NebiusObjectStorageClient : IProtectedResearchObjectStoreCli
         ArgumentNullException.ThrowIfNull(options);
         ValidateOptions(options);
 
-        var configuration = new AmazonS3Config
-        {
-            ServiceURL = options.Endpoint.TrimEnd('/'),
-            AuthenticationRegion = options.Region,
-            ForcePathStyle = false,
-            MaxErrorRetry = 0
-        };
+        var configuration = CreateSdkConfiguration(options);
 
         _client = new AmazonS3Client(
             new BasicAWSCredentials(options.AccessKeyId, options.SecretAccessKey),
@@ -63,6 +57,21 @@ public sealed class NebiusObjectStorageClient : IProtectedResearchObjectStoreCli
         _prefix = NormalizePrefix(options.Prefix);
         _operationTimeout = options.OperationTimeout ?? DefaultOperationTimeout;
         _maxRetries = options.MaxRetries;
+    }
+
+    internal static AmazonS3Config CreateSdkConfiguration(NebiusObjectStorageClientOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ValidateOptions(options);
+
+        return new AmazonS3Config
+        {
+            ServiceURL = options.Endpoint.TrimEnd('/'),
+            AuthenticationRegion = options.Region,
+            ForcePathStyle = false,
+            MaxErrorRetry = 0,
+            AllowAutoRedirect = false
+        };
     }
 
     public async Task PutIfAbsentAsync(

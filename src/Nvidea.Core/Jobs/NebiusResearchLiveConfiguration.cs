@@ -150,30 +150,19 @@ public static class NebiusResearchLiveConfigurationLoader
 
     internal static void ValidateObjectStorageEndpointAndRegion(string endpointValue, string region)
     {
-        if (string.IsNullOrWhiteSpace(region)
-            || region.Length > 64
-            || region.Any(static ch => !(char.IsLower(ch) || char.IsDigit(ch) || ch == '-'))
-            || region[0] == '-'
-            || region[^1] == '-')
+        var trustFailure = NebiusObjectStorageEndpointTrust.Validate(endpointValue, region);
+        switch (trustFailure)
         {
-            throw new InvalidOperationException("NVIDEA_LIVE_OBJECT_STORAGE_REGION must be a bounded Nebius region identifier.");
-        }
-
-        if (!Uri.TryCreate(endpointValue, UriKind.Absolute, out var endpoint)
-            || endpoint.Scheme != Uri.UriSchemeHttps
-            || !string.IsNullOrEmpty(endpoint.UserInfo)
-            || endpoint.Port != 443
-            || !string.IsNullOrEmpty(endpoint.Query)
-            || !string.IsNullOrEmpty(endpoint.Fragment)
-            || endpoint.AbsolutePath != "/")
-        {
-            throw new InvalidOperationException("NVIDEA_LIVE_OBJECT_STORAGE_ENDPOINT must be the trusted HTTPS regional Nebius Object Storage origin on port 443.");
-        }
-
-        var expectedHost = $"storage.{region}.nebius.cloud";
-        if (!string.Equals(endpoint.Host, expectedHost, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException("NVIDEA_LIVE_OBJECT_STORAGE_ENDPOINT must match NVIDEA_LIVE_OBJECT_STORAGE_REGION.");
+            case NebiusObjectStorageEndpointTrustFailure.InvalidRegion:
+                throw new InvalidOperationException("NVIDEA_LIVE_OBJECT_STORAGE_REGION must be a bounded ASCII Nebius region identifier.");
+            case NebiusObjectStorageEndpointTrustFailure.InvalidEndpoint:
+                throw new InvalidOperationException("NVIDEA_LIVE_OBJECT_STORAGE_ENDPOINT must be the trusted HTTPS regional Nebius Object Storage origin on port 443.");
+            case NebiusObjectStorageEndpointTrustFailure.RegionMismatch:
+                throw new InvalidOperationException("NVIDEA_LIVE_OBJECT_STORAGE_ENDPOINT must match NVIDEA_LIVE_OBJECT_STORAGE_REGION.");
+            case NebiusObjectStorageEndpointTrustFailure.None:
+                return;
+            default:
+                throw new InvalidOperationException("Nebius Object Storage endpoint trust validation failed closed.");
         }
     }
 

@@ -1,6 +1,12 @@
 namespace Nvidea.Core.Jobs;
 
 /// <summary>
+/// Credential-free Object Storage namespace identity used when proving that the desktop S3 client
+/// and the Serverless-mounted worker address the same protected transport objects.
+/// </summary>
+public sealed record NebiusObjectStorageTransportAlignment(string Bucket, string Prefix);
+
+/// <summary>
 /// Validates the deployment-only contract required by Nvidea.Worker before a live Nebius
 /// Serverless research job is submitted. This deliberately validates references/topology,
 /// never secret values.
@@ -17,7 +23,18 @@ public static class NebiusResearchDeploymentPreflight
         "NVIDEA_WORKER_PRIVATE_KEY_PEM"
     };
 
-    public static void Validate(NebiusResearchDispatchOptions options)
+    public static void Validate(NebiusResearchDispatchOptions options) =>
+        ValidateCore(options, requireClientPublicKey: true);
+
+    /// <summary>
+    /// Validates every credential-free deployment-shape invariant that can be established before
+    /// the client signing key is loaded. The final <see cref="Validate"/> call remains mandatory
+    /// after the client public key has been derived from the private key.
+    /// </summary>
+    public static void ValidateCredentialFreeTopology(NebiusResearchDispatchOptions options) =>
+        ValidateCore(options, requireClientPublicKey: false);
+
+    private static void ValidateCore(NebiusResearchDispatchOptions options, bool requireClientPublicKey)
     {
         ArgumentNullException.ThrowIfNull(options);
 
@@ -70,15 +87,18 @@ public static class NebiusResearchDeploymentPreflight
             ValidateMysteryBoxSecretReference(requiredSecret, secretRef);
         }
 
-        var hasClientPublicKey =
-            (plaintext.TryGetValue(ClientPublicKeyEnvironmentVariable, out var publicKey) && !string.IsNullOrWhiteSpace(publicKey))
-            || (secrets.TryGetValue(ClientPublicKeyEnvironmentVariable, out var publicKeySecret)
-                && publicKeySecret is not null
-                && (!string.IsNullOrWhiteSpace(publicKeySecret.SecretId) || !string.IsNullOrWhiteSpace(publicKeySecret.VersionId)));
-        if (!hasClientPublicKey)
+        if (requireClientPublicKey)
         {
-            throw new InvalidOperationException(
-                $"Live Nebius research requires '{ClientPublicKeyEnvironmentVariable}' so the worker can verify authoritative dispatch bindings.");
+            var hasClientPublicKey =
+                (plaintext.TryGetValue(ClientPublicKeyEnvironmentVariable, out var publicKey) && !string.IsNullOrWhiteSpace(publicKey))
+                || (secrets.TryGetValue(ClientPublicKeyEnvironmentVariable, out var publicKeySecret)
+                    && publicKeySecret is not null
+                    && (!string.IsNullOrWhiteSpace(publicKeySecret.SecretId) || !string.IsNullOrWhiteSpace(publicKeySecret.VersionId)));
+            if (!hasClientPublicKey)
+            {
+                throw new InvalidOperationException(
+                    $"Live Nebius research requires '{ClientPublicKeyEnvironmentVariable}' so the worker can verify authoritative dispatch bindings.");
+            }
         }
 
         if (plaintext.ContainsKey("NVIDEA_WORKER_PRIVATE_KEY_PEM"))
@@ -121,24 +141,23 @@ public static class NebiusResearchDeploymentPreflight
 
     /// <summary>
     /// Proves that the native S3 client and the Serverless-mounted worker resolve the protected
-    /// transport namespaces to the same bucket objects. The client prefix must equal the mounted
-    /// volume SourcePath: for example client prefix "nvidea-research" and SourcePath
-    /// "nvidea-research" make the worker see work-items/... directly under NVIDEA_TRANSPORT_ROOT.
+    /// transport namespaces to the same bucket objects without accepting any credential-bearing
+    /// client configuration. The client prefix must equal the mounted volume SourcePath.
     /// </summary>
     public static void ValidateObjectStorageAlignment(
         NebiusResearchDispatchOptions dispatchOptions,
-        NebiusObjectStorageClientOptions objectStorageOptions)
+        NebiusObjectStorageTransportAlignment alignment)
     {
         ArgumentNullException.ThrowIfNull(dispatchOptions);
-        ArgumentNullException.ThrowIfNull(objectStorageOptions);
-        Validate(dispatchOptions);
+        ArgumentNullException.ThrowIfNull(alignment);
+        ValidateCredentialFreeTopology(dispatchOptions);
 
         var plaintext = dispatchOptions.EnvironmentVariables ?? new Dictionary<string, string>();
         var transportRoot = plaintext[TransportRootEnvironmentVariable].Trim();
         var volume = (dispatchOptions.Volumes ?? Array.Empty<NebiusServerlessVolumeMount>())
             .Single(candidate => string.Equals(candidate.ContainerPath, transportRoot, StringComparison.Ordinal));
 
-        var bucket = NormalizeBucket(objectStorageOptions.Bucket);
+        var bucket = NormalizeBucket(alignment.Bucket);
         var source = NormalizeBucket(volume.Source);
         if (!string.Equals(bucket, source, StringComparison.Ordinal))
         {
@@ -146,13 +165,27 @@ public static class NebiusResearchDeploymentPreflight
                 "Native Object Storage bucket must exactly match the Serverless research transport volume source.");
         }
 
-        var clientPrefix = NormalizeObjectPrefix(objectStorageOptions.Prefix, "Object Storage client prefix");
+        var clientPrefix = NormalizeObjectPrefix(alignment.Prefix, "Object Storage client prefix");
         var mountedSourcePath = NormalizeObjectPrefix(volume.SourcePath ?? string.Empty, "Serverless volume source path");
         if (!string.Equals(clientPrefix, mountedSourcePath, StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
                 "Native Object Storage prefix must exactly match the Serverless research transport volume SourcePath.");
         }
+    }
+
+    /// <summary>
+    /// Backward-compatible adapter for callers that already hold a validated runtime client
+    /// options object. Secret fields are deliberately discarded before alignment validation.
+    /// </summary>
+    public static void ValidateObjectStorageAlignment(
+        NebiusResearchDispatchOptions dispatchOptions,
+        NebiusObjectStorageClientOptions objectStorageOptions)
+    {
+        ArgumentNullException.ThrowIfNull(objectStorageOptions);
+        ValidateObjectStorageAlignment(
+            dispatchOptions,
+            new NebiusObjectStorageTransportAlignment(objectStorageOptions.Bucket, objectStorageOptions.Prefix));
     }
 
     private static string? NormalizeMysteryBoxId(string? value)

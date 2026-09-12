@@ -40,9 +40,9 @@ public static class NebiusResearchLiveConfigurationLoader
         var objectStorageRegion = RequiredEnvironment(environmentReader, "NVIDEA_LIVE_OBJECT_STORAGE_REGION");
         ValidateObjectStorageEndpointAndRegion(objectStorageEndpoint, objectStorageRegion);
 
-        // Load the credential-free deployment topology before provider secrets. The serverless
-        // access token and Object Storage static credentials are intentionally deferred until the
-        // dispatch/MysteryBox/volume/bucket alignment contract has already passed locally.
+        // Load the credential-free deployment topology before provider secrets or the client
+        // signing private key. The final derived-public-key identity check is still performed
+        // after all shape/alignment checks that do not require private material have succeeded.
         var projectId = RequiredEnvironment(environmentReader, "NVIDEA_LIVE_SERVERLESS_PROJECT_ID");
         var workerImage = RequiredEnvironment(environmentReader, "NVIDEA_LIVE_WORKER_IMAGE");
         var subnetId = RequiredEnvironment(environmentReader, "NVIDEA_LIVE_SUBNET_ID");
@@ -57,22 +57,6 @@ public static class NebiusResearchLiveConfigurationLoader
         var transportSourcePath = OptionalEnvironment(environmentReader, "NVIDEA_LIVE_TRANSPORT_SOURCE_PATH") ?? objectStoragePrefix;
         var objectStorageBucket = RequiredEnvironment(environmentReader, "NVIDEA_LIVE_OBJECT_STORAGE_BUCKET");
         var workerPublicKeyPem = ReadRequiredPemFile(environmentReader, "NVIDEA_LIVE_WORKER_PUBLIC_KEY_PEM_FILE");
-        var clientPrivateKeyPem = ReadRequiredPemFile(environmentReader, "NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE");
-
-        string clientPublicKeyPem;
-        using (var clientRsa = RSA.Create())
-        {
-            try
-            {
-                clientRsa.ImportFromPem(clientPrivateKeyPem);
-            }
-            catch (Exception exception) when (exception is CryptographicException or ArgumentException)
-            {
-                throw new InvalidOperationException("NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE does not contain a valid RSA private key.");
-            }
-
-            clientPublicKeyPem = clientRsa.ExportSubjectPublicKeyInfoPem();
-        }
 
         var secretEnvironment = new Dictionary<string, NebiusMysteryBoxSecretRef>(StringComparer.Ordinal)
         {
@@ -89,13 +73,12 @@ public static class NebiusResearchLiveConfigurationLoader
                 "NVIDEA_LIVE_SECRET_WORKER_PRIVATE_KEY_ID",
                 "NVIDEA_LIVE_SECRET_WORKER_PRIVATE_KEY_VERSION_ID")
         };
-        var plainEnvironment = new Dictionary<string, string>(StringComparer.Ordinal)
+        var topologyPlainEnvironment = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            [NebiusResearchDeploymentPreflight.TransportRootEnvironmentVariable] = workerTransportRoot,
-            [NebiusResearchDeploymentPreflight.ClientPublicKeyEnvironmentVariable] = clientPublicKeyPem
+            [NebiusResearchDeploymentPreflight.TransportRootEnvironmentVariable] = workerTransportRoot
         };
 
-        var dispatchOptions = new NebiusResearchDispatchOptions(
+        var topologyDispatchOptions = new NebiusResearchDispatchOptions(
             WorkerImage: workerImage,
             WorkerPublicKeyPem: workerPublicKeyPem,
             ContainerCommand: "dotnet",
@@ -104,7 +87,7 @@ public static class NebiusResearchLiveConfigurationLoader
             Timeout: timeout,
             SubnetId: subnetId,
             Disk: new NebiusServerlessDiskSpec(diskType, diskSizeBytes),
-            EnvironmentVariables: plainEnvironment,
+            EnvironmentVariables: topologyPlainEnvironment,
             SecretEnvironmentVariables: secretEnvironment,
             Volumes: new[]
             {
@@ -115,21 +98,38 @@ public static class NebiusResearchLiveConfigurationLoader
                     transportSourcePath)
             });
 
-        // This topology-only options value contains no provider credential. Alignment validation
-        // consumes only the trusted endpoint/region plus bucket/prefix topology; the real static
-        // keys are not requested until this local gate succeeds.
-        var topologyOnlyObjectStorageOptions = new NebiusObjectStorageClientOptions(
-            Endpoint: objectStorageEndpoint,
-            Region: objectStorageRegion,
-            Bucket: objectStorageBucket,
-            AccessKeyId: "credential-not-read",
-            SecretAccessKey: "credential-not-read",
-            Prefix: objectStoragePrefix,
-            OperationTimeout: TimeSpan.FromSeconds(30),
-            MaxRetries: 2);
+        // Alignment accepts only the credential-free namespace identity. Provider static keys and
+        // client signing material cannot flow into this stage by construction.
         NebiusResearchDeploymentPreflight.ValidateObjectStorageAlignment(
-            dispatchOptions,
-            topologyOnlyObjectStorageOptions);
+            topologyDispatchOptions,
+            new NebiusObjectStorageTransportAlignment(objectStorageBucket, objectStoragePrefix));
+
+        // Only now load the client signing private key and derive the public identity that the
+        // worker verifies. The final full preflight below still requires this derived public key.
+        var clientPrivateKeyPem = ReadRequiredPemFile(environmentReader, "NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE");
+        string clientPublicKeyPem;
+        using (var clientRsa = RSA.Create())
+        {
+            try
+            {
+                clientRsa.ImportFromPem(clientPrivateKeyPem);
+            }
+            catch (Exception exception) when (exception is CryptographicException or ArgumentException)
+            {
+                throw new InvalidOperationException("NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE does not contain a valid RSA private key.");
+            }
+
+            clientPublicKeyPem = clientRsa.ExportSubjectPublicKeyInfoPem();
+        }
+
+        var finalPlainEnvironment = new Dictionary<string, string>(topologyPlainEnvironment, StringComparer.Ordinal)
+        {
+            [NebiusResearchDeploymentPreflight.ClientPublicKeyEnvironmentVariable] = clientPublicKeyPem
+        };
+        var dispatchOptions = topologyDispatchOptions with
+        {
+            EnvironmentVariables = finalPlainEnvironment
+        };
 
         var serverlessAccessToken = RequiredEnvironment(environmentReader, "NVIDEA_LIVE_SERVERLESS_ACCESS_TOKEN");
         var objectStorageOptions = new NebiusObjectStorageClientOptions(

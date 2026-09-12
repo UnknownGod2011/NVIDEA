@@ -62,8 +62,7 @@ public static class ResearchResultProtector
         string clientPublicKeyPem)
     {
         ValidateResult(result);
-        if (string.IsNullOrWhiteSpace(clientPublicKeyPem))
-            throw new ArgumentException("Client public key is required.", nameof(clientPublicKeyPem));
+        using var rsa = ClientResultEnvelopePublicKeyTrust.CreateValidatedRsa(clientPublicKeyPem);
 
         var plaintext = JsonSerializer.SerializeToUtf8Bytes(
             result,
@@ -86,8 +85,6 @@ public static class ResearchResultProtector
             using (var aes = new AesGcm(dataKey, TagBytes))
                 aes.Encrypt(nonce, plaintext, ciphertext, tag, associatedData);
 
-            using var rsa = RSA.Create();
-            rsa.ImportFromPem(clientPublicKeyPem);
             var wrappedKey = rsa.Encrypt(dataKey, RSAEncryptionPadding.OaepSHA256);
 
             return new ProtectedResearchResultEnvelope(
@@ -116,8 +113,6 @@ public static class ResearchResultProtector
         ArgumentNullException.ThrowIfNull(envelope);
         if (!string.Equals(envelope.ProtocolVersion, ProtocolVersion, StringComparison.Ordinal))
             throw new InvalidOperationException("Unsupported remote research result protocol version.");
-        if (string.IsNullOrWhiteSpace(clientPrivateKeyPem))
-            throw new ArgumentException("Client private key is required.", nameof(clientPrivateKeyPem));
 
         ValidateOpaqueId(envelope.OpaqueWorkItemId);
         ValidateRemoteJobId(envelope.RemoteJobId);
@@ -127,6 +122,7 @@ public static class ResearchResultProtector
         if (envelope.ExpiresAt <= envelope.CompletedAt || envelope.ExpiresAt - envelope.CompletedAt > MaxLifetime)
             throw new InvalidOperationException("Remote research result lifetime is invalid.");
 
+        using var rsa = ClientResultEnvelopePrivateKeyTrust.CreateValidatedRsa(clientPrivateKeyPem);
         var wrappedKey = DecodeBase64(envelope.WrappedDataKey, "wrapped data key");
         var nonce = DecodeBase64(envelope.Nonce, "nonce");
         var ciphertext = DecodeBase64(envelope.Ciphertext, "ciphertext");
@@ -134,8 +130,6 @@ public static class ResearchResultProtector
         if (nonce.Length != NonceBytes || tag.Length != TagBytes || ciphertext.Length > MaxPlaintextBytes)
             throw new InvalidOperationException("Remote research result has invalid cryptographic dimensions.");
 
-        using var rsa = RSA.Create();
-        rsa.ImportFromPem(clientPrivateKeyPem);
         var dataKey = rsa.Decrypt(wrappedKey, RSAEncryptionPadding.OaepSHA256);
         if (dataKey.Length != DataKeyBytes)
         {

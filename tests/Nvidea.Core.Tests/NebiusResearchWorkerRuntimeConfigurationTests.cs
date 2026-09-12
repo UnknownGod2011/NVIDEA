@@ -22,6 +22,9 @@ public sealed class NebiusResearchWorkerRuntimeConfigurationTests
         });
 
         Assert.Equal("/mnt/nvidea", configuration.BootstrapTrust.TransportRoot);
+        Assert.NotEqual(
+            configuration.BootstrapTrust.ClientVerificationPublicKeyPem,
+            configuration.BootstrapTrust.ClientResultEncryptionPublicKeyPem);
         Assert.Equal("nebius-test-key", configuration.Nebius.ApiKey);
         Assert.Equal("tavily-test-key", configuration.Tavily.ApiKey);
         Assert.Equal(TimeSpan.FromSeconds(3), configuration.BindingPollInterval);
@@ -35,6 +38,7 @@ public sealed class NebiusResearchWorkerRuntimeConfigurationTests
 
         AssertReadBefore(reads, "NVIDEA_TRANSPORT_ROOT", "NVIDEA_WORKER_PRIVATE_KEY_PEM");
         AssertReadBefore(reads, "NVIDEA_CLIENT_PUBLIC_KEY_PEM", "NVIDEA_WORKER_PRIVATE_KEY_PEM");
+        AssertReadBefore(reads, "NVIDEA_CLIENT_RESULT_PUBLIC_KEY_PEM", "NVIDEA_WORKER_PRIVATE_KEY_PEM");
         AssertReadBefore(reads, "NVIDEA_BINDING_POLL_SECONDS", "NVIDEA_WORKER_PRIVATE_KEY_PEM");
         AssertReadBefore(reads, "NVIDEA_BINDING_WAIT_SECONDS", "NVIDEA_WORKER_PRIVATE_KEY_PEM");
         AssertReadBefore(reads, "NVIDEA_NEBIUS_BASE_URL", "NVIDEA_WORKER_PRIVATE_KEY_PEM");
@@ -53,6 +57,7 @@ public sealed class NebiusResearchWorkerRuntimeConfigurationTests
         {
             ["NVIDEA_TRANSPORT_ROOT"] = "relative/path",
             ["NVIDEA_CLIENT_PUBLIC_KEY_PEM"] = "not-used",
+            ["NVIDEA_CLIENT_RESULT_PUBLIC_KEY_PEM"] = "not-used",
             ["NEBIUS_API_KEY"] = "must-not-be-read",
             ["TAVILY_API_KEY"] = "must-not-be-read",
             ["NVIDEA_WORKER_PRIVATE_KEY_PEM"] = "must-not-be-read"
@@ -183,11 +188,14 @@ public sealed class NebiusResearchWorkerRuntimeConfigurationTests
         Assert.Equal(expected, canonical);
     }
 
-    private static Dictionary<string, string> CreateValues(string clientPublicKey, string workerPrivateKey) =>
-        new(StringComparer.Ordinal)
+    private static Dictionary<string, string> CreateValues(string clientPublicKey, string workerPrivateKey)
+    {
+        using var result = RSA.Create(2048);
+        return new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["NVIDEA_TRANSPORT_ROOT"] = "/mnt/nvidea",
             ["NVIDEA_CLIENT_PUBLIC_KEY_PEM"] = clientPublicKey,
+            ["NVIDEA_CLIENT_RESULT_PUBLIC_KEY_PEM"] = result.ExportSubjectPublicKeyInfoPem(),
             ["NVIDEA_BINDING_POLL_SECONDS"] = "3",
             ["NVIDEA_BINDING_WAIT_SECONDS"] = "45",
             ["NVIDEA_NEBIUS_BASE_URL"] = "https://api.tokenfactory.us-central1.nebius.com/v1/",
@@ -198,6 +206,7 @@ public sealed class NebiusResearchWorkerRuntimeConfigurationTests
             ["TAVILY_API_KEY"] = "tavily-test-key",
             ["NVIDEA_WORKER_PRIVATE_KEY_PEM"] = workerPrivateKey
         };
+    }
 
     private static void AssertNoSecretsRead(IReadOnlyCollection<string> reads)
     {

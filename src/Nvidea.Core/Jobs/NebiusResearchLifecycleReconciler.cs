@@ -278,7 +278,8 @@ public sealed class NebiusResearchLifecycleReconciler
                     "research.remote_failed",
                     failureEvidence.AuditSummary,
                     currentTime,
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken,
+                    providerFailureCode: remote.Diagnostic?.Code).ConfigureAwait(false);
             }
 
             case NebiusRemoteJobState.Cancelled:
@@ -456,7 +457,8 @@ public sealed class NebiusResearchLifecycleReconciler
         string eventType,
         string summary,
         DateTimeOffset now,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? providerFailureCode = null)
     {
         var replacement = current with
         {
@@ -464,7 +466,14 @@ public sealed class NebiusResearchLifecycleReconciler
             ExecutionLocation = JobExecutionLocation.Local,
             LastError = lastError,
             NextAttemptAt = null,
-            RemoteResearch = provenance with { State = provenanceState, TerminalAt = now },
+            RemoteResearch = provenance with
+            {
+                State = provenanceState,
+                TerminalAt = now,
+                ProviderFailureCode = provenanceState == RemoteResearchProvenanceState.RemoteFailed
+                    ? providerFailureCode
+                    : null
+            },
             UpdatedAt = now
         };
         if (!await _store.CompareExchangeAsync(current, replacement, cancellationToken).ConfigureAwait(false))

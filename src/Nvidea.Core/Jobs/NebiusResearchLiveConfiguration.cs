@@ -40,7 +40,9 @@ public static class NebiusResearchLiveConfigurationLoader
         var objectStorageRegion = RequiredEnvironment(environmentReader, "NVIDEA_LIVE_OBJECT_STORAGE_REGION");
         ValidateObjectStorageEndpointAndRegion(objectStorageEndpoint, objectStorageRegion);
 
-        var serverlessAccessToken = RequiredEnvironment(environmentReader, "NVIDEA_LIVE_SERVERLESS_ACCESS_TOKEN");
+        // Load the credential-free deployment topology before provider secrets. The serverless
+        // access token and Object Storage static credentials are intentionally deferred until the
+        // dispatch/MysteryBox/volume/bucket alignment contract has already passed locally.
         var projectId = RequiredEnvironment(environmentReader, "NVIDEA_LIVE_SERVERLESS_PROJECT_ID");
         var workerImage = RequiredEnvironment(environmentReader, "NVIDEA_LIVE_WORKER_IMAGE");
         var subnetId = RequiredEnvironment(environmentReader, "NVIDEA_LIVE_SUBNET_ID");
@@ -53,18 +55,9 @@ public static class NebiusResearchLiveConfigurationLoader
         var workerTransportRoot = OptionalEnvironment(environmentReader, "NVIDEA_LIVE_WORKER_TRANSPORT_ROOT") ?? "/mnt/nvidea-research";
         var objectStoragePrefix = OptionalEnvironment(environmentReader, "NVIDEA_LIVE_OBJECT_STORAGE_PREFIX") ?? "nvidea-research";
         var transportSourcePath = OptionalEnvironment(environmentReader, "NVIDEA_LIVE_TRANSPORT_SOURCE_PATH") ?? objectStoragePrefix;
+        var objectStorageBucket = RequiredEnvironment(environmentReader, "NVIDEA_LIVE_OBJECT_STORAGE_BUCKET");
         var workerPublicKeyPem = ReadRequiredPemFile(environmentReader, "NVIDEA_LIVE_WORKER_PUBLIC_KEY_PEM_FILE");
         var clientPrivateKeyPem = ReadRequiredPemFile(environmentReader, "NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE");
-
-        var objectStorageOptions = new NebiusObjectStorageClientOptions(
-            Endpoint: objectStorageEndpoint,
-            Region: objectStorageRegion,
-            Bucket: RequiredEnvironment(environmentReader, "NVIDEA_LIVE_OBJECT_STORAGE_BUCKET"),
-            AccessKeyId: RequiredEnvironment(environmentReader, "NVIDEA_LIVE_OBJECT_STORAGE_ACCESS_KEY_ID"),
-            SecretAccessKey: RequiredEnvironment(environmentReader, "NVIDEA_LIVE_OBJECT_STORAGE_SECRET_ACCESS_KEY"),
-            Prefix: objectStoragePrefix,
-            OperationTimeout: TimeSpan.FromSeconds(30),
-            MaxRetries: 2);
 
         string clientPublicKeyPem;
         using (var clientRsa = RSA.Create())
@@ -121,6 +114,33 @@ public static class NebiusResearchLiveConfigurationLoader
                     "READ_WRITE",
                     transportSourcePath)
             });
+
+        // This topology-only options value contains no provider credential. Alignment validation
+        // consumes only the trusted endpoint/region plus bucket/prefix topology; the real static
+        // keys are not requested until this local gate succeeds.
+        var topologyOnlyObjectStorageOptions = new NebiusObjectStorageClientOptions(
+            Endpoint: objectStorageEndpoint,
+            Region: objectStorageRegion,
+            Bucket: objectStorageBucket,
+            AccessKeyId: "credential-not-read",
+            SecretAccessKey: "credential-not-read",
+            Prefix: objectStoragePrefix,
+            OperationTimeout: TimeSpan.FromSeconds(30),
+            MaxRetries: 2);
+        NebiusResearchDeploymentPreflight.ValidateObjectStorageAlignment(
+            dispatchOptions,
+            topologyOnlyObjectStorageOptions);
+
+        var serverlessAccessToken = RequiredEnvironment(environmentReader, "NVIDEA_LIVE_SERVERLESS_ACCESS_TOKEN");
+        var objectStorageOptions = new NebiusObjectStorageClientOptions(
+            Endpoint: objectStorageEndpoint,
+            Region: objectStorageRegion,
+            Bucket: objectStorageBucket,
+            AccessKeyId: RequiredEnvironment(environmentReader, "NVIDEA_LIVE_OBJECT_STORAGE_ACCESS_KEY_ID"),
+            SecretAccessKey: RequiredEnvironment(environmentReader, "NVIDEA_LIVE_OBJECT_STORAGE_SECRET_ACCESS_KEY"),
+            Prefix: objectStoragePrefix,
+            OperationTimeout: TimeSpan.FromSeconds(30),
+            MaxRetries: 2);
 
         var report = NebiusResearchLivePreflightReporter.ValidateAndBuild(
             dispatchOptions,

@@ -22,7 +22,7 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Token Factory, Tavily, Serverless, remote worker, model-catalog, contract-probe, and Object Storage credential-bearing paths have explicit endpoint and redirect trust boundaries.
 - Live configuration validates credential-free topology/alignment before local signing material or provider credentials.
 - Worker private envelope identity is centralized in `WorkerEnvelopePrivateKeyTrust`: bounded PEM, private RSA >=2048 bits, OAEP-SHA256 capability proof, canonical PKCS#8, and probe zeroization. `ResearchWorkItemProtector.Unprotect(...)` reuses it directly.
-- Worker public envelope identity now has a matching `WorkerEnvelopePublicKeyTrust` primitive: bounded PEM, public-only RSA >=2048 bits, OAEP-SHA256 encryption capability proof, canonical SubjectPublicKeyInfo output, and temporary probe zeroization.
+- Worker public envelope identity is centralized in `WorkerEnvelopePublicKeyTrust`: bounded PEM, public-only RSA >=2048 bits, OAEP-SHA256 encryption capability proof, canonical SubjectPublicKeyInfo output, and temporary probe zeroization. `ResearchWorkItemProtector.Protect(...)` now reuses it directly.
 - Client dispatch-signing key is usable private RSA >=2048 bits; client verification identity is public-only RSA >=2048 bits.
 - `NebiusResearchWorkerRuntimeConfiguration` is the single worker environment boundary. Credential-free bootstrap/timing/destination/model checks run before worker-private-key validation, then provider secret reads.
 - Windows voice invocation is local and review-first. Memory maintenance re-indexes stale/missing embeddings with privacy-safe previews and explicit Sensitive/Restricted opt-ins.
@@ -40,31 +40,34 @@ Added Tavily Extract enrichment, evidence ranking/staleness/diversity, restart-s
 Added research/browser product runtimes, WPF lifecycle-aware research, restart-safe browser-goal recovery, one-shot cloud approval, local review-first voice, semantic-memory migration UI, positive/adversarial Personal AI evaluators, prompt-injection mutation approval hardening, unified judging evidence, deterministic demo-package validation, and adversarial validator tests.
 
 ### 2026-09-11 to 2026-09-12 — Provider trust + worker startup hardening
-Hardened Token Factory, Tavily, Serverless, model-catalog, contract-probe, Object Storage, and worker credential paths against suffix lookalikes, user-info, wrong ports, unsafe redirects, cross-region storage origins, Unicode-confusable regions, mutable worker images, RSA role confusion, malformed PEM, and early secret reads. Added credential-free topology/alignment, strict client signing/verification trust, testable worker bootstrap/runtime loading, and protocol-level worker private-key trust.
+Hardened Token Factory, Tavily, Serverless, model-catalog, contract-probe, Object Storage, and worker credential paths against suffix lookalikes, user-info, wrong ports, unsafe redirects, cross-region storage origins, Unicode-confusable regions, mutable worker images, RSA role confusion, malformed PEM, and early secret reads. Added credential-free topology/alignment, strict client signing/verification trust, testable worker bootstrap/runtime loading, protocol-level worker private-key trust, and a shared worker-public-key trust primitive.
 
-### 2026-09-12 — Worker public envelope trust primitive
+### 2026-09-12 — Protocol-level worker public encryption trust
 Completed this run:
-- Re-read this ledger and inspected `ResearchWorkItemProtector.Protect(...)`, `Unprotect(...)`, existing worker private-key trust, and focused protocol tests before editing.
-- Added `WorkerEnvelopePublicKeyTrust` as the single intended trust primitive for the worker public RSA identity used to wrap remote research data keys.
-- New policy rejects missing, oversized (>65536 characters), control-character-bearing, malformed, private, and RSA <2048-bit material; allows CR/LF PEM formatting; verifies OAEP-SHA256 encryption capability; canonicalizes accepted material to SubjectPublicKeyInfo PEM; and zeroes temporary probe/wrapped buffers.
-- Expanded `ResearchWorkItemProtectorKeyTrustTests` with direct coverage for valid public-key canonicalization plus private, RSA-1024, malformed, oversized, and embedded-control-character rejection.
-- Existing private-key protocol tests remain intact and unchanged in behavior.
+- Re-read this ledger completely and inspected the current main branch, recent commits, `ResearchWorkItemProtector`, `WorkerEnvelopePublicKeyTrust`, deployment preflight, and focused key-trust tests before editing.
+- Verified the repository boundary before each mutation; every write targeted exactly `UnknownGod2011/NVIDEA`.
+- Replaced `ResearchWorkItemProtector.Protect(...)`'s direct `RSA.ImportFromPem(...)` path with `WorkerEnvelopePublicKeyTrust.CreateValidatedRsa(...)`.
+- Lower-level callers that bypass deployment preflight can no longer use private, RSA <2048-bit, malformed, oversized, or control-character-bearing worker encryption-key material for protected work-item wrapping.
+- The protocol now validates the worker encryption identity before serializing/encrypting the work item or generating the random envelope data key/nonce, reducing work performed after an invalid trust input.
+- Added focused protocol regressions for a valid RSA-2048 round trip and rejection of private, weak RSA-1024, malformed, oversized (>65536 chars), and embedded-control-character worker public-key inputs.
 
 Engineering commits before this ledger update:
-- `b916ea4e703f973ca1a48d3f30ec08a67690fbb6` — centralize worker envelope public-key trust.
-- `4fd8dc46a12c533167e064a80f67ccf8a2b5f884` — add worker public envelope trust regressions.
+- `e8a5437d6c416705dfa8bc252ef6fe5c8dc908f1` — enforce worker public key trust at protocol boundary.
+- `754cc9e94a3b69ee8b80ad29ef690519413c8445` — cover protocol public key trust boundary.
 
 Validation / evidence:
-- GitHub compare from prior ledger head `427bd648f502e25b51d5453ffa3a26b2b8501d2c` to engineering head `4fd8dc46a12c533167e064a80f67ccf8a2b5f884` reports **2 commits ahead / 0 behind** and exactly two intended changed files.
-- Static review confirms the new public trust primitive mirrors the existing private trust boundary’s bounded-input, RSA-strength, OAEP-SHA256, canonicalization, and zeroization discipline.
-- `dotnet --info` remains unavailable in this execution environment, so no compile, xUnit, WPF, Worker, evaluator, or tool PASS is claimed.
+- GitHub compare from prior ledger head `a61507c1e8d50e605c03ebfce45a297f3dac0510` to engineering head `754cc9e94a3b69ee8b80ad29ef690519413c8445` reports **2 commits ahead / 0 behind** and exactly two intended changed files: `src/Nvidea.Core/Jobs/NebiusResearchDispatch.cs` and `tests/Nvidea.Core.Tests/ResearchWorkItemProtectorKeyTrustTests.cs`.
+- Static review confirms `Protect(...)` and `Unprotect(...)` now both use dedicated shared RSA role/capability trust primitives at the protocol boundary.
+- `dotnet --info` still returns `dotnet: command not found` in this execution environment, so no compile, xUnit, WPF, Worker, evaluator, or tool PASS is claimed.
 - No GitHub Actions workflow was triggered merely to manufacture a green signal.
 - No live Nebius, Tavily, Object Storage, Serverless, Playwright, Ollama, or paid inference operation was performed.
 
 Security / privacy / failure review:
-- The new primitive prevents accidental private worker-key material from being accepted as an encryption identity and rejects weak/malformed/oversized/control-character input before use.
-- It does **not yet** close the lower-level `ResearchWorkItemProtector.Protect(...)` bypass by itself: that method still directly imports its caller-supplied PEM. This is intentionally recorded as unfinished rather than claimed complete.
+- The worker encryption-key role is now enforced at the actual cryptographic protocol boundary, not only at deployment/configuration layers.
+- Private worker key material cannot accidentally be accepted by `Protect(...)` and copied into a public-encryption role.
+- Weak/malformed/oversized/control-character input fails before protected payload generation.
 - Existing encrypted transport, signed dispatch binding, provider trust, cancellation/recovery, Tavily/Nemotron behavior, and Windows product behavior were not removed or weakened.
+- Deployment preflight still has its own `ValidateWorkerPublicKey(...)` implementation instead of delegating to `WorkerEnvelopePublicKeyTrust`; this remaining policy-drift risk is intentionally recorded as unfinished.
 
 ## Known Blockers / Risks
 - No usable .NET 8 executable is available in this environment. Core/WPF/Worker code, XAML, tests, evaluator tools, evidence verifier, demo validator, catalog checker, and recent focused RSA/secret-ordering regressions still require a real restore/build/run.
@@ -75,7 +78,7 @@ Security / privacy / failure review:
 - Real `embeddinggemma` semantic quality/ranking calibration still requires a local Ollama evaluation corpus.
 - No live Object Storage bucket/static key, digest-pinned registry image, MysteryBox refs, subnet, Serverless token, or real Serverless job has been provisioned/validated here.
 - Exact provider acceptance of Serverless Object Storage `Source` / `SourcePath` still requires a real job.
-- `ResearchWorkItemProtector.Protect(...)` still directly imports caller-supplied worker public PEM instead of invoking `WorkerEnvelopePublicKeyTrust`.
+- `NebiusResearchDeploymentPreflight.ValidateWorkerPublicKey(...)` still duplicates the worker-public-key policy and can drift from `WorkerEnvelopePublicKeyTrust` until it delegates to the shared primitive.
 
 ## Single Best Next Task
-First obtain a .NET 8-capable Windows execution signal and restore/build `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, all evaluator/evidence tools, and focused tests; fix every compile/runtime defect before treating evidence as judge-ready. If executable validation remains unavailable, wire `WorkerEnvelopePublicKeyTrust.CreateValidatedRsa(...)` directly into `ResearchWorkItemProtector.Protect(...)`, add protocol-level tests proving private/weak/malformed/oversized/control-character public-key inputs fail before data-key wrapping, and then reuse the same primitive anywhere deployment preflight validates the worker encryption identity so policy cannot drift.
+First obtain a .NET 8-capable Windows execution signal and restore/build `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, all evaluator/evidence tools, and focused tests; fix every compile/runtime defect before treating evidence as judge-ready. If executable validation remains unavailable, replace `NebiusResearchDeploymentPreflight.ValidateWorkerPublicKey(...)` with delegation to `WorkerEnvelopePublicKeyTrust.ValidateAndCanonicalize(...)` (or `CreateValidatedRsa(...)`), add focused deployment-preflight regressions proving private/weak/malformed/oversized/control-character worker public-key material is rejected by the same shared policy, then audit `ResearchResultProtector` client public/private RSA handling for an equivalent lower-level role/capability trust boundary.

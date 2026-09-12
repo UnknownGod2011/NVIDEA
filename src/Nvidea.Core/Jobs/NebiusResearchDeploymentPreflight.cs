@@ -38,6 +38,8 @@ public static class NebiusResearchDeploymentPreflight
     {
         ArgumentNullException.ThrowIfNull(options);
 
+        ValidateDigestPinnedWorkerImage(options.WorkerImage);
+
         var plaintext = options.EnvironmentVariables ?? new Dictionary<string, string>();
         var secrets = options.SecretEnvironmentVariables ?? new Dictionary<string, NebiusMysteryBoxSecretRef>();
         var volumes = options.Volumes ?? Array.Empty<NebiusServerlessVolumeMount>();
@@ -103,6 +105,31 @@ public static class NebiusResearchDeploymentPreflight
 
         if (plaintext.ContainsKey("NVIDEA_WORKER_PRIVATE_KEY_PEM"))
             throw new InvalidOperationException("The worker private key must remain secret-backed.");
+    }
+
+    public static void ValidateDigestPinnedWorkerImage(string workerImage)
+    {
+        if (string.IsNullOrWhiteSpace(workerImage)
+            || workerImage.Length > 2048
+            || workerImage.Any(char.IsControl)
+            || workerImage.Any(char.IsWhiteSpace))
+        {
+            throw new InvalidOperationException("Live Nebius research requires a bounded worker image reference.");
+        }
+
+        var marker = workerImage.LastIndexOf("@sha256:", StringComparison.OrdinalIgnoreCase);
+        if (marker <= 0 || marker + 8 + 64 != workerImage.Length)
+        {
+            throw new InvalidOperationException(
+                "Live Nebius research requires a digest-pinned worker image in registry/path@sha256:<64-hex> form; mutable tags are not accepted by the preflight.");
+        }
+
+        var digest = workerImage[(marker + 8)..];
+        if (digest.Length != 64 || !digest.All(static character => Uri.IsHexDigit(character)))
+        {
+            throw new InvalidOperationException(
+                "Live Nebius research requires a digest-pinned worker image in registry/path@sha256:<64-hex> form; mutable tags are not accepted by the preflight.");
+        }
     }
 
     /// <summary>

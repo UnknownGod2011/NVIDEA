@@ -50,8 +50,8 @@ public static class NebiusFailureRemediationPolicy
 
     /// <summary>
     /// Rehydrates only a fixed remediation classification from NVIDEA's own persisted remote-failure
-    /// evidence format. The provider message is never read. This exists so durable jobs created before
-    /// the dedicated FailureRecoveryGuidance field was introduced can still receive safe local guidance.
+    /// evidence format. The provider message is never read or copied into the result. This keeps the
+    /// existing durable LastError format useful without promoting provider-controlled text into UI policy.
     /// </summary>
     public static NebiusFailureRemediation? ClassifyPersistedFailureEvidence(string? lastError)
     {
@@ -62,7 +62,7 @@ public static class NebiusFailureRemediationPolicy
         }
 
         var codeStart = FailureEvidencePrefix.Length;
-        var codeEnd = lastError.IndexOfAny([';', '.'], codeStart);
+        var codeEnd = lastError.IndexOfAny(new[] { ';', '.' }, codeStart);
         if (codeEnd < 0)
             codeEnd = lastError.Length;
         if (codeEnd <= codeStart)

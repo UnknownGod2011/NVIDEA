@@ -17,7 +17,7 @@ public enum ResearchJobStage
 /// <summary>
 /// Privacy-safe projection of a durable research job for desktop status UI.
 /// Deliberately excludes checkpoint payloads, source URLs/content, query text,
-/// approval grants and error details that may contain provider or user data.
+/// approval grants and raw error details that may contain provider or user data.
 /// </summary>
 public sealed record ResearchJobStatus(
     Guid JobId,
@@ -55,6 +55,13 @@ public sealed record ResearchJobStatus(
     /// </summary>
     public bool ContainsPrivateOsData { get; init; }
 
+    /// <summary>
+    /// Optional recovery guidance generated exclusively from NVIDEA's fixed local allowlist for a
+    /// recognized Nebius failure code. Raw provider message text is never projected into this field,
+    /// and the field has no execution authority.
+    /// </summary>
+    public string? FailureRecoveryGuidance { get; init; }
+
     public static ResearchJobStatus FromRecord(AgentJobRecord record)
     {
         ArgumentNullException.ThrowIfNull(record);
@@ -77,6 +84,11 @@ public sealed record ResearchJobStatus(
         var canRecoverInterrupted = CanRecoverInterrupted(record, DateTimeOffset.UtcNow);
 
         var stage = ResolveStage(record);
+        var failureRecoveryGuidance = record.State == AgentJobState.Failed
+            && remoteState == RemoteResearchProvenanceState.RemoteFailed
+            ? NebiusFailureRemediationPolicy.ClassifyPersistedFailureEvidence(record.LastError)?.Guidance
+            : null;
+
         return new ResearchJobStatus(
             record.JobId,
             stage,
@@ -93,7 +105,8 @@ public sealed record ResearchJobStatus(
         {
             RequiresRemoteReconciliation = HasUnfinishedRemoteProvenance(record),
             CheckpointStep = record.Checkpoint?.Step,
-            ContainsPrivateOsData = record.Definition.ContainsPrivateOsData
+            ContainsPrivateOsData = record.Definition.ContainsPrivateOsData,
+            FailureRecoveryGuidance = failureRecoveryGuidance
         };
     }
 

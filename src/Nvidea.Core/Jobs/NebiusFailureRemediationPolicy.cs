@@ -13,6 +13,8 @@ public sealed record NebiusFailureRemediation(
 public static class NebiusFailureRemediationPolicy
 {
     private const int MaxProviderCodeLength = 128;
+    private const string FailureEvidencePrefix =
+        "Nebius remote research stage failed. Provider diagnostic (untrusted): code=";
 
     private static readonly NebiusFailureRemediation CapacityUnavailable = new(
         "NotEnoughResources",
@@ -44,5 +46,28 @@ public static class NebiusFailureRemediationPolicy
             return QuotaInsufficient;
 
         return null;
+    }
+
+    /// <summary>
+    /// Rehydrates only a fixed remediation classification from NVIDEA's own persisted remote-failure
+    /// evidence format. The provider message is never read. This exists so durable jobs created before
+    /// the dedicated FailureRecoveryGuidance field was introduced can still receive safe local guidance.
+    /// </summary>
+    public static NebiusFailureRemediation? ClassifyPersistedFailureEvidence(string? lastError)
+    {
+        if (string.IsNullOrWhiteSpace(lastError)
+            || !lastError.StartsWith(FailureEvidencePrefix, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var codeStart = FailureEvidencePrefix.Length;
+        var codeEnd = lastError.IndexOfAny([';', '.'], codeStart);
+        if (codeEnd < 0)
+            codeEnd = lastError.Length;
+        if (codeEnd <= codeStart)
+            return null;
+
+        return Classify(lastError[codeStart..codeEnd]);
     }
 }

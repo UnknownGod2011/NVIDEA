@@ -102,7 +102,7 @@ static int RunLiveResearchPreflight()
     Console.WriteLine("Judging artifact destinations: validated non-destructively");
     Console.WriteLine("Cloud jobs/model calls/Object Storage requests: not performed");
     Console.WriteLine("Worker image: digest-pinned");
-    Console.WriteLine("Worker/client RSA material: parseable and signing identity consistent");
+    Console.WriteLine("Worker/client RSA material: parseable with distinct dispatch-signing and result-envelope identities");
     Console.WriteLine("MysteryBox-backed worker credentials: configured");
     Console.WriteLine("Object Storage bucket/prefix and Serverless mount: aligned");
     Console.WriteLine("Serverless compute/disk/subnet fields: structurally valid");
@@ -162,6 +162,7 @@ static async Task<int> RunLiveResearchProbeAsync()
         transport,
         configuration.DispatchOptions,
         configuration.ClientPrivateKeyPem,
+        configuration.ClientResultPrivateKeyPem,
         auditTrail);
 
     var now = DateTimeOffset.UtcNow;

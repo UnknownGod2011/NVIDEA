@@ -41,47 +41,48 @@ Added research/browser product runtimes, WPF lifecycle integration, restart-safe
 Separated dispatch signing/verification from result encryption/decryption across live configuration, runtime composition, worker bootstrap, worker execution, contract probe, and focused fixtures. Worker bootstrap rejects identical public identities before any worker/provider secret read; live composition rejects identical private identities before Serverless/Object Storage credential reads.
 
 ### 2026-09-12 — Raw deployment preflight key-purpose enforcement
-Completed in this run:
-- Added `NebiusResearchDeploymentPreflight.ClientResultPublicKeyEnvironmentVariable` for `NVIDEA_CLIENT_RESULT_PUBLIC_KEY_PEM`.
-- Final deployment preflight now requires both client public identities, not just dispatch verification.
-- The result identity must be plaintext public-only RSA and is validated through the existing `ClientResultEnvelopePublicKeyTrust` OAEP-SHA256 policy.
-- Secret-backed result public identities are rejected, matching the signing public identity policy.
-- Both public identities are canonicalized and deployment preflight rejects reuse of the same RSA identity for signing/verification and result encryption.
-- `ValidateCredentialFreeTopology(...)` intentionally remains credential/key-identity independent so early topology checks can still run before client key loading.
-- Added direct raw-`NebiusResearchDispatchOptions` regressions for distinct-key success, missing result identity, signing/result identity reuse, private material in the result-public slot, and secret-backed result identity.
-- Repaired the older deployment-preflight fixture to construct two distinct RSA-2048 client public identities so its existing assertions keep testing their intended invariants under the new contract.
+Final deployment preflight now requires both client public identities. The result identity is public-only RSA validated through `ClientResultEnvelopePublicKeyTrust`; secret-backed result public identities are rejected, both public identities are canonicalized, and deployment preflight rejects reuse of the same RSA identity for signing/verification and result encryption.
 
-Engineering commits in this run before the ledger update:
-- `3b1b222dcd0f1546a35f967bb0cb11f9a9f56960` — enforce separated client result identity in deployment preflight.
-- `58193802d9fb404912fb7459fc9fe37bc567b326` — cover deployment client key-purpose separation.
-- `5bd88d30e692c360612e5b44c75238538b02c271` — update deployment-preflight fixtures for separated client identities.
+### 2026-09-12 — Separated-key operator documentation
+Completed in this run:
+- Updated `docs/nebius-research-worker.md` to document the actual three-keypair protocol: worker work-item identity, client dispatch-signing identity, and distinct client result-envelope identity.
+- Added safe OpenSSL RSA-3072 generation examples while retaining the code-enforced minimum of RSA-2048.
+- Corrected worker configuration so `NVIDEA_CLIENT_PUBLIC_KEY_PEM` is documented as dispatch verification only and `NVIDEA_CLIENT_RESULT_PUBLIC_KEY_PEM` as result encryption only.
+- Documented the corresponding local-only private-key files: `NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE` and `NVIDEA_LIVE_CLIENT_RESULT_PRIVATE_KEY_PEM_FILE`.
+- Updated `docs/nebius-contract-probe.md` so zero-cost preflight requirements, live-probe required variables, worker-visible key contract, credential handling, and key-generation instructions all match the enforced two-client-key runtime.
+- Updated `README.md` with a concise live-key setup section, the two local client private-key variables, the two worker public variables, and an explicit prohibition on signing/result key reuse.
+- Removed the stale documentation claim that one client private key performs both dispatch signing and result decryption.
+
+Engineering/documentation commits in this run before the ledger update:
+- `49e3b5b6a7d0ac33dbc7c18fb2a561563f1e0d9a` — document separated client RSA identities in the worker guide.
+- `c9f0a52ee2c76ac7a992aae25d8e6797917421a6` — update live contract-probe setup for separated client keys.
+- `a08808aea013b4f5a0d041de76dbbd5aab0bf6ff` — document live client key separation in the README.
 
 Validation / evidence:
-- GitHub compare from prior ledger head `958810191361556f53b3988163561dcdfe51c946` to engineering head `5bd88d30e692c360612e5b44c75238538b02c271` reports **3 commits ahead / 0 behind**.
-- Diff scope is exactly three intended files: deployment preflight, one new focused regression file, and the existing preflight fixture.
-- Static review confirms raw final deployment validation can no longer accept a worker configuration missing `NVIDEA_CLIENT_RESULT_PUBLIC_KEY_PEM`.
-- Static review confirms canonical signing and result public identities are compared after role-specific validation, so alternate PEM formatting cannot bypass distinct-key enforcement.
-- Static regression review found and repaired the stale one-key preflight fixture introduced by tightening the contract.
 - `dotnet --info` still returns `dotnet: command not found` in this execution environment. **No compile, xUnit, WPF, Worker, evaluator, or tool PASS is claimed.**
+- Static documentation review confirms all judge/operator surfaces now describe the same client key-purpose separation enforced by deployment preflight and worker bootstrap.
+- The documented worker-visible variables are public-only identities; no instructions place either client private key in Serverless worker configuration.
+- OpenSSL examples generate independent RSA-3072 keypairs and never write generated keys into repository paths.
 - No GitHub Actions workflow was triggered merely to manufacture a green signal.
 - No live Nebius, Tavily, Object Storage, Serverless, Playwright, Ollama, or paid inference operation was performed.
 
 ## Security / Privacy / Failure Review
 - Dispatch-signing and result-decryption private material remain client-local. Worker/deployment plaintext receives only validated canonical public identities.
-- Final deployment preflight, live loader, and worker bootstrap now all independently require separated client key purposes, reducing blast radius and preventing a future raw-dispatch caller from bypassing the live composition policy.
-- Result public validation reuses the protocol trust primitive, avoiding drift in PEM bounds, key size, private-material rejection, and OAEP-SHA256 capability requirements.
+- Final deployment preflight, live loader, and worker bootstrap independently require separated client key purposes.
+- Documentation now matches those security invariants and no longer instructs operators to reuse one private RSA identity across signing and OAEP result decryption.
+- Worker work-item private material remains a separate MysteryBox-backed key and is never included in source or example values.
 - Existing authenticated associated data, encrypted transport, signed binding, endpoint trust, cancellation/recovery, exact-once ingestion, Tavily/Nemotron behavior, browser safety, and Windows UX were not removed or weakened.
 - Lower-level `NebiusResearchClientRuntime.Create(...)` still retains a same-key compatibility fallback for legacy unit/contract callers; production live composition and deployment preflight are stricter. Remove this fallback only after executable migration coverage exists.
 
 ## Known Blockers / Risks
 - No usable .NET 8 executable exists in this execution environment, so all new and existing .NET/WPF/Worker code still needs a real restore/build/test/run.
 - Real Windows execution remains mandatory before treating WPF voice/readiness/maintenance behavior and generated judging evidence as judge-ready.
-- Documentation still contains parts of the former single-client-key setup. `README.md`, `docs/nebius-contract-probe.md`, and `docs/nebius-research-worker.md` need explicit generation/configuration instructions for both client RSA keypairs and the new result-public environment contract.
 - Provider catalogs can change; model listing does not prove quota, inference success, tool calling, context length, or every capability. A real Nebius inference smoke test remains required.
 - Prompt-injection detection remains heuristic; capability gates and approvals remain mandatory defense-in-depth.
 - Real `embeddinggemma` ranking quality still needs a local Ollama evaluation corpus.
 - No live Object Storage bucket/static key, digest-pinned registry image, MysteryBox refs, subnet, Serverless token, or real Serverless job has been provisioned/validated here.
 - Exact provider acceptance of Serverless Object Storage `Source` / `SourcePath` still requires a real job.
+- `docs/nebius-research-worker.md` notes provider transition states such as `IMAGE_PULLING` and `DELETING`; lifecycle-state parsing should be verified against current provider behavior before a live judging run.
 
 ## Single Best Next Task
-Obtain a real .NET 8-capable Windows restore/build/test signal and fix every compile/runtime defect exposed by the two-key migration. If executable validation remains unavailable, update `README.md`, `docs/nebius-contract-probe.md`, and `docs/nebius-research-worker.md` to document secure generation/storage of two distinct client RSA-2048+ keypairs, `NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE`, `NVIDEA_LIVE_CLIENT_RESULT_PRIVATE_KEY_PEM_FILE`, `NVIDEA_CLIENT_PUBLIC_KEY_PEM`, and `NVIDEA_CLIENT_RESULT_PUBLIC_KEY_PEM`, including the explicit prohibition on key reuse.
+Obtain a real .NET 8-capable Windows restore/build/test signal and fix every compile/runtime defect exposed by the two-key migration. If executable validation remains unavailable, audit the Nebius Serverless lifecycle-state parser and tests against current documented provider states, add conservative handling for legitimate transitional states such as `IMAGE_PULLING` / `DELETING` without weakening fail-closed handling for unknown states, and persist focused regressions.

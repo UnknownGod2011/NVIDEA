@@ -93,16 +93,20 @@ public static class NebiusResearchDeploymentPreflight
 
         if (requireClientPublicKey)
         {
-            var hasClientPublicKey =
-                (plaintext.TryGetValue(ClientPublicKeyEnvironmentVariable, out var publicKey) && !string.IsNullOrWhiteSpace(publicKey))
-                || (secrets.TryGetValue(ClientPublicKeyEnvironmentVariable, out var publicKeySecret)
-                    && publicKeySecret is not null
-                    && (!string.IsNullOrWhiteSpace(publicKeySecret.SecretId) || !string.IsNullOrWhiteSpace(publicKeySecret.VersionId)));
-            if (!hasClientPublicKey)
+            if (secrets.ContainsKey(ClientPublicKeyEnvironmentVariable))
+            {
+                throw new InvalidOperationException(
+                    $"'{ClientPublicKeyEnvironmentVariable}' is a public verification identity and must be supplied as validated plaintext public-only RSA material, not as a secret reference.");
+            }
+
+            if (!plaintext.TryGetValue(ClientPublicKeyEnvironmentVariable, out var publicKey)
+                || string.IsNullOrWhiteSpace(publicKey))
             {
                 throw new InvalidOperationException(
                     $"Live Nebius research requires '{ClientPublicKeyEnvironmentVariable}' so the worker can verify authoritative dispatch bindings.");
             }
+
+            ValidateClientVerificationPublicKey(publicKey);
         }
 
         if (plaintext.ContainsKey("NVIDEA_WORKER_PRIVATE_KEY_PEM"))
@@ -168,6 +172,40 @@ public static class NebiusResearchDeploymentPreflight
 
         if (rsa.KeySize < 2048)
             throw new InvalidOperationException("The worker envelope public key must be at least 2048 bits.");
+    }
+
+    /// <summary>
+    /// Validates the public verification identity propagated to the remote worker. This boundary is
+    /// intentionally public-only: accepting a private RSA PEM here could copy the desktop's signing
+    /// authority into plaintext worker configuration. The canonical public PEM is returned for callers
+    /// that need a stable representation for identity comparison.
+    /// </summary>
+    public static string ValidateClientVerificationPublicKey(string pem)
+    {
+        if (string.IsNullOrWhiteSpace(pem)
+            || pem.Length > 65536
+            || pem.Any(static character => char.IsControl(character) && character is not '\r' and not '\n'))
+        {
+            throw new InvalidOperationException("The client verification public key is missing or invalid.");
+        }
+
+        if (pem.Contains("PRIVATE KEY", StringComparison.Ordinal))
+            throw new InvalidOperationException("The client verification public key must contain public-only RSA key material.");
+
+        using var rsa = RSA.Create();
+        try
+        {
+            rsa.ImportFromPem(pem);
+        }
+        catch (Exception exception) when (exception is CryptographicException or ArgumentException)
+        {
+            throw new InvalidOperationException("The client verification public key is not a valid RSA public key PEM.");
+        }
+
+        if (rsa.KeySize < 2048)
+            throw new InvalidOperationException("The client verification RSA key must be at least 2048 bits.");
+
+        return rsa.ExportSubjectPublicKeyInfoPem();
     }
 
     /// <summary>

@@ -155,8 +155,10 @@ public static class ResearchWorkItemProtector
         if (nonce.Length != NonceBytes || tag.Length != TagBytes || ciphertext.Length > MaxPlaintextBytes)
             throw new InvalidOperationException("Remote research envelope has invalid cryptographic dimensions.");
 
-        using var rsa = RSA.Create();
-        rsa.ImportFromPem(workerPrivateKeyPem);
+        // Enforce the same worker-key trust boundary even for callers that bypass normal worker
+        // startup configuration. This prevents public-only, weak, malformed or wrong-capability
+        // RSA material from reaching protocol decryption through a lower-level API.
+        using var rsa = WorkerEnvelopePrivateKeyTrust.CreateValidatedRsa(workerPrivateKeyPem);
         var dataKey = rsa.Decrypt(wrappedKey, RSAEncryptionPadding.OaepSHA256);
         if (dataKey.Length != DataKeyBytes)
         {

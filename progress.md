@@ -24,6 +24,7 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Client dispatch-signing material is private RSA >=2048; worker verification material is public-only RSA >=2048.
 - **Client RSA purposes are separated end-to-end.** Dispatch signing/verification uses one RSA identity; result-envelope encryption/decryption uses a second. Live client configuration requires distinct private keys; worker configuration receives only their distinct public halves.
 - `NebiusResearchWorkerRuntimeConfiguration` is the single worker environment boundary. Credential-free topology/model/timing validation happens before worker-private-key and provider-secret reads.
+- Nebius Serverless lifecycle interpretation is explicitly allowlisted. Bounded `state_details` diagnostics are retained only as untrusted operator/audit evidence and never determine lifecycle transitions.
 - Windows voice invocation is local/review-first. Deterministic judging tools include `Nvidea.PersonalAiDemoEval`, `Nvidea.PersonalAiAdversarialEval`, `Nvidea.JudgingEvidenceVerifier`, `Nvidea.DemoPackageValidator`, and `Nvidea.NebiusModelCatalogCheck`.
 
 ## Persistent Progress History
@@ -46,37 +47,52 @@ Final deployment preflight now requires both client public identities. The resul
 ### 2026-09-12 — Separated-key operator documentation
 - Updated `docs/nebius-research-worker.md` to document the actual three-keypair protocol: worker work-item identity, client dispatch-signing identity, and distinct client result-envelope identity.
 - Added safe OpenSSL RSA-3072 generation examples while retaining the code-enforced minimum of RSA-2048.
-- Corrected worker configuration so `NVIDEA_CLIENT_PUBLIC_KEY_PEM` is documented as dispatch verification only and `NVIDEA_CLIENT_RESULT_PUBLIC_KEY_PEM` as result encryption only.
+- Corrected worker configuration so `NVIDEA_CLIENT_PUBLIC_KEY_PEM` is dispatch verification only and `NVIDEA_CLIENT_RESULT_PUBLIC_KEY_PEM` is result encryption only.
 - Documented the corresponding local-only private-key files: `NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE` and `NVIDEA_LIVE_CLIENT_RESULT_PRIVATE_KEY_PEM_FILE`.
-- Updated `docs/nebius-contract-probe.md` so zero-cost preflight requirements, live-probe required variables, worker-visible key contract, credential handling, and key-generation instructions all match the enforced two-client-key runtime.
-- Updated `README.md` with a concise live-key setup section, the two local client private-key variables, the two worker public variables, and an explicit prohibition on signing/result key reuse.
-- Removed the stale documentation claim that one client private key performs both dispatch signing and result decryption.
+- Updated `docs/nebius-contract-probe.md` and `README.md` so live-probe requirements and setup instructions match the enforced two-client-key runtime and explicitly prohibit signing/result key reuse.
 
 ### 2026-09-13 — Serverless lifecycle contract audit
-Completed in this run:
-- Re-checked the current official Nebius Serverless AI lifecycle documentation before changing assumptions. The documented **job** states are `STATE_UNSPECIFIED`, `PROVISIONING`, `STARTING`, `IMAGE_PULLING`, `RUNNING`, `COMPLETED`, `CANCELLING`, `CANCELLED`, `DELETING`, `FAILED`, and `ERROR`.
-- Confirmed the existing `NebiusServerlessJobSnapshotParser.ParseState(...)` already handled every actionable documented state conservatively: preparation states map to local Pending; `CANCELLING`/`DELETING` map to Cancelling; `FAILED`/`ERROR` map to Failed; and unrecognized values remain Unknown/fail-closed.
-- Replaced the partial lifecycle regression suite with exhaustive contract coverage for every documented Nebius job state.
-- Added explicit fail-closed regressions for `STATE_UNSPECIFIED`, future/unknown values, blank/null values, and plausible-but-undocumented aliases such as `PENDING` and `SUCCESS` so provider vocabulary drift cannot silently acquire semantics.
-- Kept case/outer-whitespace tolerance for documented states without broadening the accepted state vocabulary.
+- Re-checked the current Nebius Serverless AI lifecycle contract. Documented job states are `STATE_UNSPECIFIED`, `PROVISIONING`, `STARTING`, `IMAGE_PULLING`, `RUNNING`, `COMPLETED`, `CANCELLING`, `CANCELLED`, `DELETING`, `FAILED`, and `ERROR`.
+- Confirmed `NebiusServerlessJobSnapshotParser.ParseState(...)` already handled every actionable documented state conservatively.
+- Replaced partial state tests with exhaustive contract coverage and fail-closed regressions for `STATE_UNSPECIFIED`, future/unknown values, blank/null values, and plausible-but-undocumented aliases such as `PENDING` and `SUCCESS`.
+- Kept case/outer-whitespace tolerance without broadening accepted lifecycle vocabulary.
 
-Engineering commit before this ledger update:
+Engineering commit:
 - `f9c9553cce535ca713953545d9d4855983ff0f95` — exhaustively cover documented Nebius job lifecycle states.
 
+### 2026-09-13 — Bounded untrusted Serverless failure diagnostics
+Completed in this run:
+- Re-checked current Nebius SDK/provider metadata showing `JobStatus.state_details` carries a provider `code` and human-readable `message`.
+- Added `NebiusRemoteJobDiagnostic` to snapshots without changing the existing three-field positional/deconstruction surface of `NebiusRemoteJobSnapshot`.
+- `NebiusServerlessJobSnapshotParser` accepts either provider/proto JSON spelling (`stateDetails` or `state_details`) only when exactly one is present and object-shaped. Ambiguous duplicate shapes are ignored.
+- Diagnostic `code` is bounded to 128 characters and `message` to 1024; blank values are ignored, non-string values are rejected, and control characters cause the diagnostic to be discarded.
+- Diagnostic parsing is intentionally ancillary: it never feeds `ParseState(...)`. Unknown/future lifecycle values remain `Unknown` and are rejected before durable mutation even if a diagnostic claims success.
+- For a verified `FAILED`/`ERROR` lifecycle only, safe bounded diagnostics are appended to `LastError` and `research.remote_failed` audit summaries with an explicit `Provider diagnostic (untrusted)` label.
+- Unsafe, malformed, oversized, or ambiguous diagnostics degrade to the previous generic terminal-failure message rather than weakening failure handling or throwing away the authoritative lifecycle state.
+- Preserved the public snapshot API after static review by making `Diagnostic` an additive init property rather than a fourth positional record component.
+
+Engineering commits before this ledger update:
+- `7b95aea7a3d331572e1c296c60374df6b8fb21b5` — surface bounded Nebius failure diagnostics.
+- `432c2b345f04f62470cd3d6f27709831007d7cf2` — add adversarial/untrusted diagnostic coverage.
+- `60903449a815178e09550a5f2882525fe52cf0a2` — preserve Serverless snapshot API compatibility.
+- `cae356d2df69c8de787e49d2030208cfbce07b5e` — reject ambiguous duplicate diagnostic shapes in focused tests.
+
 Validation / evidence:
-- Current Nebius official lifecycle documentation was checked on 2026-09-13 and explicitly lists `IMAGE_PULLING` and `DELETING` for jobs, along with the complete state set above.
-- `dotnet --info` is still unavailable in this execution environment (`dotnet` executable not found). **No compile, xUnit, WPF, Worker, evaluator, or tool PASS is claimed.**
-- Static review confirms the exhaustive test expectations exactly match the parser's existing conservative mappings; no runtime behavior was weakened merely to satisfy tests.
+- Current Nebius SDK metadata was checked on 2026-09-13 and confirms `JobStatus.state_details` / `JobStateDetails` expose `code` and `message`.
+- Added focused tests for both JSON spellings, bounded valid diagnostics, oversized fields, control-character injection, duplicate-shape ambiguity, generic fallback, audit/LastError surfacing, and unknown-state fail-closed behavior with no terminal mutation.
+- Static review confirms provider diagnostic text is not consulted by lifecycle parsing, remote provenance verification, cancellation semantics, result ingestion, or durable transition selection.
+- Static review also caught and corrected the initially broadened positional record surface before this run was closed.
+- `dotnet --info` remains unavailable in this execution environment (`dotnet` executable not found). **No compile, xUnit, WPF, Worker, evaluator, or tool PASS is claimed.**
 - No GitHub Actions workflow was triggered merely to manufacture a green signal.
 - No live Nebius, Tavily, Object Storage, Serverless, Playwright, Ollama, or paid inference operation was performed.
 
 ## Security / Privacy / Failure Review
 - Dispatch-signing and result-decryption private material remain client-local. Worker/deployment plaintext receives only validated canonical public identities.
 - Final deployment preflight, live loader, and worker bootstrap independently require separated client key purposes.
-- Documentation matches those security invariants and does not instruct operators to reuse one private RSA identity across signing and OAEP result decryption.
 - Worker work-item private material remains a separate MysteryBox-backed key and is never included in source or example values.
 - Serverless lifecycle interpretation remains allowlisted rather than heuristic: undocumented/future provider states are Unknown and cannot mutate durable local job state.
-- `STATE_UNSPECIFIED` remains Unknown, while `ERROR` remains terminal Failed in accordance with current Nebius job semantics.
+- Provider `state_details` is treated as untrusted evidence only: bounded, control-character-free, non-authoritative, and ignored when malformed or ambiguous.
+- `STATE_UNSPECIFIED` remains Unknown, while `ERROR` remains terminal Failed in accordance with the current Nebius contract.
 - Existing authenticated associated data, encrypted transport, signed binding, endpoint trust, cancellation/recovery, exact-once ingestion, Tavily/Nemotron behavior, browser safety, and Windows UX were not removed or weakened.
 - Lower-level `NebiusResearchClientRuntime.Create(...)` still retains a same-key compatibility fallback for legacy unit/contract callers; production live composition and deployment preflight are stricter. Remove this fallback only after executable migration coverage exists.
 
@@ -88,7 +104,7 @@ Validation / evidence:
 - Real `embeddinggemma` ranking quality still needs a local Ollama evaluation corpus.
 - No live Object Storage bucket/static key, digest-pinned registry image, MysteryBox refs, subnet, Serverless token, or real Serverless job has been provisioned/validated here.
 - Exact provider acceptance of Serverless Object Storage `Source` / `SourcePath` still requires a real job.
-- Nebius exposes `status.state_details.code` and `status.state_details.message` for failures such as `StartFailed`, `ContainerFailed`, `TimeoutExceeded`, and `NotEnoughResources`; NVIDEA currently collapses remote terminal failures to a generic message, so operator diagnostics and retry guidance can be improved without trusting provider text as control input.
+- Known Nebius failure codes can now be surfaced safely, but they are not yet mapped to fixed local remediation guidance; any future guidance must be selected from an allowlist by normalized code and must never execute/retry/change resources based on provider message text.
 
 ## Single Best Next Task
-Obtain a real .NET 8-capable Windows restore/build/test signal and fix every compile/runtime defect exposed by recent security migrations. If executable validation remains unavailable, add a bounded/untrusted `status.state_details` parser for Nebius Serverless job snapshots and safely surface its code/message in terminal failure diagnostics and audit evidence, with tests proving malformed/oversized provider details cannot influence control flow and unknown lifecycle states still fail closed.
+Obtain a real .NET 8-capable Windows restore/build/test signal and fix every compile/runtime defect exposed by recent security/reliability migrations. If executable validation remains unavailable, add a fixed allowlisted remediation classifier for known Nebius failure **codes** (for example resource exhaustion, timeout, start/container failure) so Windows can show safe actionable recovery guidance while continuing to treat the provider `message` as display-only untrusted text and never as an automatic retry/resource-change instruction.

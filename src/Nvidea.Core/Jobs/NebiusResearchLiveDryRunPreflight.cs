@@ -129,35 +129,23 @@ public static class NebiusResearchLiveDryRunPreflight
             throw new InvalidOperationException("The live dry-run requires the client verification public key in plaintext worker configuration.");
         }
 
-        using var publicKey = RSA.Create();
-        try
-        {
-            publicKey.ImportFromPem(configuredPublicKey);
-        }
-        catch (CryptographicException)
-        {
-            throw new InvalidOperationException("Configured client verification public key PEM is not a valid RSA public key.");
-        }
-        catch (ArgumentException)
-        {
-            throw new InvalidOperationException("Configured client verification public key PEM is not a valid RSA public key.");
-        }
-
-        if (publicKey.KeySize < 2048)
-            throw new InvalidOperationException("Client verification RSA key must be at least 2048 bits.");
+        var canonicalConfiguredPublicKeyPem =
+            NebiusResearchDeploymentPreflight.ValidateClientVerificationPublicKey(configuredPublicKey);
 
         using var derivedPublicKey = RSA.Create();
+        using var configuredPublicKeyRsa = RSA.Create();
         try
         {
             derivedPublicKey.ImportFromPem(derivedPublicKeyPem);
+            configuredPublicKeyRsa.ImportFromPem(canonicalConfiguredPublicKeyPem);
         }
         catch (Exception exception) when (exception is CryptographicException or ArgumentException)
         {
-            throw new InvalidOperationException("Derived client verification public key could not be canonicalized.", exception);
+            throw new InvalidOperationException("Client verification public key could not be canonicalized.", exception);
         }
 
         var derived = derivedPublicKey.ExportSubjectPublicKeyInfo();
-        var configured = publicKey.ExportSubjectPublicKeyInfo();
+        var configured = configuredPublicKeyRsa.ExportSubjectPublicKeyInfo();
         if (!CryptographicOperations.FixedTimeEquals(derived, configured))
         {
             throw new InvalidOperationException(

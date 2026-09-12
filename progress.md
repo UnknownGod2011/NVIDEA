@@ -44,7 +44,6 @@ Separated dispatch signing/verification from result encryption/decryption across
 Final deployment preflight now requires both client public identities. The result identity is public-only RSA validated through `ClientResultEnvelopePublicKeyTrust`; secret-backed result public identities are rejected, both public identities are canonicalized, and deployment preflight rejects reuse of the same RSA identity for signing/verification and result encryption.
 
 ### 2026-09-12 — Separated-key operator documentation
-Completed in this run:
 - Updated `docs/nebius-research-worker.md` to document the actual three-keypair protocol: worker work-item identity, client dispatch-signing identity, and distinct client result-envelope identity.
 - Added safe OpenSSL RSA-3072 generation examples while retaining the code-enforced minimum of RSA-2048.
 - Corrected worker configuration so `NVIDEA_CLIENT_PUBLIC_KEY_PEM` is documented as dispatch verification only and `NVIDEA_CLIENT_RESULT_PUBLIC_KEY_PEM` as result encryption only.
@@ -53,24 +52,31 @@ Completed in this run:
 - Updated `README.md` with a concise live-key setup section, the two local client private-key variables, the two worker public variables, and an explicit prohibition on signing/result key reuse.
 - Removed the stale documentation claim that one client private key performs both dispatch signing and result decryption.
 
-Engineering/documentation commits in this run before the ledger update:
-- `49e3b5b6a7d0ac33dbc7c18fb2a561563f1e0d9a` — document separated client RSA identities in the worker guide.
-- `c9f0a52ee2c76ac7a992aae25d8e6797917421a6` — update live contract-probe setup for separated client keys.
-- `a08808aea013b4f5a0d041de76dbbd5aab0bf6ff` — document live client key separation in the README.
+### 2026-09-13 — Serverless lifecycle contract audit
+Completed in this run:
+- Re-checked the current official Nebius Serverless AI lifecycle documentation before changing assumptions. The documented **job** states are `STATE_UNSPECIFIED`, `PROVISIONING`, `STARTING`, `IMAGE_PULLING`, `RUNNING`, `COMPLETED`, `CANCELLING`, `CANCELLED`, `DELETING`, `FAILED`, and `ERROR`.
+- Confirmed the existing `NebiusServerlessJobSnapshotParser.ParseState(...)` already handled every actionable documented state conservatively: preparation states map to local Pending; `CANCELLING`/`DELETING` map to Cancelling; `FAILED`/`ERROR` map to Failed; and unrecognized values remain Unknown/fail-closed.
+- Replaced the partial lifecycle regression suite with exhaustive contract coverage for every documented Nebius job state.
+- Added explicit fail-closed regressions for `STATE_UNSPECIFIED`, future/unknown values, blank/null values, and plausible-but-undocumented aliases such as `PENDING` and `SUCCESS` so provider vocabulary drift cannot silently acquire semantics.
+- Kept case/outer-whitespace tolerance for documented states without broadening the accepted state vocabulary.
+
+Engineering commit before this ledger update:
+- `f9c9553cce535ca713953545d9d4855983ff0f95` — exhaustively cover documented Nebius job lifecycle states.
 
 Validation / evidence:
-- `dotnet --info` still returns `dotnet: command not found` in this execution environment. **No compile, xUnit, WPF, Worker, evaluator, or tool PASS is claimed.**
-- Static documentation review confirms all judge/operator surfaces now describe the same client key-purpose separation enforced by deployment preflight and worker bootstrap.
-- The documented worker-visible variables are public-only identities; no instructions place either client private key in Serverless worker configuration.
-- OpenSSL examples generate independent RSA-3072 keypairs and never write generated keys into repository paths.
+- Current Nebius official lifecycle documentation was checked on 2026-09-13 and explicitly lists `IMAGE_PULLING` and `DELETING` for jobs, along with the complete state set above.
+- `dotnet --info` is still unavailable in this execution environment (`dotnet` executable not found). **No compile, xUnit, WPF, Worker, evaluator, or tool PASS is claimed.**
+- Static review confirms the exhaustive test expectations exactly match the parser's existing conservative mappings; no runtime behavior was weakened merely to satisfy tests.
 - No GitHub Actions workflow was triggered merely to manufacture a green signal.
 - No live Nebius, Tavily, Object Storage, Serverless, Playwright, Ollama, or paid inference operation was performed.
 
 ## Security / Privacy / Failure Review
 - Dispatch-signing and result-decryption private material remain client-local. Worker/deployment plaintext receives only validated canonical public identities.
 - Final deployment preflight, live loader, and worker bootstrap independently require separated client key purposes.
-- Documentation now matches those security invariants and no longer instructs operators to reuse one private RSA identity across signing and OAEP result decryption.
+- Documentation matches those security invariants and does not instruct operators to reuse one private RSA identity across signing and OAEP result decryption.
 - Worker work-item private material remains a separate MysteryBox-backed key and is never included in source or example values.
+- Serverless lifecycle interpretation remains allowlisted rather than heuristic: undocumented/future provider states are Unknown and cannot mutate durable local job state.
+- `STATE_UNSPECIFIED` remains Unknown, while `ERROR` remains terminal Failed in accordance with current Nebius job semantics.
 - Existing authenticated associated data, encrypted transport, signed binding, endpoint trust, cancellation/recovery, exact-once ingestion, Tavily/Nemotron behavior, browser safety, and Windows UX were not removed or weakened.
 - Lower-level `NebiusResearchClientRuntime.Create(...)` still retains a same-key compatibility fallback for legacy unit/contract callers; production live composition and deployment preflight are stricter. Remove this fallback only after executable migration coverage exists.
 
@@ -82,7 +88,7 @@ Validation / evidence:
 - Real `embeddinggemma` ranking quality still needs a local Ollama evaluation corpus.
 - No live Object Storage bucket/static key, digest-pinned registry image, MysteryBox refs, subnet, Serverless token, or real Serverless job has been provisioned/validated here.
 - Exact provider acceptance of Serverless Object Storage `Source` / `SourcePath` still requires a real job.
-- `docs/nebius-research-worker.md` notes provider transition states such as `IMAGE_PULLING` and `DELETING`; lifecycle-state parsing should be verified against current provider behavior before a live judging run.
+- Nebius exposes `status.state_details.code` and `status.state_details.message` for failures such as `StartFailed`, `ContainerFailed`, `TimeoutExceeded`, and `NotEnoughResources`; NVIDEA currently collapses remote terminal failures to a generic message, so operator diagnostics and retry guidance can be improved without trusting provider text as control input.
 
 ## Single Best Next Task
-Obtain a real .NET 8-capable Windows restore/build/test signal and fix every compile/runtime defect exposed by the two-key migration. If executable validation remains unavailable, audit the Nebius Serverless lifecycle-state parser and tests against current documented provider states, add conservative handling for legitimate transitional states such as `IMAGE_PULLING` / `DELETING` without weakening fail-closed handling for unknown states, and persist focused regressions.
+Obtain a real .NET 8-capable Windows restore/build/test signal and fix every compile/runtime defect exposed by recent security migrations. If executable validation remains unavailable, add a bounded/untrusted `status.state_details` parser for Nebius Serverless job snapshots and safely surface its code/message in terminal failure diagnostics and audit evidence, with tests proving malformed/oversized provider details cannot influence control flow and unknown lifecycle states still fail closed.

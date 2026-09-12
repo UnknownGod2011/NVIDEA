@@ -8,6 +8,7 @@ public sealed class NebiusResearchLiveConfigurationCredentialOrderingTests
     private const string ServerlessTokenVariable = "NVIDEA_LIVE_SERVERLESS_ACCESS_TOKEN";
     private const string AccessKeyVariable = "NVIDEA_LIVE_OBJECT_STORAGE_ACCESS_KEY_ID";
     private const string SecretKeyVariable = "NVIDEA_LIVE_OBJECT_STORAGE_SECRET_ACCESS_KEY";
+    private const string ClientPrivateKeyVariable = "NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE";
 
     [Fact]
     public void InvalidObjectStorageEndpoint_IsRejectedBeforeStaticCredentialsAreRead()
@@ -101,7 +102,7 @@ public sealed class NebiusResearchLiveConfigurationCredentialOrderingTests
     }
 
     [Fact]
-    public void InvalidTransportBucketAlignment_IsRejectedBeforeProviderCredentialsAreRead()
+    public void InvalidTransportBucketAlignment_IsRejectedBeforeProviderCredentialsOrClientPrivateKeyAreRead()
     {
         var root = Path.Combine(Path.GetTempPath(), "nvidea-live-ordering-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -133,7 +134,7 @@ public sealed class NebiusResearchLiveConfigurationCredentialOrderingTests
                 ["NVIDEA_LIVE_TRANSPORT_SOURCE_PATH"] = "nvidea-research",
                 ["NVIDEA_LIVE_OBJECT_STORAGE_BUCKET"] = "nvidea-live-bucket",
                 ["NVIDEA_LIVE_WORKER_PUBLIC_KEY_PEM_FILE"] = workerPublicPath,
-                ["NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE"] = clientPrivatePath,
+                [ClientPrivateKeyVariable] = clientPrivatePath,
                 ["NVIDEA_LIVE_SECRET_NEBIUS_API_KEY_ID"] = "mbsec-nebius-api-key",
                 ["NVIDEA_LIVE_SECRET_TAVILY_API_KEY_ID"] = "mbsec-tavily-api-key",
                 ["NVIDEA_LIVE_SECRET_WORKER_PRIVATE_KEY_ID"] = "mbsec-worker-private-key",
@@ -152,6 +153,7 @@ public sealed class NebiusResearchLiveConfigurationCredentialOrderingTests
                 () => NebiusResearchLiveConfigurationLoader.Load(Reader));
 
             Assert.Contains("bucket", exception.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(ClientPrivateKeyVariable, reads);
             Assert.DoesNotContain(ServerlessTokenVariable, reads);
             Assert.DoesNotContain(AccessKeyVariable, reads);
             Assert.DoesNotContain(SecretKeyVariable, reads);

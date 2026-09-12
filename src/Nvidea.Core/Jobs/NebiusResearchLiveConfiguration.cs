@@ -4,6 +4,7 @@ public sealed record NebiusResearchLiveConfiguration(
     string ServerlessAccessToken,
     string ProjectId,
     string ClientPrivateKeyPem,
+    string ClientResultPrivateKeyPem,
     NebiusResearchDispatchOptions DispatchOptions,
     NebiusObjectStorageClientOptions ObjectStorageOptions,
     NebiusResearchLivePreflightReport Report,
@@ -38,9 +39,9 @@ public static class NebiusResearchLiveConfigurationLoader
         var objectStorageRegion = RequiredEnvironment(environmentReader, "NVIDEA_LIVE_OBJECT_STORAGE_REGION");
         ValidateObjectStorageEndpointAndRegion(objectStorageEndpoint, objectStorageRegion);
 
-        // Load the credential-free deployment topology before provider secrets or either local PEM
-        // file. The worker image is digest-pinned and the final derived-public-key identity checks
-        // still run after all shape/alignment checks that do not require key material have passed.
+        // Load the credential-free deployment topology before provider secrets or local PEM files.
+        // The worker image is digest-pinned and final client identity checks run only after all
+        // shape/alignment checks that do not require key material have passed.
         var projectId = RequiredEnvironment(environmentReader, "NVIDEA_LIVE_SERVERLESS_PROJECT_ID");
         var workerImage = RequiredEnvironment(environmentReader, "NVIDEA_LIVE_WORKER_IMAGE");
         var subnetId = RequiredEnvironment(environmentReader, "NVIDEA_LIVE_SUBNET_ID");
@@ -96,7 +97,7 @@ public static class NebiusResearchLiveConfigurationLoader
             });
 
         // Alignment accepts only credential-free namespace identity. This also runs the immutable
-        // worker-image/topology checks before either local PEM file is opened.
+        // worker-image/topology checks before any local PEM file is opened.
         NebiusResearchDeploymentPreflight.ValidateObjectStorageAlignment(
             topologyDispatchOptions,
             new NebiusObjectStorageTransportAlignment(objectStorageBucket, objectStoragePrefix));
@@ -104,7 +105,7 @@ public static class NebiusResearchLiveConfigurationLoader
         // The worker envelope public key is needed only after deployment shape and storage namespace
         // alignment are known-good. Validate and canonicalize it immediately after reading so malformed,
         // weak, private, or protocol-incompatible material cannot enter deployment plumbing or cause
-        // the client signing key/provider credentials to be read.
+        // client/provider credentials to be read.
         var workerPublicKeyPem = ReadRequiredPemFile(environmentReader, "NVIDEA_LIVE_WORKER_PUBLIC_KEY_PEM_FILE");
         workerPublicKeyPem = NebiusResearchDeploymentPreflight.ValidateWorkerPublicKey(workerPublicKeyPem);
         topologyDispatchOptions = topologyDispatchOptions with
@@ -112,15 +113,30 @@ public static class NebiusResearchLiveConfigurationLoader
             WorkerPublicKeyPem = workerPublicKeyPem
         };
 
-        // Only now load the client signing private key. Validate its size and actual private signing
-        // capability immediately, before any Serverless/Object Storage credential is accessed, then
-        // use the canonical derived public identity for the worker-side dispatch binding.
+        // Load and validate the dispatch-signing identity before any cloud credential is touched.
         var clientPrivateKeyPem = ReadRequiredPemFile(environmentReader, "NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE");
         var clientPublicKeyPem = NebiusResearchLiveDryRunPreflight.ValidateAndDeriveClientPublicKey(clientPrivateKeyPem);
 
+        // Result decryption deliberately has its own RSA identity. Canonicalize the private OAEP key,
+        // derive only its public half for worker configuration, and reject accidental key reuse before
+        // Serverless/Object Storage credentials are read.
+        var clientResultPrivateKeyPem = ReadRequiredPemFile(
+            environmentReader,
+            "NVIDEA_LIVE_CLIENT_RESULT_PRIVATE_KEY_PEM_FILE");
+        clientResultPrivateKeyPem = ClientResultEnvelopePrivateKeyTrust
+            .ValidateAndCanonicalize(clientResultPrivateKeyPem);
+        using var clientResultRsa = ClientResultEnvelopePrivateKeyTrust.CreateValidatedRsa(clientResultPrivateKeyPem);
+        var clientResultPublicKeyPem = clientResultRsa.ExportSubjectPublicKeyInfoPem();
+        if (string.Equals(clientPublicKeyPem, clientResultPublicKeyPem, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Live Nebius research requires distinct RSA identities for dispatch signing and result-envelope encryption/decryption.");
+        }
+
         var finalPlainEnvironment = new Dictionary<string, string>(topologyPlainEnvironment, StringComparer.Ordinal)
         {
-            [NebiusResearchDeploymentPreflight.ClientPublicKeyEnvironmentVariable] = clientPublicKeyPem
+            [NebiusResearchDeploymentPreflight.ClientPublicKeyEnvironmentVariable] = clientPublicKeyPem,
+            [NebiusResearchWorkerBootstrapTrust.ClientResultPublicKeyEnvironmentVariable] = clientResultPublicKeyPem
         };
         var dispatchOptions = topologyDispatchOptions with
         {
@@ -154,6 +170,7 @@ public static class NebiusResearchLiveConfigurationLoader
             serverlessAccessToken,
             projectId,
             clientPrivateKeyPem,
+            clientResultPrivateKeyPem,
             dispatchOptions,
             objectStorageOptions,
             report,

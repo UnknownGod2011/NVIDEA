@@ -17,7 +17,9 @@ public enum RemoteResearchProvenanceState
 /// Durable client-side provenance for exactly one remotely executed research stage.
 /// RemoteJobId is intentionally nullable only while State == DispatchReserved. WorkItemExpiresAt
 /// records the cryptographically authenticated encrypted-work-item lifetime so terminal lifecycle
-/// reconciliation never has to infer TTL from wall-clock conventions.
+/// reconciliation never has to infer TTL from wall-clock conventions. ProviderFailureCode is an
+/// optional bounded provider classification captured only for a verified terminal RemoteFailed state;
+/// it is untrusted data and carries no retry, resource-selection, or other execution authority.
 /// </summary>
 public sealed record RemoteResearchProvenance(
     string ProtocolVersion,
@@ -29,7 +31,8 @@ public sealed record RemoteResearchProvenance(
     RemoteResearchProvenanceState State,
     DateTimeOffset? ResultAppliedAt = null,
     DateTimeOffset? WorkItemExpiresAt = null,
-    DateTimeOffset? TerminalAt = null);
+    DateTimeOffset? TerminalAt = null,
+    string? ProviderFailureCode = null);
 
 public sealed record RemoteResearchDispatchReservation(
     Guid LocalJobId,
@@ -243,14 +246,19 @@ public sealed class RemoteResearchResultIngestor
         };
 
         if (!await _store.CompareExchangeAsync(current, replacement, cancellationToken).ConfigureAwait(false))
-            throw new InvalidOperationException("Research state changed while the remote result was being ingested; result was not applied.");
+            throw new InvalidOperationException("Research state changed while protected remote result was being applied.");
 
-        await AppendAuditAsync(replacement, "research.remote_result_applied", "Verified encrypted Nebius research result was applied exactly once.", cancellationToken).ConfigureAwait(false);
-        await BestEffortDeleteAsync(provenance.OpaqueWorkItemId).ConfigureAwait(false);
+        await AppendAuditAsync(replacement, "research.remote_result_applied", "Protected remote research result applied exactly once.", cancellationToken).ConfigureAwait(false);
+        await CleanupProtectedPayloadsAsync(provenance.OpaqueWorkItemId).ConfigureAwait(false);
         return replacement;
     }
 
-    public Task CleanupProtectedPayloadsAsync(string opaqueWorkItemId) => BestEffortDeleteAsync(opaqueWorkItemId);
+    public async Task CleanupProtectedPayloadsAsync(string opaqueWorkItemId)
+    {
+        await TryDeleteAsync(_results, opaqueWorkItemId).ConfigureAwait(false);
+        if (_workItems is not null)
+            await TryDeleteAsync(_workItems, opaqueWorkItemId).ConfigureAwait(false);
+    }
 
     private async Task<AgentJobRecord> GetRequiredResearchAsync(Guid jobId, CancellationToken cancellationToken)
     {
@@ -277,13 +285,27 @@ public sealed class RemoteResearchResultIngestor
                 }),
             cancellationToken);
 
-    private async Task BestEffortDeleteAsync(string opaqueWorkItemId)
+    private static async Task TryDeleteAsync(IProtectedResearchResultTransport transport, string opaqueWorkItemId)
     {
-        try { await _results.DeleteAsync(opaqueWorkItemId, CancellationToken.None).ConfigureAwait(false); }
-        catch { }
+        try
+        {
+            await transport.DeleteAsync(opaqueWorkItemId, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Protected artifacts are bounded by protocol expiry; cleanup is best effort.
+        }
+    }
 
-        if (_workItems is null) return;
-        try { await _workItems.DeleteAsync(opaqueWorkItemId, CancellationToken.None).ConfigureAwait(false); }
-        catch { }
+    private static async Task TryDeleteAsync(IProtectedResearchWorkItemTransport transport, string opaqueWorkItemId)
+    {
+        try
+        {
+            await transport.DeleteAsync(opaqueWorkItemId, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Protected artifacts are bounded by protocol expiry; cleanup is best effort.
+        }
     }
 }

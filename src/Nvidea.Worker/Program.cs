@@ -12,30 +12,30 @@ internal static class Program
         {
             var options = WorkerCommandLine.Parse(args);
 
-            // Establish credential-free trust first. A malformed transport root or client
-            // verification identity must fail before Token Factory, Tavily, or worker-private-key
-            // environment values are accessed.
-            var bootstrapTrust = NebiusResearchWorkerBootstrapTrust.Load();
+            // Load the entire runtime through one trust-ordered environment boundary. Public
+            // bootstrap/destination/timing validation completes before provider or worker secrets
+            // are accessed, and the same path is directly regression-testable in Core.
+            var runtime = NebiusResearchWorkerRuntimeConfiguration.Load();
 
             using var http = CreateProviderHttpClient();
-            var inference = new NebiusTokenFactoryClient(http, NebiusOptions.FromEnvironment());
-            var tavily = new TavilyResearchClient(http, TavilyOptions.FromEnvironment());
+            var inference = new NebiusTokenFactoryClient(http, runtime.Nebius);
+            var tavily = new TavilyResearchClient(http, runtime.Tavily);
             var engine = new ResearchEngine(inference, tavily);
             var handler = new ResearchJobHandler(engine);
-            var transport = new DirectoryProtectedResearchTransport(bootstrapTrust.TransportRoot);
-            var clientPublicKey = bootstrapTrust.ClientVerificationPublicKeyPem;
+            var transport = new DirectoryProtectedResearchTransport(runtime.BootstrapTrust.TransportRoot);
+            var clientPublicKey = runtime.BootstrapTrust.ClientVerificationPublicKeyPem;
             var bindingWaiter = new ResearchDispatchBindingWaiter(
                 transport,
                 clientPublicKey,
-                pollInterval: GetOptionalDurationSeconds("NVIDEA_BINDING_POLL_SECONDS", TimeSpan.FromSeconds(2)),
-                maxWait: GetOptionalDurationSeconds("NVIDEA_BINDING_WAIT_SECONDS", TimeSpan.FromMinutes(5)));
+                pollInterval: runtime.BindingPollInterval,
+                maxWait: runtime.BindingMaxWait);
             var binding = await bindingWaiter.WaitAsync(options.OpaqueWorkItemId, CancellationToken.None).ConfigureAwait(false);
 
             var worker = new NebiusResearchWorker(
                 transport,
                 transport,
                 handler,
-                GetRequiredEnvironment("NVIDEA_WORKER_PRIVATE_KEY_PEM"),
+                runtime.WorkerPrivateKeyPem,
                 clientPublicKey);
 
             await worker.ExecuteOneStageAsync(
@@ -64,28 +64,6 @@ internal static class Program
         {
             AllowAutoRedirect = false
         }, disposeHandler: true);
-    }
-
-    private static string GetRequiredEnvironment(string name)
-    {
-        var value = Environment.GetEnvironmentVariable(name);
-        return string.IsNullOrWhiteSpace(value)
-            ? throw new InvalidOperationException($"Required worker environment variable '{name}' is missing.")
-            : value;
-    }
-
-    private static TimeSpan GetOptionalDurationSeconds(string name, TimeSpan fallback)
-    {
-        var raw = Environment.GetEnvironmentVariable(name);
-        if (string.IsNullOrWhiteSpace(raw))
-            return fallback;
-        if (!double.TryParse(raw, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var seconds)
-            || !double.IsFinite(seconds)
-            || seconds <= 0)
-        {
-            throw new InvalidOperationException($"Worker environment variable '{name}' must be a positive number of seconds.");
-        }
-        return TimeSpan.FromSeconds(seconds);
     }
 }
 

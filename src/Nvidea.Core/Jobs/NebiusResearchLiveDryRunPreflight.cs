@@ -35,7 +35,6 @@ public static class NebiusResearchLiveDryRunPreflight
         ValidateBounded(options.Preset, nameof(options.Preset), 256);
         ValidateBounded(options.Timeout, nameof(options.Timeout), 128);
         ValidateBounded(options.SubnetId, nameof(options.SubnetId), 512);
-        ValidateBounded(options.WorkerPublicKeyPem, nameof(options.WorkerPublicKeyPem), 65536);
 
         NebiusResearchDeploymentPreflight.ValidateDigestPinnedWorkerImage(options.WorkerImage);
 
@@ -78,7 +77,7 @@ public static class NebiusResearchLiveDryRunPreflight
 
     private static void ValidateSigningIdentity(NebiusResearchDispatchOptions options, string clientPrivateKeyPem)
     {
-        ValidateBounded(clientPrivateKeyPem, nameof(clientPrivateKeyPem), 65536);
+        ValidateBoundedPem(clientPrivateKeyPem, nameof(clientPrivateKeyPem), 65536);
         using var privateKey = RSA.Create();
         try
         {
@@ -149,6 +148,16 @@ public static class NebiusResearchLiveDryRunPreflight
         ValidateBounded(value, name, 8192);
         if (value.Any(char.IsWhiteSpace))
             throw new InvalidOperationException($"Live configuration '{name}' must not contain whitespace.");
+    }
+
+    private static void ValidateBoundedPem(string value, string name, int maximumLength)
+    {
+        if (string.IsNullOrWhiteSpace(value)
+            || value.Length > maximumLength
+            || value.Any(static character => char.IsControl(character) && character is not '\r' and not '\n'))
+        {
+            throw new InvalidOperationException($"Live configuration '{name}' is missing or invalid.");
+        }
     }
 
     private static void ValidateBounded(string value, string name, int maximumLength)

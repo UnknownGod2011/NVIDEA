@@ -73,6 +73,7 @@ public sealed class NebiusResearchLiveProviderStartupTests
             ServerlessAccessToken: null!,
             ProjectId: null!,
             ClientPrivateKeyPem: null!,
+            ClientResultPrivateKeyPem: null!,
             DispatchOptions: null!,
             ObjectStorageOptions: null!,
             Report: null!,

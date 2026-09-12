@@ -14,13 +14,21 @@ public enum NebiusRemoteJobState
     Cancelled
 }
 
+public sealed record NebiusRemoteJobDiagnostic(
+    string? Code,
+    string? Message);
+
 public sealed record NebiusRemoteJobSnapshot(
     string Id,
     string Name,
-    NebiusRemoteJobState State);
+    NebiusRemoteJobState State,
+    NebiusRemoteJobDiagnostic? Diagnostic = null);
 
 public static class NebiusServerlessJobSnapshotParser
 {
+    private const int MaxDiagnosticCodeLength = 128;
+    private const int MaxDiagnosticMessageLength = 1024;
+
     public static IReadOnlyList<NebiusRemoteJobSnapshot> ParseList(NebiusServerlessResponse response)
     {
         ArgumentNullException.ThrowIfNull(response);
@@ -42,10 +50,10 @@ public static class NebiusServerlessJobSnapshotParser
             if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(name))
                 continue;
 
-            var rawState = item.TryGetProperty("status", out var status) && status.ValueKind == JsonValueKind.Object
-                ? TryReadString(status, "state")
-                : null;
-            result.Add(new NebiusRemoteJobSnapshot(id, name, ParseState(rawState)));
+            var hasStatus = item.TryGetProperty("status", out var status) && status.ValueKind == JsonValueKind.Object;
+            var rawState = hasStatus ? TryReadString(status, "state") : null;
+            var diagnostic = hasStatus ? TryReadDiagnostic(status) : null;
+            result.Add(new NebiusRemoteJobSnapshot(id, name, ParseState(rawState), diagnostic));
         }
 
         return result;
@@ -77,10 +85,10 @@ public static class NebiusServerlessJobSnapshotParser
         if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(name))
             throw new InvalidOperationException("Nebius job response is missing resource id or name.");
 
-        var rawState = root.TryGetProperty("status", out var status) && status.ValueKind == JsonValueKind.Object
-            ? TryReadString(status, "state")
-            : null;
-        return new NebiusRemoteJobSnapshot(id, name, ParseState(rawState));
+        var hasStatus = root.TryGetProperty("status", out var status) && status.ValueKind == JsonValueKind.Object;
+        var rawState = hasStatus ? TryReadString(status, "state") : null;
+        var diagnostic = hasStatus ? TryReadDiagnostic(status) : null;
+        return new NebiusRemoteJobSnapshot(id, name, ParseState(rawState), diagnostic);
     }
 
     public static NebiusRemoteJobState ParseState(string? state) => state?.Trim().ToUpperInvariant() switch
@@ -93,6 +101,55 @@ public static class NebiusServerlessJobSnapshotParser
         "CANCELLED" => NebiusRemoteJobState.Cancelled,
         _ => NebiusRemoteJobState.Unknown
     };
+
+    private static NebiusRemoteJobDiagnostic? TryReadDiagnostic(JsonElement status)
+    {
+        if (!TryGetStateDetails(status, out var details))
+            return null;
+
+        if (!TryReadBoundedDiagnosticField(details, "code", MaxDiagnosticCodeLength, out var code)
+            || !TryReadBoundedDiagnosticField(details, "message", MaxDiagnosticMessageLength, out var message))
+        {
+            return null;
+        }
+
+        return code is null && message is null
+            ? null
+            : new NebiusRemoteJobDiagnostic(code, message);
+    }
+
+    private static bool TryGetStateDetails(JsonElement status, out JsonElement details)
+    {
+        if (status.TryGetProperty("stateDetails", out details) && details.ValueKind == JsonValueKind.Object)
+            return true;
+        if (status.TryGetProperty("state_details", out details) && details.ValueKind == JsonValueKind.Object)
+            return true;
+
+        details = default;
+        return false;
+    }
+
+    private static bool TryReadBoundedDiagnosticField(
+        JsonElement element,
+        string propertyName,
+        int maxLength,
+        out string? value)
+    {
+        value = null;
+        if (!element.TryGetProperty(propertyName, out var property))
+            return true;
+        if (property.ValueKind != JsonValueKind.String)
+            return false;
+
+        var candidate = property.GetString()?.Trim();
+        if (string.IsNullOrWhiteSpace(candidate))
+            return true;
+        if (candidate.Length > maxLength || candidate.Any(char.IsControl))
+            return false;
+
+        value = candidate;
+        return true;
+    }
 
     private static string? TryReadString(JsonElement element, string propertyName) =>
         element.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String
@@ -199,16 +256,19 @@ public sealed class NebiusResearchLifecycleReconciler
                 return current;
 
             case NebiusRemoteJobState.Failed:
+            {
+                var failureEvidence = BuildRemoteFailureEvidence(remote.Diagnostic);
                 return await FinalizeTerminalAsync(
                     current,
                     provenance,
                     AgentJobState.Failed,
                     RemoteResearchProvenanceState.RemoteFailed,
-                    "Nebius remote research stage failed.",
+                    failureEvidence.LastError,
                     "research.remote_failed",
-                    "Nebius reported a terminal failure for the remote research stage.",
+                    failureEvidence.AuditSummary,
                     currentTime,
                     cancellationToken).ConfigureAwait(false);
+            }
 
             case NebiusRemoteJobState.Cancelled:
                 return await FinalizeTerminalAsync(
@@ -353,6 +413,27 @@ public sealed class NebiusResearchLifecycleReconciler
         if (remote.State == NebiusRemoteJobState.Unknown)
             throw new InvalidOperationException("Verified Nebius job has an unknown lifecycle state; refusing durable mutation.");
         return remote;
+    }
+
+    private static (string LastError, string AuditSummary) BuildRemoteFailureEvidence(NebiusRemoteJobDiagnostic? diagnostic)
+    {
+        const string baseError = "Nebius remote research stage failed.";
+        const string baseAudit = "Nebius reported a terminal failure for the remote research stage.";
+        if (diagnostic is null)
+            return (baseError, baseAudit);
+
+        var fields = new List<string>(2);
+        if (!string.IsNullOrWhiteSpace(diagnostic.Code))
+            fields.Add($"code={diagnostic.Code}");
+        if (!string.IsNullOrWhiteSpace(diagnostic.Message))
+            fields.Add($"message={diagnostic.Message}");
+        if (fields.Count == 0)
+            return (baseError, baseAudit);
+
+        var detail = string.Join("; ", fields);
+        return (
+            $"{baseError} Provider diagnostic (untrusted): {detail}.",
+            $"{baseAudit} Provider diagnostic (untrusted): {detail}.");
     }
 
     private async Task<AgentJobRecord> FinalizeTerminalAsync(

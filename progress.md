@@ -25,6 +25,7 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - **Client RSA purposes are separated end-to-end.** Dispatch signing/verification uses one RSA identity; result-envelope encryption/decryption uses a second. Live client configuration requires distinct private keys; worker configuration receives only their distinct public halves.
 - `NebiusResearchWorkerRuntimeConfiguration` is the single worker environment boundary. Credential-free topology/model/timing validation happens before worker-private-key and provider-secret reads.
 - Nebius Serverless lifecycle interpretation is explicitly allowlisted. Bounded `state_details` diagnostics are retained only as untrusted operator/audit evidence and never determine lifecycle transitions.
+- Recognized Nebius failure codes now map through a fixed local remediation allowlist. Windows-safe `ResearchJobStatus` can expose guidance without copying provider `message` text or granting retry/resource-change authority.
 - Windows voice invocation is local/review-first. Deterministic judging tools include `Nvidea.PersonalAiDemoEval`, `Nvidea.PersonalAiAdversarialEval`, `Nvidea.JudgingEvidenceVerifier`, `Nvidea.DemoPackageValidator`, and `Nvidea.NebiusModelCatalogCheck`.
 
 ## Persistent Progress History
@@ -77,12 +78,35 @@ Engineering commits before this ledger update:
 - `60903449a815178e09550a5f2882525fe52cf0a2` — preserve Serverless snapshot API compatibility.
 - `cae356d2df69c8de787e49d2030208cfbce07b5e` — reject ambiguous duplicate diagnostic shapes in focused tests.
 
+### 2026-09-13 — Safe fixed Serverless failure remediation
+Completed in this run:
+- Added `NebiusFailureRemediationPolicy`, a pure allowlist that accepts only a bounded normalized provider **code** and returns fixed local guidance. It accepts no provider message and has no retry/cancel/resubmit/resize authority.
+- Seeded the allowlist with `NotEnoughResources` and `Quota`, which current Nebius first-party Serverless tooling documents as capacity and quota failure classifications respectively. Unknown/future/lookalike codes return no guidance.
+- Added a compatibility parser for NVIDEA's own durable `LastError` failure-evidence prefix. It reads only the code field before the provider message; provider message text is neither copied nor consulted for classification.
+- `ResearchJobStatus` now exposes optional `FailureRecoveryGuidance` only for durable `AgentJobState.Failed` records whose remote provenance is specifically `RemoteFailed`.
+- The existing Windows research UI already renders `ResearchJobStatus.DisplayText`; recognized remote failures therefore receive fixed actionable guidance without exposing raw provider text. Local failures and unknown remote codes remain the generic `Research failed` UI.
+- Added adversarial tests for normalization, unknown/lookalike/control-character/oversized codes, message-based spoof attempts, fixed-guidance projection, raw-message non-disclosure, and prevention of local-failure spoofing.
+- Static review rejected an intermediate design that persisted a free-form guidance string in `AgentJobRecord`; those two JobContracts commits were reversed in-run and have **no net diff**, avoiding a new untrusted durable UI-text surface.
+
+Net meaningful files changed from the previous ledger head:
+- `src/Nvidea.Core/Jobs/NebiusFailureRemediationPolicy.cs` — fixed allowlist + durable-evidence compatibility classification.
+- `src/Nvidea.Core/Jobs/ResearchJobStatus.cs` — privacy-safe remediation projection into product status/display text.
+- `tests/Nvidea.Core.Tests/NebiusFailureRemediationPolicyTests.cs` — focused/adversarial policy and UI-projection coverage.
+
+Key persisted commits before this ledger update:
+- `382ab8da0ae6c198a1b263a5c9bfef213d117afb` — introduce the fixed remediation policy.
+- `6ae4b1cae44a920e3ebbc171147628239777faec` — add durable failure-evidence classification.
+- `848326d9a4ac0310992b4f88e158fb383c661223` / `590e8432dc716db2637d7adaf8d1904e01600dad` — project and surface safe remediation through research status.
+- `7f7e8ddcc9df67ce56e7663892a84d1d5b563c1b` — add policy/adversarial tests.
+- `ad29f0ddd4b31aa475afb41f95ed702a52dcefdb` — align policy comments and conservative parsing with the final architecture.
+
 Validation / evidence:
 - Current Nebius SDK metadata was checked on 2026-09-13 and confirms `JobStatus.state_details` / `JobStateDetails` expose `code` and `message`.
-- Added focused tests for both JSON spellings, bounded valid diagnostics, oversized fields, control-character injection, duplicate-shape ambiguity, generic fallback, audit/LastError surfacing, and unknown-state fail-closed behavior with no terminal mutation.
-- Static review confirms provider diagnostic text is not consulted by lifecycle parsing, remote provenance verification, cancellation semantics, result ingestion, or durable transition selection.
-- Static review also caught and corrected the initially broadened positional record surface before this run was closed.
-- `dotnet --info` remains unavailable in this execution environment (`dotnet` executable not found). **No compile, xUnit, WPF, Worker, evaluator, or tool PASS is claimed.**
+- Current Nebius first-party `nebius-physical-ai` Serverless tooling was inspected read-only and documents capacity failures as `NotEnoughResources` and quota failures as `Quota`; the local policy does not infer any unverified additional codes.
+- Added focused tests for both JSON spellings, bounded valid diagnostics, oversized fields, control-character injection, duplicate-shape ambiguity, generic fallback, audit/LastError surfacing, unknown-state fail-closed behavior, remediation allowlisting, message spoofing, and privacy-safe product projection.
+- Static review confirms provider diagnostic text is not consulted by lifecycle parsing, remote provenance verification, cancellation semantics, result ingestion, durable transition selection, or remediation selection.
+- GitHub comparison from `95d8f59c2ff1b961431e995e2478a95b693f713c` before this ledger commit is 8 commits ahead / 0 behind, with a net diff limited to the three files listed above.
+- `dotnet --info` and `csc` remain unavailable in this execution environment. **No compile, xUnit, WPF, Worker, evaluator, or tool PASS is claimed.**
 - No GitHub Actions workflow was triggered merely to manufacture a green signal.
 - No live Nebius, Tavily, Object Storage, Serverless, Playwright, Ollama, or paid inference operation was performed.
 
@@ -92,6 +116,8 @@ Validation / evidence:
 - Worker work-item private material remains a separate MysteryBox-backed key and is never included in source or example values.
 - Serverless lifecycle interpretation remains allowlisted rather than heuristic: undocumented/future provider states are Unknown and cannot mutate durable local job state.
 - Provider `state_details` is treated as untrusted evidence only: bounded, control-character-free, non-authoritative, and ignored when malformed or ambiguous.
+- Fixed remediation is selected only from an allowlisted provider code and is product guidance only. Provider `message` text cannot select guidance, authorize a retry, choose another resource shape/project, or mutate durable state.
+- Windows product projection never copies raw provider message text into `ResearchJobStatus`; recognized guidance is locally authored and unknown codes fail to generic UI.
 - `STATE_UNSPECIFIED` remains Unknown, while `ERROR` remains terminal Failed in accordance with the current Nebius contract.
 - Existing authenticated associated data, encrypted transport, signed binding, endpoint trust, cancellation/recovery, exact-once ingestion, Tavily/Nemotron behavior, browser safety, and Windows UX were not removed or weakened.
 - Lower-level `NebiusResearchClientRuntime.Create(...)` still retains a same-key compatibility fallback for legacy unit/contract callers; production live composition and deployment preflight are stricter. Remove this fallback only after executable migration coverage exists.
@@ -104,7 +130,8 @@ Validation / evidence:
 - Real `embeddinggemma` ranking quality still needs a local Ollama evaluation corpus.
 - No live Object Storage bucket/static key, digest-pinned registry image, MysteryBox refs, subnet, Serverless token, or real Serverless job has been provisioned/validated here.
 - Exact provider acceptance of Serverless Object Storage `Source` / `SourcePath` still requires a real job.
-- Known Nebius failure codes can now be surfaced safely, but they are not yet mapped to fixed local remediation guidance; any future guidance must be selected from an allowlist by normalized code and must never execute/retry/change resources based on provider message text.
+- Remediation currently rehydrates the bounded code from NVIDEA's own formatted durable `LastError` for backward compatibility. A future migration should persist a bounded structured diagnostic code alongside remote provenance so product projection no longer depends on an internal display/evidence serialization format.
+- Only `NotEnoughResources` and `Quota` are currently allowlisted because those were the current failure classifications verified in first-party Nebius Serverless tooling during this run. Do not add timeout/start/container classifications until current provider evidence or a real contract capture confirms their exact codes.
 
 ## Single Best Next Task
-Obtain a real .NET 8-capable Windows restore/build/test signal and fix every compile/runtime defect exposed by recent security/reliability migrations. If executable validation remains unavailable, add a fixed allowlisted remediation classifier for known Nebius failure **codes** (for example resource exhaustion, timeout, start/container failure) so Windows can show safe actionable recovery guidance while continuing to treat the provider `message` as display-only untrusted text and never as an automatic retry/resource-change instruction.
+Obtain a real .NET 8-capable Windows restore/build/test signal and fix every compile/runtime defect exposed by recent security/reliability migrations. If executable validation remains unavailable, migrate the recognized remote failure **code** into a bounded structured field in durable remote provenance (with backward-compatible migration from existing `LastError` evidence), then make `ResearchJobStatus` classify that structured field directly instead of depending on formatted error text.

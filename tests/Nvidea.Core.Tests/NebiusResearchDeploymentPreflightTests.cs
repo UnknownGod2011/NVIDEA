@@ -335,6 +335,7 @@ public sealed class NebiusResearchDeploymentPreflightTests
     private static NebiusResearchDispatchOptions CreateValidOptions()
     {
         using var client = RSA.Create(2048);
+        using var resultClient = RSA.Create(2048);
         return new NebiusResearchDispatchOptions(
             WorkerImage: $"registry.example/nvidea-worker@sha256:{new string('a', 64)}",
             WorkerPublicKeyPem: "public-key-used-by-client-envelope-protection",
@@ -347,7 +348,8 @@ public sealed class NebiusResearchDeploymentPreflightTests
             EnvironmentVariables: new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 [NebiusResearchDeploymentPreflight.TransportRootEnvironmentVariable] = "/mnt/nvidea-research",
-                [NebiusResearchDeploymentPreflight.ClientPublicKeyEnvironmentVariable] = client.ExportSubjectPublicKeyInfoPem()
+                [NebiusResearchDeploymentPreflight.ClientPublicKeyEnvironmentVariable] = client.ExportSubjectPublicKeyInfoPem(),
+                [NebiusResearchDeploymentPreflight.ClientResultPublicKeyEnvironmentVariable] = resultClient.ExportSubjectPublicKeyInfoPem()
             },
             SecretEnvironmentVariables: new Dictionary<string, NebiusMysteryBoxSecretRef>(StringComparer.Ordinal)
             {

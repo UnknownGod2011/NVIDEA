@@ -44,6 +44,8 @@ public sealed class JsonAgentJobStore : IAgentJobStore
         if (record.JobId == Guid.Empty)
             throw new ArgumentException("Jobs require a non-empty id.", nameof(record));
 
+        record = RemoteResearchFailureProvenanceMigration.Migrate(record);
+
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -78,6 +80,8 @@ public sealed class JsonAgentJobStore : IAgentJobStore
         ArgumentNullException.ThrowIfNull(replacement);
         if (expected.JobId == Guid.Empty || replacement.JobId == Guid.Empty || expected.JobId != replacement.JobId)
             throw new ArgumentException("Compare-exchange requires the same non-empty job id.");
+
+        replacement = RemoteResearchFailureProvenanceMigration.Migrate(replacement);
 
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -138,11 +142,20 @@ public sealed class JsonAgentJobStore : IAgentJobStore
         var changed = _protector is not null && !payload.WasProtected;
         for (var i = 0; i < records.Count; i++)
         {
-            var migrated = BrowserActionCheckpointMigrationService.MigrateRecord(records[i]);
-            if (migrated.Status is BrowserActionCheckpointRecordMigrationStatus.Migrated
+            var record = records[i];
+            var remoteMigrated = RemoteResearchFailureProvenanceMigration.Migrate(record);
+            if (!ReferenceEquals(remoteMigrated, record))
+            {
+                records[i] = remoteMigrated;
+                record = remoteMigrated;
+                changed = true;
+            }
+
+            var browserMigrated = BrowserActionCheckpointMigrationService.MigrateRecord(record);
+            if (browserMigrated.Status is BrowserActionCheckpointRecordMigrationStatus.Migrated
                 or BrowserActionCheckpointRecordMigrationStatus.Quarantined)
             {
-                records[i] = migrated.Record;
+                records[i] = browserMigrated.Record;
                 changed = true;
             }
         }
@@ -198,7 +211,8 @@ public sealed class JsonAgentJobStore : IAgentJobStore
             && a.InputCheckpointSavedAt == e.InputCheckpointSavedAt
             && a.DispatchedAt == e.DispatchedAt
             && a.State == e.State
-            && a.ResultAppliedAt == e.ResultAppliedAt;
+            && a.ResultAppliedAt == e.ResultAppliedAt
+            && string.Equals(a.ProviderFailureCode, e.ProviderFailureCode, StringComparison.Ordinal);
     }
 
     private static bool DefinitionEquivalent(AgentJobDefinition actual, AgentJobDefinition expected) =>

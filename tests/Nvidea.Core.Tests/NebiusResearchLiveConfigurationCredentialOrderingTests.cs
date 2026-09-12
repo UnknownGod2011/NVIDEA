@@ -65,6 +65,39 @@ public sealed class NebiusResearchLiveConfigurationCredentialOrderingTests
         Assert.DoesNotContain(SecretKeyVariable, reads);
     }
 
+    [Fact]
+    public void UnicodeConfusableRegion_IsRejectedBeforeStaticCredentialsAreRead()
+    {
+        var reads = new List<string>();
+        var environment = new Dictionary<string, string?>(StringComparer.Ordinal)
+        {
+            ["NVIDEA_LIVE_OBJECT_STORAGE_ENDPOINT"] = "https://storage.eu-north1.nebius.cloud",
+            ["NVIDEA_LIVE_OBJECT_STORAGE_REGION"] = "eu-nоrth1", // Cyrillic small o, U+043E.
+            [AccessKeyVariable] = "must-not-be-read",
+            [SecretKeyVariable] = "must-not-be-read"
+        };
+
+        string? Reader(string name)
+        {
+            reads.Add(name);
+            return environment.GetValueOrDefault(name);
+        }
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => NebiusResearchLiveConfigurationLoader.Load(Reader));
+
+        Assert.Contains("OBJECT_STORAGE_REGION", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(AccessKeyVariable, reads);
+        Assert.DoesNotContain(SecretKeyVariable, reads);
+        Assert.Equal(
+            new[]
+            {
+                "NVIDEA_LIVE_OBJECT_STORAGE_ENDPOINT",
+                "NVIDEA_LIVE_OBJECT_STORAGE_REGION"
+            },
+            reads);
+    }
+
     [Theory]
     [InlineData("https://storage.eu-north1.nebius.cloud", "eu-north1")]
     [InlineData("https://storage.us-central1.nebius.cloud/", "us-central1")]
@@ -81,6 +114,8 @@ public sealed class NebiusResearchLiveConfigurationCredentialOrderingTests
     [InlineData("https://storage.eu-north1.nebius.cloud/path", "eu-north1")]
     [InlineData("https://storage.eu-north1.nebius.cloud/?x=1", "eu-north1")]
     [InlineData("https://storage.eu-north1.nebius.cloud", "EU-NORTH1")]
+    [InlineData("https://storage.eu-north1.nebius.cloud", "eu-nоrth1")]
+    [InlineData("https://storage.eu-north1.nebius.cloud", "eu-north١")]
     public void UntrustedEarlyBoundary_IsRejected(string endpoint, string region)
     {
         Assert.Throws<InvalidOperationException>(

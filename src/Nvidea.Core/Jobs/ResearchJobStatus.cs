@@ -86,7 +86,7 @@ public sealed record ResearchJobStatus(
         var stage = ResolveStage(record);
         var failureRecoveryGuidance = record.State == AgentJobState.Failed
             && remoteState == RemoteResearchProvenanceState.RemoteFailed
-            ? NebiusFailureRemediationPolicy.ClassifyPersistedFailureEvidence(record.LastError)?.Guidance
+            ? ResolveFailureRemediation(record)?.Guidance
             : null;
         var displayText = Display(record, stage);
         if (!string.IsNullOrWhiteSpace(failureRecoveryGuidance))
@@ -137,6 +137,14 @@ public sealed record ResearchJobStatus(
                 or RemoteResearchProvenanceState.Dispatched
                 or RemoteResearchProvenanceState.CancelRequested
         };
+
+    private static NebiusFailureRemediation? ResolveFailureRemediation(AgentJobRecord record)
+    {
+        // New records classify the bounded structured provenance field directly. The legacy LastError
+        // parser remains only as a read-compatibility bridge for jobs persisted before that field existed.
+        var structured = NebiusFailureRemediationPolicy.Classify(record.RemoteResearch?.ProviderFailureCode);
+        return structured ?? NebiusFailureRemediationPolicy.ClassifyPersistedFailureEvidence(record.LastError);
+    }
 
     private static ResearchJobStage ResolveStage(AgentJobRecord record)
     {

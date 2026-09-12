@@ -88,8 +88,11 @@ public static class ResearchWorkItemProtector
         string workerPublicKeyPem)
     {
         ValidateWorkItem(workItem);
-        if (string.IsNullOrWhiteSpace(workerPublicKeyPem))
-            throw new ArgumentException("Worker public key is required.", nameof(workerPublicKeyPem));
+
+        // Enforce the worker encryption-key trust boundary even for lower-level callers that
+        // bypass deployment preflight. This prevents private, weak, malformed or oversized RSA
+        // material from reaching data-key wrapping through the protocol API.
+        using var rsa = WorkerEnvelopePublicKeyTrust.CreateValidatedRsa(workerPublicKeyPem);
 
         var plaintext = JsonSerializer.SerializeToUtf8Bytes(
             workItem,
@@ -109,8 +112,6 @@ public static class ResearchWorkItemProtector
             using (var aes = new AesGcm(dataKey, TagBytes))
                 aes.Encrypt(nonce, plaintext, ciphertext, tag, associatedData);
 
-            using var rsa = RSA.Create();
-            rsa.ImportFromPem(workerPublicKeyPem);
             var wrappedKey = rsa.Encrypt(dataKey, RSAEncryptionPadding.OaepSHA256);
 
             return new ProtectedResearchWorkItemEnvelope(

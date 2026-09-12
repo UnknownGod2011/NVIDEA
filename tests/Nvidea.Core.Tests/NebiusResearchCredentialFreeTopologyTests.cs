@@ -13,6 +13,21 @@ public sealed class NebiusResearchCredentialFreeTopologyTests
     }
 
     [Fact]
+    public void CredentialFreeTopology_RejectsMutableWorkerImageBeforeKeyMaterialIsNeeded()
+    {
+        var options = CreateTopologyOnlyOptions() with
+        {
+            WorkerImage = "registry.example/nvidea-worker:latest",
+            WorkerPublicKeyPem = string.Empty
+        };
+
+        var error = Assert.Throws<InvalidOperationException>(
+            () => NebiusResearchDeploymentPreflight.ValidateCredentialFreeTopology(options));
+
+        Assert.Contains("digest-pinned", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void FullValidation_StillRequiresClientPublicKeyAfterTopologyPasses()
     {
         var options = CreateTopologyOnlyOptions();
@@ -75,7 +90,7 @@ public sealed class NebiusResearchCredentialFreeTopologyTests
 
     private static NebiusResearchDispatchOptions CreateTopologyOnlyOptions() =>
         new(
-            WorkerImage: "registry.example/nvidea-worker:immutable-test",
+            WorkerImage: $"registry.example/nvidea-worker@sha256:{new string('a', 64)}",
             WorkerPublicKeyPem: "public-key-used-by-client-envelope-protection",
             ContainerCommand: "dotnet",
             Platform: "cpu-d3",

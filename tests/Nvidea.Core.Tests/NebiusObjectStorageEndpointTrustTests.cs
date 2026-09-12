@@ -10,6 +10,18 @@ public sealed class NebiusObjectStorageEndpointTrustTests
         using var client = new NebiusObjectStorageClient(ValidOptions());
     }
 
+    [Fact]
+    public void SdkConfiguration_DisablesAutomaticRedirects()
+    {
+        var configuration = NebiusObjectStorageClient.CreateSdkConfiguration(ValidOptions());
+
+        Assert.False(configuration.AllowAutoRedirect);
+        Assert.Equal("https://storage.eu-north1.nebius.cloud", configuration.ServiceURL);
+        Assert.Equal("eu-north1", configuration.AuthenticationRegion);
+        Assert.False(configuration.ForcePathStyle);
+        Assert.Equal(0, configuration.MaxErrorRetry);
+    }
+
     [Theory]
     [InlineData("http://storage.eu-north1.nebius.cloud")]
     [InlineData("https://storage.eu-north1.nebius.cloud:444")]

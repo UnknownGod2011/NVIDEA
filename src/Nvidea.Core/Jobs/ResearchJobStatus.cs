@@ -140,10 +140,15 @@ public sealed record ResearchJobStatus(
 
     private static NebiusFailureRemediation? ResolveFailureRemediation(AgentJobRecord record)
     {
-        // New records classify the bounded structured provenance field directly. The legacy LastError
-        // parser remains only as a read-compatibility bridge for jobs persisted before that field existed.
-        var structured = NebiusFailureRemediationPolicy.Classify(record.RemoteResearch?.ProviderFailureCode);
-        return structured ?? NebiusFailureRemediationPolicy.ClassifyPersistedFailureEvidence(record.LastError);
+        // Once structured provenance exists it is authoritative, even when the provider code is
+        // unknown to this version. Falling back in that case would let stale/conflicting legacy
+        // LastError text override the newer structured value. Legacy parsing is therefore used only
+        // for records persisted before ProviderFailureCode existed.
+        var providerCode = record.RemoteResearch?.ProviderFailureCode;
+        if (!string.IsNullOrWhiteSpace(providerCode))
+            return NebiusFailureRemediationPolicy.Classify(providerCode);
+
+        return NebiusFailureRemediationPolicy.ClassifyPersistedFailureEvidence(record.LastError);
     }
 
     private static ResearchJobStage ResolveStage(AgentJobRecord record)

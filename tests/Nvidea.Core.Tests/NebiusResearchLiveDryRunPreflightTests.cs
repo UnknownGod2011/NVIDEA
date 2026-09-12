@@ -10,7 +10,16 @@ public sealed class NebiusResearchLiveDryRunPreflightTests
     {
         using var worker = RSA.Create(2048);
         using var client = RSA.Create(2048);
-        var dispatch = CreateDispatch(worker.ExportSubjectPublicKeyInfoPem(), client.ExportSubjectPublicKeyInfoPem());
+        var workerPublicKeyPem = worker.ExportSubjectPublicKeyInfoPem();
+        var clientPublicKeyPem = client.ExportSubjectPublicKeyInfoPem();
+        var clientPrivateKeyPem = client.ExportPkcs8PrivateKeyPem();
+
+        // Export*Pem returns canonical multi-line PEM. This guards against accidentally treating
+        // CR/LF as forbidden control characters in the live validation path.
+        Assert.Contains('\n', workerPublicKeyPem);
+        Assert.Contains('\n', clientPrivateKeyPem);
+
+        var dispatch = CreateDispatch(workerPublicKeyPem, clientPublicKeyPem);
         var storage = CreateStorage();
 
         NebiusResearchLiveDryRunPreflight.Validate(
@@ -18,7 +27,7 @@ public sealed class NebiusResearchLiveDryRunPreflightTests
             storage,
             "serverless-access-token",
             "project-test",
-            client.ExportPkcs8PrivateKeyPem());
+            clientPrivateKeyPem);
     }
 
     [Fact]
@@ -116,7 +125,7 @@ public sealed class NebiusResearchLiveDryRunPreflightTests
             {
                 ["NEBIUS_API_KEY"] = new(SecretId: "mbsec-nebius"),
                 ["TAVILY_API_KEY"] = new(SecretId: "mbsec-tavily"),
-                ["NVIDEA_WORKER_PRIVATE_KEY_PEM"] = new(VersionId: "mbsecver-worker")
+                ["NVIDEA_WORKER_PRIVATE_KEY_PEM"] = new(SecretId: "mbsec-worker", VersionId: "mbsecver-worker")
             },
             Volumes: new[]
             {

@@ -144,35 +144,12 @@ public static class NebiusResearchDeploymentPreflight
     }
 
     /// <summary>
-    /// Validates the worker envelope key before any client signing key or provider credential is
-    /// required. Private PEM material is rejected explicitly because this value is propagated
-    /// through deployment/evidence plumbing that must remain public-only.
+    /// Validates and canonicalizes the worker envelope public identity before any client signing key
+    /// or provider credential is required. Deployment preflight deliberately reuses the exact protocol
+    /// trust primitive so RSA role, size, input-bounds, and OAEP-SHA256 capability policy cannot drift.
     /// </summary>
-    public static void ValidateWorkerPublicKey(string pem)
-    {
-        if (string.IsNullOrWhiteSpace(pem)
-            || pem.Length > 65536
-            || pem.Any(static character => char.IsControl(character) && character is not '\r' and not '\n'))
-        {
-            throw new InvalidOperationException("The worker envelope public key is missing or invalid.");
-        }
-
-        if (pem.Contains("PRIVATE KEY", StringComparison.Ordinal))
-            throw new InvalidOperationException("The worker envelope public key must contain public-only RSA key material.");
-
-        using var rsa = RSA.Create();
-        try
-        {
-            rsa.ImportFromPem(pem);
-        }
-        catch (Exception exception) when (exception is CryptographicException or ArgumentException)
-        {
-            throw new InvalidOperationException("The worker envelope public key is not a valid RSA public key PEM.");
-        }
-
-        if (rsa.KeySize < 2048)
-            throw new InvalidOperationException("The worker envelope public key must be at least 2048 bits.");
-    }
+    public static string ValidateWorkerPublicKey(string pem) =>
+        WorkerEnvelopePublicKeyTrust.ValidateAndCanonicalize(pem);
 
     /// <summary>
     /// Validates the public verification identity propagated to the remote worker. This boundary is

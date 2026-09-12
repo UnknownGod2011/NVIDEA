@@ -77,6 +77,54 @@ public sealed class ResearchWorkItemProtectorKeyTrustTests
     }
 
     [Fact]
+    public void WorkerPublicTrust_ValidPublicKeyCanonicalizes()
+    {
+        using var worker = RSA.Create(2048);
+
+        var canonical = WorkerEnvelopePublicKeyTrust.ValidateAndCanonicalize(
+            worker.ExportRSAPublicKeyPem());
+
+        Assert.StartsWith("-----BEGIN PUBLIC KEY-----", canonical, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WorkerPublicTrust_PrivateKeyFailsClosed()
+    {
+        using var worker = RSA.Create(2048);
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            WorkerEnvelopePublicKeyTrust.ValidateAndCanonicalize(worker.ExportPkcs8PrivateKeyPem()));
+
+        Assert.Contains("public-only", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void WorkerPublicTrust_WeakKeyFailsClosed()
+    {
+        using var worker = RSA.Create(1024);
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            WorkerEnvelopePublicKeyTrust.ValidateAndCanonicalize(worker.ExportSubjectPublicKeyInfoPem()));
+
+        Assert.Contains("2048", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WorkerPublicTrust_MalformedOversizedAndControlCharacterPemFailClosed()
+    {
+        Assert.Throws<InvalidOperationException>(() =>
+            WorkerEnvelopePublicKeyTrust.ValidateAndCanonicalize(
+                "-----BEGIN PUBLIC KEY-----\nnot-valid-base64\n-----END PUBLIC KEY-----"));
+
+        Assert.Throws<InvalidOperationException>(() =>
+            WorkerEnvelopePublicKeyTrust.ValidateAndCanonicalize(new string('A', 65537)));
+
+        Assert.Throws<InvalidOperationException>(() =>
+            WorkerEnvelopePublicKeyTrust.ValidateAndCanonicalize(
+                "-----BEGIN PUBLIC KEY-----\nAAAA\0BBBB\n-----END PUBLIC KEY-----"));
+    }
+
+    [Fact]
     public void SharedTrust_CanonicalizationMatchesWorkerRuntimeEntryPoint()
     {
         using var worker = RSA.Create(2048);

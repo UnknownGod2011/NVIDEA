@@ -8,6 +8,7 @@ public sealed class NebiusResearchLiveConfigurationCredentialOrderingTests
     private const string ServerlessTokenVariable = "NVIDEA_LIVE_SERVERLESS_ACCESS_TOKEN";
     private const string AccessKeyVariable = "NVIDEA_LIVE_OBJECT_STORAGE_ACCESS_KEY_ID";
     private const string SecretKeyVariable = "NVIDEA_LIVE_OBJECT_STORAGE_SECRET_ACCESS_KEY";
+    private const string WorkerPublicKeyVariable = "NVIDEA_LIVE_WORKER_PUBLIC_KEY_PEM_FILE";
     private const string ClientPrivateKeyVariable = "NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE";
 
     [Fact]
@@ -102,7 +103,7 @@ public sealed class NebiusResearchLiveConfigurationCredentialOrderingTests
     }
 
     [Fact]
-    public void InvalidTransportBucketAlignment_IsRejectedBeforeProviderCredentialsOrClientPrivateKeyAreRead()
+    public void InvalidTransportBucketAlignment_IsRejectedBeforeAnyPemOrProviderCredentialsAreRead()
     {
         var root = Path.Combine(Path.GetTempPath(), "nvidea-live-ordering-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -133,7 +134,7 @@ public sealed class NebiusResearchLiveConfigurationCredentialOrderingTests
                 ["NVIDEA_LIVE_OBJECT_STORAGE_PREFIX"] = "nvidea-research",
                 ["NVIDEA_LIVE_TRANSPORT_SOURCE_PATH"] = "nvidea-research",
                 ["NVIDEA_LIVE_OBJECT_STORAGE_BUCKET"] = "nvidea-live-bucket",
-                ["NVIDEA_LIVE_WORKER_PUBLIC_KEY_PEM_FILE"] = workerPublicPath,
+                [WorkerPublicKeyVariable] = workerPublicPath,
                 [ClientPrivateKeyVariable] = clientPrivatePath,
                 ["NVIDEA_LIVE_SECRET_NEBIUS_API_KEY_ID"] = "mbsec-nebius-api-key",
                 ["NVIDEA_LIVE_SECRET_TAVILY_API_KEY_ID"] = "mbsec-tavily-api-key",
@@ -153,6 +154,7 @@ public sealed class NebiusResearchLiveConfigurationCredentialOrderingTests
                 () => NebiusResearchLiveConfigurationLoader.Load(Reader));
 
             Assert.Contains("bucket", exception.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(WorkerPublicKeyVariable, reads);
             Assert.DoesNotContain(ClientPrivateKeyVariable, reads);
             Assert.DoesNotContain(ServerlessTokenVariable, reads);
             Assert.DoesNotContain(AccessKeyVariable, reads);
@@ -169,6 +171,54 @@ public sealed class NebiusResearchLiveConfigurationCredentialOrderingTests
                 // Test cleanup only.
             }
         }
+    }
+
+    [Fact]
+    public void MutableWorkerImage_IsRejectedBeforeAnyPemOrProviderCredentialsAreRead()
+    {
+        var reads = new List<string>();
+        var environment = new Dictionary<string, string?>(StringComparer.Ordinal)
+        {
+            ["NVIDEA_LIVE_OBJECT_STORAGE_ENDPOINT"] = "https://storage.eu-north1.nebius.cloud",
+            ["NVIDEA_LIVE_OBJECT_STORAGE_REGION"] = "eu-north1",
+            ["NVIDEA_LIVE_SERVERLESS_PROJECT_ID"] = "project-test",
+            ["NVIDEA_LIVE_WORKER_IMAGE"] = "registry.example/nvidea-worker:latest",
+            ["NVIDEA_LIVE_SUBNET_ID"] = "subnet-test",
+            ["NVIDEA_LIVE_PLATFORM"] = "cpu-d3",
+            ["NVIDEA_LIVE_PRESET"] = "1vcpu-4gb",
+            ["NVIDEA_LIVE_TIMEOUT"] = "3600s",
+            ["NVIDEA_LIVE_DISK_TYPE"] = "NETWORK_SSD",
+            ["NVIDEA_LIVE_DISK_SIZE_BYTES"] = (10L * 1024 * 1024 * 1024).ToString(),
+            ["NVIDEA_LIVE_TRANSPORT_SOURCE"] = "nvidea-live-bucket",
+            ["NVIDEA_LIVE_WORKER_TRANSPORT_ROOT"] = "/mnt/nvidea-research",
+            ["NVIDEA_LIVE_OBJECT_STORAGE_PREFIX"] = "nvidea-research",
+            ["NVIDEA_LIVE_TRANSPORT_SOURCE_PATH"] = "nvidea-research",
+            ["NVIDEA_LIVE_OBJECT_STORAGE_BUCKET"] = "nvidea-live-bucket",
+            [WorkerPublicKeyVariable] = "must-not-be-read",
+            [ClientPrivateKeyVariable] = "must-not-be-read",
+            ["NVIDEA_LIVE_SECRET_NEBIUS_API_KEY_ID"] = "mbsec-nebius-api-key",
+            ["NVIDEA_LIVE_SECRET_TAVILY_API_KEY_ID"] = "mbsec-tavily-api-key",
+            ["NVIDEA_LIVE_SECRET_WORKER_PRIVATE_KEY_ID"] = "mbsec-worker-private-key",
+            [ServerlessTokenVariable] = "must-not-be-read",
+            [AccessKeyVariable] = "must-not-be-read",
+            [SecretKeyVariable] = "must-not-be-read"
+        };
+
+        string? Reader(string name)
+        {
+            reads.Add(name);
+            return environment.GetValueOrDefault(name);
+        }
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => NebiusResearchLiveConfigurationLoader.Load(Reader));
+
+        Assert.Contains("digest-pinned", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(WorkerPublicKeyVariable, reads);
+        Assert.DoesNotContain(ClientPrivateKeyVariable, reads);
+        Assert.DoesNotContain(ServerlessTokenVariable, reads);
+        Assert.DoesNotContain(AccessKeyVariable, reads);
+        Assert.DoesNotContain(SecretKeyVariable, reads);
     }
 
     [Theory]

@@ -31,7 +31,17 @@ public static class WorkerEnvelopePrivateKeyTrust
         var rsa = RSA.Create();
         try
         {
-            rsa.ImportFromPem(pem);
+            try
+            {
+                rsa.ImportFromPem(pem);
+            }
+            catch (Exception exception) when (exception is CryptographicException or ArgumentException)
+            {
+                throw new InvalidOperationException(
+                    "The worker envelope private key is not valid RSA private-key PEM.",
+                    exception);
+            }
+
             if (rsa.KeySize < MinimumRsaBits)
                 throw new InvalidOperationException("The worker envelope RSA private key must be at least 2048 bits.");
 

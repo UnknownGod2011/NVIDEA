@@ -24,7 +24,7 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Client dispatch-signing and result-envelope RSA purposes are separated end-to-end; production live composition rejects identity reuse before provider credential reads.
 - `NebiusResearchWorkerRuntimeConfiguration` is the single worker environment boundary. Credential-free topology/model/timing validation happens before worker-private-key and provider-secret reads.
 - Nebius Serverless lifecycle interpretation is explicitly allowlisted. Bounded `state_details` diagnostics are untrusted evidence only and never determine lifecycle transitions.
-- Recognized Nebius failure codes map through a fixed local remediation allowlist. **Durable remote provenance now contains a structured optional `ProviderFailureCode`; product guidance prefers this field and uses formatted `LastError` only as a legacy compatibility source when the structured field is absent.**
+- Recognized Nebius failure codes map through a fixed local remediation allowlist. **Durable remote provenance contains a structured optional `ProviderFailureCode`; newly verified remote failures now place the already bounded diagnostic code into terminal provenance before CAS, so returned in-memory and persisted records agree. Product guidance still treats the code as evidence and only acts on its fixed local allowlist.**
 - Windows voice invocation is local/review-first. Deterministic judging tools include `Nvidea.PersonalAiDemoEval`, `Nvidea.PersonalAiAdversarialEval`, `Nvidea.JudgingEvidenceVerifier`, `Nvidea.DemoPackageValidator`, and `Nvidea.NebiusModelCatalogCheck`.
 
 ## Persistent Progress History
@@ -48,7 +48,6 @@ Audited current Nebius Serverless lifecycle vocabulary and added exhaustive fail
 Added `NebiusFailureRemediationPolicy`. Only verified exact codes currently allowlisted from first-party Nebius evidence are `NotEnoughResources` (capacity guidance) and `Quota` (quota guidance). Provider `message` cannot select guidance, authorize retry/resubmit/cancel, change resources/projects, or mutate durable state. `ResearchJobStatus` exposes locally authored guidance only for durable `Failed + RemoteFailed` jobs.
 
 ### 2026-09-13 — Structured durable remote failure provenance
-Completed in this run:
 - Extended `RemoteResearchProvenance` with trailing optional `ProviderFailureCode`, preserving existing constructor call sites/legacy JSON compatibility while creating a dedicated structured field for bounded provider classification.
 - Added `RemoteResearchFailureProvenanceMigration`. It migrates only `RemoteFailed` records with no structured code, reads only NVIDEA's own legacy failure-evidence `code=...`, and promotes a code only when the fixed local remediation allowlist recognizes it. Provider `message` is never copied or parsed for authority.
 - Hardened `ResearchJobStatus`: when `ProviderFailureCode` is present it is authoritative even if unknown to this version. A conflicting legacy `LastError` cannot override it. Legacy text parsing is used only when the structured field is absent.
@@ -57,7 +56,7 @@ Completed in this run:
 - Added focused/adversarial tests for recognized migration, unknown-code refusal, preservation of an already structured code, structured-vs-legacy conflict precedence, malicious provider-message non-disclosure, and fixed-guidance projection.
 - Added `RemoteResearchFailureProvenancePersistenceTests` exercising the real protected `JsonAgentJobStore` save/reload path: a legacy `Quota` failure is reloaded with structured `ProviderFailureCode=Quota`, provider message remains only in legacy error evidence, and Windows-safe status emits fixed local guidance without exposing that provider message.
 
-Engineering commits before this ledger update:
+Engineering commits:
 - `2cbb03def912821b4fcd4c5cfc9bfdfad64cf663` — persist bounded remote failure code in provenance.
 - `e63d6b9d2907309a4b71b24cdd7fe27a0eb8e87c` — prefer structured remote failure provenance in UI.
 - `04e1859d0d6d34826a482021121095da676b4c91` — add remote failure provenance migration.
@@ -66,20 +65,34 @@ Engineering commits before this ledger update:
 - `de479adec7d8c17c2381100c365856cd34f0f466` — test structured remote failure provenance migration.
 - `1fe442cab7adb6914d39b661a126b5e3fd94fb24` — test durable remote failure provenance migration.
 
+### 2026-09-13 — Direct lifecycle failure-code capture
+Completed in this run:
+- `NebiusResearchLifecycleReconciler` now carries the already parsed/bounded `state_details.code` directly into `RemoteResearchProvenance.ProviderFailureCode` when and only when the verified remote lifecycle independently resolves to `FAILED`/`ERROR`.
+- Terminal provenance is built with the code **before** the job-store compare-and-swap. The record returned by reconciliation therefore matches the durable record instead of relying on a later load/migration pass.
+- Non-`RemoteFailed` terminal paths explicitly clear `ProviderFailureCode`, preventing provider failure classification from leaking into cancelled/expired terminal provenance.
+- Unknown/future bounded provider codes are preserved as untrusted evidence, but they do not gain remediation authority: `NebiusFailureRemediationPolicy` still returns guidance only for its fixed local allowlist.
+- Added `NebiusResearchLifecycleFailureProvenanceTests` covering immediate-vs-durable equality for both an allowlisted `Quota` code and an unknown future code, plus a rejected oversized diagnostic proving malformed diagnostics do not populate structured provenance.
+
+Engineering commits before this ledger update:
+- `1073f5de4717a8a4f850367022071ec9f227abdf` — persist provider failure code during lifecycle reconciliation.
+- `034ca5809f2f893f2ba3aa9b15c30f41f330de43` — test direct remote failure provenance capture.
+
 Validation / evidence this run:
-- Static inspection covered `RemoteResearchProvenance`, lifecycle reconciliation, remediation policy, product status projection, durable store CAS/load behavior, and relevant existing test patterns before modification.
-- GitHub comparison from prior ledger head `0383359b2d82e923216c0f817fc16b1c751fa324` before this ledger commit: **7 commits ahead / 0 behind** with net diff limited to six intended engineering/test files.
-- Added focused test code, including a real file-backed/protected job-store persistence round trip. These tests are committed but **not executed here**.
-- `dotnet` and `csc` are unavailable in this execution environment. **No compile, xUnit, WPF, Worker, evaluator, or tool PASS is claimed.**
+- Re-read `progress.md` completely before implementation and inspected the current reconciler, durable provenance model, job-store migration/CAS behavior, remediation policy, and existing lifecycle-test patterns.
+- GitHub comparison from prior ledger head `920d3d0634f18e51b39a0cf7dd351e559ba4ac7b` before this ledger commit: **2 commits ahead / 0 behind**, with net diff limited to `NebiusResearchLifecycleReconciler.cs` and the new focused lifecycle-provenance test file.
+- Static review confirms the structured code originates only from `NebiusServerlessJobSnapshotParser`, which already bounds code length to 128 characters and rejects control characters/non-string/ambiguous diagnostic payloads before reconciliation.
+- Focused regression code is committed but **not executed here** because no usable .NET compiler/runtime is available in this execution environment.
+- **No compile, xUnit, WPF, Worker, evaluator, or tool PASS is claimed.**
 - No GitHub Actions workflow was triggered merely to manufacture a green signal.
 - No live Nebius, Tavily, Object Storage, Serverless, Playwright, Ollama, or paid inference operation was performed.
 
 ## Security / Privacy / Failure Review
 - Provider failure `message` remains non-authoritative and is not promoted into structured provenance or product guidance.
-- Structured `ProviderFailureCode` cannot itself trigger retries, resubmission, cancellation, resizing, project changes, billing actions, or any other side effect; it is classification evidence only.
+- `ProviderFailureCode` is classification evidence only. Even an unknown/future bounded code cannot itself trigger retries, resubmission, cancellation, resizing, project changes, billing actions, or any other side effect.
+- Only a provider response whose independently allowlisted lifecycle state is `FAILED`/`ERROR` can populate `ProviderFailureCode`; diagnostic text cannot manufacture a terminal transition.
 - Once a structured code exists, legacy formatted error text cannot override it. Unknown/future structured codes fail to generic UI rather than falling back to a conflicting old string.
-- Legacy migration is intentionally allowlist-only: unknown codes remain unstructured instead of being granted durable classification status.
-- CAS version equivalence now includes the structured code, protecting against stale state replacement across this field.
+- Legacy migration remains intentionally allowlist-only: unknown legacy codes remain unstructured instead of being promoted from text.
+- CAS version equivalence includes the structured code, protecting against stale state replacement across this field.
 - Dispatch-signing/result-decryption private material remain client-local; worker/deployment plaintext receives only validated canonical public identities.
 - Serverless lifecycle remains allowlisted rather than heuristic; undocumented/future states cannot mutate durable local job state.
 - Existing encrypted transport, authenticated associated data, signed binding, cancellation/recovery, exact-once ingestion, Tavily/Nemotron behavior, browser safety, and Windows permission UX were not removed or weakened.
@@ -92,9 +105,10 @@ Validation / evidence this run:
 - Real `embeddinggemma` ranking quality still needs a local Ollama evaluation corpus.
 - No live Object Storage bucket/static key, digest-pinned registry image, MysteryBox refs, subnet, Serverless token, or real Serverless job has been provisioned/validated here.
 - Exact provider acceptance of Serverless Object Storage `Source` / `SourcePath` still requires a real job.
-- The lifecycle reconciler currently constructs a terminal replacement without setting `ProviderFailureCode` directly; the durable store canonicalizes recognized codes during CAS, so persisted/reloaded state is structured, while the immediate returned record can still rely on legacy `LastError` compatibility classification until reread. This is safe but should be removed so in-memory and persisted terminal records are identical.
+- The steady-state lifecycle mismatch for newly observed remote failures is closed: reconciliation now returns the same structured failure code that CAS persists. Legacy `LastError` parsing remains only for old records that predate structured provenance.
+- A pre-existing/corrupt record can still contain an already-populated arbitrary `ProviderFailureCode`; product remediation fails closed on malformed/unknown values, but the durable-model invariant that this field is bounded is not yet enforced by one shared trust primitive at every persistence boundary.
 - Only `NotEnoughResources` and `Quota` are allowlisted because those are the failure classifications currently verified from first-party Nebius evidence. Do not add timeout/start/container classifications until current provider evidence or a real contract capture confirms exact codes.
 - Lower-level `NebiusResearchClientRuntime.Create(...)` still retains a same-key compatibility fallback for legacy unit/contract callers; production live composition and deployment preflight are stricter. Remove only after executable migration coverage exists.
 
 ## Single Best Next Task
-Obtain a real .NET 8-capable Windows restore/build/test signal and fix every compile/runtime defect exposed by recent security/reliability migrations. If executable validation remains unavailable, make `NebiusResearchLifecycleReconciler` place the already bounded diagnostic `code` directly into terminal `RemoteResearchProvenance` before CAS, so the returned in-memory record and durable record are identical and steady-state product logic no longer needs the legacy formatted-error bridge for newly created failures.
+Obtain a real .NET 8-capable Windows restore/build/test signal and fix every compile/runtime defect exposed by recent security/reliability migrations. If executable validation remains unavailable, introduce one shared bounded `ProviderFailureCode` trust/canonicalization primitive and apply it to parser output plus durable provenance persistence/load so the 128-character/control-character invariant is enforced consistently even for pre-existing structured records, while keeping remediation allowlisting separate from evidence validation.

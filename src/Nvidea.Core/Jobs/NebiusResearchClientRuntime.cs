@@ -59,7 +59,11 @@ public sealed class ResearchDispatchBindingCleanup
 /// Client-only composition boundary for Nebius remote research. It deliberately constructs the
 /// dispatcher and lifecycle reconciler from one ResearchDispatchBindingPublisher instance so normal
 /// dispatch, crash recovery, and repeated reconciliation cannot accidentally use different signing
-/// identities. The client private key never crosses this boundary into Serverless job configuration.
+/// identities. Client private keys never cross this boundary into Serverless job configuration.
+///
+/// The optional result-envelope private key preserves compatibility for lower-level fixtures. Live
+/// production composition always supplies a distinct key so RSA-PSS dispatch signing and OAEP-SHA256
+/// result decryption do not share one cryptographic identity.
 ///
 /// Serverless execution should be exposed to product UX only after this runtime is backed by a live,
 /// authenticated shared transport and the narrow Nebius contract probe succeeds.
@@ -95,7 +99,8 @@ public sealed class NebiusResearchClientRuntime : IRemoteResearchClientRuntime
         IProtectedResearchDispatchBindingTransport bindings,
         NebiusResearchDispatchOptions options,
         string clientPrivateKeyPem,
-        Nvidea.Core.Capabilities.IAuditTrail auditTrail)
+        Nvidea.Core.Capabilities.IAuditTrail auditTrail,
+        string? clientResultPrivateKeyPem = null)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(serverless);
@@ -107,8 +112,12 @@ public sealed class NebiusResearchClientRuntime : IRemoteResearchClientRuntime
         if (string.IsNullOrWhiteSpace(clientPrivateKeyPem))
             throw new ArgumentException("Client private key is required.", nameof(clientPrivateKeyPem));
 
+        var resultPrivateKeyPem = string.IsNullOrWhiteSpace(clientResultPrivateKeyPem)
+            ? clientPrivateKeyPem
+            : clientResultPrivateKeyPem;
+
         var publisher = new ResearchDispatchBindingPublisher(bindings, clientPrivateKeyPem);
-        var ingestor = new RemoteResearchResultIngestor(store, results, clientPrivateKeyPem, auditTrail, workItems);
+        var ingestor = new RemoteResearchResultIngestor(store, results, resultPrivateKeyPem, auditTrail, workItems);
         var dispatcher = new TwoPhaseNebiusResearchDispatcher(serverless, workItems, options, publisher);
         var reconciler = new NebiusResearchLifecycleReconciler(store, serverless, ingestor, auditTrail, publisher);
         var cleanup = new ResearchDispatchBindingCleanup(bindings);

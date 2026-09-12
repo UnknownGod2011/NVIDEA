@@ -206,30 +206,19 @@ public sealed class NebiusObjectStorageClient : IProtectedResearchObjectStoreCli
 
     private static void ValidateOptions(NebiusObjectStorageClientOptions options)
     {
-        if (string.IsNullOrWhiteSpace(options.Region)
-            || options.Region.Length > 64
-            || options.Region.Any(static ch => !(char.IsLower(ch) || char.IsDigit(ch) || ch == '-'))
-            || options.Region[0] == '-'
-            || options.Region[^1] == '-')
+        var trustFailure = NebiusObjectStorageEndpointTrust.Validate(options.Endpoint, options.Region);
+        switch (trustFailure)
         {
-            throw new ArgumentException("A bounded Nebius Object Storage region identifier is required.", nameof(options));
-        }
-
-        if (!Uri.TryCreate(options.Endpoint, UriKind.Absolute, out var endpoint)
-            || endpoint.Scheme != Uri.UriSchemeHttps
-            || !string.IsNullOrEmpty(endpoint.UserInfo)
-            || endpoint.Port != 443
-            || !string.IsNullOrEmpty(endpoint.Query)
-            || !string.IsNullOrEmpty(endpoint.Fragment)
-            || endpoint.AbsolutePath != "/")
-        {
-            throw new ArgumentException("Nebius Object Storage endpoint must be its HTTPS regional origin on port 443.", nameof(options));
-        }
-
-        var expectedHost = $"storage.{options.Region}.nebius.cloud";
-        if (!string.Equals(endpoint.Host, expectedHost, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new ArgumentException("Nebius Object Storage endpoint must match the configured Nebius region.", nameof(options));
+            case NebiusObjectStorageEndpointTrustFailure.InvalidRegion:
+                throw new ArgumentException("A bounded Nebius Object Storage region identifier is required.", nameof(options));
+            case NebiusObjectStorageEndpointTrustFailure.InvalidEndpoint:
+                throw new ArgumentException("Nebius Object Storage endpoint must be its HTTPS regional origin on port 443.", nameof(options));
+            case NebiusObjectStorageEndpointTrustFailure.RegionMismatch:
+                throw new ArgumentException("Nebius Object Storage endpoint must match the configured Nebius region.", nameof(options));
+            case NebiusObjectStorageEndpointTrustFailure.None:
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(trustFailure));
         }
 
         if (string.IsNullOrWhiteSpace(options.Bucket) || options.Bucket.Length > 63)

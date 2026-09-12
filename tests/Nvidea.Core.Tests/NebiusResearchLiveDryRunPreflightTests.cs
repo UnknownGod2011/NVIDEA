@@ -71,6 +71,25 @@ public sealed class NebiusResearchLiveDryRunPreflightTests
     }
 
     [Fact]
+    public void Validate_RejectsPrivateClientKeyInWorkerVerificationConfigurationEvenWhenIdentityMatches()
+    {
+        using var worker = RSA.Create(2048);
+        using var client = RSA.Create(2048);
+        var clientPrivateKeyPem = client.ExportPkcs8PrivateKeyPem();
+        var dispatch = CreateDispatch(worker.ExportSubjectPublicKeyInfoPem(), clientPrivateKeyPem);
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            NebiusResearchLiveDryRunPreflight.Validate(
+                dispatch,
+                CreateStorage(),
+                "serverless-access-token",
+                "project-test",
+                clientPrivateKeyPem));
+
+        Assert.Contains("public-only", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Validate_RejectsMalformedWorkerEnvelopePublicKey()
     {
         using var client = RSA.Create(2048);

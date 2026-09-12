@@ -104,8 +104,10 @@ public static class NebiusResearchLiveConfigurationLoader
             new NebiusObjectStorageTransportAlignment(objectStorageBucket, objectStoragePrefix));
 
         // The worker envelope public key is needed only after deployment shape and storage namespace
-        // alignment are known-good. Its cryptographic semantics remain enforced by final preflight.
+        // alignment are known-good. Validate it immediately after reading so malformed, weak, or
+        // private PEM material cannot cause the client signing key or provider credentials to be read.
         var workerPublicKeyPem = ReadRequiredPemFile(environmentReader, "NVIDEA_LIVE_WORKER_PUBLIC_KEY_PEM_FILE");
+        NebiusResearchDeploymentPreflight.ValidateWorkerPublicKey(workerPublicKeyPem);
         topologyDispatchOptions = topologyDispatchOptions with
         {
             WorkerPublicKeyPem = workerPublicKeyPem

@@ -11,14 +11,19 @@ internal static class Program
         try
         {
             var options = WorkerCommandLine.Parse(args);
-            using var http = CreateProviderHttpClient();
 
+            // Establish credential-free trust first. A malformed transport root or client
+            // verification identity must fail before Token Factory, Tavily, or worker-private-key
+            // environment values are accessed.
+            var bootstrapTrust = NebiusResearchWorkerBootstrapTrust.Load();
+
+            using var http = CreateProviderHttpClient();
             var inference = new NebiusTokenFactoryClient(http, NebiusOptions.FromEnvironment());
             var tavily = new TavilyResearchClient(http, TavilyOptions.FromEnvironment());
             var engine = new ResearchEngine(inference, tavily);
             var handler = new ResearchJobHandler(engine);
-            var transport = new DirectoryProtectedResearchTransport(GetRequiredEnvironment("NVIDEA_TRANSPORT_ROOT"));
-            var clientPublicKey = GetRequiredEnvironment("NVIDEA_CLIENT_PUBLIC_KEY_PEM");
+            var transport = new DirectoryProtectedResearchTransport(bootstrapTrust.TransportRoot);
+            var clientPublicKey = bootstrapTrust.ClientVerificationPublicKeyPem;
             var bindingWaiter = new ResearchDispatchBindingWaiter(
                 transport,
                 clientPublicKey,

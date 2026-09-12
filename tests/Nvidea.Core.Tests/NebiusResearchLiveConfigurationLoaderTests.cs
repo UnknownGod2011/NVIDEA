@@ -22,6 +22,9 @@ public sealed class NebiusResearchLiveConfigurationLoaderTests
         Assert.Equal("mbsecver-tavily-v4", configuration.DispatchOptions.SecretEnvironmentVariables!["TAVILY_API_KEY"].VersionId);
         Assert.Equal(configuration.ObjectStorageOptions.Prefix, configuration.DispatchOptions.Volumes!.Single().SourcePath);
         Assert.Equal(64, configuration.Report.Manifest.DeploymentFingerprintSha256.Length);
+        Assert.NotEqual(
+            configuration.DispatchOptions.EnvironmentVariables![NebiusResearchDeploymentPreflight.ClientPublicKeyEnvironmentVariable],
+            configuration.DispatchOptions.EnvironmentVariables[NebiusResearchWorkerBootstrapTrust.ClientResultPublicKeyEnvironmentVariable]);
     }
 
     [Fact]
@@ -194,6 +197,19 @@ public sealed class NebiusResearchLiveConfigurationLoaderTests
     }
 
     [Fact]
+    public void Load_RejectsReusedClientIdentityAcrossSigningAndResultEncryption()
+    {
+        using var fixture = LiveConfigurationFixture.Create();
+        fixture.Environment["NVIDEA_LIVE_CLIENT_RESULT_PRIVATE_KEY_PEM_FILE"] =
+            fixture.Environment["NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE"];
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            NebiusResearchLiveConfigurationLoader.Load(fixture.Read));
+
+        Assert.Contains("distinct RSA identities", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Load_RejectsPrivatePemWhereWorkerPublicKeyIsRequired()
     {
         using var fixture = LiveConfigurationFixture.Create();
@@ -247,11 +263,14 @@ public sealed class NebiusResearchLiveConfigurationLoaderTests
             Directory.CreateDirectory(root);
 
             using var workerRsa = RSA.Create(2048);
-            using var clientRsa = RSA.Create(2048);
+            using var clientSigningRsa = RSA.Create(2048);
+            using var clientResultRsa = RSA.Create(2048);
             var workerPublicPath = Path.Combine(root, "worker-public.pem");
             var clientPrivatePath = Path.Combine(root, "client-private.pem");
+            var clientResultPrivatePath = Path.Combine(root, "client-result-private.pem");
             File.WriteAllText(workerPublicPath, workerRsa.ExportSubjectPublicKeyInfoPem());
-            File.WriteAllText(clientPrivatePath, clientRsa.ExportPkcs8PrivateKeyPem());
+            File.WriteAllText(clientPrivatePath, clientSigningRsa.ExportPkcs8PrivateKeyPem());
+            File.WriteAllText(clientResultPrivatePath, clientResultRsa.ExportPkcs8PrivateKeyPem());
 
             var environment = new Dictionary<string, string>(StringComparer.Ordinal)
             {
@@ -270,6 +289,7 @@ public sealed class NebiusResearchLiveConfigurationLoaderTests
                 ["NVIDEA_LIVE_TRANSPORT_SOURCE_PATH"] = "nvidea-research",
                 ["NVIDEA_LIVE_WORKER_PUBLIC_KEY_PEM_FILE"] = workerPublicPath,
                 ["NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE"] = clientPrivatePath,
+                ["NVIDEA_LIVE_CLIENT_RESULT_PRIVATE_KEY_PEM_FILE"] = clientResultPrivatePath,
                 ["NVIDEA_LIVE_OBJECT_STORAGE_ENDPOINT"] = "https://storage.eu-north1.nebius.cloud",
                 ["NVIDEA_LIVE_OBJECT_STORAGE_REGION"] = "eu-north1",
                 ["NVIDEA_LIVE_OBJECT_STORAGE_BUCKET"] = "nvidea-live-bucket",

@@ -23,9 +23,9 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Token Factory requires HTTPS/443, no URI user-info, and exact `nebius.com` or genuine `*.nebius.com`; endpoint trust is validated before API-key lookup.
 - Nebius Serverless requires exact `api.nebius.cloud`, HTTPS/443, and no URI user-info in production. HTTPS loopback remains test-only.
 - Nebius Object Storage static-key paths share a credential-free endpoint/region policy: exact `https://storage.<region>.nebius.cloud:443/`, strict ASCII `[a-z0-9-]` region syntax, no path/query/fragment/user-info, endpoint/region binding, and AWSSDK automatic redirects disabled.
-- Live-research configuration validates provider-independent topology, MysteryBox references, volume/root alignment, and Object Storage bucket/prefix alignment before Serverless bearer-token or Object Storage static-key reads.
-- Object Storage bucket/prefix alignment now consumes a narrow credential-free `NebiusObjectStorageTransportAlignment`, not the credential-bearing runtime client options record.
-- Client dispatch-signing private-key PEM is now read only after all credential-free topology/alignment checks pass; its derived public key is then injected and the mandatory full preflight still verifies the final identity contract.
+- Live-research configuration validates provider-independent topology, digest-pinned worker image, MysteryBox references, volume/root alignment, and Object Storage bucket/prefix alignment before opening either local PEM file or reading Serverless/Object Storage credentials.
+- Object Storage bucket/prefix alignment consumes a narrow credential-free `NebiusObjectStorageTransportAlignment`, not credential-bearing runtime client options.
+- Worker envelope public-key PEM is now read only after immutable-image/topology/alignment checks pass. Client dispatch-signing private-key PEM is read only after that worker-key boundary; its derived public key is injected and mandatory final preflight still verifies the RSA identity contract.
 - Worker `NEBIUS_API_KEY` and `TAVILY_API_KEY` values are not read by the desktop live loader; only validated Nebius MysteryBox references are handled there.
 - Windows voice invocation is local and review-first. Memory maintenance safely re-indexes stale/missing embeddings with privacy-safe previews and explicit Sensitive/Restricted opt-ins.
 - `tools/Nvidea.PersonalAiDemoEval` and `tools/Nvidea.PersonalAiAdversarialEval` provide deterministic positive/negative cross-cutting evidence.
@@ -57,42 +57,49 @@ Completed a systematic trust/egress pass:
 - Explicitly set `AmazonS3Config.AllowAutoRedirect = false` and added SDK-configuration regression coverage.
 - Reordered live configuration so malformed deployment topology is rejected before reading the Serverless token or Object Storage static credentials.
 
-Representative commits through this point include `18943f9f`, `64285c0a`, `e0362868`, `15e24a26`, `7eaf0131`, `66181222`, `92ec271c`, `126376af`, `8aceba9d`, `3efcdf95`, `541d7247`, `10a84323`, `abeca9f9`, `1a1c11a2`, `034a6273`, `f8b9871e`, `061bc757`, and `eb31cb98`.
+Representative commits include `18943f9f`, `64285c0a`, `e0362868`, `15e24a26`, `7eaf0131`, `66181222`, `92ec271c`, `126376af`, `8aceba9d`, `3efcdf95`, `541d7247`, `10a84323`, `abeca9f9`, `1a1c11a2`, `034a6273`, `f8b9871e`, `061bc757`, and `eb31cb98`.
 
 ### 2026-09-12 — Credential-free topology contract + delayed signing-key access
+- Introduced `NebiusObjectStorageTransportAlignment`, containing only bucket and prefix namespace identity.
+- Split deployment validation into mandatory final `Validate(...)` and `ValidateCredentialFreeTopology(...)`.
+- Reordered the live loader so bucket/prefix alignment is validated before `NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE` is requested.
+- After topology passes, the loader reads/imports the client RSA private key, derives `NVIDEA_CLIENT_PUBLIC_KEY_PEM`, creates final dispatch options, then performs the existing full live preflight.
+- Removed the prior `credential-not-read` Object Storage sentinel workaround.
+- Tests prove valid topology can pass without client public key; full validation still requires it; exact bucket/prefix alignment works via the narrow contract; mismatch fails without runtime Object Storage client options.
+
+Commits: `8629150b`, `9cea0b9b`, `48068a98`, `4b048f2c`, `4381651e`.
+
+### 2026-09-12 — Immutable image + worker public-key ordering hardening
 Completed this run:
-- Re-read the full progress ledger and the current live configuration/preflight paths before changing code.
-- Introduced `NebiusObjectStorageTransportAlignment`, containing only bucket and prefix namespace identity. `ValidateObjectStorageAlignment` can now prove native-client/Serverless-mounted namespace equality without accepting endpoint credentials or any other runtime client secrets.
-- Kept the existing `NebiusObjectStorageClientOptions` overload only as a compatibility adapter; it immediately discards secret fields and delegates to the narrow alignment contract.
-- Split deployment validation into mandatory final `Validate(...)` and `ValidateCredentialFreeTopology(...)`. The latter verifies transport root, exact mounted READ_WRITE volume, required MysteryBox references, and plaintext-secret exclusions while intentionally deferring only the client-public-key requirement.
-- Reordered `NebiusResearchLiveConfigurationLoader.Load` so topology dispatch is built without `NVIDEA_CLIENT_PUBLIC_KEY_PEM` and bucket/prefix alignment is validated before `NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE` is requested.
-- After topology passes, the loader reads/imports the client RSA private key, derives `NVIDEA_CLIENT_PUBLIC_KEY_PEM`, creates the final dispatch options, then performs the existing full live preflight. The derived-public-key identity contract is therefore preserved rather than weakened.
-- Removed the prior `credential-not-read` Object Storage sentinel workaround entirely.
-- Strengthened `InvalidTransportBucketAlignment...` so it now proves a bucket mismatch prevents reads of the client private-key path, Serverless token, Object Storage access key, and Object Storage secret key.
-- Added `NebiusResearchCredentialFreeTopologyTests` proving: valid topology can pass without client public key; full validation still rejects its absence; exact bucket/prefix alignment succeeds using the narrow contract; mismatch fails without constructing runtime Object Storage client options.
+- Re-read the complete progress ledger and current live configuration/deployment-preflight paths before changing code.
+- Moved digest-pinned worker-image validation into credential-free deployment preflight. Mutable tags, malformed/whitespace image references, non-64-byte digests, and non-hex digests now fail before any local PEM file access.
+- `NebiusResearchLiveConfigurationLoader` now constructs topology with no worker public-key material, runs immutable-image/topology/Object-Storage namespace validation first, and only then requests `NVIDEA_LIVE_WORKER_PUBLIC_KEY_PEM_FILE`.
+- After topology succeeds, the worker public key is injected into dispatch options; client signing private-key loading and the existing final RSA/full preflight remain mandatory.
+- Strengthened the bucket-alignment counting-reader regression to prove a topology mismatch does not even request the worker public-key file path, client private-key file path, Serverless token, or Object Storage static credentials.
+- Added a mutable-image counting-reader regression proving `registry.example/nvidea-worker:latest` fails before either PEM path or provider credential is accessed.
+- Updated credential-free topology fixtures to use a digest-pinned image and added a focused test showing mutable images fail even when `WorkerPublicKeyPem` is empty.
 
 Engineering commits before this ledger update:
-- `8629150bb040ad33af1dc79580b5aa5c47ccbfcb` — refactor credential-free research topology validation.
-- `9cea0b9b9cbf2f27148f1572cf9ba1ab8dbf4a46` — delay client signing key until topology passes.
-- `48068a9863c8464a390836a40659c4e5c1c57d7e` — cover client signing key behind topology gate.
-- `4b048f2c0b8a29131bd54716040f248552649a56` — test credential-free topology contract.
+- `72b393c3b98ecd3d1ac4496913417a25bc30ee0b` — fail closed on mutable worker images before key access.
+- `6c13cfb20ae86385c8d9d84cf7297244f9acd787` — delay worker public key file access until topology passes.
+- `86982d212901b18c47327db311ec73d7ba6089aa` — test immutable worker image in credential-free topology.
+- `cec475af9499aa841824984b2ea369b6ebd0c6b2` — prove topology failures avoid worker public key file reads.
 
 Validation / evidence:
-- Static re-fetch confirms the live loader validates `NebiusObjectStorageTransportAlignment` before `NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE`, `NVIDEA_LIVE_SERVERLESS_ACCESS_TOKEN`, `NVIDEA_LIVE_OBJECT_STORAGE_ACCESS_KEY_ID`, or `NVIDEA_LIVE_OBJECT_STORAGE_SECRET_ACCESS_KEY` are requested.
-- Static re-fetch confirms final dispatch options receive the public key derived from the client private key before `NebiusResearchLivePreflightReporter.ValidateAndBuild` executes.
-- Search finds no remaining `credential-not-read` sentinel.
-- GitHub compare from prior ledger head `eb31cb98b56c0b34db368f281c05699adb2956ad` to engineering head `4b048f2c0b8a29131bd54716040f248552649a56` reports **4 commits ahead / 0 behind**, limited to two production files and two focused test files; 197 additions / 57 deletions.
+- Static re-fetch confirms `ValidateCredentialFreeTopology` invokes digest-pinned image validation before topology/MysteryBox/volume checks.
+- Static re-fetch confirms `ValidateObjectStorageAlignment(...)` runs before `NVIDEA_LIVE_WORKER_PUBLIC_KEY_PEM_FILE` and `NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE` are requested.
+- GitHub compare from prior ledger head `4381651eee5610680248ea87646c8ddb02119413` to engineering head `cec475af9499aa841824984b2ea369b6ebd0c6b2` reports **4 commits ahead / 0 behind**, limited to two production files and two focused test files; 110 additions / 11 deletions.
 - `dotnet --info` still returns `dotnet: command not found`; no compile/unit-test/WPF/Worker/tool PASS is claimed.
 - No GitHub Actions workflow was triggered merely to manufacture a green status.
 - No live Nebius, Tavily, Object Storage, Serverless, Playwright, Ollama, or paid inference request was performed.
 
 Security / privacy / failure review:
+- Mutable deployment images now fail in the cheapest credential-free stage rather than after keys/tokens have already been read.
+- Malformed storage topology can no longer cause either local PEM path to be requested.
+- Worker public-key cryptographic semantics remain enforced by final dry-run preflight; client private/public RSA identity consistency remains mandatory.
 - Provider endpoint/redirect protections remain unchanged.
-- Malformed deployment topology can no longer cause the client signing private-key file to be read merely to derive an identity that will never be used.
-- Alignment code is structurally unable to inspect Object Storage static credentials when called through the new narrow contract.
-- Required worker credentials remain MysteryBox references and plaintext worker credentials are still rejected in both topology and final validation.
-- Final validation still requires the derived client public key, so delaying private-key file access does not remove authoritative dispatch-binding verification.
-- Worker public-key PEM is still read before topology alignment because it is public verification/envelope material rather than a secret; malformed PEM semantics remain covered by the later full preflight.
+- MysteryBox-backed worker secrets remain references only; plaintext worker credentials are still rejected.
+- No working runtime functionality was removed; the changes only reorder validation and strengthen fail-closed deployment shape checks.
 
 ## Known Blockers / Risks
 - No usable .NET 8 execution signal is available in this environment; Core/WPF/Worker code, XAML, tests, evaluator tools, evidence verifier, demo validator, catalog checker, and focused tests still require a real restore/build/run.
@@ -104,7 +111,8 @@ Security / privacy / failure review:
 - Real `embeddinggemma` semantic quality/ranking calibration still requires a local Ollama evaluation corpus.
 - No live Object Storage bucket/static key, digest-pinned registry image, MysteryBox refs, subnet, Serverless access token, or real Serverless job has been provisioned/validated here.
 - Exact provider acceptance of Serverless Object Storage `Source`/`SourcePath` still requires a real job.
-- New topology/signing-key ordering is statically verified but still needs executable regression coverage against the actual .NET runtime.
+- New image/PEM ordering is statically verified but still needs executable regression coverage against the actual .NET runtime.
+- Digest-pinned image validation now exists in deployment preflight and again in the live dry-run shape validator; this duplicate predicate should be consolidated so future rules cannot drift.
 
 ## Single Best Next Task
-First obtain a .NET 8-capable Windows execution signal and restore/build `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, all evaluator/evidence tools, and focused tests; fix every compile/runtime defect before treating evidence as judge-ready. If executable validation remains unavailable, audit the **worker public-key and deployment-image trust ordering**: move any cryptographic file parsing or image-specific validation that can safely occur after purely textual deployment-shape checks, add counting/file-access regressions for malformed topology, and preserve the mandatory digest-pinned image + RSA identity checks in final preflight.
+First obtain a .NET 8-capable Windows execution signal and restore/build `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, all evaluator/evidence tools, and focused tests; fix every compile/runtime defect before treating evidence as judge-ready. If executable validation remains unavailable, **centralize digest-pinned worker-image validation so deployment preflight and live dry-run cannot drift, then move worker public-key RSA parsing/strength validation immediately after topology success and before client-private-key/provider-secret reads, with counting-reader regressions proving malformed worker-key material cannot cause later sensitive reads.**

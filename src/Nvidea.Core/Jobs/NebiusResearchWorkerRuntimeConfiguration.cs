@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Security.Cryptography;
 using Nvidea.Core.Nebius;
 using Nvidea.Core.Research;
 
@@ -81,67 +80,12 @@ public sealed record NebiusResearchWorkerRuntimeConfiguration(
     }
 
     /// <summary>
-    /// Validates the secret-backed worker envelope identity used by
-    /// <see cref="ResearchWorkItemProtector.Unprotect"/>. The key must be bounded, contain usable
-    /// private RSA material of at least 2048 bits, and successfully round-trip the exact OAEP-SHA256
-    /// operation used by the protected work-item protocol. A canonical PKCS#8 PEM is returned so
-    /// downstream worker construction does not need to reinterpret arbitrary PEM encodings.
+    /// Compatibility entry point for worker startup validation. The policy itself lives in
+    /// <see cref="WorkerEnvelopePrivateKeyTrust"/> so lower-level protocol callers cannot bypass
+    /// a stricter runtime-only key policy.
     /// </summary>
-    public static string ValidateWorkerPrivateKey(string pem)
-    {
-        if (string.IsNullOrWhiteSpace(pem)
-            || pem.Length > 65536
-            || pem.Any(static character => char.IsControl(character) && character is not '\r' and not '\n'))
-        {
-            throw new InvalidOperationException("The worker envelope private key is missing or invalid.");
-        }
-
-        using var rsa = RSA.Create();
-        try
-        {
-            rsa.ImportFromPem(pem);
-        }
-        catch (Exception exception) when (exception is CryptographicException or ArgumentException)
-        {
-            throw new InvalidOperationException("The worker envelope private key is not valid RSA private-key PEM.", exception);
-        }
-
-        if (rsa.KeySize < 2048)
-            throw new InvalidOperationException("The worker envelope RSA private key must be at least 2048 bits.");
-
-        byte[]? probe = null;
-        byte[]? wrapped = null;
-        byte[]? unwrapped = null;
-        try
-        {
-            // Exporting private parameters rejects public-only material before we attempt the
-            // protocol-level decryption capability proof.
-            _ = rsa.ExportParameters(includePrivateParameters: true);
-
-            probe = RandomNumberGenerator.GetBytes(32);
-            wrapped = rsa.Encrypt(probe, RSAEncryptionPadding.OaepSHA256);
-            unwrapped = rsa.Decrypt(wrapped, RSAEncryptionPadding.OaepSHA256);
-            if (!CryptographicOperations.FixedTimeEquals(probe, unwrapped))
-                throw new CryptographicException("Worker envelope RSA capability proof did not round-trip.");
-
-            return rsa.ExportPkcs8PrivateKeyPem();
-        }
-        catch (Exception exception) when (exception is CryptographicException or ArgumentException)
-        {
-            throw new InvalidOperationException(
-                "The worker envelope key must contain usable RSA private material for OAEP-SHA256 decryption.",
-                exception);
-        }
-        finally
-        {
-            if (probe is not null)
-                CryptographicOperations.ZeroMemory(probe);
-            if (wrapped is not null)
-                CryptographicOperations.ZeroMemory(wrapped);
-            if (unwrapped is not null)
-                CryptographicOperations.ZeroMemory(unwrapped);
-        }
-    }
+    public static string ValidateWorkerPrivateKey(string pem) =>
+        WorkerEnvelopePrivateKeyTrust.ValidateAndCanonicalize(pem);
 
     private static string Require(Func<string, string?> read, string name)
     {

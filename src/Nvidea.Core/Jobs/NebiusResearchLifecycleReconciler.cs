@@ -21,8 +21,10 @@ public sealed record NebiusRemoteJobDiagnostic(
 public sealed record NebiusRemoteJobSnapshot(
     string Id,
     string Name,
-    NebiusRemoteJobState State,
-    NebiusRemoteJobDiagnostic? Diagnostic = null);
+    NebiusRemoteJobState State)
+{
+    public NebiusRemoteJobDiagnostic? Diagnostic { get; init; }
+}
 
 public static class NebiusServerlessJobSnapshotParser
 {
@@ -53,7 +55,10 @@ public static class NebiusServerlessJobSnapshotParser
             var hasStatus = item.TryGetProperty("status", out var status) && status.ValueKind == JsonValueKind.Object;
             var rawState = hasStatus ? TryReadString(status, "state") : null;
             var diagnostic = hasStatus ? TryReadDiagnostic(status) : null;
-            result.Add(new NebiusRemoteJobSnapshot(id, name, ParseState(rawState), diagnostic));
+            result.Add(new NebiusRemoteJobSnapshot(id, name, ParseState(rawState))
+            {
+                Diagnostic = diagnostic
+            });
         }
 
         return result;
@@ -88,7 +93,10 @@ public static class NebiusServerlessJobSnapshotParser
         var hasStatus = root.TryGetProperty("status", out var status) && status.ValueKind == JsonValueKind.Object;
         var rawState = hasStatus ? TryReadString(status, "state") : null;
         var diagnostic = hasStatus ? TryReadDiagnostic(status) : null;
-        return new NebiusRemoteJobSnapshot(id, name, ParseState(rawState), diagnostic);
+        return new NebiusRemoteJobSnapshot(id, name, ParseState(rawState))
+        {
+            Diagnostic = diagnostic
+        };
     }
 
     public static NebiusRemoteJobState ParseState(string? state) => state?.Trim().ToUpperInvariant() switch
@@ -120,13 +128,16 @@ public static class NebiusServerlessJobSnapshotParser
 
     private static bool TryGetStateDetails(JsonElement status, out JsonElement details)
     {
-        if (status.TryGetProperty("stateDetails", out details) && details.ValueKind == JsonValueKind.Object)
-            return true;
-        if (status.TryGetProperty("state_details", out details) && details.ValueKind == JsonValueKind.Object)
-            return true;
+        var hasCamelCase = status.TryGetProperty("stateDetails", out var camelCaseDetails);
+        var hasSnakeCase = status.TryGetProperty("state_details", out var snakeCaseDetails);
+        if (hasCamelCase == hasSnakeCase)
+        {
+            details = default;
+            return false;
+        }
 
-        details = default;
-        return false;
+        details = hasCamelCase ? camelCaseDetails : snakeCaseDetails;
+        return details.ValueKind == JsonValueKind.Object;
     }
 
     private static bool TryReadBoundedDiagnosticField(

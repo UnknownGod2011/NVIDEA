@@ -27,6 +27,49 @@ public static class NebiusResearchLiveDryRunPreflight
         ValidateSigningIdentity(dispatchOptions, clientPrivateKeyPem);
     }
 
+    /// <summary>
+    /// Validates the client dispatch-signing identity without touching any provider credentials.
+    /// Returns the canonical public identity only after proving the PEM contains usable RSA private
+    /// material with an acceptable key size and can perform the signature operation used by dispatch.
+    /// </summary>
+    internal static string ValidateAndDeriveClientPublicKey(string clientPrivateKeyPem)
+    {
+        ValidateBoundedPem(clientPrivateKeyPem, nameof(clientPrivateKeyPem), 65536);
+        using var privateKey = RSA.Create();
+        try
+        {
+            privateKey.ImportFromPem(clientPrivateKeyPem);
+        }
+        catch (CryptographicException)
+        {
+            throw new InvalidOperationException("Client dispatch-signing private key PEM is not a valid RSA private key.");
+        }
+        catch (ArgumentException)
+        {
+            throw new InvalidOperationException("Client dispatch-signing private key PEM is not a valid RSA private key.");
+        }
+
+        if (privateKey.KeySize < 2048)
+            throw new InvalidOperationException("Client dispatch-signing RSA key must be at least 2048 bits.");
+
+        // ImportFromPem also accepts a public-only RSA PEM. Prove that private key material is
+        // actually present with a harmless fixed-hash signature before allowing any later provider
+        // credential reads or paid live execution.
+        try
+        {
+            _ = privateKey.SignHash(
+                SHA256.HashData(Array.Empty<byte>()),
+                HashAlgorithmName.SHA256,
+                RSASignaturePadding.Pkcs1);
+        }
+        catch (CryptographicException)
+        {
+            throw new InvalidOperationException("Client dispatch-signing private key PEM does not contain usable RSA private key material.");
+        }
+
+        return privateKey.ExportSubjectPublicKeyInfoPem();
+    }
+
     private static void ValidateDispatchShape(NebiusResearchDispatchOptions options)
     {
         ValidateBounded(options.WorkerImage, nameof(options.WorkerImage), 2048);
@@ -77,38 +120,7 @@ public static class NebiusResearchLiveDryRunPreflight
 
     private static void ValidateSigningIdentity(NebiusResearchDispatchOptions options, string clientPrivateKeyPem)
     {
-        ValidateBoundedPem(clientPrivateKeyPem, nameof(clientPrivateKeyPem), 65536);
-        using var privateKey = RSA.Create();
-        try
-        {
-            privateKey.ImportFromPem(clientPrivateKeyPem);
-        }
-        catch (CryptographicException)
-        {
-            throw new InvalidOperationException("Client dispatch-signing private key PEM is not a valid RSA private key.");
-        }
-        catch (ArgumentException)
-        {
-            throw new InvalidOperationException("Client dispatch-signing private key PEM is not a valid RSA private key.");
-        }
-
-        if (privateKey.KeySize < 2048)
-            throw new InvalidOperationException("Client dispatch-signing RSA key must be at least 2048 bits.");
-
-        // ImportFromPem also accepts a public-only RSA PEM. Prove that private key material is
-        // actually present with a harmless fixed-hash signature before allowing a paid live run.
-        // This avoids a configuration that passes preflight but later fails when dispatch signing starts.
-        try
-        {
-            _ = privateKey.SignHash(
-                SHA256.HashData(Array.Empty<byte>()),
-                HashAlgorithmName.SHA256,
-                RSASignaturePadding.Pkcs1);
-        }
-        catch (CryptographicException)
-        {
-            throw new InvalidOperationException("Client dispatch-signing private key PEM does not contain usable RSA private key material.");
-        }
+        var derivedPublicKeyPem = ValidateAndDeriveClientPublicKey(clientPrivateKeyPem);
 
         var plaintext = options.EnvironmentVariables ?? new Dictionary<string, string>();
         if (!plaintext.TryGetValue(NebiusResearchDeploymentPreflight.ClientPublicKeyEnvironmentVariable, out var configuredPublicKey)
@@ -134,7 +146,17 @@ public static class NebiusResearchLiveDryRunPreflight
         if (publicKey.KeySize < 2048)
             throw new InvalidOperationException("Client verification RSA key must be at least 2048 bits.");
 
-        var derived = privateKey.ExportSubjectPublicKeyInfo();
+        using var derivedPublicKey = RSA.Create();
+        try
+        {
+            derivedPublicKey.ImportFromPem(derivedPublicKeyPem);
+        }
+        catch (Exception exception) when (exception is CryptographicException or ArgumentException)
+        {
+            throw new InvalidOperationException("Derived client verification public key could not be canonicalized.", exception);
+        }
+
+        var derived = derivedPublicKey.ExportSubjectPublicKeyInfo();
         var configured = publicKey.ExportSubjectPublicKeyInfo();
         if (!CryptographicOperations.FixedTimeEquals(derived, configured))
         {

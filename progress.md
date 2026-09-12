@@ -20,12 +20,12 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Remote research uses encrypted opaque work items, signed Nebius resource-ID bindings, two-phase dispatch, lifecycle reconciliation, durable cancellation, exact-once result ingestion, and race-safe cleanup.
 - Native Nebius Object Storage and Serverless-mounted worker transport share one protected protocol. Preflight validates mount alignment, READ_WRITE transport, MysteryBox references, immutable worker image, RSA identities, bounded resources, and redacted fingerprints.
 - Token Factory, Tavily, Serverless, remote worker, model-catalog, contract-probe, and Object Storage credential-bearing paths have explicit endpoint and redirect trust boundaries.
-- Live configuration validates credential-free topology/alignment before local signing material or provider credentials.
-- Worker private envelope identity is centralized in `WorkerEnvelopePrivateKeyTrust`: bounded PEM, private RSA >=2048 bits, OAEP-SHA256 capability proof, canonical PKCS#8, and probe zeroization. `ResearchWorkItemProtector.Unprotect(...)` reuses it directly.
-- Worker public envelope identity is centralized in `WorkerEnvelopePublicKeyTrust`: bounded PEM, public-only RSA >=2048 bits, OAEP-SHA256 encryption capability proof, canonical SubjectPublicKeyInfo output, and temporary probe zeroization. `ResearchWorkItemProtector.Protect(...)`, deployment preflight, and live worker-key loading reuse it.
-- Client result-envelope encryption/decryption now has dedicated lower-level trust boundaries: `ClientResultEnvelopePublicKeyTrust` requires bounded public-only RSA >=2048 with OAEP-SHA256 encryption capability and canonical SPKI; `ClientResultEnvelopePrivateKeyTrust` requires bounded private RSA >=2048 with an OAEP-SHA256 round-trip capability proof and canonical PKCS#8. `ResearchResultProtector.Protect(...)` / `Unprotect(...)` use them directly.
-- Client dispatch-signing key is usable private RSA >=2048 bits; client verification identity is public-only RSA >=2048 bits.
-- `NebiusResearchWorkerRuntimeConfiguration` is the single worker environment boundary. Credential-free bootstrap/timing/destination/model checks run before worker-private-key validation, then provider secret reads.
+- Worker envelope decryption uses `WorkerEnvelopePrivateKeyTrust`: bounded PEM, private RSA >=2048, OAEP-SHA256 capability proof, canonical PKCS#8, and probe zeroization. `ResearchWorkItemProtector.Unprotect(...)` reuses it directly.
+- Worker envelope encryption uses `WorkerEnvelopePublicKeyTrust`: bounded PEM, public-only RSA >=2048, OAEP-SHA256 capability proof, canonical SPKI, and probe zeroization. Protocol protection, deployment preflight, and live loading share this policy.
+- Client result-envelope encryption/decryption uses `ClientResultEnvelopePublicKeyTrust` / `ClientResultEnvelopePrivateKeyTrust`, with bounded input, strict public/private role separation, RSA >=2048, OAEP-SHA256 capability checks, canonicalization, and probe zeroization. `ResearchResultProtector.Protect(...)` / `Unprotect(...)` enforce these policies at the protocol boundary.
+- Client dispatch-signing material is usable private RSA >=2048 and worker verification material is public-only RSA >=2048.
+- **Live client RSA key purposes are now separated:** dispatch signing/verification and result-envelope encryption/decryption use distinct RSA identities. The live loader requires `NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE` and `NVIDEA_LIVE_CLIENT_RESULT_PRIVATE_KEY_PEM_FILE`; only their distinct public halves are placed into worker configuration. The worker uses the signing public key only for dispatch-binding verification and the result public key only for result encryption. The live runtime uses the signing private key only for binding signatures and the result private key only for result ingestion/decryption.
+- `NebiusResearchWorkerRuntimeConfiguration` remains the single worker environment boundary. Credential-free bootstrap/timing/destination/model checks run before worker-private-key validation and provider secret reads.
 - Windows voice invocation is local and review-first. Memory maintenance re-indexes stale/missing embeddings with privacy-safe previews and explicit Sensitive/Restricted opt-ins.
 - Deterministic judging/readiness tools include `Nvidea.PersonalAiDemoEval`, `Nvidea.PersonalAiAdversarialEval`, `Nvidea.JudgingEvidenceVerifier`, `Nvidea.DemoPackageValidator`, and `Nvidea.NebiusModelCatalogCheck`.
 
@@ -40,55 +40,62 @@ Added Tavily Extract enrichment, evidence ranking/staleness/diversity, restart-s
 ### 2026-09-10 to 2026-09-11 — Product, evaluator, and judging hardening
 Added research/browser product runtimes, WPF lifecycle-aware research, restart-safe browser-goal recovery, one-shot cloud approval, local review-first voice, semantic-memory migration UI, positive/adversarial Personal AI evaluators, prompt-injection mutation approval hardening, unified judging evidence, deterministic demo-package validation, and adversarial validator tests.
 
-### 2026-09-11 to 2026-09-12 — Provider trust + worker startup hardening
-Hardened Token Factory, Tavily, Serverless, model-catalog, contract-probe, Object Storage, and worker credential paths against suffix lookalikes, user-info, wrong ports, unsafe redirects, cross-region storage origins, Unicode-confusable regions, mutable worker images, RSA role confusion, malformed PEM, and early secret reads. Added credential-free topology/alignment, strict client signing/verification trust, testable worker bootstrap/runtime loading, protocol-level worker private-key trust, and shared worker-public-key trust.
+### 2026-09-11 to 2026-09-12 — Provider trust + cryptographic protocol hardening
+Hardened Token Factory, Tavily, Serverless, model-catalog, contract-probe, Object Storage, and worker credential paths against suffix lookalikes, user-info, wrong ports, unsafe redirects, cross-region storage origins, Unicode-confusable regions, mutable worker images, RSA role confusion, malformed PEM, and early secret reads. Added credential-free topology/alignment, strict client signing/verification trust, testable worker bootstrap/runtime loading, protocol-level worker private/public envelope trust, deployment/protocol worker-key policy reuse, and lower-level client result-envelope public/private trust.
 
-### 2026-09-12 — Protocol + deployment worker public encryption trust
-Completed across the preceding runs:
-- `ResearchWorkItemProtector.Protect(...)` now uses `WorkerEnvelopePublicKeyTrust.CreateValidatedRsa(...)` directly, so lower-level callers cannot bypass the worker public-key policy.
-- Deployment preflight delegates to `WorkerEnvelopePublicKeyTrust.ValidateAndCanonicalize(...)`, so deployment/live loading/protocol encryption share the same bounded-input, public-only, RSA >=2048, OAEP-SHA256-capable identity policy.
-- Live configuration persists the canonical SubjectPublicKeyInfo worker identity after validation.
-- Focused regressions cover valid RSA-2048 round trip and private, weak, malformed, oversized, and embedded-control-character worker public keys.
-
-### 2026-09-12 — Client result-envelope RSA trust
+### 2026-09-12 — Client RSA key-purpose separation
 Completed in this run:
-- Added `ClientResultEnvelopePublicKeyTrust` as a dedicated trust boundary for remote-result encryption identities. It rejects missing/oversized/control-character PEM, malformed/non-RSA material, RSA below 2048 bits, and any RSA PEM containing private material; it proves OAEP-SHA256 encryption capability, canonicalizes to SubjectPublicKeyInfo PEM, and zeroes temporary cryptographic probes.
-- Added `ClientResultEnvelopePrivateKeyTrust` as the matching result-decryption boundary. It rejects missing/oversized/control-character PEM, malformed/non-RSA material, RSA below 2048 bits, and public-only identities; it proves usable private material with an OAEP-SHA256 encrypt/decrypt round trip, canonicalizes to PKCS#8 PEM, and zeroes probe/wrapped/unwrapped buffers.
-- Replaced direct `RSA.ImportFromPem(...)` calls inside `ResearchResultProtector.Protect(...)` / `Unprotect(...)` with the two shared trust primitives. Result protection therefore fails closed on role/strength/capability errors even when callers bypass deployment/live preflight.
-- Public-key validation now occurs before serializing/encrypting the result payload. Private-key validation occurs after envelope version/id/lifetime validation but before decoding and unwrapping the protected data key.
-- Added `ResearchResultProtectorKeyTrustTests` with valid RSA-2048 round trip plus private/public role-confusion, weak RSA-1024, malformed PEM, >65,536-character PEM, embedded-control-character, and canonicalization coverage for both result-envelope key roles.
+- Split the worker bootstrap client identity into `ClientVerificationPublicKeyPem` and `ClientResultEncryptionPublicKeyPem`; added public environment contract `NVIDEA_CLIENT_RESULT_PUBLIC_KEY_PEM`.
+- Worker bootstrap validates both public-only RSA identities before any worker/provider secret read and rejects identical signing/result public identities.
+- `Nvidea.Worker` now passes only the signing public identity to `ResearchDispatchBindingWaiter` and only the result-encryption public identity to `NebiusResearchWorker`.
+- `NebiusResearchClientRuntime.Create(...)` now accepts an optional distinct result private key. Existing lower-level fixtures retain a compatibility fallback to the signing private key, but live production composition does not.
+- `NebiusResearchLiveRuntimeFactory.Create(...)` now requires a distinct result private key, validates/canonicalizes it through `ClientResultEnvelopePrivateKeyTrust`, derives its public identity, and rejects reuse of the dispatch-signing identity before constructing the runtime.
+- `NebiusResearchLiveConfiguration` now carries `ClientResultPrivateKeyPem`. The live loader requires `NVIDEA_LIVE_CLIENT_RESULT_PRIVATE_KEY_PEM_FILE`, validates it, derives its public SPKI identity, rejects reuse of the signing identity, and injects both distinct public identities into worker plain configuration before reading Serverless/Object Storage credentials.
+- The Nebius contract probe passes both private identities into live runtime composition and reports key-purpose separation in preflight output.
+- Updated focused bootstrap/runtime/live-loader/provider-startup fixtures for the two-key contract.
+- Added adversarial coverage proving private result-key material is rejected in the worker public slot and signing/result identity reuse fails before provider or worker secrets are read.
 
 Engineering commits in this run before the ledger update:
-- `0a09fa1b2dfed7c3da1741cdbee29ce1af4ed138` — harden client result-envelope public-key trust.
-- `d8e0af3ac04a21a9ccfe804e3a6924b355be0642` — harden client result-envelope private-key trust.
-- `6b4c4100fc4ea0eda1968bfbbe6f4412720b0cbb` — enforce client result-envelope RSA trust inside the protocol.
-- `8a820bc61f864f1b7cc4231e0f01a299cea919b0` — add adversarial client result-envelope key-trust tests.
+- `8e6e7996b84b88be349f6d6df7f0569d323bf085` — separate worker client signing and result-encryption identities.
+- `7a7beb25c637f1a071822102973382d60ccdab1d` — use distinct client key roles in the remote worker.
+- `7ac66ab5c43c552ae5a409f2d74f4aaab40c31aa` — separate client result-decryption key in the runtime.
+- `6ecdd0619123685b5a0bb7b7b35dce4768912bfd` — require distinct result key in live client runtime composition.
+- `f65b1bd07f3761dee4016bd4c9150994d74fcb74` — load distinct client signing/result-envelope keys.
+- `bda1e77562bb91b7d23327c58d3b26a373d8f9cc` — use separated result key in the live contract probe.
+- `0f8170ef997acea39b678154930eecaf1beebd9c` — test separated client key roles in worker bootstrap.
+- `fbf33aa12db2e8b5fdd9355513c6f029dccb1896` — update worker runtime fixtures for separated client keys.
+- `1264276c6ed40ffadd43684bc197bc7049c7dc2d` — cover live client key-purpose separation.
+- `ccd26aab7e0fc39f5918ca292105332fa9b5447b` — update live provider-startup fixture for the result key.
 
 Validation / evidence:
-- GitHub compare from prior ledger head `0a69effed8ea5b1f4e4b551548036239d9223360` to engineering head `8a820bc61f864f1b7cc4231e0f01a299cea919b0` reports **4 commits ahead / 0 behind**.
-- Changed engineering scope is limited to two new trust primitives, `NebiusResearchResultProtocol.cs`, and one focused test file.
-- Static re-read confirms both result-envelope protocol entry points now use the shared trust primitives rather than direct PEM imports.
-- `dotnet --info` still returns `dotnet: command not found` in this execution environment, so no compile, xUnit, WPF, Worker, evaluator, or tool PASS is claimed.
+- GitHub compare from prior ledger head `ee4e1659b0085724906b4b0949dbf680b1bc0dfa` to engineering head `ccd26aab7e0fc39f5918ca292105332fa9b5447b` reports **10 commits ahead / 0 behind**.
+- Engineering scope is limited to five production/runtime files, the worker entry point, three focused test files plus one constructor fixture, and the live contract probe.
+- Static re-read confirms the worker no longer uses one client public key for both binding verification and result encryption.
+- Static re-read confirms live runtime composition no longer sends the signing private key to result ingestion when the production live factory is used.
+- Static regression audit found and repaired stale worker-runtime, live-loader, and provider-startup fixtures introduced by the two-key contract.
+- `dotnet --info` still returns `dotnet: command not found` in this execution environment, so **no compile, xUnit, WPF, Worker, evaluator, or tool PASS is claimed**.
 - No GitHub Actions workflow was triggered merely to manufacture a green signal.
 - No live Nebius, Tavily, Object Storage, Serverless, Playwright, Ollama, or paid inference operation was performed.
 
 Security / privacy / failure review:
-- A future direct caller of `ResearchResultProtector` can no longer bypass client result-key role, minimum-strength, bounded-input, or OAEP-SHA256 capability policy.
-- Private client result keys cannot be accepted by the result-encryption path; public-only keys cannot be accepted by result decryption.
-- Temporary capability-test plaintext/ciphertext buffers are zeroized; actual AES result plaintext and data keys retain their existing zeroization behavior.
-- Existing authenticated associated data, expiry checks, encrypted transport, signed dispatch binding, provider trust, cancellation/recovery, Tavily/Nemotron behavior, and Windows product behavior were not removed or weakened.
-- Static architecture review shows the live configuration currently derives the worker-side client public identity from the same `ClientPrivateKeyPem` used for dispatch signing. That means one RSA identity is serving both signature/verification and OAEP result encryption/decryption roles; key-purpose separation should be audited and, if feasible without breaking migration, split into distinct signing and result-envelope identities.
+- Dispatch-signing private material remains client-local; result-decryption private material remains client-local. Worker configuration receives only canonical public identities.
+- Worker signature verification and result encryption now consume separate public keys, reducing cross-protocol key reuse and blast radius.
+- Live configuration rejects identical signing/result identities before reading Serverless/Object Storage credentials; worker bootstrap independently rejects identical public identities before reading worker/provider secrets.
+- Result private-key validation retains the existing OAEP-SHA256 capability proof and canonical PKCS#8 policy; result public-key validation retains the public-only OAEP-SHA256 policy.
+- Existing authenticated associated data, encrypted transport, signed dispatch bindings, provider endpoint trust, cancellation/recovery, exact-once ingestion, Tavily/Nemotron behavior, and Windows product behavior were not removed or weakened.
+- Lower-level `NebiusResearchClientRuntime.Create(...)` intentionally retains same-key fallback for existing unit/contract fixtures. The live production factory is stricter and rejects same-key use. This compatibility path should remain clearly non-production and eventually be removable after executable migration coverage exists.
 
 ## Known Blockers / Risks
-- No usable .NET 8 executable is available in this environment. Core/WPF/Worker code, XAML, tests, evaluator tools, evidence verifier, demo validator, catalog checker, and recent focused RSA/secret-ordering regressions still require a real restore/build/run.
+- No usable .NET 8 executable is available in this environment. Core/WPF/Worker code, XAML, tests, evaluator tools, evidence verifier, demo validator, catalog checker, and the new two-key API surface still require a real restore/build/run.
 - Real Windows/.NET 8 restore/build/run remains mandatory before treating generated evidence as judge-ready.
+- `NebiusResearchDeploymentPreflight.Validate(...)` still formally requires/validates only the dispatch-signing client public environment entry. The live loader and worker bootstrap enforce the new result public identity, but a future direct caller constructing raw `NebiusResearchDispatchOptions` could pass deployment preflight without `NVIDEA_CLIENT_RESULT_PUBLIC_KEY_PEM` and fail only at worker startup. This policy should be centralized in deployment preflight.
+- Documentation/setup still describes the previous single-client-key contract in places; `README.md`, `docs/nebius-contract-probe.md`, and `docs/nebius-research-worker.md` need the distinct signing/result key generation and environment contract documented after preflight is centralized.
 - Provider catalogs can change; `/v1/models` presence does not prove quota, inference success, tool calling, context length, or every required capability. A real inference smoke test remains necessary.
 - WPF maintenance/voice/readiness bindings and Windows-specific behavior need a real Windows execution pass.
 - Prompt-injection detection remains heuristic; capability gates and approval boundaries remain required defense-in-depth.
 - Real `embeddinggemma` semantic quality/ranking calibration still requires a local Ollama evaluation corpus.
 - No live Object Storage bucket/static key, digest-pinned registry image, MysteryBox refs, subnet, Serverless token, or real Serverless job has been provisioned/validated here.
 - Exact provider acceptance of Serverless Object Storage `Source` / `SourcePath` still requires a real job.
-- Client RSA key-purpose separation remains a security-hardening opportunity: current live configuration derives the result-encryption/worker-verification public identity from the same private key used for dispatch signing.
 
 ## Single Best Next Task
-First obtain a .NET 8-capable Windows execution signal and restore/build `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, all evaluator/evidence tools, and focused tests; fix every compile/runtime defect before treating evidence as judge-ready. If executable validation remains unavailable, audit and separate client RSA key purposes: introduce a distinct result-envelope client RSA key pair/configuration from the dispatch-signing identity, preserve safe migration/compatibility where necessary, thread the result public identity to the worker and result private identity to ingestion, and add tests proving signing keys cannot silently substitute for result encryption/decryption keys.
+Obtain a real .NET 8-capable Windows restore/build/test signal and fix every compile/runtime defect caused by or exposed through the two-key migration before treating the path as judge-ready. If executable validation remains unavailable in the next run, the highest-value safe fallback is to move `NVIDEA_CLIENT_RESULT_PUBLIC_KEY_PEM` validation and distinct-identity enforcement into `NebiusResearchDeploymentPreflight`, add direct raw-dispatch-options regressions, then update the Nebius worker/contract-probe setup documentation for generating and supplying the two distinct client RSA identities.

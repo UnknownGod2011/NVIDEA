@@ -40,9 +40,9 @@ public static class NebiusResearchLiveConfigurationLoader
         var objectStorageRegion = RequiredEnvironment(environmentReader, "NVIDEA_LIVE_OBJECT_STORAGE_REGION");
         ValidateObjectStorageEndpointAndRegion(objectStorageEndpoint, objectStorageRegion);
 
-        // Load the credential-free deployment topology before provider secrets or the client
-        // signing private key. The final derived-public-key identity check is still performed
-        // after all shape/alignment checks that do not require private material have succeeded.
+        // Load the credential-free deployment topology before provider secrets or either local PEM
+        // file. The worker image is digest-pinned and the final derived-public-key identity checks
+        // still run after all shape/alignment checks that do not require key material have passed.
         var projectId = RequiredEnvironment(environmentReader, "NVIDEA_LIVE_SERVERLESS_PROJECT_ID");
         var workerImage = RequiredEnvironment(environmentReader, "NVIDEA_LIVE_WORKER_IMAGE");
         var subnetId = RequiredEnvironment(environmentReader, "NVIDEA_LIVE_SUBNET_ID");
@@ -56,7 +56,6 @@ public static class NebiusResearchLiveConfigurationLoader
         var objectStoragePrefix = OptionalEnvironment(environmentReader, "NVIDEA_LIVE_OBJECT_STORAGE_PREFIX") ?? "nvidea-research";
         var transportSourcePath = OptionalEnvironment(environmentReader, "NVIDEA_LIVE_TRANSPORT_SOURCE_PATH") ?? objectStoragePrefix;
         var objectStorageBucket = RequiredEnvironment(environmentReader, "NVIDEA_LIVE_OBJECT_STORAGE_BUCKET");
-        var workerPublicKeyPem = ReadRequiredPemFile(environmentReader, "NVIDEA_LIVE_WORKER_PUBLIC_KEY_PEM_FILE");
 
         var secretEnvironment = new Dictionary<string, NebiusMysteryBoxSecretRef>(StringComparer.Ordinal)
         {
@@ -80,7 +79,7 @@ public static class NebiusResearchLiveConfigurationLoader
 
         var topologyDispatchOptions = new NebiusResearchDispatchOptions(
             WorkerImage: workerImage,
-            WorkerPublicKeyPem: workerPublicKeyPem,
+            WorkerPublicKeyPem: string.Empty,
             ContainerCommand: "dotnet",
             Platform: platform,
             Preset: preset,
@@ -98,11 +97,19 @@ public static class NebiusResearchLiveConfigurationLoader
                     transportSourcePath)
             });
 
-        // Alignment accepts only the credential-free namespace identity. Provider static keys and
-        // client signing material cannot flow into this stage by construction.
+        // Alignment accepts only credential-free namespace identity. This also runs the immutable
+        // worker-image/topology checks before either local PEM file is opened.
         NebiusResearchDeploymentPreflight.ValidateObjectStorageAlignment(
             topologyDispatchOptions,
             new NebiusObjectStorageTransportAlignment(objectStorageBucket, objectStoragePrefix));
+
+        // The worker envelope public key is needed only after deployment shape and storage namespace
+        // alignment are known-good. Its cryptographic semantics remain enforced by final preflight.
+        var workerPublicKeyPem = ReadRequiredPemFile(environmentReader, "NVIDEA_LIVE_WORKER_PUBLIC_KEY_PEM_FILE");
+        topologyDispatchOptions = topologyDispatchOptions with
+        {
+            WorkerPublicKeyPem = workerPublicKeyPem
+        };
 
         // Only now load the client signing private key and derive the public identity that the
         // worker verifies. The final full preflight below still requires this derived public key.

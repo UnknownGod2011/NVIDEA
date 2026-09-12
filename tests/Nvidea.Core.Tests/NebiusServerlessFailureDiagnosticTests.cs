@@ -85,6 +85,33 @@ public sealed class NebiusServerlessFailureDiagnosticTests
     }
 
     [Fact]
+    public void ParseGet_DropsAmbiguousDuplicateDiagnosticShapes()
+    {
+        const string json = """
+            {
+              "metadata": { "id": "job-1", "name": "research-job" },
+              "status": {
+                "state": "FAILED",
+                "stateDetails": {
+                  "code": "StartFailed",
+                  "message": "camel"
+                },
+                "state_details": {
+                  "code": "ContainerFailed",
+                  "message": "snake"
+                }
+              }
+            }
+            """;
+
+        var snapshot = NebiusServerlessJobSnapshotParser.ParseGet(
+            new NebiusServerlessResponse(HttpStatusCode.OK, json));
+
+        Assert.Equal(NebiusRemoteJobState.Failed, snapshot.State);
+        Assert.Null(snapshot.Diagnostic);
+    }
+
+    [Fact]
     public void ParseGet_DiagnosticCannotUpgradeUnknownLifecycleState()
     {
         const string json = """

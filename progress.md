@@ -25,8 +25,8 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Nebius Object Storage requires exact `https://storage.<region>.nebius.cloud:443/`, strict ASCII region syntax, no path/query/fragment/user-info, endpoint/region binding, and AWSSDK automatic redirects disabled.
 - Live-research configuration validates provider-independent topology, immutable worker image, MysteryBox references, volume/root alignment, and Object Storage bucket/prefix alignment before opening local PEM files or reading Serverless/Object Storage credentials.
 - Object Storage bucket/prefix alignment consumes a credential-free `NebiusObjectStorageTransportAlignment`, not credential-bearing runtime options.
-- Worker envelope public-key PEM is read only after topology/alignment succeeds and is now immediately validated as public-only RSA >=2048 bits before the client signing key or provider credentials are accessed.
-- Client dispatch-signing private-key PEM is read after the worker-key trust boundary; its derived public key is injected and final preflight verifies signing capability and exact public/private identity consistency.
+- Worker envelope public-key PEM is read only after topology/alignment succeeds and is immediately validated as public-only RSA >=2048 bits before the client signing key or provider credentials are accessed.
+- Client dispatch-signing private-key PEM is read only after the worker-key trust boundary and is now immediately validated as usable RSA private material >=2048 bits with an actual signature operation before any Serverless/Object Storage credential is accessed. The canonical public identity derived by that shared validator is injected into worker configuration, and final dry-run reuses the same private-key validator before exact public/private identity comparison.
 - Worker `NEBIUS_API_KEY` and `TAVILY_API_KEY` values are not read by the desktop live loader; only validated Nebius MysteryBox references are handled there.
 - Windows voice invocation is local and review-first. Memory maintenance re-indexes stale/missing embeddings with privacy-safe previews and explicit Sensitive/Restricted opt-ins.
 - `tools/Nvidea.PersonalAiDemoEval`, `tools/Nvidea.PersonalAiAdversarialEval`, `tools/Nvidea.JudgingEvidenceVerifier`, `tools/Nvidea.DemoPackageValidator`, and `tools/Nvidea.NebiusModelCatalogCheck` provide deterministic/local judging and readiness evidence paths.
@@ -97,6 +97,36 @@ Security / privacy / failure review:
 - Provider endpoint/redirect protections, MysteryBox reference-only worker credentials, storage namespace alignment, and final client public/private identity checks remain intact.
 - No working runtime functionality was removed; duplicated policy was replaced with a single stricter shared path.
 
+### 2026-09-12 — Shared client signing trust before provider credentials
+Completed this run:
+- Re-read the complete ledger and the live configuration / dry-run / credential-ordering implementation before changing code.
+- Confirmed executable validation is still unavailable locally: `dotnet --info` returns `dotnet: command not found`.
+- Centralized client dispatch-signing private-key trust in `NebiusResearchLiveDryRunPreflight.ValidateAndDeriveClientPublicKey(...)`.
+- The shared validator now rejects missing/invalid PEM, RSA keys below 2048 bits, and public-only RSA material; it proves actual private signing capability with the same SHA-256/PKCS#1 operation used by the prior final preflight and only then returns the canonical SubjectPublicKeyInfo PEM.
+- `NebiusResearchLiveConfigurationLoader` now calls that shared validator immediately after reading the client private-key PEM and **before** reading `NVIDEA_LIVE_SERVERLESS_ACCESS_TOKEN`, `NVIDEA_LIVE_OBJECT_STORAGE_ACCESS_KEY_ID`, or `NVIDEA_LIVE_OBJECT_STORAGE_SECRET_ACCESS_KEY`.
+- The loader injects the canonical public identity returned by the validated private-key path, removing its weaker import-only RSA block.
+- Final live dry-run reuses the same client-private-key validator and preserves fixed-time comparison between the derived public identity and the worker-configured client verification identity.
+- Added `NebiusResearchClientSigningTrustOrderingTests` covering a valid 2048-bit signing identity plus public-only, weak 1024-bit, and malformed client PEMs. Counting-reader assertions prove each invalid client identity fails after its PEM path is read but before any Serverless/Object Storage credential variable is accessed.
+
+Engineering commits before this ledger update:
+- `36babdd9e23c0955d02a364cde99a8638626d2b8` — centralize client signing-key validation in live dry-run.
+- `c8731d69079c9f57ad223f810e9d407f575f7e31` — validate client signing identity before provider credentials.
+- `0600a65d4e28fae1d9a482fc6a11f94b01684e84` — focused client signing trust / credential-ordering coverage.
+
+Validation / evidence:
+- Static re-fetch confirms the loader invokes `ValidateAndDeriveClientPublicKey(...)` immediately after reading `NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE` and before requesting the Serverless token or Object Storage static credentials.
+- Static re-fetch confirms final dry-run delegates client private-key parsing, >=2048-bit enforcement, and private signing-capability proof to the same shared validator before performing the existing identity comparison.
+- GitHub compare from prior ledger head `a38366278e0eb8c18ad23f0d3143d77a047f4b27` to engineering head `0600a65d4e28fae1d9a482fc6a11f94b01684e84` reports **3 commits ahead / 0 behind**, limited to two production files and one focused test file; 184 additions / 51 deletions.
+- `dotnet --info` returned `dotnet: command not found`; no compile, xUnit, WPF, Worker, evaluator, or tool PASS is claimed.
+- No GitHub Actions workflow was triggered merely to manufacture validation.
+- No live Nebius, Tavily, Object Storage, Serverless, Playwright, Ollama, or paid inference request was performed.
+
+Security / privacy / failure review:
+- Malformed, weak, or public-only client signing material now fails before provider credentials are even read from the environment.
+- The standard loader path always sends only a derived public identity into worker plaintext configuration; the local private signing PEM remains local.
+- Provider endpoint/redirect trust, topology gating, worker-key trust, MysteryBox reference-only worker secrets, and final fixed-time identity consistency remain intact.
+- No working runtime functionality was deleted; a weaker duplicated import path was replaced by the stronger existing signing-capability policy.
+
 ## Known Blockers / Risks
 - No usable .NET 8 executable is available in this environment; Core/WPF/Worker code, XAML, tests, evaluator tools, evidence verifier, demo validator, catalog checker, and focused tests still require a real restore/build/run.
 - Real Windows/.NET 8 restore/build/run remains mandatory before relying on generated PASS evidence.
@@ -107,8 +137,8 @@ Security / privacy / failure review:
 - Real `embeddinggemma` semantic quality/ranking calibration still requires a local Ollama evaluation corpus.
 - No live Object Storage bucket/static key, digest-pinned registry image, MysteryBox refs, subnet, Serverless access token, or real Serverless job has been provisioned/validated here.
 - Exact provider acceptance of Serverless Object Storage `Source`/`SourcePath` still requires a real job.
-- New worker trust and PEM-line-ending regressions are statically reviewed but still need executable .NET verification.
-- Client private-key loading in the live loader currently proves RSA importability before provider credential reads, but >=2048-bit strength and actual private signing capability are still enforced later by final dry-run, after those provider credentials have been read.
+- New worker/client trust and PEM-line-ending regressions are statically reviewed but still need executable .NET verification.
+- The normal live loader derives a public-only client verification key, but the lower-level dry-run API currently imports any RSA PEM supplied in `NVIDEA_CLIENT_PUBLIC_KEY_PEM` and does not explicitly reject private-key PEM input. A manual caller could therefore accidentally place private signing material into plaintext worker configuration even though the standard loader path is safe.
 
 ## Single Best Next Task
-First obtain a .NET 8-capable Windows execution signal and restore/build `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, all evaluator/evidence tools, and focused tests; fix every compile/runtime defect before treating evidence as judge-ready. If executable validation remains unavailable, **centralize client dispatch-signing private-key validation (valid RSA private material, >=2048 bits, actual signing capability) and run it immediately after the client PEM is read but before Serverless/Object Storage credentials are accessed; derive the client public key from that validated identity and add counting-reader regressions for public-only, weak, and malformed client-key inputs.**
+First obtain a .NET 8-capable Windows execution signal and restore/build `Nvidea.Core`, `Nvidea.Windows`, `Nvidea.Worker`, all evaluator/evidence tools, and focused tests; fix every compile/runtime defect before treating evidence as judge-ready. If executable validation remains unavailable, **centralize client verification-public-key validation as bounded public-only RSA >=2048 bits, reuse it in deployment/live preflight, and add a regression proving a manually supplied private PEM under `NVIDEA_CLIENT_PUBLIC_KEY_PEM` fails closed before it can become plaintext worker configuration.**

@@ -44,6 +44,8 @@ public sealed class NebiusObjectStorageEndpointTrustTests
     [InlineData("eu_north1")]
     [InlineData("-eu-north1")]
     [InlineData("eu-north1-")]
+    [InlineData("eu-nоrth1")] // Cyrillic small o, U+043E.
+    [InlineData("eu-north١")] // Arabic-Indic digit one, U+0661.
     public void InvalidRegionIdentifiers_AreRejected(string region)
     {
         var options = ValidOptions() with { Region = region };

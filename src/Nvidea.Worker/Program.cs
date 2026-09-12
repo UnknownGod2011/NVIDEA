@@ -23,10 +23,11 @@ internal static class Program
             var engine = new ResearchEngine(inference, tavily);
             var handler = new ResearchJobHandler(engine);
             var transport = new DirectoryProtectedResearchTransport(runtime.BootstrapTrust.TransportRoot);
-            var clientPublicKey = runtime.BootstrapTrust.ClientVerificationPublicKeyPem;
+            var clientVerificationPublicKey = runtime.BootstrapTrust.ClientVerificationPublicKeyPem;
+            var clientResultEncryptionPublicKey = runtime.BootstrapTrust.ClientResultEncryptionPublicKeyPem;
             var bindingWaiter = new ResearchDispatchBindingWaiter(
                 transport,
-                clientPublicKey,
+                clientVerificationPublicKey,
                 pollInterval: runtime.BindingPollInterval,
                 maxWait: runtime.BindingMaxWait);
             var binding = await bindingWaiter.WaitAsync(options.OpaqueWorkItemId, CancellationToken.None).ConfigureAwait(false);
@@ -36,7 +37,7 @@ internal static class Program
                 transport,
                 handler,
                 runtime.WorkerPrivateKeyPem,
-                clientPublicKey);
+                clientResultEncryptionPublicKey);
 
             await worker.ExecuteOneStageAsync(
                 options.OpaqueWorkItemId,

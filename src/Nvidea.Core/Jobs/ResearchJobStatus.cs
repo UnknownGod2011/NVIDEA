@@ -88,6 +88,9 @@ public sealed record ResearchJobStatus(
             && remoteState == RemoteResearchProvenanceState.RemoteFailed
             ? NebiusFailureRemediationPolicy.ClassifyPersistedFailureEvidence(record.LastError)?.Guidance
             : null;
+        var displayText = Display(record, stage);
+        if (!string.IsNullOrWhiteSpace(failureRecoveryGuidance))
+            displayText = $"{displayText} — {failureRecoveryGuidance}";
 
         return new ResearchJobStatus(
             record.JobId,
@@ -101,7 +104,7 @@ public sealed record ResearchJobStatus(
             canRecoverInterrupted,
             canCancel,
             terminal,
-            Display(record, stage))
+            displayText)
         {
             RequiresRemoteReconciliation = HasUnfinishedRemoteProvenance(record),
             CheckpointStep = record.Checkpoint?.Step,

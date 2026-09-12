@@ -148,7 +148,7 @@ public static class NebiusResearchDeploymentPreflight
     {
         if (string.IsNullOrWhiteSpace(pem)
             || pem.Length > 65536
-            || pem.Any(char.IsControl))
+            || pem.Any(static character => char.IsControl(character) && character is not '\r' and not '\n'))
         {
             throw new InvalidOperationException("The worker envelope public key is missing or invalid.");
         }

@@ -23,6 +23,8 @@ The transport still stores only three categories:
 - Opaque work-item IDs are validated before becoming object keys.
 - Optional top-level key prefixes are bounded and reject traversal/backslash/control-character forms.
 - Every S3 call has a local cancellation-backed deadline. SDK retries are disabled so the NVIDEA retry budget is explicit.
+- AWS SDK automatic HTTP redirects are explicitly disabled. A `3xx` response therefore cannot silently move a signed Object Storage request, its static-key authorization material, or encrypted research payload to a different origin.
+- The production endpoint itself must be the exact regional Nebius origin `https://storage.<region>.nebius.cloud:443/`, with no user-info, path, query, or fragment, and the configured region must match the hostname.
 - Errors returned by the production client contain only the operation and HTTP status. Bucket names, endpoints, object keys, access-key IDs, provider response bodies, and secret values are not included.
 - Delete is idempotent.
 
@@ -46,6 +48,8 @@ The Serverless worker continues to receive Token Factory/Tavily/RSA worker crede
 
 The client uses AWS SDK for .NET v4 (`AWSSDK.S3`) because Nebius Object Storage exposes an S3-compatible interface. Version 4 is used rather than v3 because AWS SDK for .NET v3 reached end of support in 2026.
 
+The SDK's `AmazonS3Config.AllowAutoRedirect` setting is pinned to `false` by `NebiusObjectStorageClient.CreateSdkConfiguration`. Keep the focused regression around this setting when upgrading `AWSSDK.S3`; the AWS SDK default is redirect-enabled, so omitting the explicit override would weaken the static-credential egress boundary.
+
 ## Deployment topology
 
 The intended topology is now:
@@ -68,9 +72,10 @@ A prefix-to-mounted-path mapping must still be proven with the actual Nebius Ser
 
 ## Required validation before UI exposure
 
-1. Compile and run `S3ProtectedResearchTransportTests`.
-2. Verify a dedicated test bucket accepts conditional `If-None-Match: *` writes through Nebius' S3-compatible endpoint.
-3. Verify one S3-written protected object appears at the expected path in a Serverless mounted bucket.
-4. Wire the native transport into `Nvidea.NebiusContractProbe --live-research`.
-5. Run the complete encrypted dispatch -> signed binding -> worker -> encrypted result -> exact-once ingestion -> cleanup path.
-6. Keep WPF Serverless controls hidden until that probe passes.
+1. Compile and run `S3ProtectedResearchTransportTests` and `NebiusObjectStorageEndpointTrustTests`.
+2. Verify the SDK configuration regression confirms `AllowAutoRedirect == false` for the production S3 client.
+3. Verify a dedicated test bucket accepts conditional `If-None-Match: *` writes through Nebius' S3-compatible endpoint.
+4. Verify one S3-written protected object appears at the expected path in a Serverless mounted bucket.
+5. Wire the native transport into `Nvidea.NebiusContractProbe --live-research`.
+6. Run the complete encrypted dispatch -> signed binding -> worker -> encrypted result -> exact-once ingestion -> cleanup path.
+7. Keep WPF Serverless controls hidden until that probe passes.

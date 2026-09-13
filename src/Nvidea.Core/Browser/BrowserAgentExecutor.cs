@@ -2,6 +2,9 @@ namespace Nvidea.Core.Browser;
 
 public sealed class BrowserAgentExecutor
 {
+    private const string DriverFailureDiagnostic =
+        "Browser driver action failed before verification completed. Raw driver/site diagnostics are quarantined.";
+
     private readonly IBrowserDriver _driver;
     private readonly BrowserSafetyPolicy _safety;
     private readonly IBrowserApprovalGate _approval;
@@ -99,15 +102,15 @@ public sealed class BrowserAgentExecutor
         {
             throw;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             BrowserObservation? after = null;
             try { after = await _driver.ObserveAsync(CancellationToken.None).ConfigureAwait(false); } catch { }
             return new BrowserActionReceipt(
                 actionId, action, decision, started, DateTimeOffset.UtcNow,
                 DriverReportedSuccess: false, Verified: false,
-                VerificationDetail: "Driver action failed before verification completed.",
-                before.Url, after?.Url ?? before.Url, ex.Message);
+                VerificationDetail: DriverFailureDiagnostic,
+                before.Url, after?.Url ?? before.Url, DriverFailureDiagnostic);
         }
     }
 }

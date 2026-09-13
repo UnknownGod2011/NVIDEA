@@ -17,19 +17,13 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Tavily Search + Extract research with multi-query planning, canonical deduplication, evidence quality/freshness/diversity ranking, citations/provenance, resumable checkpoints, and explicit untrusted-evidence handling.
 - Safe Playwright browser agent with persistent Chromium state, popup tracking, plan-act-observe-verify, prompt-injection detection, consequential-action approvals, quarantined downloads, emergency stop, and crash recovery.
 - Protected local state uses Windows CurrentUser DPAPI by default; job state uses durable CAS, leases, and hash-chained/segmented audit.
-- Remote research uses encrypted opaque work items, signed resource-ID bindings, two-phase dispatch, lifecycle reconciliation, durable cancellation, exact-once result ingestion, and race-safe cleanup.
-- Nebius Object Storage + Serverless-mounted worker transport share one protected protocol. Preflight validates mount alignment, READ_WRITE transport, MysteryBox references, immutable worker image, bounded resources, and separated RSA identities.
-- Worker envelope, dispatch-signing, and client result-envelope RSA purposes are separated end-to-end with RSA >=2048, OAEP-SHA256 capability proofs, bounded PEM, canonicalization, and temporary-buffer zeroization.
-- `NebiusResearchWorkerRuntimeConfiguration` is the single worker environment boundary; credential-free topology/model/timing validation occurs before private-key/provider-secret reads.
-- Nebius Serverless lifecycle interpretation is explicitly allowlisted. Bounded `state_details` diagnostics are untrusted evidence only and never determine lifecycle transitions.
-- Durable remote provenance contains optional structured `ProviderFailureCode`; `ProviderFailureCodeTrust` is the single bounded/control-character-free evidence-shape boundary and the field is valid only for `RemoteFailed` provenance.
-- `NebiusFailureRemediationPolicy` is intentionally narrower than evidence validation. Only locally verified `NotEnoughResources` and `Quota` codes map to guidance; provider text cannot authorize actions.
-- Generic job-handler/provider exception text crosses `JobFailureDiagnostic` before durable `LastError`, is bounded/normalized, and is excluded from append-only audit summaries.
-- Product-facing exception failures cross `DesktopUiFailureProjector`, which ignores exception message/type/stack content and emits fixed NVIDEA-authored text.
-- Runtime-provided desktop text crosses `DesktopDisplayTextTrust` where display is necessary: control/whitespace normalization, explicit bounds, fixed fallback, and privacy-reduced HTTP(S) targets that omit URL user-info/query/fragment data.
-- Browser approval WPF labels page/runtime targets explicitly as untrusted and preserves exact NVIDEA-generated approval scope verbatim.
-- Browser recovery WPF no longer renders arbitrary recovery detail or full evidence URLs. Browser outcome/status WPF uses trusted local state rather than raw runtime diagnostic strings.
-- **Product-facing browser outcomes now cross `BrowserProductOutcomeTrust` in Core before leaving `BrowserProductRuntime`.** Failed/retry messages are fixed local text and cannot contain `LastError`; approval summary/target presentation is bounded/normalized and privacy-reduced while exact approval scope remains byte-for-byte unchanged.
+- Remote research uses encrypted opaque work items, signed resource-ID bindings, two-phase dispatch, lifecycle reconciliation, durable cancellation, exact-once result ingestion, race-safe cleanup, Nebius Object Storage, and Serverless-mounted worker transport.
+- Worker envelope, dispatch-signing, and result-envelope RSA purposes are separated end-to-end with RSA >=2048, OAEP-SHA256 capability proofs, bounded PEM, canonicalization, and temporary-buffer zeroization.
+- Nebius Serverless lifecycle interpretation is explicitly allowlisted. Bounded provider diagnostics are untrusted evidence only and never determine lifecycle transitions.
+- Durable remote provenance contains structured `ProviderFailureCode`; `ProviderFailureCodeTrust` is the single evidence-shape boundary and only fixed local remediation codes can generate guidance.
+- Generic provider/handler exception text crosses `JobFailureDiagnostic`; WPF exceptions cross `DesktopUiFailureProjector`; non-exception runtime display strings cross `DesktopDisplayTextTrust`.
+- Browser product outcomes cross `BrowserProductOutcomeTrust`; failed/retry messages are local state-derived, approval presentation is bounded/privacy-reduced, and exact approval scope remains unchanged.
+- Durable browser-goal descriptive evidence now crosses `BrowserGoalEvidenceTrust`: session/recovery detail and verified-step evidence are bounded/control-normalized; verified HTTP(S) URLs drop user-info/query/fragment; unexpected schemes fail closed to `about:blank`; approval scope/job/state/replay authority are not modified.
 - Windows voice invocation is local/review-first. Deterministic judging tools include `Nvidea.PersonalAiDemoEval`, `Nvidea.PersonalAiAdversarialEval`, `Nvidea.JudgingEvidenceVerifier`, `Nvidea.DemoPackageValidator`, and `Nvidea.NebiusModelCatalogCheck`.
 
 ## Persistent Progress History
@@ -40,74 +34,60 @@ Added Nebius/Nemotron inference, layered memory, Tavily research, capabilities/a
 ### 2026-09-09 to 2026-09-10 — Durable research + Nebius cloud execution
 Added Tavily Extract enrichment, evidence ranking/staleness/diversity, restart-safe research, encrypted remote transport, two-phase Nebius dispatch, signed resource binding, exact-once ingestion, lifecycle/cancellation reconciliation, native Object Storage, Serverless-mounted transport, immutable worker images, MysteryBox validation, RSA role checks, destination preflight, and fail-closed provider construction.
 
-### 2026-09-10 to 2026-09-12 — Product, evaluator, provider, and protocol hardening
-Added research/browser product runtimes, WPF lifecycle integration, restart-safe browser recovery, one-shot cloud approval, local voice, semantic-memory migration UI, positive/adversarial Personal AI evaluators, unified judging evidence, demo-package validation, provider endpoint/redirect trust, credential-read ordering, worker/client RSA role validation, protocol-level worker/client envelope trust, and deployment/protocol policy reuse.
+### 2026-09-10 to 2026-09-12 — Product/evaluator/protocol hardening
+Added research/browser product runtimes, WPF lifecycle integration, restart-safe browser recovery, one-shot cloud approval, local voice, semantic-memory migration UI, positive/adversarial Personal AI evaluators, unified judging evidence, demo-package validation, provider endpoint/redirect trust, credential-read ordering, worker/client RSA role separation, protocol-level envelope trust, and deployment/preflight policy reuse.
 
-### 2026-09-12 — Client RSA key-purpose separation
-Separated dispatch signing/verification from result encryption/decryption across live configuration, runtime composition, worker bootstrap/execution, contract probe, deployment preflight, tests, README, and Nebius operator docs. Worker/live/preflight reject reused identities; worker receives only public halves.
+### 2026-09-13 — Provider diagnostic and desktop trust boundaries
+- Added exhaustive fail-closed Serverless lifecycle coverage and bounded `state_details` evidence.
+- Added `ProviderFailureCodeTrust`, structured remote failure provenance, fixed `NotEnoughResources`/`Quota` remediation only, durable migration, CAS equivalence, direct reconciler capture, and parser→reconciler→store coverage.
+- Added `JobFailureDiagnostic`; arbitrary exception text is bounded/marked untrusted and excluded from append-only audit summaries.
+- Added `DesktopUiFailureProjector` and `DesktopDisplayTextTrust`; direct exception/runtime text leakage was removed from product-facing WPF surfaces and URL presentation strips user-info/query/fragment.
+- Added `BrowserProductOutcomeTrust` in Core so plugin/product browser callers receive constrained outcomes even outside WPF.
 
-### 2026-09-13 — Serverless lifecycle + failure provenance
-- Added exhaustive fail-closed Serverless lifecycle coverage.
-- Added bounded `state_details.code/message`, duplicate-shape ambiguity rejection, and explicit untrusted diagnostic evidence.
-- Added fixed local remediation for `NotEnoughResources` and `Quota` only.
-- Added structured `RemoteResearchProvenance.ProviderFailureCode`, durable migration, CAS equivalence, product precedence, direct reconciler capture, and raw JSON -> parser -> reconciler -> CAS coverage.
-- Unified raw provider code validation through `ProviderFailureCodeTrust` and enforced `RemoteFailed`-only state semantics.
-
-### 2026-09-13 — Durable and desktop diagnostic taint boundaries
-- Added `JobFailureDiagnostic`; arbitrary handler/provider exception text is bounded, normalized, marked untrusted, and removed from append-only audit summaries.
-- Added `DesktopUiFailureProjector`; direct `Exception.Message` disclosure was removed from invocation, browser/recovery, download, and audit-retention WPF catch paths.
-- Added `DesktopDisplayTextTrust`; browser/recovery/status/runtime display strings and privacy-sensitive URL presentation are constrained before WPF rendering.
-- Hardened approval display without changing exact approval authority.
-
-### 2026-09-13 — Browser product API outcome trust boundary
+### 2026-09-13 — Browser goal durable evidence trust boundary
 Completed in this run:
-- Re-read this ledger and inspected current `BrowserHostRuntime`, `BrowserProductRuntime`, composition-root exposure, display-text trust, and existing browser integration tests before mutation.
-- Confirmed the remaining product-boundary leak: trusted `BrowserHostRuntime.Describe(...)` still includes durable `job.LastError` in failed/retry `BrowserJobOutcome.Message`, and raw approval summary/target values exist before WPF projection.
-- Added `BrowserProductOutcomeTrust` as a Core product-facing projection boundary. It replaces all browser status messages from trusted `AgentJobState`, never from incoming outcome text.
-- Failed and retry-scheduled product messages can no longer contain `LastError`, provider diagnostics, local paths, credentials, tool output, or site text.
-- Approval summary is bounded/control-normalized through `DesktopDisplayTextTrust`.
-- Approval target is bounded; absolute HTTP(S) targets are privacy-reduced to scheme + host + path so URL user-info/query/fragment secrets cannot escape through the product API.
-- Exact approval scope, action kind, job id, requested timestamp, state, and verified-step evidence remain unchanged; the projection has presentation authority only and cannot approve/retry/cancel/navigate/write.
-- Updated every `BrowserProductRuntime` method returning `BrowserJobOutcome` (`StartActionAsync`, `ApproveAndResumeAsync`, `CancelAsync`) to apply the projection before returning to UI/plugin callers.
-- Added `BrowserProductOutcomeTrustTests` covering fake Nebius `Quota`/provider diagnostics, bearer-like secrets, private Windows paths, oversized/control-character approval text, secret-bearing URL user-info/query/fragment removal, non-URL locator target normalization, exact-scope preservation, and verified-step preservation.
+- Re-read this ledger and inspected `BrowserGoalAgent`, `BrowserGoalSessionStore`, browser product/runtime contracts, display-text trust, and relevant test patterns before mutation.
+- Confirmed that `BrowserGoalSession.Detail`, `BrowserGoalVerifiedStep.VerificationDetail`, and verified step URLs can originate from model/site/tool/runtime evidence and are persisted/reused as planner context.
+- Added `BrowserGoalEvidenceTrust` with separate 512-character session-detail and 320-character verification-detail bounds; controls/whitespace are normalized through the existing presentation primitive.
+- Privacy-reduced verified HTTP(S) evidence URLs to scheme + host + port + path, removing user-info/query/fragment credentials/tokens. Unexpected/non-web schemes fail closed to `about:blank` because verified history is descriptive evidence, not navigation authority.
+- Preserved goal identity, job id, action kind, timestamps, lifecycle state, `PendingJobId`, and `PendingExactScope`; the projection cannot approve, retry, replay, navigate, or mutate an action.
+- Applied the projection before `JsonBrowserGoalSessionStore` persistence and again on load so legacy/corrupt records cannot bypass the current trust boundary.
+- Hardened plaintext→protected legacy migration ordering: records are normalized before re-persistence instead of merely encrypting old tainted descriptive fields unchanged.
+- Added adversarial tests covering oversized/control-character model text, secret-bearing URLs, non-HTTP schemes, missing optional evidence, and exact approval-scope/job/state preservation.
 
 Engineering commits this run before this ledger update:
-- `b2d7c69c1e6bc9430563e32edaf93f02861742a0` — add the browser product outcome trust boundary.
-- `f55ac6018b573407f9fb0fcc899a2679418a1c5b` — apply outcome projection at `BrowserProductRuntime`.
-- `991e3c1b372437b051dd02bf769fd58715c55b3f` — add adversarial browser product outcome trust regressions.
+- `5d8c560dda40d1ddf7ec2c927adcfd9bd18e60f0` — add durable browser-goal evidence trust boundary.
+- `9b9a73a686047c1ede3d91e3f74148705a0c7cb3` — apply browser-goal evidence projection at save/load boundaries.
+- `006f538d47898422472de4d60444af0e68deb962` — add adversarial browser-goal evidence trust tests.
+- `4c348767e365ff5db734e53905850c94b18a143c` — sanitize legacy goal records before local-state migration.
 
 Validation / evidence this run:
-- Verified before every GitHub mutation that the target repository was exactly `UnknownGod2011/NVIDEA`.
-- Current repository tree before mutation was `a08cddbb616a9a10d235dc81aef7b28bfb966f38`.
-- GitHub compare `a08cddbb616a9a10d235dc81aef7b28bfb966f38...991e3c1b372437b051dd02bf769fd58715c55b3f`: **3 commits ahead / 0 behind**.
-- Compare shows exactly three intended files changed before this ledger update: added `BrowserProductOutcomeTrust.cs`, modified `BrowserProductRuntime.cs`, and added `BrowserProductOutcomeTrustTests.cs`.
-- Static re-read confirms the public product browser boundary now projects all returned browser outcomes; the privileged host remains internal composition infrastructure and exact approval scope is untouched.
-- `dotnet` and `csc` remain unavailable in this execution environment.
+- Verified before every GitHub mutation that the repository target was exactly `UnknownGod2011/NVIDEA`.
+- Starting repository head was `b7900bedf64d197aff3cbfa9ac67342dacb573c4`.
+- GitHub compare through `006f538d...` showed **3 commits ahead / 0 behind** before the final legacy-migration hardening and ledger commit.
+- Static re-read confirms the trust projection is descriptive-only and leaves exact approval scope/lifecycle identifiers untouched.
+- Local execution environment still has no `dotnet` or `csc` executable.
 - **No compile, xUnit, WPF, Worker, evaluator, or live integration PASS is claimed.**
 - No GitHub Actions workflow was triggered merely to manufacture a green signal.
 - No live Nebius, Tavily, Object Storage, Serverless, Playwright, Ollama, or paid inference operation was performed.
 
 ## Security / Privacy / Failure Review
-- Provider failure messages remain non-authoritative; structured provider failure codes remain evidence-only and allowlist remediation remains local.
-- Generic exception text cannot impersonate Nebius remote-failure evidence and is not copied into append-only audit summaries.
-- WPF exception paths use fixed local projection; non-exception browser/recovery/status runtime strings are separately constrained.
-- Browser product/plugin callers now receive a second Core projection layer even if they do not use WPF, eliminating reliance on UI-specific hygiene for `BrowserJobOutcome`.
-- URL product display projection strips user-info/query/fragment to reduce accidental token/credential disclosure.
-- Page/runtime approval text cannot alter exact NVIDEA-generated approval scope or approval decision logic.
+- Provider/model/site/tool strings remain non-authoritative; lifecycle and approval control flow depend on local enums, exact scopes, durable ids, and fixed policy.
+- Browser goal evidence sanitation cannot grant approval or replay authority and does not alter exact scope.
+- Verified-history URLs no longer durably retain query/fragment/user-info secrets; unexpected schemes are discarded from descriptive history.
+- Legacy goal records are normalized before local-state protection migration, reducing retention of historical tainted descriptive data.
 - Existing encrypted transport, signed binding, cancellation/recovery, exact-once ingestion, browser safety, download quarantine, emergency stop, and permission UX were not removed or weakened.
 
 ## Known Blockers / Risks
-- No usable .NET 8 executable/compiler exists in this execution environment, so recent .NET/WPF/Worker changes require a real restore/build/test/run before compile confidence is justified.
+- No usable .NET 8 executable/compiler exists in this environment, so recent .NET/WPF/Worker changes require a real restore/build/test/run before compile confidence is justified.
 - Real Windows execution remains mandatory before treating WPF voice/readiness/maintenance behavior and generated judging evidence as judge-ready.
-- `BrowserHostRuntime.Describe(...)` still retains raw `LastError` in its **trusted internal** `BrowserJobOutcome` for internal goal/recovery infrastructure. Public product callers are now protected by `BrowserProductOutcomeTrust`, but trusted goal/recovery surfaces must continue to avoid rendering that internal message directly.
-- `BrowserGoalSession.Detail` and `BrowserGoalVerifiedStep.VerificationDetail` can originate from planner/verifier/runtime evidence and deserve a dedicated product-display provenance audit before any new plugin/UI surface exposes them.
-- Browser approval `ExactScope` may legitimately encode target-specific authority and is intentionally shown verbatim. Any future redesign must preserve exact human-visible authority rather than silently canonicalizing it.
+- `BrowserGoalAgent` can still return same-process in-memory `Detail`/`VerificationDetail` originating from planner/host output before a caller reloads through the durable store. Durable/restart planner context is now constrained, but an explicit goal product projection or in-agent sanitation should close the immediate-return surface too.
+- `BrowserHostRuntime.Describe(...)` still retains raw `LastError` in its trusted internal outcome for goal/recovery infrastructure; public browser product callers are protected, but trusted internal consumers must not render it directly.
+- Browser approval `ExactScope` may legitimately encode target-specific authority and is intentionally preserved verbatim. Any future redesign must keep the human-visible authority equal to the authority consumed by approval logic.
 - Provider catalogs can change; model listing does not prove quota, inference success, tool calling, context length, or every capability. A real Nebius inference smoke test remains required.
 - Prompt-injection detection remains heuristic; capability gates and approvals remain mandatory defense-in-depth.
-- Real `embeddinggemma` ranking quality still needs a local Ollama evaluation corpus.
-- No live Object Storage bucket/static key, digest-pinned registry image, MysteryBox refs, subnet, Serverless token, or real Serverless job has been provisioned/validated here.
-- Exact provider acceptance of Serverless Object Storage `Source` / `SourcePath` still requires a real job.
-- Lower-level `NebiusResearchClientRuntime.Create(...)` still retains a same-key compatibility fallback for legacy unit/contract callers; production live composition and deployment preflight are stricter. Remove only after executable migration coverage exists.
+- Real embedding ranking and real Nebius Object Storage/Serverless execution still require live environment validation.
+- Lower-level `NebiusResearchClientRuntime.Create(...)` retains a same-key compatibility fallback for legacy unit/contract callers; production composition/preflight are stricter. Remove only after executable migration coverage exists.
 
 ## Single Best Next Task
-Obtain a real .NET 8-capable Windows restore/build/test signal and fix every compile/runtime defect exposed by recent security/reliability migrations. If executable validation remains unavailable, audit and harden the **browser goal/recovery product presentation boundary** (`BrowserGoalSession.Detail`, `BrowserGoalVerifiedStep.VerificationDetail`, planner reasons, verification evidence, and recovery evidence) so site/model/tool-controlled strings are bounded, provenance-labelled where necessary, privacy-reduced, and never gain approval/replay/control-flow authority; add contract/adversarial tests before exposing those fields to future plugins or UI.
+Obtain a real .NET 8-capable Windows restore/build/test signal and fix every compile/runtime defect exposed by recent migrations. If executable validation remains unavailable, close the remaining **same-process browser-goal presentation gap** by applying a dedicated product/in-agent projection to planner reasons, child outcome messages, verified-step details, and recovery evidence before `BrowserGoalAgent` returns them, while continuing to preserve exact approval scope and all control-flow authority; add adversarial contract tests proving untrusted strings cannot become approval/replay authority.

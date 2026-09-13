@@ -126,6 +126,10 @@ public sealed class JsonBrowserGoalSessionStore : IBrowserGoalSessionStore
             throw new InvalidDataException("Browser goal session store contains invalid data.", ex);
         }
 
+        records = records
+            .Select(static record => PersistedBrowserGoalSession.FromSession(record.ToSession()))
+            .ToList();
+
         if (_protector is not null && !payload.WasProtected)
             await PersistUnlockedAsync(records, cancellationToken).ConfigureAwait(false);
 

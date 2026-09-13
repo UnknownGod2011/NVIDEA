@@ -131,9 +131,24 @@ public sealed class ResumableJobOrchestrator
         {
             _ephemeralApprovals.Revoke(jobId);
             var exhausted = running.Attempt >= running.Definition.MaxAttempts;
-            var failed = running with { State = exhausted ? AgentJobState.Failed : AgentJobState.RetryScheduled, LastError = ex.Message, NextAttemptAt = exhausted ? null : DateTimeOffset.UtcNow + RetryDelay(running.Attempt), UpdatedAt = DateTimeOffset.UtcNow };
+            var failureDiagnostic = JobFailureDiagnostic.FromException(ex);
+            var failed = running with
+            {
+                State = exhausted ? AgentJobState.Failed : AgentJobState.RetryScheduled,
+                LastError = failureDiagnostic,
+                NextAttemptAt = exhausted ? null : DateTimeOffset.UtcNow + RetryDelay(running.Attempt),
+                UpdatedAt = DateTimeOffset.UtcNow
+            };
             await _store.SaveAsync(failed, cancellationToken).ConfigureAwait(false);
-            await AuditAsync(failed, exhausted ? "job.failed" : "job.retry_scheduled", false, false, ex.Message, cancellationToken).ConfigureAwait(false);
+            await AuditAsync(
+                failed,
+                exhausted ? "job.failed" : "job.retry_scheduled",
+                false,
+                false,
+                exhausted
+                    ? "Job execution failed after exhausting retries; untrusted handler/provider diagnostic text was not copied into audit."
+                    : "Job execution failed and retry was scheduled; untrusted handler/provider diagnostic text was not copied into audit.",
+                cancellationToken).ConfigureAwait(false);
             return failed;
         }
     }

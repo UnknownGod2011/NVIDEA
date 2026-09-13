@@ -216,7 +216,7 @@ public sealed class TavilyResearchClient : IResearchProvider, IResearchExtractio
         {
             return batch with
             {
-                Warnings = [.. batch.Warnings, $"Tavily Extract enrichment was unavailable; retained search evidence. {ex.Message}"]
+                Warnings = [.. batch.Warnings, "Tavily Extract enrichment was unavailable; retained search evidence. Raw provider/network diagnostics were quarantined."]
             };
         }
 

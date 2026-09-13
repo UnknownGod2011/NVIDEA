@@ -6,6 +6,10 @@ public enum DesktopUiFailureSurface
     BrowserAction = 1,
     BrowserRecovery = 2,
     RecoveryDiscovery = 3,
+    DownloadSnapshot = 4,
+    DownloadRecovery = 5,
+    DownloadExport = 6,
+    DownloadDiscard = 7,
 }
 
 public sealed record DesktopUiFailureProjection(
@@ -42,6 +46,22 @@ public static class DesktopUiFailureProjector
             DesktopUiFailureSurface.RecoveryDiscovery => new(
                 "Recovery state is unavailable. Raw local-store/provider exception details were withheld.",
                 "Recovery state unavailable — details withheld"),
+
+            DesktopUiFailureSurface.DownloadSnapshot => new(
+                "Download quarantine state is unavailable. No file action was performed, and raw local-store/browser exception details were withheld.",
+                "Download quarantine unavailable — details withheld"),
+
+            DesktopUiFailureSurface.DownloadRecovery => new(
+                "Download recovery failed safely. No file was exported and no website action was replayed. Raw browser/local exception details were withheld.",
+                "Download recovery — failed safely"),
+
+            DesktopUiFailureSurface.DownloadExport => new(
+                "Download handoff failed safely. No broader file permission was granted, and raw browser/local exception details were withheld.",
+                "Download — failed safely"),
+
+            DesktopUiFailureSurface.DownloadDiscard => new(
+                "Download discard failed safely. No broader delete permission was granted, and raw browser/local exception details were withheld.",
+                "Download — discard failed safely"),
 
             _ => throw new ArgumentOutOfRangeException(nameof(surface), surface, "Unknown desktop failure surface."),
         };

@@ -151,7 +151,7 @@ public sealed class BrowserGoalAgent
         ValidateSession(session);
 
         if (IsTerminal(session.Status))
-            return session;
+            return BrowserGoalEvidenceTrust.ProjectForPersistence(session);
 
         if (session.Status == BrowserGoalStatus.WaitingForApproval)
         {
@@ -161,7 +161,7 @@ public sealed class BrowserGoalAgent
                 if (child?.State == AgentJobState.Completed)
                 {
                     var reconciled = AppendVerifiedStep(ClearPending(session with { Status = BrowserGoalStatus.Running }), child.VerifiedStep);
-                    await PersistAsync(reconciled, cancellationToken).ConfigureAwait(false);
+                    reconciled = await PersistAsync(reconciled, cancellationToken).ConfigureAwait(false);
                     return await RunUntilPauseAsync(reconciled, cancellationToken).ConfigureAwait(false);
                 }
 
@@ -183,7 +183,7 @@ public sealed class BrowserGoalAgent
                     }), cancellationToken).ConfigureAwait(false);
                 }
             }
-            return session;
+            return BrowserGoalEvidenceTrust.ProjectForPersistence(session);
         }
 
         return await RunUntilPauseAsync(session, cancellationToken).ConfigureAwait(false);
@@ -200,7 +200,7 @@ public sealed class BrowserGoalAgent
             return await PersistAsync(session, cancellationToken).ConfigureAwait(false);
 
         var current = Touch(session with { Status = BrowserGoalStatus.Running, Detail = null });
-        await PersistAsync(current, cancellationToken).ConfigureAwait(false);
+        current = await PersistAsync(current, cancellationToken).ConfigureAwait(false);
 
         if (current.PendingJobId is not null && _host is ICrashConsistentBrowserGoalHost recoveryHost)
         {
@@ -228,7 +228,7 @@ public sealed class BrowserGoalAgent
                 PlannerTurnCount = current.PlannerTurnCount + 1,
                 PlannerContextCharacters = current.PlannerContextCharacters + estimatedContext
             });
-            await PersistAsync(current, cancellationToken).ConfigureAwait(false);
+            current = await PersistAsync(current, cancellationToken).ConfigureAwait(false);
 
             var decision = await _planner
                 .PlanNextAsync(current.Goal, observation, ToPlannerHistory(current.VerifiedSteps), cancellationToken)
@@ -260,12 +260,12 @@ public sealed class BrowserGoalAgent
             {
                 BrowserLegacyActionMigration.EnsureAutonomousActionUsesTypedVerification(decision.Action);
             }
-            catch (InvalidOperationException ex)
+            catch (InvalidOperationException)
             {
                 return await PersistAsync(Touch(current with
                 {
                     Status = BrowserGoalStatus.Stopped,
-                    Detail = $"Nemotron produced an invalid autonomous verification contract: {ex.Message}"
+                    Detail = "Nemotron produced an invalid autonomous verification contract."
                 }), cancellationToken).ConfigureAwait(false);
             }
 
@@ -282,7 +282,7 @@ public sealed class BrowserGoalAgent
                     Detail = "Browser child job reserved; no browser action has executed yet."
                 });
 
-                await PersistAsync(current, cancellationToken).ConfigureAwait(false);
+                current = await PersistAsync(current, cancellationToken).ConfigureAwait(false);
                 await crashHost.CreateActionAsync(childJobId, decision.Action, cancellationToken).ConfigureAwait(false);
                 outcome = await crashHost.AdvanceActionAsync(childJobId, cancellationToken).ConfigureAwait(false);
             }
@@ -327,7 +327,7 @@ public sealed class BrowserGoalAgent
         if (outcome.State == AgentJobState.Completed)
         {
             resumed = AppendVerifiedStep(ClearPending(resumed with { Status = BrowserGoalStatus.Running }), outcome.VerifiedStep);
-            await PersistAsync(resumed, cancellationToken).ConfigureAwait(false);
+            resumed = await PersistAsync(resumed, cancellationToken).ConfigureAwait(false);
             return await RunUntilPauseAsync(resumed, cancellationToken).ConfigureAwait(false);
         }
         if (outcome.State == AgentJobState.Cancelled)
@@ -385,14 +385,14 @@ public sealed class BrowserGoalAgent
                 ActionCount = Math.Max(0, session.ActionCount - 1),
                 Detail = "Recovered a reserved child id that was never created; safely re-planning."
             });
-            await PersistAsync(replannable, cancellationToken).ConfigureAwait(false);
+            replannable = await PersistAsync(replannable, cancellationToken).ConfigureAwait(false);
             return (replannable, true);
         }
 
         if (existing.State == AgentJobState.Completed)
         {
             var completed = AppendVerifiedStep(ClearPending(session), existing.VerifiedStep);
-            await PersistAsync(completed, cancellationToken).ConfigureAwait(false);
+            completed = await PersistAsync(completed, cancellationToken).ConfigureAwait(false);
             return (completed, true);
         }
 
@@ -448,7 +448,7 @@ public sealed class BrowserGoalAgent
         if (outcome.State == AgentJobState.Completed)
         {
             var completed = AppendVerifiedStep(ClearPending(session with { Status = BrowserGoalStatus.Running, Detail = outcome.Message }), outcome.VerifiedStep);
-            await PersistAsync(completed, cancellationToken).ConfigureAwait(false);
+            completed = await PersistAsync(completed, cancellationToken).ConfigureAwait(false);
             return (completed, true);
         }
 
@@ -496,9 +496,12 @@ public sealed class BrowserGoalAgent
         if (step is null)
             return Touch(session);
 
-        var history = (session.VerifiedSteps ?? Array.Empty<BrowserGoalVerifiedStep>()).ToList();
-        if (!history.Any(existing => existing.JobId == step.JobId))
-            history.Add(step);
+        var projectedStep = BrowserGoalEvidenceTrust.ProjectVerifiedStep(step);
+        var history = (session.VerifiedSteps ?? Array.Empty<BrowserGoalVerifiedStep>())
+            .Select(BrowserGoalEvidenceTrust.ProjectVerifiedStep)
+            .ToList();
+        if (!history.Any(existing => existing.JobId == projectedStep.JobId))
+            history.Add(projectedStep);
         if (history.Count > 50)
             history.RemoveRange(0, history.Count - 50);
         return Touch(session with { VerifiedSteps = history });
@@ -516,7 +519,7 @@ public sealed class BrowserGoalAgent
         if (steps is null || steps.Count == 0)
             return Array.Empty<BrowserActionReceipt>();
 
-        return steps.Select(step => new BrowserActionReceipt(
+        return steps.Select(BrowserGoalEvidenceTrust.ProjectVerifiedStep).Select(step => new BrowserActionReceipt(
             step.JobId,
             new BrowserAction(step.ActionKind),
             new BrowserActionDecision(BrowserRiskLevel.Low, false, true, "Previously verified browser step."),
@@ -561,9 +564,10 @@ public sealed class BrowserGoalAgent
 
     private async Task<BrowserGoalSession> PersistAsync(BrowserGoalSession session, CancellationToken cancellationToken)
     {
+        var projected = BrowserGoalEvidenceTrust.ProjectForPersistence(session);
         if (_store is not null)
-            await _store.SaveAsync(session, cancellationToken).ConfigureAwait(false);
-        return session;
+            await _store.SaveAsync(projected, cancellationToken).ConfigureAwait(false);
+        return projected;
     }
 
     private static bool IsTerminal(BrowserGoalStatus status) => status is

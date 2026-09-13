@@ -82,6 +82,22 @@ public sealed class RemoteResearchResultIngestor
             : clientPrivateKeyPem;
     }
 
+    /// <summary>
+    /// Performs the deterministic, no-mutation portion of remote dispatch reservation validation.
+    /// This is intentionally safe to call before encrypted transport upload. ReserveDispatchAsync
+    /// repeats the same eligibility and audit validation against freshly loaded state immediately
+    /// before its CAS so this preflight cannot weaken concurrency safety.
+    /// </summary>
+    public async Task PreflightDispatchReservationAsync(
+        Guid localJobId,
+        string checkpointStep,
+        CancellationToken cancellationToken = default)
+    {
+        var current = await GetRequiredResearchAsync(localJobId, cancellationToken).ConfigureAwait(false);
+        ValidateDispatchReservationTarget(current, checkpointStep);
+        _ = PrepareDispatchReservationAudit(current);
+    }
+
     public async Task<AgentJobRecord> ReserveDispatchAsync(
         RemoteResearchDispatchReservation reservation,
         CancellationToken cancellationToken = default)
@@ -95,18 +111,9 @@ public sealed class RemoteResearchResultIngestor
             throw new InvalidOperationException("Dispatch reservation contains an invalid encrypted work-item lifetime.");
 
         var current = await GetRequiredResearchAsync(reservation.LocalJobId, cancellationToken).ConfigureAwait(false);
-        if (current.State != AgentJobState.Pending || current.ExecutionLocation != JobExecutionLocation.Local)
-            throw new InvalidOperationException("Only a pending local research stage can be reserved for remote dispatch.");
-        if (current.RemoteResearch is { State: not RemoteResearchProvenanceState.ResultApplied })
-            throw new InvalidOperationException("Research job already carries unfinished remote execution provenance.");
-        if (current.ApprovalScope is not null)
-            throw new InvalidOperationException("Approval-bearing research cannot be dispatched remotely.");
+        ValidateDispatchReservationTarget(current, reservation.CheckpointStep);
 
-        var checkpoint = current.Checkpoint
-            ?? throw new InvalidOperationException("Research dispatch requires a durable input checkpoint.");
-        if (!string.Equals(checkpoint.Step, reservation.CheckpointStep, StringComparison.Ordinal))
-            throw new InvalidOperationException("Dispatch reservation does not match the current research checkpoint.");
-
+        var checkpoint = current.Checkpoint!;
         var provenance = new RemoteResearchProvenance(
             ResearchWorkItemProtector.ProtocolVersion,
             reservation.OpaqueWorkItemId,
@@ -281,6 +288,38 @@ public sealed class RemoteResearchResultIngestor
         if (!string.Equals(job.Definition.JobType, ResearchJobHandler.Type, StringComparison.Ordinal))
             throw new InvalidOperationException("Remote result ingestion only accepts research jobs.");
         return job;
+    }
+
+    private static void ValidateDispatchReservationTarget(AgentJobRecord current, string checkpointStep)
+    {
+        if (string.IsNullOrWhiteSpace(checkpointStep))
+            throw new InvalidOperationException("Dispatch reservation is missing the checkpoint step.");
+        if (current.State != AgentJobState.Pending || current.ExecutionLocation != JobExecutionLocation.Local)
+            throw new InvalidOperationException("Only a pending local research stage can be reserved for remote dispatch.");
+        if (current.RemoteResearch is { State: not RemoteResearchProvenanceState.ResultApplied })
+            throw new InvalidOperationException("Research job already carries unfinished remote execution provenance.");
+        if (current.ApprovalScope is not null)
+            throw new InvalidOperationException("Approval-bearing research cannot be dispatched remotely.");
+
+        var checkpoint = current.Checkpoint
+            ?? throw new InvalidOperationException("Research dispatch requires a durable input checkpoint.");
+        if (!string.Equals(checkpoint.Step, checkpointStep, StringComparison.Ordinal))
+            throw new InvalidOperationException("Dispatch reservation does not match the current research checkpoint.");
+    }
+
+    private static AuditEvent PrepareDispatchReservationAudit(AgentJobRecord current)
+    {
+        var projected = current with
+        {
+            State = AgentJobState.Running,
+            ExecutionLocation = JobExecutionLocation.Local,
+            LastError = null,
+            NextAttemptAt = null
+        };
+        return PrepareAudit(
+            projected,
+            "research.remote_dispatch_reserved",
+            "Encrypted research stage reserved before Nebius job creation.");
     }
 
     private static AuditEvent PrepareAudit(AgentJobRecord job, string eventType, string summary)

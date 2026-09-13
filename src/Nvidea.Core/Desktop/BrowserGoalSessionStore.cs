@@ -15,6 +15,8 @@ public interface IBrowserGoalSessionStore
 /// Durable browser-goal state. Only descriptive/non-authorizing state is persisted:
 /// no approval grants, grant ids, bearer tokens, credentials, or typed browser values.
 /// PendingAction is deliberately stripped because its Value may contain private user data.
+/// Descriptive goal/recovery evidence crosses BrowserGoalEvidenceTrust before durable storage
+/// and again on load so legacy/corrupt records cannot bypass the current presentation boundary.
 /// Concrete path-backed construction is Core-internal so product/plugin code cannot point this
 /// low-level store at NVIDEA-owned durable state and write lifecycle/recovery metadata around the
 /// constrained browser product/goal/recovery authorities. The public interface remains available
@@ -162,25 +164,29 @@ public sealed class JsonBrowserGoalSessionStore : IBrowserGoalSessionStore
         DateTimeOffset UpdatedAt,
         IReadOnlyList<BrowserGoalVerifiedStep> VerifiedSteps)
     {
-        public static PersistedBrowserGoalSession FromSession(BrowserGoalSession session) => new(
-            session.SessionId,
-            session.Goal,
-            session.ActionCount,
-            session.MaxActions,
-            session.PlannerTurnCount,
-            session.MaxPlannerTurns,
-            session.PlannerContextCharacters,
-            session.MaxPlannerContextCharacters,
-            session.MaxWallClockSeconds,
-            session.Status,
-            session.Detail,
-            session.PendingJobId,
-            session.PendingExactScope,
-            session.StartedAt,
-            session.UpdatedAt,
-            session.VerifiedSteps ?? Array.Empty<BrowserGoalVerifiedStep>());
+        public static PersistedBrowserGoalSession FromSession(BrowserGoalSession session)
+        {
+            var projected = BrowserGoalEvidenceTrust.ProjectForPersistence(session);
+            return new PersistedBrowserGoalSession(
+                projected.SessionId,
+                projected.Goal,
+                projected.ActionCount,
+                projected.MaxActions,
+                projected.PlannerTurnCount,
+                projected.MaxPlannerTurns,
+                projected.PlannerContextCharacters,
+                projected.MaxPlannerContextCharacters,
+                projected.MaxWallClockSeconds,
+                projected.Status,
+                projected.Detail,
+                projected.PendingJobId,
+                projected.PendingExactScope,
+                projected.StartedAt,
+                projected.UpdatedAt,
+                projected.VerifiedSteps ?? Array.Empty<BrowserGoalVerifiedStep>());
+        }
 
-        public BrowserGoalSession ToSession() => new(
+        public BrowserGoalSession ToSession() => BrowserGoalEvidenceTrust.ProjectForPersistence(new BrowserGoalSession(
             SessionId,
             Goal,
             ActionCount,
@@ -197,6 +203,6 @@ public sealed class JsonBrowserGoalSessionStore : IBrowserGoalSessionStore
             PlannerContextCharacters,
             MaxPlannerContextCharacters,
             MaxWallClockSeconds,
-            VerifiedSteps ?? Array.Empty<BrowserGoalVerifiedStep>());
+            VerifiedSteps ?? Array.Empty<BrowserGoalVerifiedStep>()));
     }
 }

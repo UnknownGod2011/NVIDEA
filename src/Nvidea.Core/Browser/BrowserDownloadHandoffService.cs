@@ -101,6 +101,13 @@ public sealed class BrowserDownloadHandoffService
             throw new UnauthorizedAccessException("Download handoff scope changed; request fresh user approval.");
         }
 
+        var startedAudit = CreateAuditEvent(
+            current,
+            "download.handoff.started",
+            approved: true,
+            "Approved download handoff started.");
+        AuditEventTrust.ValidateForPersistence(startedAudit, nameof(approvedPlan));
+
         if (approval is null || !_approvals.TryAuthorize(approval, current.Decision))
         {
             await AuditAsync(current, "download.handoff.awaiting_approval", approved: false,
@@ -108,8 +115,7 @@ public sealed class BrowserDownloadHandoffService
             throw new UnauthorizedAccessException("Exact single-use approval is required for this download and destination.");
         }
 
-        await AuditAsync(current, "download.handoff.started", approved: true,
-            "Approved download handoff started.", cancellationToken).ConfigureAwait(false);
+        await _audit.AppendAsync(startedAudit, cancellationToken).ConfigureAwait(false);
         try
         {
             // BrowserDownloadQuarantine still owns byte/hash/path verification and atomic copy.
@@ -144,7 +150,14 @@ public sealed class BrowserDownloadHandoffService
         bool approved,
         string summary,
         CancellationToken cancellationToken) =>
-        _audit.AppendAsync(new AuditEvent(
+        _audit.AppendAsync(CreateAuditEvent(plan, eventType, approved, summary), cancellationToken);
+
+    private static AuditEvent CreateAuditEvent(
+        BrowserDownloadHandoffPlan plan,
+        string eventType,
+        bool approved,
+        string summary) =>
+        new(
             Guid.NewGuid(),
             DateTimeOffset.UtcNow,
             CapabilityId,
@@ -160,7 +173,7 @@ public sealed class BrowserDownloadHandoffService
                 ["downloadId"] = plan.DownloadId.ToString("N"),
                 ["destinationFingerprint"] = Fingerprint(plan.DestinationPath),
                 ["permissions"] = string.Join(',', plan.Decision.EffectivePermissions.OrderBy(x => x).Select(x => x.ToString()))
-            }), cancellationToken);
+            });
 
     private static bool Equivalent(BrowserDownloadHandoffPlan left, BrowserDownloadHandoffPlan right) =>
         left.DownloadId == right.DownloadId

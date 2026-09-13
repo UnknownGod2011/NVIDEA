@@ -21,10 +21,10 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Provider/model/site/tool text is non-authoritative across explicit trust boundaries including `ProviderFailureCodeTrust`, `JobFailureDiagnostic`, `DesktopUiFailureProjector`, `DesktopDisplayTextTrust`, `BrowserProductOutcomeTrust`, `BrowserGoalEvidenceTrust`, `CapabilityIdentityTrust`, `AuditPayloadTrust`, and `AuditEventTrust`.
 - Browser goal state no longer duplicates pending browser actions; safely terminal child jobs scrub executable checkpoints while retryable/ambiguous jobs retain only recovery-required material.
 - Exact browser approval scopes contain only capability id + stable action id + ordered permissions; typed values, uploads, rationale, page/source URLs, and tool arguments are excluded.
-- Capability failures do not persist raw backend/provider/site exception messages.
 - Capability/action/tool identity authority is bounded canonical ASCII and reject-only; malformed identity is rejected before policy/scope/backend/audit execution.
-- `JsonLinesAuditTrail` enforces identity and semantic payload trust on append, protected reload, and legacy migration; `BoundedSegmentedAuditTrail` also enforces byte/retention ceilings.
-- `ResumableJobOrchestrator`, `NebiusResearchLifecycleReconciler`, and `RemoteResearchResultIngestor` now validate prospective audit events before the durable CAS/state transitions they describe.
+- `JsonLinesAuditTrail` enforces identity and semantic payload trust on append, protected/hash-chained reload, and legacy migration; `BoundedSegmentedAuditTrail` also enforces byte/retention ceilings.
+- `ResumableJobOrchestrator`, `NebiusResearchLifecycleReconciler`, and `RemoteResearchResultIngestor` validate prospective audit events before the durable state transitions they describe.
+- `ResearchCloudExecutionCoordinator` now additionally preflights the exact dynamic reservation-audit shape before handing a research stage to the remote runtime, preventing deterministic audit rejection from causing encrypted transport/provider side effects first.
 - Windows voice invocation is local/review-first. Deterministic judging tools include `Nvidea.PersonalAiDemoEval`, `Nvidea.PersonalAiAdversarialEval`, `Nvidea.JudgingEvidenceVerifier`, `Nvidea.DemoPackageValidator`, and `Nvidea.NebiusModelCatalogCheck`.
 
 ## Persistent Progress History
@@ -52,65 +52,56 @@ Added research/browser product runtimes, WPF lifecycle integration, restart-safe
 - Made `ResumableJobOrchestrator` pre-validate audits before job creation, approval resume/re-arm, ambiguous recovery completion, cancellation, failure, and other state transitions.
 - Malformed handler-produced audit/approval data after execution begins leaves the durable record `Running`, preventing automatic replay of potentially consequential work.
 
-### 2026-09-13 — Nebius remote-research audit ordering + provider privacy (latest run)
+### 2026-09-13 — Nebius remote-research lifecycle/order hardening
+- `NebiusResearchLifecycleReconciler` validates cancellation/terminal audit events before CAS transitions and no longer persists provider-controlled diagnostic messages; only bounded provider failure codes can enter fixed NVIDEA-authored durable evidence.
+- `RemoteResearchResultIngestor` validates reserve, attach, and protected-result audit events before CAS. Result cleanup remains after successful CAS + audit append.
+- Added focused regressions proving malformed audit authority cannot reserve, attach, apply, clean up encrypted results, commit terminal lifecycle state, or trigger the Nebius cancellation control plane.
+- Relevant prior commits: `5569c5f998483f99fe27258e83ccfaf8a8246849`, `76b00276d33658d2b1bbd869d5b7d5db815cb6a4`, `6354f8b1aafc2921467523e200ecd8a470d8311c`, ledger `517a443e961cbd56adff9282caabea3496f6141e`.
+
+### 2026-09-13 — Pre-dispatch remote side-effect audit preflight (latest run)
 Completed:
-- Re-read this ledger completely and inspected the current NVIDEA head, recent commits, `AuditEventTrust`, `NebiusResearchLifecycleReconciler`, `NebiusResearchLifecycleFailureProvenanceTests`, `RemoteResearchResultIngestor`, and existing remote-result tests before implementation.
-- Confirmed the concrete lifecycle ordering defects recorded by the previous run:
-  - `RequestCancellationAsync` could CAS a research job to `CancelRequested` before the stricter audit contract had validated the corresponding event;
-  - terminal lifecycle reconciliation could CAS to `Failed`/`Cancelled`/`Expired` before audit validation;
-  - provider-controlled Nebius diagnostic `message` text could be copied into durable `AgentJobRecord.LastError` and audit `Summary` even though it was non-authoritative and could contain credentials, paths, URLs, identifiers, or prompt-like text.
-- Refactored `NebiusResearchLifecycleReconciler` to construct the exact prospective cancellation/terminal audit event and call `AuditEventTrust.ValidateForPersistence(...)` **before** the associated CAS mutation.
-- Cancellation ordering is now: validate replacement audit -> CAS to `CancelRequested` -> append already-validated audit -> contact Nebius control plane. Therefore deterministic semantic audit rejection cannot reserve cancellation state or trigger the remote cancel call.
-- Terminal reconciliation now validates the exact terminal audit event before CAS to local `Failed`, `Cancelled`, or `Expired` state.
-- Removed provider diagnostic messages from durable failure evidence. Only the already-canonicalized bounded provider failure `Code` may be retained in `RemoteResearchProvenance.ProviderFailureCode`, fixed NVIDEA-authored `LastError`, and fixed NVIDEA-authored audit summary. Raw provider `message` remains transient parser data only.
-- Updated `NebiusResearchLifecycleFailureProvenanceTests` so a provider message containing a bearer-style secret must be absent from both returned/durable failure text and the terminal audit summary while the canonical failure code remains available.
-- Added `NebiusResearchLifecycleAuditOrderingTests` proving:
-  - malformed lifecycle audit identity is rejected before cancellation CAS;
-  - no Nebius control-plane cancellation occurs when that validation fails;
-  - malformed terminal audit identity is rejected before terminal CAS and the dispatched job remains `Running`/`Dispatched`.
-- Inspected `RemoteResearchResultIngestor` and found the same CAS-before-audit-validation pattern in dispatch reservation, dispatch attachment, and protected result application.
-- Refactored all three ingestion transitions to prepare/validate their exact prospective audit event before CAS, then append the already-validated event after a successful CAS.
-- Added `RemoteResearchResultAuditOrderingTests` proving malformed audit identity cannot:
-  - move a pending job into `DispatchReserved`;
-  - attach a remote job id/increment attempt/change execution location;
-  - apply a protected research result or clean up its encrypted transport payload.
+- Re-read this ledger completely and inspected current head/recent commits, `TwoPhaseNebiusResearchDispatcher`, `ResearchCloudExecutionCoordinator`, `RemoteResearchResultIngestor`, `AuditEventTrust`, and the focused coordinator/two-phase tests before changing code.
+- Confirmed a remaining ordering gap at the product dispatch boundary: `TwoPhaseNebiusResearchDispatcher.PrepareAsync(...)` protects and uploads the encrypted work item before `RemoteResearchResultIngestor.ReserveDispatchAsync(...)` validates the reservation audit contract. Reservation failure attempts best-effort cleanup, but deterministic malformed audit authority could still create an unnecessary remote/object-store artifact first and cleanup itself can fail.
+- Preserved the critical existing exact-once rule that the durable `DispatchReserved` state must exist before Nebius Serverless `CreateAsync` is allowed.
+- Hardened `ResearchCloudExecutionCoordinator.DispatchCurrentStageAsync(...)` to construct and validate the same dynamic reservation-audit shape used by `RemoteResearchResultIngestor` immediately after exact cloud authorization validation and **before** `_remote.DispatchAsync(...)`.
+- The preflight covers capability id, action id (`jobId` in GUID-N form), event type, risk, summary, and the exact `jobType/state/executionLocation/attempt` metadata shape expected for `research.remote_dispatch_reserved`.
+- Validation is reject-only: it does not trim, normalize, rewrite, or broaden authority.
+- Added `Malformed_reservation_audit_identity_fails_before_remote_runtime_or_state_mutation` to `ResearchCloudExecutionCoordinatorTests`. The regression corrupts only the durable capability id with a newline-bearing identity, supplies otherwise-valid exact-stage cloud authorization, and requires rejection before the remote runtime is entered. It also requires the research job to remain `Pending`, `Local`, and without remote provenance.
 
 Engineering commits this run before this ledger update:
-- `5569c5f998483f99fe27258e83ccfaf8a8246849` — harden Nebius lifecycle audit ordering and provider diagnostics.
-- `c340395cee79c037fbc52765728820ba49cce74e` — quarantine provider diagnostic text in lifecycle failure regressions.
-- `f0ef692d750869b299e8c6b42e1971f5cecdda65` — add lifecycle audit-ordering/no-control-plane regressions.
-- `76b00276d33658d2b1bbd869d5b7d5db815cb6a4` — make remote research ingestion audit ordering fail closed.
-- `6354f8b1aafc2921467523e200ecd8a470d8311c` — add reserve/attach/result-apply audit ordering regressions.
+- `2e4766e3d4fe085275ad05a7a845d9b65284b877` — preflight remote research reservation audit before dispatch.
+- `866521ed39f658c62f501ab8de097f7d96359244` — reject malformed reservation audit before remote dispatch.
 
 Validation / evidence this run:
-- Verified immediately before every GitHub mutation that repository metadata reported exactly `repository_full_name: UnknownGod2011/NVIDEA`, default branch `main`.
-- Starting head: `2b0fe905de4c106cde5bd19df4b8b60655d3bef9`.
-- GitHub compare from starting head to engineering head `6354f8b1aafc2921467523e200ecd8a470d8311c` reports **5 commits ahead / 0 behind** and exactly five intended engineering files changed: two production files, two new focused regression suites, and the existing failure-provenance test file.
-- Static lifecycle evidence: `PrepareAudit(...)` calls `AuditEventTrust.ValidateForPersistence(...)`; cancellation and terminal methods invoke it before their `CompareExchangeAsync` calls.
-- Static privacy evidence: `BuildRemoteFailureEvidence(...)` no longer references `diagnostic.Message`; only `diagnostic.Code` may enter fixed durable failure text.
-- Static ingestion evidence: reserve, attach, and result-apply prepare/validate their audit before CAS. Result payload cleanup remains after successful CAS + audit append, so a deterministic audit-contract rejection cannot erase recovery material.
-- Environment probe again found no usable `dotnet`, `csc`, `msbuild`, or `mcs` executable.
-- **No compile, xUnit, WPF, Worker, evaluator, or live integration PASS is claimed.** New tests are persisted but unexecuted in this environment.
+- Verified before every GitHub mutation that repository metadata reported exactly `repository_full_name: UnknownGod2011/NVIDEA`, default branch `main`.
+- Starting head: `517a443e961cbd56adff9282caabea3496f6141e`.
+- GitHub compare from starting head to engineering head `866521ed39f658c62f501ab8de097f7d96359244` reports **2 commits ahead / 0 behind** and exactly two intended files changed: `ResearchCloudExecutionCoordinator.cs` and `ResearchCloudExecutionCoordinatorTests.cs`.
+- Static ordering evidence: `ResearchWorkItemProtector.ValidateAuthorization(...)` still runs first; then `ValidateDispatchReservationAudit(current)` invokes `AuditEventTrust.ValidateForPersistence(...)`; only after both succeed can `_remote.DispatchAsync(...)` run.
+- This means the production coordinator cannot enter the remote runtime—and therefore cannot reach two-phase encryption/upload or Nebius create—when the deterministic reservation audit contract is malformed.
+- Existing lower-layer `RemoteResearchResultIngestor.ReserveDispatchAsync(...)` still validates the actual prospective audit again immediately before CAS, preserving defense in depth if state changed or a lower layer is invoked outside the coordinator.
+- Environment probe found no usable `dotnet`, `csc`, `msbuild`, or `mcs` executable.
+- **No compile, xUnit, WPF, Worker, evaluator, or live integration PASS is claimed.** The new test is persisted but unexecuted in this environment.
 - No GitHub Actions workflow was triggered merely to manufacture a green signal.
 - No live Nebius, Tavily, Object Storage, Serverless, Playwright, Ollama, or paid inference operation was performed.
 
 ## Security / Privacy / Failure Review
-- Audit validation remains reject-only. It never normalizes, trims, rewrites, or broadens approval/capability authority.
-- Producer-side prevalidation plus sink-side validation is defense in depth: producers prevent deterministic semantic rejection after state mutation, while sinks reject unsafe events from any caller.
-- Remote provider diagnostic messages are no longer durable research failure evidence. Canonical provider failure codes are retained only as non-authoritative classification/remediation hints.
-- Cancellation still durably records intent before contacting Nebius; the change only moves deterministic audit-contract validation ahead of that reservation.
-- Remote result cleanup still happens only after successful exact-once CAS + audit append. Failed validation leaves the encrypted result available for diagnosis/recovery rather than deleting it after an unapplied transition.
-- Audit append/storage I/O can still fail independently after a prevalidated state transition. This work closes deterministic semantic contract ordering; it does not create an atomic transaction across the job store and audit filesystem.
-- Existing browser ambiguous-execution recovery, emergency stop, permission gating, terminal checkpoint scrubbing, hash chain/tail seal, encrypted research transport, and local/cloud separation were not weakened.
+- Producer-side audit prevalidation plus sink-side audit validation remains defense in depth; neither layer normalizes approval/capability authority.
+- Exact cloud authorization is still checked against local job/checkpoint/lifetime before remote dispatch.
+- The new coordinator guard specifically prevents a deterministic malformed audit contract from causing encrypted work-item upload/provider work first in the production dispatch path.
+- Two-phase serverless semantics remain intact: encrypted preparation can precede reservation only after product-level audit preflight; durable `DispatchReserved` must still precede Nebius `CreateAsync`; remote-id attachment still follows create; binding publication still follows durable attachment.
+- A lower-level caller that bypasses `ResearchCloudExecutionCoordinator` can still invoke `TwoPhaseNebiusResearchDispatcher` directly and therefore still relies on post-upload reservation validation plus best-effort cleanup. This is intentionally recorded as remaining work rather than overstating the fix.
+- Audit append/storage I/O can still fail independently after a semantically prevalidated state transition. Semantic prevalidation removes deterministic contract rejection after mutation but does not create an atomic transaction across the job store and audit filesystem.
+- Existing browser ambiguous-execution recovery, emergency stop, permission gating, terminal checkpoint scrubbing, encrypted research transport, and local/cloud separation were not weakened.
 
 ## Known Blockers / Risks
 - No usable .NET 8 executable/compiler exists in this environment, so recent Core/WPF/Worker changes still require a real restore/build/test/run before compile confidence is justified.
-- The new lifecycle and ingestion regressions are statically reviewed but unexecuted until a .NET environment is available.
-- Other direct `AuditEvent` producers may still construct/append events only after a related durable or external side effect; the remaining producer inventory needs the same ordering review.
-- Audit append/storage I/O is not transactionally coupled to the job store. Semantic prevalidation removes deterministic contract rejection after mutation, but disk/protection failures still require operational recovery semantics.
+- The new coordinator regression is statically reviewed but unexecuted until a .NET environment is available.
+- Direct lower-level use of `TwoPhaseNebiusResearchDispatcher` can still upload encrypted work before reservation-audit validation. Production composition is now guarded by the coordinator, but the invariant should be pushed into the lower layer so it cannot be bypassed accidentally.
+- Other direct `AuditEvent`/`IAuditTrail.AppendAsync` producers may still need ordering review.
+- Audit append/storage I/O is not transactionally coupled to the job store.
 - Provider catalogs can change; model listing does not prove quota, inference success, tool calling, context length, or every capability. A real Nebius inference smoke test remains required.
 - Prompt-injection detection remains heuristic; capability gates and approvals remain mandatory defense in depth.
 - Real Windows UX, embedding ranking, Playwright authenticated-session behavior, and Nebius Object Storage/Serverless execution still require live environment validation.
 
 ## Single Best Next Task
-Audit the **remaining direct audit producers and two-phase remote-dispatch coordinator**—starting with `TwoPhaseNebiusResearchDispatcher`, `ResearchCloudExecutionCoordinator`, and any direct `new AuditEvent(...)`/`IAuditTrail.AppendAsync(...)` call sites—for the same transaction/order guarantee. Ensure prospective dynamic audit data is validated before local reservation/state mutation or irreversible/external side effects; add focused no-side-effect/no-replay regressions for any gap found. If a real .NET 8 Windows build environment becomes available first, run restore/build/Core tests/WPF build/Worker build and record exact failures rather than assuming success.
+Push the new pre-dispatch invariant down into the **lower-level two-phase dispatch boundary** so it cannot be bypassed by a future direct caller: add a no-mutation reservation/audit preflight API to `RemoteResearchResultIngestor` (sharing the same candidate/audit construction logic as `ReserveDispatchAsync`), call it from `TwoPhaseNebiusResearchDispatcher.DispatchWithReservationAsync(...)` **before** `PrepareAsync(...)` uploads encrypted work, and add a focused regression proving malformed durable audit identity yields zero transport `PutAsync`, zero Nebius `CreateAsync`, and unchanged local state. Preserve the existing second validation immediately before CAS. If a real .NET 8 Windows build environment becomes available first, run restore/build/Core tests/WPF build/Worker build and record exact failures rather than assuming success.

@@ -18,13 +18,14 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Safe Playwright browser agent with persistent Chromium state, popup tracking, plan-act-observe-verify, prompt-injection detection, consequential-action approvals, quarantined downloads, emergency stop, crash recovery, and no automatic replay after ambiguous side effects.
 - Protected local state uses Windows CurrentUser DPAPI by default; job state uses durable CAS, leases, and hash-chained/segmented audit.
 - Remote research uses encrypted opaque work items, signed resource-ID bindings, two-phase dispatch, lifecycle reconciliation, durable cancellation, exact-once result ingestion, race-safe cleanup, Nebius Object Storage, and Serverless-mounted worker transport.
-- Provider/model/site/tool text is non-authoritative across explicit trust boundaries including `ProviderFailureCodeTrust`, `JobFailureDiagnostic`, `DesktopUiFailureProjector`, `DesktopDisplayTextTrust`, `BrowserProductOutcomeTrust`, `BrowserGoalEvidenceTrust`, `CapabilityIdentityTrust`, and `AuditPayloadTrust`.
+- Provider/model/site/tool text is non-authoritative across explicit trust boundaries including `ProviderFailureCodeTrust`, `JobFailureDiagnostic`, `DesktopUiFailureProjector`, `DesktopDisplayTextTrust`, `BrowserProductOutcomeTrust`, `BrowserGoalEvidenceTrust`, `CapabilityIdentityTrust`, `AuditPayloadTrust`, and `AuditEventTrust`.
 - Browser goal state no longer duplicates pending browser actions; safely terminal child jobs scrub executable checkpoints while retryable/ambiguous jobs retain only recovery-required material.
 - Browser exact approval scopes contain only capability id + stable action id + ordered permissions; values, upload paths, rationale, page/source URLs, and tool arguments are excluded.
 - Capability failure audit records never persist raw backend/provider/site exception messages.
 - Capability/action/tool identity authority is bounded canonical ASCII and reject-only; malformed identity is rejected before policy/scope/backend/audit execution.
-- `JsonLinesAuditTrail` now enforces both identity trust and semantic payload trust on raw append, current protected-format reload, and legacy migration; malformed persisted records fail closed rather than being legitimized by migration.
+- `JsonLinesAuditTrail` enforces identity and semantic payload trust on append, protected reload, and legacy migration; malformed persisted records fail closed rather than being legitimized by migration.
 - `BoundedSegmentedAuditTrail` additionally enforces byte/retention ceilings before production browser audit persistence.
+- `ResumableJobOrchestrator` now validates prospective audit events before durable state transitions that depend on dynamic producer data; malformed handler-produced approval/audit data leaves the durable job in fail-closed `Running` state instead of permitting replay.
 - Windows voice invocation is local/review-first. Deterministic judging tools include `Nvidea.PersonalAiDemoEval`, `Nvidea.PersonalAiAdversarialEval`, `Nvidea.JudgingEvidenceVerifier`, `Nvidea.DemoPackageValidator`, and `Nvidea.NebiusModelCatalogCheck`.
 
 ## Persistent Progress History
@@ -38,75 +39,82 @@ Added Tavily Extract enrichment, evidence ranking/staleness/diversity, restart-s
 ### 2026-09-10 to 2026-09-12 — Product/evaluator/protocol hardening
 Added research/browser product runtimes, WPF lifecycle integration, restart-safe browser recovery, one-shot cloud approval, local voice, semantic-memory migration UI, positive/adversarial Personal AI evaluators, unified judging evidence, demo-package validation, provider endpoint/redirect trust, credential-read ordering, worker/client RSA role separation, protocol-level envelope trust, and deployment/preflight policy reuse.
 
-### 2026-09-13 — Trust, exact-once, privacy, and authority hardening
-- Added structured provider-failure provenance, bounded remediation, diagnostic quarantine, privacy-safe desktop failure/display projection, constrained browser product outcomes, browser-goal evidence projection, and safe legacy goal-state migration.
-- Applied browser-goal evidence projection both durably and in-process so planner history cannot receive a more permissive surface after same-process execution.
+### 2026-09-13 — Browser exact-once/privacy hardening
+- Added structured provider-failure provenance, bounded remediation, diagnostic quarantine, privacy-safe desktop failure/display projection, browser product outcome projection, browser-goal evidence projection, and safe legacy goal migration.
+- Applied browser-goal evidence projection durably and in-process so planner history cannot receive a more permissive surface after same-process execution.
 - Removed parent `PendingAction` duplication while retaining child job id + exact-scope recovery semantics.
 - Added terminal browser checkpoint scrubbing and explicit ambiguous-execution handling; executed-but-unverified actions stay `Running`, receive no automatic retry, and require fresh verification.
 - Confirmed exact browser approval scopes are data-minimal and removed raw backend exception messages from capability failure audit summaries.
-- Added `CapabilityIdentityTrust` and enforced it in registry, permission policy, tool executor, capability-tool audit, and durable audit identity append/reload/migration.
-- Added adversarial regressions around exception/UI leakage, goal evidence, pending-action privacy, ambiguous replay, audit identity, and exact approval authority.
+- Added canonical capability/action/tool identity trust at registry/policy/tool/audit boundaries.
 
-### 2026-09-13 — Durable audit semantic boundary
-- Added `AuditPayloadTrust`, a reject-only semantic contract for event type, approval scope, summary and metadata. It does not silently truncate or normalize forensic evidence.
-- `EventType` is bounded canonical ASCII; scope/summary are bounded single-line text; metadata has bounded count/key/value/aggregate size; keys designating credentials/tokens/cookies/passwords/private keys are rejected.
-- Enforced the boundary first in `BoundedSegmentedAuditTrail` before measurement, locking, reads, directory creation, rotation, or persistence, while preserving existing byte-limit semantics.
-- Added `AuditPayloadBoundaryTests` for control/separator injection, forged-looking summaries, oversized scope, sensitive metadata keys, metadata amplification, no-side-effect rejection and historical `execution` / `exact-action` compatibility.
+### 2026-09-13 — Durable audit trust hardening
+- Added `AuditPayloadTrust`: reject-only bounds/canonicalization requirements for event type, approval scope, summary, metadata count/key/value/aggregate size, with secret-designating metadata keys rejected.
+- Enforced identity + payload trust in `JsonLinesAuditTrail` on raw append, current protected/hash-chained reload, and legacy migration, and in the bounded/segmented browser path.
+- Added adversarial coverage for control-character injection, forged summaries, oversized scope/metadata, sensitive metadata keys, migration rejection, and a hash-valid but semantically invalid protected event.
+- Preserved historical compatibility for existing `execution`, `exact-action`, `host=example.test`, and browser exact-scope forms.
 
-### 2026-09-13 — Raw audit sink + remote-research closure (latest run)
+### 2026-09-13 — Transaction-safe resumable-job audit contract (latest run)
 Completed:
-- Re-read this ledger completely and inspected current head, recent commits, raw `JsonLinesAuditTrail`, semantic payload policy, bounded/segmented tests, remote research composition, resumable-job audit producer, browser ambiguous-recovery flow, and existing protected-audit migration tests before and after changes.
-- Confirmed the remaining bypass was concrete: `NvideaCompositionRoot` creates `new JsonLinesAuditTrail(.../research-cloud-audit.jsonl)` directly for Nebius remote research, so the bounded browser facade alone did not make the semantic contract universal.
-- Extended the existing `JsonLinesAuditTrail.ValidateAppendEvent(...)` choke point to call `AuditPayloadTrust.ValidateForPersistence(...)` after capability/action identity validation. Because `AppendAsync(...)` invokes this before the semaphore and before `Directory.CreateDirectory`, malformed raw events are rejected before audit file/seal side effects.
-- Extended the existing persisted-event validation path so both current hash-valid protected records and legacy plaintext JSONL records must satisfy the same identity + semantic payload contract before becoming accepted audit evidence.
-- Legacy migration now validates the semantic contract before `BuildLines(...)`, rewrite, or tail-seal creation, preventing a malicious historical record from being legitimized merely by migration into the protected/hash-chained format.
-- Current-format reload validates the decoded event after outer sequence/hash-chain integrity verification but before accepting it into `AuditState` and before tail-seal recovery, so structurally valid/tamper-recomputed payloads still fail closed if their event semantics violate the durable trust contract.
-- Kept historical compatibility deliberately narrow but intact: existing `execution`, `exact-action`, `host=example.test`, ordinary fixed summaries, and the browser `browser.agent|<guid-n>|<permissions>` authority form remain valid.
-- Added `JsonLinesAuditPayloadTrustTests` covering:
-  - raw append rejection of CR/LF summary injection with no audit/seal file creation;
-  - legacy record with an `authorization` metadata key rejected before migration/rewrite/seal and original plaintext left unchanged;
-  - a current-format record whose payload and SHA-256 chain hash are deliberately recomputed to be structurally valid but whose decoded summary contains a newline, proving the semantic check is independent of outer hash integrity;
-  - successful migration/round-trip of a compatible historical `execution` / `exact-action` / `host=example.test` record.
-- Reviewed existing `AuditTrailProtectionTests`: its protected round-trip, hash tamper/deletion, tail-seal recovery, legacy migration and duplicate-ID fixtures use values compatible with the semantic policy.
-- Reviewed `ResumableJobOrchestrator` audit production: event types are fixed canonical NVIDEA tokens, metadata keys (`jobType`, `state`, `executionLocation`, `attempt`) are canonical, provider/handler exception text is not copied to summaries, and exact approval scope continues to be persisted byte-for-byte where required.
-- Reviewed browser ambiguous reconciliation because its evidence summary reaches the resumable-job audit. Successful reconciliation paths pass fixed/bounded verification descriptions rather than raw page text; exact URL mismatch details occur only on unresolved paths and are not used to mark an action complete.
+- Re-read this ledger completely, inspected current head/recent commits, `AuditPayloadTrust`, `CapabilityIdentityTrust`, `JsonLinesAuditTrail`, `ResumableJobOrchestrator`, job contracts/tests, and the Nebius remote-research lifecycle producer before implementation.
+- Confirmed a concrete consistency defect: several resumable-job paths could durably change state or mint an ephemeral approval grant and only then ask the now-stricter audit sink to validate dynamic capability/scope/metadata/evidence fields. A semantic rejection could therefore occur after the state transition it was supposed to describe.
+- Added `AuditEventTrust` as a shared producer-side reject-only validator for a complete `AuditEvent` (non-empty event id + canonical capability/action identities + `AuditPayloadTrust`). This lets producers validate the exact event they intend to append before committing related state.
+- Refactored `ResumableJobOrchestrator` to construct and validate prospective audit events before relevant state mutations:
+  - `job.created` is validated before first job-store save;
+  - approval resume validates the exact persisted approval scope before changing the job to `Pending` or creating the ephemeral single-use execution grant;
+  - approval re-arm validates before persisting `WaitingForApproval`;
+  - ambiguous-recovery completion validates the final evidence summary before changing `Running` to `Completed`;
+  - cancellation/failure/ambiguous state transitions validate their fixed audit payload before the corresponding save.
+- Added a pre-execution audit-contract probe for loaded Pending/RetryScheduled jobs, so malformed legacy/corrupt `CapabilityId` or `jobType` metadata is rejected before the durable `Running` transition and before handler execution.
+- Added a dedicated `JobAuditContractException` path around handler-result audit preparation. If a handler returns malformed approval/audit data after execution has begun, NVIDEA revokes ephemeral approval and intentionally leaves the durable record `Running`; automatic replay remains blocked instead of converting the producer-contract failure into a retryable handler error.
+- Preserved exact approval equality: approval strings are never normalized, trimmed, re-encoded, or replaced; they are only validated as the exact prospective audit field before use.
+- Added `JobAuditContractOrderingTests` covering:
+  - malformed capability id rejected before initial store mutation;
+  - malformed loaded job-type metadata rejected before `Running` save and before handler execution;
+  - malformed handler-produced approval scope leaves the durable job `Running`, emits no awaiting-approval audit, and does not execute again on the next `RunNextStepAsync` call;
+  - corrupted persisted approval scope rejected before state mutation/approval audit;
+  - multiline ambiguous-recovery evidence rejected before marking a `Running` job complete.
+- Static review caught and corrected an xUnit assertion issue: regressions use `ThrowsAnyAsync<InvalidOperationException>` because the producer contract failure is intentionally represented by a private subtype rather than exposing implementation-private exception identity.
+- Reviewed `NebiusResearchLifecycleReconciler` after the resumable-job changes and found the next concrete ordering/privacy target: `RequestCancellationAsync` performs CAS to `CancelRequested` before append validation, `FinalizeTerminalAsync` performs terminal CAS before append validation, and `BuildRemoteFailureEvidence` currently includes bounded provider diagnostic message text in the durable audit summary.
 
 Engineering commits this run before this ledger update:
-- `9058ee9b5113ae4fe36d9be7037e7845ee86236e` — enforce payload trust in raw audit sink.
-- `a4f156ce1c0c9d2f4d5b54d5069828290f574283` — add raw audit payload trust regressions.
-- `98e56612779ac8050ee90711cd6fd1ad97047926` — simplify/review the current-format tamper regression.
+- `c18d00442e8f4a11e1a0eec116774bebe911025b` — add shared durable `AuditEventTrust` validator.
+- `9bca364268b97ef387c625a97a5a79e81889deae` — make resumable-job audit validation transaction/order safe and fail closed after malformed handler output.
+- `a6aee7e0b3e45c83cac3c833b8893ac16fdc403c` — add job audit ordering regressions.
+- `811d239accd1ba33e893f78e15954e8c2042df7e` — correct regression exception assertions after static xUnit review.
 
 Validation / evidence this run:
-- Verified immediately before every GitHub mutation that repository metadata reports exactly `repository_full_name: UnknownGod2011/NVIDEA`, default branch `main`.
-- Starting head: `cdf54fcff7b927dd543e75addb201ac7e2a8c1a4`.
-- GitHub compare from the starting head through engineering head `98e56612779ac8050ee90711cd6fd1ad97047926` reports **3 commits ahead / 0 behind**, changing only `src/Nvidea.Core/Capabilities/AuditTrail.cs` and the new `tests/Nvidea.Core.Tests/JsonLinesAuditPayloadTrustTests.cs` before this ledger commit.
-- Static composition evidence: `NvideaCompositionRoot` wires Nebius remote research to raw `JsonLinesAuditTrail`; because the semantic validation is now inside that sink, no parallel wrapper or duplicated policy is required for `research-cloud-audit.jsonl`.
-- Static ordering evidence: raw append validation precedes lock/filesystem effects; legacy validation precedes migration rewrite; current-format validation precedes state acceptance/tail-seal recovery.
-- Existing protected-audit fixtures use compatible event/scope/metadata shapes, reducing migration-regression risk.
-- Environment probe found no usable `dotnet`, `csc`, `msbuild`, or `mcs` executable.
+- Verified immediately before every GitHub mutation that repository metadata reported exactly `repository_full_name: UnknownGod2011/NVIDEA`, default branch `main`.
+- Starting head: `5e38d20c1e8abd77fb77ba55655c704f12abf039`.
+- GitHub compare from starting head to engineering head reports **4 commits ahead / 0 behind**, changing exactly three engineering files before this ledger commit: `AuditEventTrust.cs`, `ResumableJobOrchestrator.cs`, and `JobAuditContractOrderingTests.cs`.
+- Static ordering evidence: all newly protected transition paths call `PrepareAudit(...)` before the relevant durable save/grant; malformed post-handler audit data is caught separately and leaves the already crash-safe `Running` record untouched.
+- Static no-replay evidence: `RunNextStepAsync` already returns immediately for durable `Running` jobs; the new malformed-handler path deliberately preserves that state.
+- xUnit package is 2.9.2; the tests were adjusted to use the supported polymorphic `ThrowsAnyAsync` assertion.
+- Environment probe again found no usable `dotnet`, `csc`, `msbuild`, or `mcs` executable.
 - **No compile, xUnit, WPF, Worker, evaluator, or live integration PASS is claimed.** New regressions are persisted but unexecuted in this environment.
 - No GitHub Actions workflow was triggered merely to manufacture a green signal.
 - No live Nebius, Tavily, Object Storage, Serverless, Playwright, Ollama, or paid inference operation was performed.
 
 ## Security / Privacy / Failure Review
-- Audit semantic validation is reject-only; it never changes authority strings or silently turns tainted text into different evidence.
-- Raw, segmented, and bounded production audit paths now share the same semantic floor, so a future producer cannot bypass control-character/secret-designating metadata checks simply by selecting the lowest-level JSONL implementation.
-- Protected/hash-chained integrity and semantic trust are independent: a record can be cryptographically/structurally intact and still be rejected because its decoded payload is unsafe for durable audit use.
-- Legacy migration fails before rewrite/seal for semantically invalid records, preserving the original evidence rather than laundering it into the new format.
-- Existing exact approval comparison, permission decisions, job IDs, replay prevention, browser emergency stop, download quarantine, encrypted research transport, tail seal, and hash chain were not modified.
-- Secret detection intentionally focuses on metadata purpose/field identity, not arbitrary value scanning; heuristic value redaction could corrupt legitimate forensic evidence. Producers must still avoid placing secrets under benign field names.
-- A sink-level rejection can expose producer contract bugs earlier. Audit-producing state machines therefore still need to ensure any dynamic audit fields are validated before irreversible side effects or durable state transitions.
+- Audit validation remains reject-only and never changes approval authority or silently sanitizes forensic evidence.
+- Producer-side prevalidation and sink-side validation are defense in depth: the producer prevents semantic rejection after sensitive state transitions, while the sink still rejects unsafe events from any caller.
+- The handler-result contract failure is treated as potentially side-effecting. Leaving the record `Running` is intentionally conservative because retrying an operation whose result metadata was malformed could duplicate a consequential action.
+- Exact approval scope is validated before grant creation but compared byte-for-byte exactly as before.
+- Existing browser ambiguous-execution recovery, emergency stop, permission gating, terminal checkpoint scrubbing, hash chain, tail seal, encrypted research transport, and local/cloud separation were not weakened.
+- Audit append/storage I/O can still fail independently after a prevalidated state transition; this run closes semantic producer-contract ordering, not cross-resource transactional atomicity between the job store and audit filesystem.
+- Provider/tool text remains non-authoritative. Remote lifecycle provider diagnostic text requires an additional privacy pass because bounded single-line text can still contain credentials/private data even when it satisfies the generic audit payload shape.
 
 ## Known Blockers / Risks
 - No usable .NET 8 executable/compiler exists in this environment, so recent Core/WPF/Worker changes still require a real restore/build/test/run before compile confidence is justified.
-- Sink-level semantic validation is now universal for `JsonLinesAuditTrail`, but **all direct `AuditEvent` producers still need a consistency audit**: dynamic `CapabilityId`, job type metadata, approval scopes, or future evidence summaries must be validated before an audit rejection could occur after a durable state mutation or external side effect.
-- Because legacy audit records can legitimately use older arbitrary-but-bounded scope strings such as `exact-action`, approval-scope parsing must remain migration-aware; do not blindly require the modern browser `capability|action|permissions` shape on historical records.
-- Secret detection based on arbitrary value contents is intentionally not attempted at the sink; producers remain responsible for data classification and privacy-safe summaries/metadata.
-- Ambiguous `Running`/in-flight-cancelled browser records intentionally retain executable action material until recovery resolves the side effect; cleanup must scrub it immediately after trusted terminal reconciliation.
+- `NebiusResearchLifecycleReconciler` still has audit-ordering gaps: cancellation reservation and terminal reconciliation mutate durable CAS state before the prospective audit event has been producer-validated.
+- Remote Nebius failure audit currently includes bounded provider diagnostic message text. Even without control characters, such text is provider-controlled and could contain URLs, identifiers, paths, or credentials; durable audit should use fixed/projected evidence and keep raw diagnostic material out of forensic summaries.
+- Audit append/storage I/O is not transactionally coupled to the job store. Semantic prevalidation removes deterministic contract rejection after mutation, but disk/protection failures still require operational recovery semantics.
+- Because legacy audit records can legitimately use older arbitrary-but-bounded scope strings such as `exact-action`, approval-scope parsing must remain migration-aware.
+- Secret detection based on arbitrary value contents is intentionally not attempted at the generic sink; producers remain responsible for data classification and privacy-safe summaries/metadata.
+- Ambiguous `Running` browser records intentionally retain executable action material until recovery resolves the side effect; cleanup must scrub it immediately after trusted terminal reconciliation.
 - `BrowserHostRuntime.Describe(...)` still retains raw `LastError` internally for trusted recovery infrastructure; future internal consumers must not render it directly.
 - Provider catalogs can change; model listing does not prove quota, inference success, tool calling, context length, or every capability. A real Nebius inference smoke test remains required.
-- Prompt-injection detection remains heuristic; capability gates and approvals remain mandatory defense-in-depth.
+- Prompt-injection detection remains heuristic; capability gates and approvals remain mandatory defense in depth.
 - Real Windows UX, embedding ranking, and Nebius Object Storage/Serverless execution still require live environment validation.
 
 ## Single Best Next Task
-Audit every direct `AuditEvent` producer and make audit-contract validation **transaction/order safe**: ensure dynamic capability IDs, job-type metadata, approval scopes, recovery evidence summaries and future audit metadata are validated/projected before durable job-state writes or external side effects can be followed by an audit rejection. Prioritize `ResumableJobOrchestrator` and remote-research lifecycle paths, add regressions proving malformed producer data fails before state mutation, and preserve exact approval authority semantics. If a real .NET 8 Windows build environment becomes available first, run restore/build/Core tests/WPF build/Worker build before further refactoring and record exact failures instead of assuming success.
+Apply the new producer-side audit contract to `NebiusResearchLifecycleReconciler`: build/validate cancellation and terminal audit events **before** CAS state mutation, remove raw provider diagnostic message text from durable audit summaries while retaining only canonical provider failure code/fixed NVIDEA-authored evidence, and add regressions proving malformed lifecycle audit data cannot commit `CancelRequested`/terminal state or trigger a control-plane cancellation. Then inspect `RemoteResearchResultIngestor` and remaining direct `AuditEvent` producers for the same ordering guarantee. If a real .NET 8 Windows build environment becomes available first, run restore/build/Core tests/WPF build/Worker build and record exact failures rather than assuming success.

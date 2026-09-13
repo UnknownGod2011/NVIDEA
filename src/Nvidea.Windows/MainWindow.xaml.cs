@@ -166,7 +166,10 @@ public partial class MainWindow : Window
                     : await _browserHost.CancelAsync(outcome.JobId, CancellationToken.None);
             }
 
-            OutputBox.Text = outcome.Message;
+            OutputBox.Text = DesktopDisplayTextTrust.Canonicalize(
+                outcome.Message,
+                420,
+                "Browser action finished without a displayable diagnostic.");
             StatusText.Text = $"Browser — {outcome.State}";
         }
         catch (OperationCanceledException)
@@ -209,20 +212,20 @@ public partial class MainWindow : Window
             switch (recovery.Status)
             {
                 case BrowserAmbiguousRecoveryStatus.Reconciled:
-                    var evidenceUrl = recovery.Evidence?.Url.AbsoluteUri;
-                    OutputBox.Text = string.IsNullOrWhiteSpace(evidenceUrl)
-                        ? $"Recovered without replay.\n\n{recovery.Detail}"
-                        : $"Recovered without replay.\n\n{recovery.Detail}\n\nFresh evidence: {evidenceUrl}";
+                    var safeEvidenceTarget = DesktopDisplayTextTrust.ProjectNavigationTarget(
+                        recovery.Evidence?.Url,
+                        "current browser context");
+                    OutputBox.Text = $"Recovered without replay. Fresh browser evidence verified the interrupted action.\n\nEvidence target: {safeEvidenceTarget}";
                     StatusText.Text = "Recovery — reconciled automatically from fresh evidence";
                     break;
 
                 case BrowserAmbiguousRecoveryStatus.NeedsHumanResolution:
-                    OutputBox.Text = $"Human resolution required. NVIDEA did not retry the interrupted action.\n\n{recovery.Detail}";
+                    OutputBox.Text = "Human resolution required. NVIDEA did not retry the interrupted action because fresh evidence could not prove completion safely.";
                     StatusText.Text = "Recovery — human resolution required; no automatic retry";
                     break;
 
                 default:
-                    OutputBox.Text = $"This interrupted job is not currently side-effect ambiguous. No action was replayed.\n\n{recovery.Detail}";
+                    OutputBox.Text = "This interrupted job is not currently side-effect ambiguous. No action was replayed.";
                     StatusText.Text = "Recovery — no ambiguous action to reconcile";
                     break;
             }
@@ -267,9 +270,10 @@ public partial class MainWindow : Window
                 return;
             }
 
-            var goal = _recoveryCandidate.Goal;
-            if (goal.Length > 180)
-                goal = goal[..177] + "...";
+            var goal = DesktopDisplayTextTrust.Canonicalize(
+                _recoveryCandidate.Goal,
+                180,
+                "Interrupted browser goal");
 
             RecoverySummaryText.Text = $"{goal}\nSession {_recoveryCandidate.SessionId:N} · interrupted child {_recoveryCandidate.PendingJobId:N}";
             RecoveryPanel.Visibility = Visibility.Visible;
@@ -302,11 +306,18 @@ public partial class MainWindow : Window
         if (_browserRunning || _memoryMigrationRunning)
             return;
 
-        Dispatcher.InvokeAsync(() =>
+        Dispatcher.InvokeAsync(() => StatusText.Text = status.State switch
         {
-            StatusText.Text = string.IsNullOrWhiteSpace(status.Detail)
-                ? status.State.ToString()
-                : $"{status.State} — {status.Detail}";
+            DesktopAgentState.Idle => "Idle",
+            DesktopAgentState.Listening => "Listening — local voice capture active",
+            DesktopAgentState.Thinking => "Thinking — processing with NVIDEA",
+            DesktopAgentState.Researching => "Researching — gathering and verifying sources",
+            DesktopAgentState.Acting => "Acting — executing an approved local capability",
+            DesktopAgentState.WaitingForApproval => "Waiting for explicit approval",
+            DesktopAgentState.Completed => "Completed — response ready",
+            DesktopAgentState.Cancelled => "Cancelled — stopped safely",
+            DesktopAgentState.Failed => "Failed — invocation did not complete",
+            _ => "NVIDEA status unavailable"
         });
     }
 
@@ -345,15 +356,20 @@ public partial class MainWindow : Window
 
     private void UpdateContextLabel(DesktopContext context)
     {
-        var app = string.IsNullOrWhiteSpace(context.ActiveApplication) ? "unknown app" : context.ActiveApplication;
-        var title = string.IsNullOrWhiteSpace(context.WindowTitle) ? string.Empty : $" · {context.WindowTitle}";
+        var app = DesktopDisplayTextTrust.Canonicalize(
+            context.ActiveApplication,
+            DesktopDisplayTextTrust.MaxContextCharacters,
+            "unknown app");
+        var title = string.IsNullOrWhiteSpace(context.WindowTitle)
+            ? string.Empty
+            : $" · {DesktopDisplayTextTrust.Canonicalize(context.WindowTitle, DesktopDisplayTextTrust.MaxContextCharacters, "untitled window")}";
         var selection = string.IsNullOrWhiteSpace(context.SelectedText) ? string.Empty : " · selection captured";
         ContextText.Text = $"Context: {app}{title}{selection}";
     }
 
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+    private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers);
 
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

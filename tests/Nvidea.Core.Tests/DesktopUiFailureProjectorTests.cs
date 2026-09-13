@@ -9,6 +9,10 @@ public sealed class DesktopUiFailureProjectorTests
     [InlineData(DesktopUiFailureSurface.BrowserAction)]
     [InlineData(DesktopUiFailureSurface.BrowserRecovery)]
     [InlineData(DesktopUiFailureSurface.RecoveryDiscovery)]
+    [InlineData(DesktopUiFailureSurface.DownloadSnapshot)]
+    [InlineData(DesktopUiFailureSurface.DownloadRecovery)]
+    [InlineData(DesktopUiFailureSurface.DownloadExport)]
+    [InlineData(DesktopUiFailureSurface.DownloadDiscard)]
     public void Project_DoesNotExposeExceptionMessageOrInjectedProviderEvidence(DesktopUiFailureSurface surface)
     {
         const string secret = "sk-live-secret-value";

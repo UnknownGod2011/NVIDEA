@@ -1,3 +1,5 @@
+using Nvidea.Core.Capabilities;
+
 namespace Nvidea.Core.Jobs;
 
 /// <summary>
@@ -90,6 +92,12 @@ public sealed class ResearchCloudExecutionCoordinator : IResearchCloudExecutionC
             // Validate before any remote transport/provider work. DispatchAsync validates again at the
             // cryptographic boundary; the duplicate check is intentional defense in depth.
             ResearchWorkItemProtector.ValidateAuthorization(authorization, workItem, now);
+
+            // The production remote runtime prepares/uploads encrypted work before it can reserve the
+            // stage. Preflight the exact dynamic reservation-audit shape here so deterministic audit
+            // rejection cannot create an unnecessary remote artifact before the durable reservation.
+            ValidateDispatchReservationAudit(current);
+
             var dispatched = await _remote.DispatchAsync(workItem, authorization, ct).ConfigureAwait(false);
             return ResearchJobStatus.FromRecord(dispatched);
         }, cancellationToken);
@@ -165,6 +173,30 @@ public sealed class ResearchCloudExecutionCoordinator : IResearchCloudExecutionC
             throw new InvalidOperationException("Research job already carries unfinished remote execution provenance.");
         if (!ResearchJobStatus.IsRecoverableCheckpoint(job.Checkpoint?.Step))
             throw new InvalidOperationException("Current research checkpoint is not eligible for remote execution.");
+    }
+
+    private static void ValidateDispatchReservationAudit(AgentJobRecord job)
+    {
+        var prospectiveAudit = new AuditEvent(
+            Guid.NewGuid(),
+            DateTimeOffset.UtcNow,
+            job.Definition.CapabilityId,
+            job.JobId.ToString("N"),
+            "research.remote_dispatch_reserved",
+            job.Definition.Risk,
+            true,
+            false,
+            string.Empty,
+            "Encrypted research stage reserved before Nebius job creation.",
+            new Dictionary<string, string>
+            {
+                ["jobType"] = job.Definition.JobType,
+                ["state"] = AgentJobState.Running.ToString(),
+                ["executionLocation"] = JobExecutionLocation.Local.ToString(),
+                ["attempt"] = job.Attempt.ToString()
+            });
+
+        AuditEventTrust.ValidateForPersistence(prospectiveAudit, nameof(job));
     }
 
     private async Task<T> WithMutationLeaseAsync<T>(

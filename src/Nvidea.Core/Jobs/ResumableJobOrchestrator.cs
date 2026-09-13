@@ -77,8 +77,9 @@ public sealed class ResumableJobOrchestrator
         var now = DateTimeOffset.UtcNow;
         var record = new AgentJobRecord(jobId, definition, AgentJobState.Pending,
             _executionPolicy.Choose(definition), 0, initialCheckpoint, null, null, now, now);
+        var createdAudit = PrepareAudit(record, "job.created", true, false, "Job created.");
         await _store.SaveAsync(record, cancellationToken).ConfigureAwait(false);
-        await AuditAsync(record, "job.created", true, false, "Job created.", cancellationToken).ConfigureAwait(false);
+        await AppendAuditAsync(createdAudit, cancellationToken).ConfigureAwait(false);
         return record;
     }
 
@@ -92,6 +93,7 @@ public sealed class ResumableJobOrchestrator
         if (job.State == AgentJobState.Running) return job;
         if (job.State == AgentJobState.RetryScheduled && job.NextAttemptAt is { } next && next > DateTimeOffset.UtcNow) return job;
 
+        ValidateJobAuditContract(job);
         var running = job with { State = AgentJobState.Running, Attempt = job.Attempt + 1, LastError = null, NextAttemptAt = null, UpdatedAt = DateTimeOffset.UtcNow };
         await _store.SaveAsync(running, cancellationToken).ConfigureAwait(false);
         var executionContext = new JobExecutionContext(jobId, _ephemeralApprovals.Take(jobId));
@@ -105,12 +107,14 @@ public sealed class ResumableJobOrchestrator
             {
                 if (string.IsNullOrWhiteSpace(result.ApprovalScope)) throw new InvalidOperationException("Approval-paused jobs require an exact approval scope.");
                 updated = running with { State = AgentJobState.WaitingForApproval, Checkpoint = checkpoint, ApprovalScope = result.ApprovalScope, UpdatedAt = DateTimeOffset.UtcNow };
-                await AuditAsync(updated, "job.awaiting_approval", true, false, "Job paused for explicit approval.", cancellationToken).ConfigureAwait(false);
+                var awaitingApprovalAudit = PrepareAudit(updated, "job.awaiting_approval", true, false, "Job paused for explicit approval.");
+                await AppendAuditAsync(awaitingApprovalAudit, cancellationToken).ConfigureAwait(false);
             }
             else if (result.Completed)
             {
                 updated = running with { State = AgentJobState.Completed, Checkpoint = checkpoint, ApprovalScope = null, UpdatedAt = DateTimeOffset.UtcNow };
-                await AuditAsync(updated, "job.completed", true, true, "Job completed.", cancellationToken).ConfigureAwait(false);
+                var completedAudit = PrepareAudit(updated, "job.completed", true, true, "Job completed.");
+                await AppendAuditAsync(completedAudit, cancellationToken).ConfigureAwait(false);
             }
             else
             {
@@ -118,6 +122,14 @@ public sealed class ResumableJobOrchestrator
             }
             await _store.SaveAsync(updated, cancellationToken).ConfigureAwait(false);
             return updated;
+        }
+        catch (JobAuditContractException)
+        {
+            _ephemeralApprovals.Revoke(jobId);
+            // The handler may already have started a consequential operation. Leaving the durable
+            // record Running blocks automatic replay until the producer contract is corrected or a
+            // trusted recovery path verifies the outcome.
+            throw;
         }
         catch (AmbiguousJobExecutionException)
         {
@@ -128,14 +140,14 @@ public sealed class ResumableJobOrchestrator
                 NextAttemptAt = null,
                 UpdatedAt = DateTimeOffset.UtcNow
             };
-            await _store.SaveAsync(ambiguous, cancellationToken).ConfigureAwait(false);
-            await AuditAsync(
+            var ambiguousAudit = PrepareAudit(
                 ambiguous,
                 "job.execution_ambiguous",
                 false,
                 false,
-                "Job may have produced a side effect but verification was inconclusive; automatic retry was blocked.",
-                cancellationToken).ConfigureAwait(false);
+                "Job may have produced a side effect but verification was inconclusive; automatic retry was blocked.");
+            await _store.SaveAsync(ambiguous, cancellationToken).ConfigureAwait(false);
+            await AppendAuditAsync(ambiguousAudit, cancellationToken).ConfigureAwait(false);
             return ambiguous;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -149,20 +161,21 @@ public sealed class ResumableJobOrchestrator
                     NextAttemptAt = null,
                     UpdatedAt = DateTimeOffset.UtcNow
                 };
-                await _store.SaveAsync(ambiguousCancellation, CancellationToken.None).ConfigureAwait(false);
-                await AuditAsync(
+                var cancellationAudit = PrepareAudit(
                     ambiguousCancellation,
                     "job.cancellation_ambiguous",
                     false,
                     false,
-                    "Browser execution was cancelled while in flight; automatic replay was blocked pending fresh verification.",
-                    CancellationToken.None).ConfigureAwait(false);
+                    "Browser execution was cancelled while in flight; automatic replay was blocked pending fresh verification.");
+                await _store.SaveAsync(ambiguousCancellation, CancellationToken.None).ConfigureAwait(false);
+                await AppendAuditAsync(cancellationAudit, CancellationToken.None).ConfigureAwait(false);
                 return ambiguousCancellation;
             }
 
             var cancelled = running with { State = AgentJobState.Cancelled, LastError = "Cancelled", UpdatedAt = DateTimeOffset.UtcNow };
+            var cancelledAudit = PrepareAudit(cancelled, "job.cancelled", false, false, "Job cancelled.");
             await _store.SaveAsync(cancelled, CancellationToken.None).ConfigureAwait(false);
-            await AuditAsync(cancelled, "job.cancelled", false, false, "Job cancelled.", CancellationToken.None).ConfigureAwait(false);
+            await AppendAuditAsync(cancelledAudit, CancellationToken.None).ConfigureAwait(false);
             return cancelled;
         }
         catch (Exception ex)
@@ -178,16 +191,16 @@ public sealed class ResumableJobOrchestrator
                 UpdatedAt = DateTimeOffset.UtcNow
             };
             failed = BrowserActionTerminalCheckpoint.ScrubIfTerminal(failed);
-            await _store.SaveAsync(failed, cancellationToken).ConfigureAwait(false);
-            await AuditAsync(
+            var failureAudit = PrepareAudit(
                 failed,
                 exhausted ? "job.failed" : "job.retry_scheduled",
                 false,
                 false,
                 exhausted
                     ? "Job execution failed after exhausting retries; untrusted handler/provider diagnostic text was not copied into audit."
-                    : "Job execution failed and retry was scheduled; untrusted handler/provider diagnostic text was not copied into audit.",
-                cancellationToken).ConfigureAwait(false);
+                    : "Job execution failed and retry was scheduled; untrusted handler/provider diagnostic text was not copied into audit.");
+            await _store.SaveAsync(failed, cancellationToken).ConfigureAwait(false);
+            await AppendAuditAsync(failureAudit, cancellationToken).ConfigureAwait(false);
             return failed;
         }
     }
@@ -199,11 +212,12 @@ public sealed class ResumableJobOrchestrator
         if (!string.Equals(job.ApprovalScope, approvalScope, StringComparison.Ordinal)) throw new UnauthorizedAccessException("Approval scope does not match the paused action.");
 
         var resumed = job with { State = AgentJobState.Pending, ApprovalScope = null, UpdatedAt = DateTimeOffset.UtcNow };
+        var auditableApproval = resumed with { ApprovalScope = approvalScope };
+        var approvedAudit = PrepareAudit(auditableApproval, "job.approved", true, true, "Exact paused action approved with ephemeral single-use execution grant.");
         await _store.SaveAsync(resumed, cancellationToken).ConfigureAwait(false);
         var grant = _approvalAuthorizer.GrantExactScope(approvalScope, TimeSpan.FromMinutes(2));
         _ephemeralApprovals.Put(jobId, grant);
-        var auditableApproval = resumed with { ApprovalScope = approvalScope };
-        await AuditAsync(auditableApproval, "job.approved", true, true, "Exact paused action approved with ephemeral single-use execution grant.", cancellationToken).ConfigureAwait(false);
+        await AppendAuditAsync(approvedAudit, cancellationToken).ConfigureAwait(false);
         return resumed;
     }
 
@@ -236,9 +250,14 @@ public sealed class ResumableJobOrchestrator
             ApprovalScope = approvalScope,
             UpdatedAt = DateTimeOffset.UtcNow
         };
+        var rearmedAudit = PrepareAudit(
+            waiting,
+            "job.approval_rearmed",
+            true,
+            false,
+            "Approval wait restored after restart; no execution grant was created.");
         await _store.SaveAsync(waiting, cancellationToken).ConfigureAwait(false);
-        await AuditAsync(waiting, "job.approval_rearmed", true, false,
-            "Approval wait restored after restart; no execution grant was created.", cancellationToken).ConfigureAwait(false);
+        await AppendAuditAsync(rearmedAudit, cancellationToken).ConfigureAwait(false);
         return waiting;
     }
 
@@ -264,7 +283,6 @@ public sealed class ResumableJobOrchestrator
         if (job.State != AgentJobState.Running)
             throw new InvalidOperationException("Only a durable Running job may be completed through ambiguous-side-effect reconciliation.");
 
-        _ephemeralApprovals.Revoke(jobId);
         var completed = job with
         {
             State = AgentJobState.Completed,
@@ -274,10 +292,15 @@ public sealed class ResumableJobOrchestrator
             NextAttemptAt = null,
             UpdatedAt = DateTimeOffset.UtcNow
         };
+        var reconciliationAudit = PrepareAudit(
+            completed,
+            "job.reconciled_completed",
+            true,
+            false,
+            $"Ambiguous in-flight job was marked complete from fresh post-crash evidence without replay. {evidenceSummary}");
+        _ephemeralApprovals.Revoke(jobId);
         await _store.SaveAsync(completed, cancellationToken).ConfigureAwait(false);
-        await AuditAsync(completed, "job.reconciled_completed", true, false,
-            $"Ambiguous in-flight job was marked complete from fresh post-crash evidence without replay. {evidenceSummary}",
-            cancellationToken).ConfigureAwait(false);
+        await AppendAuditAsync(reconciliationAudit, cancellationToken).ConfigureAwait(false);
         return completed;
     }
 
@@ -285,14 +308,12 @@ public sealed class ResumableJobOrchestrator
     {
         var job = await GetRequiredAsync(jobId, cancellationToken).ConfigureAwait(false);
         if (job.State is AgentJobState.Completed or AgentJobState.Failed or AgentJobState.Cancelled) return job;
-        _ephemeralApprovals.Revoke(jobId);
         var cancelledRaw = job with { State = AgentJobState.Cancelled, LastError = "Cancelled by user", UpdatedAt = DateTimeOffset.UtcNow };
         var cancelled = job.State == AgentJobState.Running
             && string.Equals(job.Definition.JobType, BrowserActionTerminalCheckpoint.JobType, StringComparison.OrdinalIgnoreCase)
             ? cancelledRaw
             : BrowserActionTerminalCheckpoint.ScrubIfTerminal(cancelledRaw);
-        await _store.SaveAsync(cancelled, cancellationToken).ConfigureAwait(false);
-        await AuditAsync(
+        var cancellationAudit = PrepareAudit(
             cancelled,
             "job.cancelled",
             false,
@@ -300,17 +321,54 @@ public sealed class ResumableJobOrchestrator
             job.State == AgentJobState.Running
                 && string.Equals(job.Definition.JobType, BrowserActionTerminalCheckpoint.JobType, StringComparison.OrdinalIgnoreCase)
                 ? "In-flight browser job cancelled; executable checkpoint retained only for ambiguous-side-effect verification."
-                : "Job cancelled by user.",
-            cancellationToken).ConfigureAwait(false);
+                : "Job cancelled by user.");
+        _ephemeralApprovals.Revoke(jobId);
+        await _store.SaveAsync(cancelled, cancellationToken).ConfigureAwait(false);
+        await AppendAuditAsync(cancellationAudit, cancellationToken).ConfigureAwait(false);
         return cancelled;
     }
 
     private async Task<AgentJobRecord> GetRequiredAsync(Guid jobId, CancellationToken cancellationToken) =>
         await _store.GetAsync(jobId, cancellationToken).ConfigureAwait(false) ?? throw new KeyNotFoundException($"Job '{jobId}' was not found.");
 
-    private Task AuditAsync(AgentJobRecord job, string eventType, bool allowed, bool approved, string summary, CancellationToken cancellationToken) =>
-        _auditTrail.AppendAsync(new AuditEvent(Guid.NewGuid(), DateTimeOffset.UtcNow, job.Definition.CapabilityId, job.JobId.ToString("N"), eventType, job.Definition.Risk, allowed, approved, job.ApprovalScope ?? string.Empty, summary,
-            new Dictionary<string, string> { ["jobType"] = job.Definition.JobType, ["state"] = job.State.ToString(), ["executionLocation"] = job.ExecutionLocation.ToString(), ["attempt"] = job.Attempt.ToString() }), cancellationToken);
+    private static AuditEvent PrepareAudit(AgentJobRecord job, string eventType, bool allowed, bool approved, string summary)
+    {
+        var auditEvent = new AuditEvent(
+            Guid.NewGuid(),
+            DateTimeOffset.UtcNow,
+            job.Definition.CapabilityId,
+            job.JobId.ToString("N"),
+            eventType,
+            job.Definition.Risk,
+            allowed,
+            approved,
+            job.ApprovalScope ?? string.Empty,
+            summary,
+            new Dictionary<string, string>
+            {
+                ["jobType"] = job.Definition.JobType,
+                ["state"] = job.State.ToString(),
+                ["executionLocation"] = job.ExecutionLocation.ToString(),
+                ["attempt"] = job.Attempt.ToString()
+            });
+
+        try
+        {
+            AuditEventTrust.ValidateForPersistence(auditEvent, nameof(auditEvent));
+        }
+        catch (ArgumentException ex)
+        {
+            throw new JobAuditContractException("Job audit data violates the durable audit trust contract.", ex);
+        }
+
+        return auditEvent;
+    }
+
+    private static void ValidateJobAuditContract(AgentJobRecord job) =>
+        _ = PrepareAudit(job with { ApprovalScope = null }, "job.contract_check", false, false, "Job audit contract validated before execution state mutation.");
+
+    private Task AppendAuditAsync(AuditEvent auditEvent, CancellationToken cancellationToken) =>
+        _auditTrail.AppendAsync(auditEvent, cancellationToken);
 
     private static bool DefinitionEquivalent(AgentJobDefinition left, AgentJobDefinition right) =>
         string.Equals(left.JobType, right.JobType, StringComparison.OrdinalIgnoreCase)
@@ -330,4 +388,12 @@ public sealed class ResumableJobOrchestrator
     }
 
     private static TimeSpan RetryDelay(int attempt) => TimeSpan.FromSeconds(Math.Min(60, Math.Pow(2, Math.Clamp(attempt, 1, 6))));
+
+    private sealed class JobAuditContractException : InvalidOperationException
+    {
+        public JobAuditContractException(string message, Exception innerException)
+            : base(message, innerException)
+        {
+        }
+    }
 }

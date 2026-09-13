@@ -63,8 +63,12 @@ public sealed class CapabilityToolExecutor : ICapabilityToolExecutor
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(request.Invocation);
 
-        if (string.IsNullOrWhiteSpace(request.ToolName))
-            throw new ArgumentException("Tool name is required.", nameof(request));
+        // Capability/action/tool identities become exact approval authority and durable
+        // audit metadata. Reject malformed or unbounded tokens before policy evaluation
+        // or any audit append so user/provider text cannot enter those identity fields.
+        CapabilityIdentityTrust.RequireCapabilityId(request.Invocation.CapabilityId, nameof(request));
+        CapabilityIdentityTrust.RequireActionId(request.Invocation.ActionId, nameof(request));
+        CapabilityIdentityTrust.RequireToolName(request.ToolName, nameof(request));
 
         // Deliberately evaluate at the last possible moment. Resumed jobs must not
         // inherit an old allow/approval decision from a checkpoint.

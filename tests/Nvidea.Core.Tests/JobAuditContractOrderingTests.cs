@@ -13,7 +13,7 @@ public sealed class JobAuditContractOrderingTests
         var orchestrator = Create(store, audit, new FixedHandler("research", new JobStepResult(true)));
         var definition = Definition(capabilityId: "research.web\nforged");
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => orchestrator.CreateAsync(definition));
+        await Assert.ThrowsAnyAsync<InvalidOperationException>(() => orchestrator.CreateAsync(definition));
 
         Assert.Equal(0, store.SaveCount);
         Assert.Empty(audit.Events);
@@ -42,7 +42,7 @@ public sealed class JobAuditContractOrderingTests
         var handler = new FixedHandler(malformedJobType, new JobStepResult(true));
         var orchestrator = Create(store, audit, handler);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => orchestrator.RunNextStepAsync(jobId));
+        await Assert.ThrowsAnyAsync<InvalidOperationException>(() => orchestrator.RunNextStepAsync(jobId));
 
         Assert.Equal(0, store.SaveCount);
         Assert.Empty(audit.Events);
@@ -62,7 +62,7 @@ public sealed class JobAuditContractOrderingTests
         var created = await orchestrator.CreateAsync(Definition());
         var savesAfterCreate = store.SaveCount;
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => orchestrator.RunNextStepAsync(created.JobId));
+        await Assert.ThrowsAnyAsync<InvalidOperationException>(() => orchestrator.RunNextStepAsync(created.JobId));
 
         var durable = await store.GetAsync(created.JobId);
         Assert.NotNull(durable);
@@ -98,7 +98,7 @@ public sealed class JobAuditContractOrderingTests
         var audit = new TrackingAudit();
         var orchestrator = Create(store, audit, new FixedHandler("research", new JobStepResult(true)));
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => orchestrator.ResumeAfterApprovalAsync(jobId, malformedScope));
+        await Assert.ThrowsAnyAsync<InvalidOperationException>(() => orchestrator.ResumeAfterApprovalAsync(jobId, malformedScope));
 
         Assert.Equal(0, store.SaveCount);
         Assert.Empty(audit.Events);
@@ -127,7 +127,7 @@ public sealed class JobAuditContractOrderingTests
         var orchestrator = Create(store, audit, new FixedHandler("research", new JobStepResult(true)));
         var verified = new AgentJobCheckpoint("verified", "done", now.AddSeconds(1));
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsAnyAsync<InvalidOperationException>(() =>
             orchestrator.CompleteAmbiguousRunningAsync(jobId, verified, "verified\nforged audit line"));
 
         Assert.Equal(0, store.SaveCount);

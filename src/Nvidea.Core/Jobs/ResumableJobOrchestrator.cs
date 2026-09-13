@@ -122,7 +122,8 @@ public sealed class ResumableJobOrchestrator
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             _ephemeralApprovals.Revoke(jobId);
-            var cancelled = running with { State = AgentJobState.Cancelled, LastError = "Cancelled", UpdatedAt = DateTimeOffset.UtcNow };
+            var cancelled = BrowserActionTerminalCheckpoint.ScrubIfTerminal(
+                running with { State = AgentJobState.Cancelled, LastError = "Cancelled", UpdatedAt = DateTimeOffset.UtcNow });
             await _store.SaveAsync(cancelled, CancellationToken.None).ConfigureAwait(false);
             await AuditAsync(cancelled, "job.cancelled", false, false, "Job cancelled.", CancellationToken.None).ConfigureAwait(false);
             return cancelled;
@@ -139,6 +140,7 @@ public sealed class ResumableJobOrchestrator
                 NextAttemptAt = exhausted ? null : DateTimeOffset.UtcNow + RetryDelay(running.Attempt),
                 UpdatedAt = DateTimeOffset.UtcNow
             };
+            failed = BrowserActionTerminalCheckpoint.ScrubIfTerminal(failed);
             await _store.SaveAsync(failed, cancellationToken).ConfigureAwait(false);
             await AuditAsync(
                 failed,
@@ -247,7 +249,8 @@ public sealed class ResumableJobOrchestrator
         var job = await GetRequiredAsync(jobId, cancellationToken).ConfigureAwait(false);
         if (job.State is AgentJobState.Completed or AgentJobState.Failed or AgentJobState.Cancelled) return job;
         _ephemeralApprovals.Revoke(jobId);
-        var cancelled = job with { State = AgentJobState.Cancelled, LastError = "Cancelled by user", UpdatedAt = DateTimeOffset.UtcNow };
+        var cancelled = BrowserActionTerminalCheckpoint.ScrubIfTerminal(
+            job with { State = AgentJobState.Cancelled, LastError = "Cancelled by user", UpdatedAt = DateTimeOffset.UtcNow });
         await _store.SaveAsync(cancelled, cancellationToken).ConfigureAwait(false);
         await AuditAsync(cancelled, "job.cancelled", false, false, "Job cancelled by user.", cancellationToken).ConfigureAwait(false);
         return cancelled;

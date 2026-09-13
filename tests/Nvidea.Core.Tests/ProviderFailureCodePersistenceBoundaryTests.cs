@@ -65,6 +65,33 @@ public sealed class ProviderFailureCodePersistenceBoundaryTests
         }
     }
 
+    [Fact]
+    public async Task JobStore_Save_RejectsStructuredFailureCodeOnNonFailureProvenance()
+    {
+        var directory = CreateTempDirectory();
+        try
+        {
+            var path = Path.Combine(directory, "jobs.json");
+            var store = new JsonAgentJobStore(path);
+            var failed = CreateRemoteFailure("Quota");
+            var inconsistent = failed with
+            {
+                State = AgentJobState.Cancelled,
+                RemoteResearch = failed.RemoteResearch! with
+                {
+                    State = RemoteResearchProvenanceState.Cancelled
+                }
+            };
+
+            await Assert.ThrowsAsync<InvalidDataException>(() => store.SaveAsync(inconsistent));
+            Assert.False(File.Exists(path));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     private static AgentJobRecord CreateRemoteFailure(string? providerFailureCode)
     {
         var now = DateTimeOffset.UtcNow;

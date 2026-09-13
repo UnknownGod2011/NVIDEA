@@ -530,6 +530,7 @@ public sealed class JsonLinesAuditTrail : IAuditTrail
 
         CapabilityIdentityTrust.RequireCapabilityId(auditEvent.CapabilityId, nameof(auditEvent));
         CapabilityIdentityTrust.RequireActionId(auditEvent.ActionId, nameof(auditEvent));
+        AuditPayloadTrust.ValidateForPersistence(auditEvent, nameof(auditEvent));
     }
 
     private static void ValidatePersistedEvent(AuditEvent auditEvent)
@@ -540,7 +541,7 @@ public sealed class JsonLinesAuditTrail : IAuditTrail
         }
         catch (ArgumentException ex)
         {
-            throw new InvalidDataException("Audit trail contains an event with invalid capability/action identity authority.", ex);
+            throw new InvalidDataException("Audit trail contains an event that violates the durable identity or payload trust contract.", ex);
         }
     }
 

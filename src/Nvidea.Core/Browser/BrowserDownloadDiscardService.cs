@@ -89,6 +89,13 @@ public sealed class BrowserDownloadDiscardService
             throw new UnauthorizedAccessException("Download discard scope changed; request fresh user approval.");
         }
 
+        var startedAudit = CreateAuditEvent(
+            current,
+            "download.discard.started",
+            approved: true,
+            "Approved quarantine discard started.");
+        AuditEventTrust.ValidateForPersistence(startedAudit, nameof(approvedPlan));
+
         if (approval is null || !_approvals.TryAuthorize(approval, current.Decision))
         {
             await AuditAsync(current, "download.discard.awaiting_approval", approved: false,
@@ -96,8 +103,7 @@ public sealed class BrowserDownloadDiscardService
             throw new UnauthorizedAccessException("Exact single-use approval is required to discard this quarantined download.");
         }
 
-        await AuditAsync(current, "download.discard.started", approved: true,
-            "Approved quarantine discard started.", cancellationToken).ConfigureAwait(false);
+        await _audit.AppendAsync(startedAudit, cancellationToken).ConfigureAwait(false);
         try
         {
             var receipt = await _quarantine.DiscardAsync(current.DownloadId, userApproved: true, cancellationToken).ConfigureAwait(false);
@@ -125,7 +131,14 @@ public sealed class BrowserDownloadDiscardService
         bool approved,
         string summary,
         CancellationToken cancellationToken) =>
-        _audit.AppendAsync(new AuditEvent(
+        _audit.AppendAsync(CreateAuditEvent(plan, eventType, approved, summary), cancellationToken);
+
+    private static AuditEvent CreateAuditEvent(
+        BrowserDownloadDiscardPlan plan,
+        string eventType,
+        bool approved,
+        string summary) =>
+        new(
             Guid.NewGuid(),
             DateTimeOffset.UtcNow,
             CapabilityId,
@@ -142,7 +155,7 @@ public sealed class BrowserDownloadDiscardService
                 ["sha256"] = plan.Sha256 ?? string.Empty,
                 ["lengthBytes"] = plan.LengthBytes?.ToString() ?? string.Empty,
                 ["permissions"] = string.Join(',', plan.Decision.EffectivePermissions.OrderBy(x => x).Select(x => x.ToString()))
-            }), cancellationToken);
+            });
 
     private static bool Equivalent(BrowserDownloadDiscardPlan left, BrowserDownloadDiscardPlan right) =>
         left.DownloadId == right.DownloadId

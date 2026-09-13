@@ -126,6 +126,45 @@ public sealed class TavilyExtractEnrichmentTests
         Assert.Contains(enriched.Warnings, warning => warning.Contains("retained search evidence", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public async Task Enrich_quarantines_transport_exception_diagnostics_from_warnings()
+    {
+        const string secret = "super-secret-tavily-token";
+        var call = 0;
+        var handler = new StubHandler(_ =>
+        {
+            call++;
+            if (call == 1)
+            {
+                return JsonResponse(HttpStatusCode.OK, """
+                    {"results":[{"title":"A","url":"https://a.example/page","content":"snippet-a","score":0.9,"id":"a"}],"usage":{"credits":1}}
+                    """);
+            }
+
+            throw new HttpRequestException($"Transport failed with Bearer {secret} at https://api.tavily.com/extract?token={secret}");
+        });
+
+        using var http = new HttpClient(handler);
+        var client = new TavilyResearchClient(http, new TavilyOptions
+        {
+            ApiKey = "test-key",
+            MaxAttempts = 1,
+            RequestTimeout = TimeSpan.FromSeconds(2)
+        });
+
+        var searched = await client.SearchAsync([new ResearchQuery("q")]);
+        var enriched = await client.EnrichAsync(searched, "intent");
+
+        Assert.Equal("snippet-a", enriched.Sources[0].Content);
+        Assert.Equal(1, enriched.ProviderCreditsUsed);
+        var warning = Assert.Single(enriched.Warnings);
+        Assert.DoesNotContain(secret, warning, StringComparison.Ordinal);
+        Assert.DoesNotContain("Bearer", warning, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("token=", warning, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("retained search evidence", warning, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("quarantined", warning, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static TavilyOptions TestOptions() => new()
     {
         ApiKey = "test-key",

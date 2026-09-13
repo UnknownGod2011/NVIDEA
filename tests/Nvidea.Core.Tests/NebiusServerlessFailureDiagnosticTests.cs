@@ -37,6 +37,57 @@ public sealed class NebiusServerlessFailureDiagnosticTests
     }
 
     [Fact]
+    public void ParseGet_CanonicalizesFailureCodeThroughSharedTrustBoundary()
+    {
+        const string rawCode = "  FutureProviderCode  ";
+        const string json = """
+            {
+              "metadata": { "id": "job-1", "name": "research-job" },
+              "status": {
+                "state": "FAILED",
+                "stateDetails": {
+                  "code": "  FutureProviderCode  ",
+                  "message": "Provider evidence only."
+                }
+              }
+            }
+            """;
+
+        Assert.True(ProviderFailureCodeTrust.TryCanonicalize(rawCode, out var expected));
+        var snapshot = NebiusServerlessJobSnapshotParser.ParseGet(
+            new NebiusServerlessResponse(HttpStatusCode.OK, json));
+
+        Assert.Equal(expected, snapshot.Diagnostic!.Code);
+        Assert.Equal("FutureProviderCode", snapshot.Diagnostic.Code);
+    }
+
+    [Fact]
+    public void ParseGet_DropsCodeRejectedBySharedTrustBoundary()
+    {
+        var rawCode = new string('x', ProviderFailureCodeTrust.MaxLength + 1);
+        Assert.False(ProviderFailureCodeTrust.TryCanonicalize(rawCode, out _));
+        var json = JsonSerializer.Serialize(new
+        {
+            metadata = new { id = "job-1", name = "research-job" },
+            status = new
+            {
+                state = "FAILED",
+                stateDetails = new
+                {
+                    code = rawCode,
+                    message = "Provider evidence only."
+                }
+            }
+        });
+
+        var snapshot = NebiusServerlessJobSnapshotParser.ParseGet(
+            new NebiusServerlessResponse(HttpStatusCode.OK, json));
+
+        Assert.Equal(NebiusRemoteJobState.Failed, snapshot.State);
+        Assert.Null(snapshot.Diagnostic);
+    }
+
+    [Fact]
     public void ParseGet_DropsOversizedDiagnosticWithoutChangingLifecycleState()
     {
         var json = JsonSerializer.Serialize(new
@@ -132,6 +183,54 @@ public sealed class NebiusServerlessFailureDiagnosticTests
 
         Assert.Equal(NebiusRemoteJobState.Unknown, snapshot.State);
         Assert.Equal("Completed", snapshot.Diagnostic!.Code);
+    }
+
+    [Fact]
+    public async Task ReconcileDispatchedAsync_CanonicalizesRawProviderCodeIntoDurableProvenance()
+    {
+        var harness = await CreateDispatchedHarnessAsync();
+        try
+        {
+            var client = new GetOnlyServerlessClient
+            {
+                GetResponse = new NebiusServerlessResponse(
+                    HttpStatusCode.OK,
+                    $$"""
+                    {
+                      "metadata": { "id": "job-123", "name": "{{harness.ExpectedName}}" },
+                      "status": {
+                        "state": "FAILED",
+                        "stateDetails": {
+                          "code": "  FutureProviderCode  ",
+                          "message": "Provider evidence only; do not retry automatically."
+                        }
+                      }
+                    }
+                    """)
+            };
+            var reconciler = new NebiusResearchLifecycleReconciler(
+                harness.Store,
+                client,
+                harness.Ingestor,
+                harness.Audit);
+
+            var failed = await reconciler.ReconcileDispatchedAsync(
+                harness.JobId,
+                harness.Now.AddMinutes(1));
+            var persisted = await harness.Store.GetAsync(harness.JobId);
+
+            Assert.Equal(AgentJobState.Failed, failed.State);
+            Assert.Equal(RemoteResearchProvenanceState.RemoteFailed, failed.RemoteResearch!.State);
+            Assert.Equal("FutureProviderCode", failed.RemoteResearch.ProviderFailureCode);
+            Assert.NotNull(persisted);
+            Assert.Equal("FutureProviderCode", persisted!.RemoteResearch!.ProviderFailureCode);
+            Assert.Equal(failed.RemoteResearch.ProviderFailureCode, persisted.RemoteResearch.ProviderFailureCode);
+            Assert.Null(NebiusFailureRemediationPolicy.Classify(persisted.RemoteResearch.ProviderFailureCode));
+        }
+        finally
+        {
+            Directory.Delete(harness.Root, recursive: true);
+        }
     }
 
     [Fact]

@@ -146,6 +146,47 @@ public sealed class ResearchCloudExecutionCoordinatorTests
     }
 
     [Fact]
+    public async Task Malformed_reservation_audit_identity_fails_before_remote_runtime_or_state_mutation()
+    {
+        var directory = CreateDirectory();
+        try
+        {
+            var local = CreateLocalRuntime(directory);
+            var created = await local.CreateAsync("Reject unsafe audit identity before cloud transport");
+            var store = new JsonAgentJobStore(Path.Combine(directory, "research-jobs.json"));
+            var record = await store.GetAsync(created.JobId) ?? throw new InvalidOperationException("Expected research job.");
+            await store.SaveAsync(record with
+            {
+                Definition = record.Definition with { CapabilityId = "research.deep\nforged" },
+                UpdatedAt = DateTimeOffset.UtcNow
+            });
+
+            var remote = new RecordingRemoteRuntime(directory);
+            var coordinator = new ResearchCloudExecutionCoordinator(directory, remote);
+            var approval = new ResearchCloudAuthorization(
+                created.JobId,
+                ResearchJobHandler.RequestedStep,
+                Approved: true,
+                ResearchWorkItemProtector.DisclosureVersion,
+                DateTimeOffset.UtcNow);
+
+            await Assert.ThrowsAnyAsync<ArgumentException>(() =>
+                coordinator.DispatchCurrentStageAsync(created.JobId, approval));
+
+            Assert.Equal(0, remote.DispatchCalls);
+            var persisted = await store.GetAsync(created.JobId);
+            Assert.NotNull(persisted);
+            Assert.Equal(AgentJobState.Pending, persisted!.State);
+            Assert.Equal(JobExecutionLocation.Local, persisted.ExecutionLocation);
+            Assert.Null(persisted.RemoteResearch);
+        }
+        finally
+        {
+            DeleteDirectory(directory);
+        }
+    }
+
+    [Fact]
     public async Task Reconcile_routes_dispatch_reserved_state_without_local_stage_execution()
     {
         var directory = CreateDirectory();

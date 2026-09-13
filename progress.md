@@ -23,8 +23,8 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Durable remote provenance contains structured `ProviderFailureCode`; `ProviderFailureCodeTrust` is the single evidence-shape boundary and only fixed local remediation codes can generate guidance.
 - Generic provider/handler exception text crosses `JobFailureDiagnostic`; WPF exceptions cross `DesktopUiFailureProjector`; non-exception runtime display strings cross `DesktopDisplayTextTrust`.
 - Browser product outcomes cross `BrowserProductOutcomeTrust`; failed/retry messages are local state-derived, approval presentation is bounded/privacy-reduced, and exact approval scope remains unchanged.
-- Browser-goal descriptive evidence crosses `BrowserGoalEvidenceTrust`: session/recovery detail and verified-step evidence are bounded/control-normalized; verified HTTP(S) URLs drop user-info/query/fragment; unexpected schemes fail closed to `about:blank`; approval scope/job/state/replay authority are not modified.
-- `BrowserGoalAgent` now applies that evidence projection in-process as well as at durable save/load boundaries, so immediate callers and subsequent planner turns do not get a more permissive evidence surface than restart/reload paths.
+- Browser-goal descriptive evidence crosses `BrowserGoalEvidenceTrust`: detail/history are bounded and privacy-reduced, and projected parent-goal state never retains `PendingAction`; recovery authority remains the durable child job id plus exact approval scope.
+- `BrowserGoalAgent` applies goal evidence projection in-process as well as at durable save/load boundaries, so immediate callers and subsequent planner turns do not get a more permissive evidence surface than restart/reload paths.
 - Windows voice invocation is local/review-first. Deterministic judging tools include `Nvidea.PersonalAiDemoEval`, `Nvidea.PersonalAiAdversarialEval`, `Nvidea.JudgingEvidenceVerifier`, `Nvidea.DemoPackageValidator`, and `Nvidea.NebiusModelCatalogCheck`.
 
 ## Persistent Progress History
@@ -38,60 +38,54 @@ Added Tavily Extract enrichment, evidence ranking/staleness/diversity, restart-s
 ### 2026-09-10 to 2026-09-12 — Product/evaluator/protocol hardening
 Added research/browser product runtimes, WPF lifecycle integration, restart-safe browser recovery, one-shot cloud approval, local voice, semantic-memory migration UI, positive/adversarial Personal AI evaluators, unified judging evidence, demo-package validation, provider endpoint/redirect trust, credential-read ordering, worker/client RSA role separation, protocol-level envelope trust, and deployment/preflight policy reuse.
 
-### 2026-09-13 — Provider diagnostic and desktop trust boundaries
-- Added exhaustive fail-closed Serverless lifecycle coverage and bounded `state_details` evidence.
-- Added `ProviderFailureCodeTrust`, structured remote failure provenance, fixed `NotEnoughResources`/`Quota` remediation only, durable migration, CAS equivalence, direct reconciler capture, and parser→reconciler→store coverage.
-- Added `JobFailureDiagnostic`; arbitrary exception text is bounded/marked untrusted and excluded from append-only audit summaries.
-- Added `DesktopUiFailureProjector` and `DesktopDisplayTextTrust`; direct exception/runtime text leakage was removed from product-facing WPF surfaces and URL presentation strips user-info/query/fragment.
-- Added `BrowserProductOutcomeTrust` in Core so plugin/product browser callers receive constrained outcomes even outside WPF.
+### 2026-09-13 — Provider, desktop, and browser trust boundaries
+- Added fail-closed Serverless lifecycle coverage, structured bounded provider failure provenance, `ProviderFailureCodeTrust`, and fixed local remediation only.
+- Added `JobFailureDiagnostic`, `DesktopUiFailureProjector`, and `DesktopDisplayTextTrust`; provider/tool/runtime exception and display text cannot become UI/control authority.
+- Added `BrowserProductOutcomeTrust` for constrained Core product/plugin outcomes.
+- Added `BrowserGoalEvidenceTrust`: bounded/control-normalized goal detail and verification evidence, privacy-reduced verified HTTP(S) URLs, fail-closed non-web evidence, and unchanged exact approval scope/job/lifecycle authority.
+- Applied goal projection at durable save/load and inside `BrowserGoalAgent`; subsequent planner turns and same-process/no-store returns now use the same constrained evidence surface.
+- Hardened legacy plaintext→protected goal-state migration ordering and added adversarial evidence tests.
 
-### 2026-09-13 — Browser goal durable evidence trust boundary
-- Added `BrowserGoalEvidenceTrust` with separate 512-character session-detail and 320-character verification-detail bounds; controls/whitespace are normalized through the existing presentation primitive.
-- Privacy-reduced verified HTTP(S) evidence URLs to scheme + host + port + path, removing user-info/query/fragment credentials/tokens. Unexpected/non-web schemes fail closed to `about:blank` because verified history is descriptive evidence, not navigation authority.
-- Preserved goal identity, job id, action kind, timestamps, lifecycle state, `PendingJobId`, and `PendingExactScope`; the projection cannot approve, retry, replay, navigate, or mutate an action.
-- Applied projection before `JsonBrowserGoalSessionStore` persistence and again on load. Hardened plaintext→protected legacy migration ordering so records are normalized before re-persistence.
-- Added adversarial tests covering oversized/control-character model text, secret-bearing URLs, non-HTTP schemes, missing optional evidence, and exact approval-scope/job/state preservation.
-- Commits: `5d8c560d...`, `9b9a73a...`, `006f538d...`, `4c348767...`; ledger head after that run: `8b966208ce719a6c525da07483c451f1137f3031`.
-
-### 2026-09-13 — Same-process browser goal evidence hardening
+### 2026-09-13 — Browser pending-action data minimization
 Completed in this run:
-- Re-read this ledger completely and inspected the current `BrowserGoalAgent`, `BrowserGoalEvidenceTrust`, browser host contracts, existing browser-goal tests, and current repository tree before mutation.
-- Confirmed a real asymmetry: durable save/load projected untrusted browser-goal evidence, but several same-process paths discarded the projected persistence return and continued planning or returned the original object. A completed child could therefore leave raw verification detail / credential-bearing evidence URLs in memory until restart, and a no-store caller could bypass the durable projection entirely.
-- Changed `BrowserGoalAgent.PersistAsync(...)` to project with `BrowserGoalEvidenceTrust` before both save **and return**, including when no persistence store is configured.
-- Updated continuing execution paths to retain the projected object returned from persistence before the next planner turn: initial run state, planner-budget checkpoint, crash-consistent child reservation, approval completion, completed-child reconciliation, missing-child replanning, and completed child outcomes.
-- `AppendVerifiedStep(...)` now projects both the new verified step and pre-existing history before retaining it. `ToPlannerHistory(...)` independently projects each step again as defense in depth, so site/driver evidence cannot regain a broader form merely because a future caller supplies an in-memory session directly.
-- Terminal/waiting sessions returned by `ResumeAsync(...)` are projected even on direct-return paths.
-- Removed raw `InvalidOperationException.Message` disclosure from the autonomous-verification-contract failure path; the returned detail is now fixed NVIDEA-authored text.
-- Preserved `PendingExactScope`, `PendingJobId`, pending action/control state, action counts, lifecycle enums, and approval comparison semantics. Evidence normalization cannot grant/replay an action or change the exact authority string consumed by approval logic.
-- Added `BrowserGoalImmediateEvidenceTrustTests` with no-store adversarial coverage for oversized/control-character child messages, exact approval-scope preservation, credential/query/fragment-bearing verified URLs, oversized verification text, unexpected `file:` history, and caller-supplied legacy history.
+- Re-read this ledger completely, inspected recent commits and current browser-goal agent/store/contracts/tests, and audited every meaningful `PendingAction` use before mutation.
+- Confirmed the full action object is not required for parent-goal crash recovery or approval resume. Missing reserved children are safely re-planned; existing children are reconciled by `PendingJobId`; lost approval is re-armed and explicit approval is resumed by `PendingJobId` + byte-for-byte `PendingExactScope`; the durable child job remains the source of truth for executable action data.
+- Confirmed `BrowserAction` may contain sensitive typed values, upload/file paths or destinations, locator material, rationale, expected state, and typed postconditions. Keeping that object in parent-goal same-process state after child reservation therefore violates data minimization even though `JsonBrowserGoalSessionStore` already omitted it from disk.
+- Updated `BrowserGoalEvidenceTrust.ProjectForPersistence(...)` to always set `PendingAction = null`. Because `BrowserGoalAgent.PersistAsync(...)` projects before save **and return**, this now clears sensitive action payloads in same-process/no-store goal state as well as durable save/load and legacy/corrupt record normalization.
+- Deliberately retained the nullable `PendingAction` property on `BrowserGoalSession` for source/serialization compatibility; the trust projection strips its value rather than forcing a risky schema migration.
+- Preserved `PendingJobId`, `PendingExactScope`, status, budgets, verified history, action counts, and approval comparison semantics. The minimization cannot grant, recreate, replay, navigate, submit, cancel, or otherwise execute an action.
+- Added an adversarial projection regression with a password-like typed value, credential-bearing/query/fragment URL, private expected state/rationale, and secret-bearing postcondition; the projected parent retains the job id and exact scope but drops the entire action object.
+- Strengthened the no-store waiting-approval regression to assert `PendingAction` is already null on the immediate returned session.
+- Existing crash-consistency tests already exercise restart/rearm/reconcile paths using `PendingJobId` and `PendingExactScope` without a parent `PendingAction`, supporting the architectural conclusion that parent recovery does not require the duplicate action payload.
 
 Engineering commits this run before this ledger update:
-- `be8b65d21cc45cdf4db7d43ca58f2f687a8d8d82` — harden same-process browser goal evidence and planner reuse.
-- `3ac9756cf4768244bfc93a74393de8d8afa46dca` — add immediate browser-goal evidence trust regressions.
+- `e5be22defb37f74ef2a76e90f97459d3deb2e919` — minimize projected browser pending-action data.
+- `cc882e04bf220286bc0f67a7fd88a214e2a6508b` — assert immediate/no-store pending-action minimization.
+- `1574d9f0581138971fdb427a8f1c3221a835f8c2` — add adversarial sensitive-action projection coverage.
 
 Validation / evidence this run:
-- Verified immediately before each GitHub mutation that the repository target was exactly `UnknownGod2011/NVIDEA`.
-- Starting repository head was `8b966208ce719a6c525da07483c451f1137f3031`.
-- GitHub compare through `3ac9756c...` reports **2 commits ahead / 0 behind**, with only `BrowserGoalAgent.cs` modified and one focused test file added.
-- Commit diff review confirms the changes are limited to evidence projection, persistence-return reuse, fixed local failure text, planner-history defense in depth, and tests; exact approval scope/control-flow fields were not rewritten.
-- Environment check again reports `dotnet: None` and `csc: None`.
+- Verified immediately before every GitHub mutation that the target repository was exactly `UnknownGod2011/NVIDEA`.
+- Starting repository head was `221a8a6183163b7fcd5482178ef0083cdc411c2e`.
+- GitHub compare through `1574d9f0...` reports **3 commits ahead / 0 behind**, touching exactly `BrowserGoalEvidenceTrust.cs` and two focused browser-goal trust test files.
+- Static review confirms the executable child job remains responsible for the actual action; parent minimization changes descriptive/recovery state only and does not alter exact approval authority or child execution semantics.
+- Environment check reports no usable `dotnet` or `csc` executable.
 - **No compile, xUnit, WPF, Worker, evaluator, or live integration PASS is claimed.** The new tests are persisted but remain unexecuted here.
 - No GitHub Actions workflow was triggered merely to manufacture a green signal.
 - No live Nebius, Tavily, Object Storage, Serverless, Playwright, Ollama, or paid inference operation was performed.
 
 ## Security / Privacy / Failure Review
 - Provider/model/site/tool strings remain non-authoritative; lifecycle and approval control flow depend on local enums, exact scopes, durable ids, and fixed policy.
-- Browser goal evidence sanitation now applies consistently to durable records, restart/reload, immediate returns, and planner-history reuse.
-- Verified-history URLs do not retain query/fragment/user-info secrets; unexpected schemes are discarded from descriptive history.
-- Exact approval scope remains byte-for-byte outside the evidence projection. The projection cannot approve, cancel, retry, replay, submit, navigate, or mutate actions.
-- Raw exception messages are not surfaced by the autonomous verification contract failure path added to this audit.
+- Browser-goal evidence sanitation applies consistently to durable records, restart/reload, immediate returns, and planner-history reuse.
+- Parent browser-goal state no longer retains duplicate `BrowserAction` payloads after projection, reducing lifetime of typed text, upload/file material, destinations, rationale, and postcondition values.
+- Exact approval scope remains byte-for-byte outside evidence minimization because the user-visible authority must equal the authority consumed by approval logic.
+- Crash recovery still fails closed for ambiguous in-flight children and does not recreate side effects from parent descriptive state.
 - Existing encrypted transport, signed binding, cancellation/recovery, exact-once ingestion, browser safety, download quarantine, emergency stop, and permission UX were not removed or weakened.
 
 ## Known Blockers / Risks
 - No usable .NET 8 executable/compiler exists in this environment, so recent .NET/WPF/Worker changes require a real restore/build/test/run before compile confidence is justified.
 - Real Windows execution remains mandatory before treating WPF voice/readiness/maintenance behavior and generated judging evidence as judge-ready.
 - `BrowserHostRuntime.Describe(...)` still retains raw `LastError` in its trusted internal outcome for goal/recovery infrastructure; public browser product callers and browser-goal presentation paths are constrained, but future trusted internal consumers must not render it directly.
-- `BrowserGoalSession.PendingAction` is intentionally retained for crash-consistent recovery and can contain action-specific values. State is protected locally, but this field deserves a dedicated data-minimization review to determine whether recovery can retain less sensitive material without weakening exact approval/replay safety.
+- The parent `BrowserGoalSession.PendingAction` duplication is now minimized, but the **durable child browser job/checkpoint must necessarily retain executable action data while work is pending or being verified**. Typed values/upload paths may therefore still exist in protected child state longer than needed after terminal outcomes unless terminal cleanup/scrubbing is explicit; this is the next browser privacy boundary to audit.
 - Browser approval `ExactScope` may legitimately encode target-specific authority and is intentionally preserved verbatim. Any future redesign must keep the human-visible authority equal to the authority consumed by approval logic.
 - Provider catalogs can change; model listing does not prove quota, inference success, tool calling, context length, or every capability. A real Nebius inference smoke test remains required.
 - Prompt-injection detection remains heuristic; capability gates and approvals remain mandatory defense-in-depth.
@@ -99,4 +93,4 @@ Validation / evidence this run:
 - Lower-level `NebiusResearchClientRuntime.Create(...)` retains a same-key compatibility fallback for legacy unit/contract callers; production composition/preflight are stricter. Remove only after executable migration coverage exists.
 
 ## Single Best Next Task
-Obtain a real .NET 8-capable Windows restore/build/test signal and fix every compile/runtime defect exposed by recent migrations. If executable validation remains unavailable, perform a dedicated **browser pending-action data-minimization audit**: determine exactly why `BrowserGoalSession.PendingAction` must be durably retained across each recovery/approval state, remove or replace sensitive action fields where recovery does not require them, preserve exact approval scope and no-replay semantics, and add crash/restart regressions proving typed values or upload/file material are not retained longer than necessary.
+Obtain a real .NET 8-capable Windows restore/build/test signal and fix every compile/runtime defect exposed by recent migrations. If executable validation remains unavailable, audit **durable browser child-job/checkpoint sensitive-data lifetime and terminal cleanup**: identify exactly which action fields must survive pending/execution/verification, scrub typed values/upload paths and other sensitive payloads promptly after completed/cancelled/failed terminal states where safe, preserve exact-once/no-replay/recovery semantics, and add crash/restart/checkpoint-migration regressions proving sensitive action material is not retained longer than necessary.

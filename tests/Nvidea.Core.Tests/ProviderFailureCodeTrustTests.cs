@@ -65,6 +65,25 @@ public sealed class ProviderFailureCodeTrustTests
     }
 
     [Fact]
+    public void Migration_RejectsStructuredFailureCodeOutsideRemoteFailedProvenance()
+    {
+        var failed = CreateRemoteFailure("Quota");
+        var inconsistent = failed with
+        {
+            State = AgentJobState.Cancelled,
+            RemoteResearch = failed.RemoteResearch! with
+            {
+                State = RemoteResearchProvenanceState.Cancelled
+            }
+        };
+
+        var exception = Assert.Throws<InvalidDataException>(
+            () => RemoteResearchFailureProvenanceMigration.Migrate(inconsistent));
+
+        Assert.Contains("only valid for RemoteFailed", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Migration_PreservesLegacyAllowlistMigrationWhenStructuredCodeIsAbsent()
     {
         var record = CreateRemoteFailure(providerFailureCode: null) with

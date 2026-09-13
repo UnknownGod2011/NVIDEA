@@ -64,6 +64,41 @@ public sealed class BrowserGoalEvidenceTrustTests
     }
 
     [Fact]
+    public void ProjectForPersistence_DropsSensitivePendingActionButPreservesRecoveryAuthority()
+    {
+        var jobId = Guid.NewGuid();
+        const string exactScope = "capability:browser.agent:exact-type";
+        var sensitiveAction = new BrowserAction(
+            BrowserActionKind.Type,
+            new BrowserLocator(BrowserLocatorKind.Css, "#password", "Password", "textbox"),
+            Value: "super-secret-user-value",
+            Destination: new Uri("https://user:pass@example.com/account?token=secret#private"),
+            ExpectedState: "signed in as private-user@example.com",
+            Rationale: "type a private credential",
+            Postconditions: new[]
+            {
+                new BrowserPostcondition(
+                    BrowserPostconditionKind.ElementValueEquals,
+                    Expected: "super-secret-user-value",
+                    Locator: new BrowserLocator(BrowserLocatorKind.Css, "#password"))
+            });
+        var session = BrowserGoalSession.Create("Complete the approved browser step") with
+        {
+            Status = BrowserGoalStatus.WaitingForApproval,
+            PendingJobId = jobId,
+            PendingExactScope = exactScope,
+            PendingAction = sensitiveAction
+        };
+
+        var projected = BrowserGoalEvidenceTrust.ProjectForPersistence(session);
+
+        Assert.Equal(BrowserGoalStatus.WaitingForApproval, projected.Status);
+        Assert.Equal(jobId, projected.PendingJobId);
+        Assert.Equal(exactScope, projected.PendingExactScope);
+        Assert.Null(projected.PendingAction);
+    }
+
+    [Fact]
     public void ProjectVerifiedStep_FailsClosedForNonHttpEvidenceUris()
     {
         var step = new BrowserGoalVerifiedStep(

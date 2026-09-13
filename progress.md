@@ -19,11 +19,12 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Protected local state uses Windows CurrentUser DPAPI by default; job state uses durable CAS, leases, and hash-chained/segmented audit.
 - Remote research uses encrypted opaque work items, signed resource-ID bindings, two-phase dispatch, lifecycle reconciliation, durable cancellation, exact-once result ingestion, race-safe cleanup, Nebius Object Storage, and Serverless-mounted worker transport.
 - Worker envelope, dispatch-signing, and result-envelope RSA purposes are separated end-to-end with RSA >=2048, OAEP-SHA256 capability proofs, bounded PEM, canonicalization, and temporary-buffer zeroization.
-- Provider/model/site/tool text is non-authoritative across explicit trust boundaries: `ProviderFailureCodeTrust`, `JobFailureDiagnostic`, `DesktopUiFailureProjector`, `DesktopDisplayTextTrust`, `BrowserProductOutcomeTrust`, and `BrowserGoalEvidenceTrust`.
+- Provider/model/site/tool text is non-authoritative across explicit trust boundaries including `ProviderFailureCodeTrust`, `JobFailureDiagnostic`, `DesktopUiFailureProjector`, `DesktopDisplayTextTrust`, `BrowserProductOutcomeTrust`, and `BrowserGoalEvidenceTrust`.
 - Parent browser-goal state no longer retains duplicate `PendingAction`; recovery authority remains the durable child job id plus exact approval scope.
-- Browser child jobs now scrub executable browser-action checkpoint payloads after safely terminal **Failed** or non-in-flight **Cancelled** outcomes. Retryable jobs retain the checkpoint only while needed for retry/recovery.
-- Browser execution now has an explicit `AmbiguousJobExecutionException` contract. If the driver reports that a side effect executed but post-action verification is inconclusive, the orchestrator leaves the job durable `Running`, blocks automatic retry, preserves its checkpoint for fresh verification, and emits only fixed local diagnostic/audit text.
-- In-flight browser cancellation is also fail-closed: the durable `Running` checkpoint is preserved for fresh verification instead of being scrubbed/replayed. Explicit cancellation of an already-`Running` browser job becomes terminal but retains that checkpoint solely as ambiguous-side-effect evidence; pending/approval-waiting cancellation is scrubbed.
+- Browser child jobs scrub executable browser-action checkpoints after safely terminal failed/non-in-flight-cancelled outcomes; retryable and ambiguous-running jobs retain only the material still required for retry/recovery verification.
+- Executed-but-unverified browser actions use `AmbiguousJobExecutionException`; orchestrator state remains `Running`, automatic replay is blocked, and fresh verification is required.
+- Browser exact approval scopes are data-minimal: capability id + stable action id + ordered permission names. Browser action values, upload paths, rationale, page URLs, untrusted source, and tool arguments are not part of the scope.
+- Capability audit failure events no longer persist raw backend/provider/site exception messages; durable audit records use fixed local failure text while the original exception still propagates to the immediate caller.
 - Windows voice invocation is local/review-first. Deterministic judging tools include `Nvidea.PersonalAiDemoEval`, `Nvidea.PersonalAiAdversarialEval`, `Nvidea.JudgingEvidenceVerifier`, `Nvidea.DemoPackageValidator`, and `Nvidea.NebiusModelCatalogCheck`.
 
 ## Persistent Progress History
@@ -37,54 +38,46 @@ Added Tavily Extract enrichment, evidence ranking/staleness/diversity, restart-s
 ### 2026-09-10 to 2026-09-12 — Product/evaluator/protocol hardening
 Added research/browser product runtimes, WPF lifecycle integration, restart-safe browser recovery, one-shot cloud approval, local voice, semantic-memory migration UI, positive/adversarial Personal AI evaluators, unified judging evidence, demo-package validation, provider endpoint/redirect trust, credential-read ordering, worker/client RSA role separation, protocol-level envelope trust, and deployment/preflight policy reuse.
 
-### 2026-09-13 — Provider, desktop, and browser trust boundaries
-Added structured provider-failure provenance, bounded remediation allowlists, generic failure-diagnostic quarantine, privacy-safe desktop exception/display projection, constrained browser product outcomes, bounded/privacy-reduced browser-goal evidence, safe legacy goal-state migration ordering, and same-process planner-history projection.
+### 2026-09-13 — Trust boundaries and browser exact-once/privacy hardening
+- Added structured provider-failure provenance, bounded remediation, generic failure-diagnostic quarantine, privacy-safe desktop exception/display projection, constrained browser product outcomes, bounded/privacy-reduced browser-goal evidence, and safe legacy goal-state migration.
+- Applied browser-goal evidence projection both durably and in-process so planner history cannot receive a more permissive surface after same-process execution.
+- Removed duplicate parent `PendingAction` retention while preserving `PendingJobId` + exact scope recovery semantics.
+- Added terminal browser checkpoint scrubbing for safely failed/cancelled jobs.
+- Added explicit ambiguous execution handling so driver-reported execution with failed verification is never auto-retried.
+- Preserved ambiguous in-flight cancellation checkpoints for recovery verification instead of trading side-effect safety for premature data deletion.
 
-### 2026-09-13 — Parent browser pending-action minimization
-- Audited every meaningful `BrowserGoalSession.PendingAction` use.
-- Confirmed parent crash recovery/approval resume needs `PendingJobId` + exact approval scope, not a duplicate action object.
-- `BrowserGoalEvidenceTrust.ProjectForPersistence(...)` now clears `PendingAction` in durable and same-process/no-store state while preserving child id, exact scope, lifecycle, budgets, history, and approval semantics.
-- Added adversarial projection coverage for typed secrets, credential-bearing URLs, private paths, rationale, and postcondition values.
-
-### 2026-09-13 — Child browser checkpoint lifetime + exact-once hardening
+### 2026-09-13 — Capability approval/audit privacy hardening
 Completed in this run:
-- Re-read this ledger and audited browser checkpoint migration, handler, orchestrator, job contracts, and focused job tests before mutation.
-- Found that terminal failed/cancelled browser child records could retain the full executable pending checkpoint containing typed values, upload/file paths, destinations, locator material, expected state, rationale, and postconditions.
-- Added `BrowserActionTerminalCheckpoint`: safely terminal browser jobs replace executable checkpoint data with fixed tombstone `browser.action.terminal.scrubbed` / `{"actionPayloadRemoved":true}` and clear obsolete approval scope. Non-browser jobs are unaffected.
-- Applied scrubbing **before persistence and return** for exhausted browser failures and safely cancellable non-in-flight browser jobs. `RetryScheduled` deliberately keeps the checkpoint because the next attempt still needs it.
-- Added regressions proving exhausted failure is scrubbed in-memory and durably, retry retains its exact checkpoint, and approval-paused cancellation scrubs checkpoint + scope.
-- Found a more severe no-replay bug during the audit: `BrowserActionJobHandler` used an ordinary exception when the driver reported success but verification failed, allowing the generic orchestrator to retry a side effect that may already have happened.
-- Added public handler contract `AmbiguousJobExecutionException`. `BrowserActionJobHandler` raises it only for driver-reported execution with inconclusive postcondition verification and no longer copies raw verification detail into that signal.
-- `ResumableJobOrchestrator` catches ambiguous execution separately, keeps state `Running`, preserves the checkpoint, clears retry scheduling, writes only fixed local diagnostic/audit text, and returns the fail-closed state. A repeated `RunNextStepAsync` returns that `Running` job without invoking the handler again.
-- Added regression proving ambiguous execution invokes the handler once, remains `Running`, preserves recovery checkpoint material, and is never auto-retried.
-- Tightened cancellation discovered during review: cancellation arriving while a browser handler is in-flight remains `Running` with fixed ambiguity text and preserved checkpoint. Explicit cancellation of a pre-existing `Running` browser job does not scrub its checkpoint; safely terminal pending/approval-waiting cancellation still does.
-- Memory, research, Nebius remote execution, non-browser retry behavior, exact approval equality, and verified browser completion were not intentionally changed.
+- Re-read this ledger and audited browser approval-scope construction, capability policy, tool execution, and durable audit emission before mutation.
+- Confirmed `CapabilityPermissionPolicy.BuildScope(...)` constructs browser approval authority only from `CapabilityId`, stable `ActionId`, and ordered `DataPermission` names. Browser typed values, upload paths, destination URLs, rationale, `UntrustedSource`, and tool arguments are not incorporated into approval scope.
+- Therefore a separate scope fingerprint is **not** currently required for browser exact approval: the existing exact scope is already a privacy-minimized authority string while preserving byte-for-byte human approval equality.
+- Found an adjacent higher-severity durable privacy gap: `CapabilityToolExecutor` wrote raw backend exception messages to `tool.execution_failed` audit summaries. Those messages can include provider/site text, credentials, private paths, page content, or forged control language.
+- Replaced raw exception audit summaries with fixed NVIDEA-authored text: `Tool execution failed after authorization; backend diagnostic text was withheld from audit.` The original exception is still rethrown to the immediate caller, so runtime error semantics are preserved without durable leakage.
+- Added `CapabilityAuditPrivacyTests` adversarial coverage proving backend exception secrets/private paths/forged approval text do not enter the failed audit event.
+- Added adversarial coverage proving a high-risk browser invocation containing a typed password, private upload path, and token-bearing untrusted URL produces an approval scope containing only `browser.agent|<actionId>|FilesRead,BrowserWrite`; the same privacy-safe scope is what the waiting-for-approval audit event receives.
+- Approval consumption, exact equality, one-shot grants, browser execution, retry/no-replay policy, and audit hash-chain/retention mechanics were not intentionally changed.
 
 Engineering commits this run before this ledger update:
-- `60d4a67f8179f3a615a8c8d67f97c784634bfbcd` — terminal browser checkpoint scrubber.
-- `6aa61e0b935aaaafe505cdf08e00f1523e966599` — initial orchestrator terminal scrubbing.
-- `ea525d6910500c333f5052e021b096a8657102a3`, `d704b370f725a8e2c40e3bc0bbf9275efe746113` — focused terminal checkpoint regressions/refinement.
-- `9c729943d18ecf282a7779668fedb6ccf7df64c1`, `5c0a5faea2d94543020b56f8faf83fa3af7ff2ff` — ambiguous-execution handler contract and public testable API.
-- `9235f677c93d307ab098d3d01d8df8c088559033` — executed-but-unverified browser actions no longer use the ordinary retry path.
-- `04920289c1924bfeb3a6ca6bccd8f48f2421e330` — orchestrator fail-closed ambiguous execution handling.
-- `92203d469c5216a854426fc8b551fea6cbe656ec` — no-auto-retry ambiguity regression.
-- `906ed8c513e714eaff3ac5d02c2000c804462b62` — preserve ambiguous in-flight cancellation evidence while retaining safe terminal scrubbing.
+- `41110106d82421d8e65e7ee1edae43d2d32df5d5` — quarantine backend exception text from capability audit.
+- `baddcbebda01a5bb41df4a120aa64f5dc2da2df0` — add adversarial capability audit/scope privacy regressions.
 
 Validation / evidence this run:
 - Verified immediately before every successful GitHub mutation that the target repository was exactly `UnknownGod2011/NVIDEA`.
-- Starting repository head was `e5b4bc531eb073a22d54ebb6052ef3bea80f1a1a`.
-- GitHub compare before this ledger commit reports **10 commits ahead / 0 behind**, touching exactly five engineering/test files: `AmbiguousJobExecutionException.cs`, `BrowserActionJobHandler.cs`, `BrowserActionTerminalCheckpoint.cs`, `ResumableJobOrchestrator.cs`, and `BrowserActionTerminalCheckpointTests.cs`.
-- Static review confirms normal retryable failures still use `RetryScheduled`; only explicit executed-but-unverified ambiguity bypasses retry and remains durable `Running` for existing ambiguous-side-effect recovery.
-- Environment check found no usable `dotnet`, `csc`, or `msbuild` executable.
-- **No compile, xUnit, WPF, Worker, evaluator, or live integration PASS is claimed.** New regressions are persisted but unexecuted here.
+- Starting repository head was `e90a2a7e06092e47dc9862beb305433a1c98e5ef`.
+- GitHub compare before this ledger commit reported **2 commits ahead / 0 behind**, touching exactly `CapabilityToolExecutor.cs` and the new `CapabilityAuditPrivacyTests.cs`.
+- Static review confirms exception propagation remains unchanged: only the durable audit summary was replaced with fixed local text.
+- Static review confirms browser exact approval scope excludes invocation summary, untrusted source, and tool arguments by construction.
+- Environment check again found no usable `dotnet`, `csc`, or `msbuild` executable.
+- **No compile, xUnit, WPF, Worker, evaluator, or live integration PASS is claimed.** The new regressions are persisted but unexecuted here.
 - No GitHub Actions workflow was triggered merely to manufacture a green signal.
 - No live Nebius, Tavily, Object Storage, Serverless, Playwright, Ollama, or paid inference operation was performed.
 
 ## Security / Privacy / Failure Review
-- Executable browser action data is retained only while pending/retry/recovery semantics require it; safe terminal failed/cancelled records use a fixed tombstone instead.
-- Executed-but-unverified side effects can no longer enter automatic retry through the generic failure path, materially strengthening exact-once/no-replay behavior for submit/send/upload-style actions.
+- Browser approval scopes are intentionally exact and byte-for-byte stable, but are now explicitly verified to contain no browser payload values or source URL data.
+- Durable capability failure audit records no longer receive raw backend exception messages, preventing credentials/private paths/site text from becoming retained evidence or accidental UI authority.
+- Executable browser action data remains only where pending/retry/ambiguous-recovery semantics require it; safe terminal records use fixed tombstones.
+- Executed-but-unverified side effects cannot enter automatic retry through the generic failure path.
 - Ambiguous execution/cancellation retains the checkpoint intentionally because fresh verification requires the intended action/postcondition; privacy minimization does not override side-effect safety.
-- `AmbiguousJobExecutionException` text is not copied into durable/audit output; fixed local strings carry the state transition so handler/provider/site text does not gain UI or control authority.
 - Exact approval comparison semantics and ephemeral single-use approval grants remain unchanged.
 - Existing encrypted transport, signed binding, remote exact-once ingestion, browser download quarantine, emergency stop, and permission UX were not removed or weakened.
 
@@ -92,7 +85,7 @@ Validation / evidence this run:
 - No usable .NET 8 executable/compiler exists in this environment, so recent Core/WPF/Worker changes still require a real restore/build/test/run before compile confidence is justified.
 - Real Windows execution remains mandatory before treating WPF voice/readiness/maintenance behavior and generated judging evidence as judge-ready.
 - Ambiguous `Running`/in-flight-cancelled browser records intentionally retain executable action material until recovery resolves the side effect. Cleanup must scrub it immediately after a trusted terminal reconciliation.
-- Browser approval `ExactScope` is intentionally preserved byte-for-byte while authority is live. Generic job audit also receives approval scope; confirm browser scopes do not embed raw typed secrets/upload material and, if necessary, introduce a privacy-safe auditable fingerprint without weakening exact human-visible approval equality.
+- Generic capability/action identifiers are still caller-supplied strings at the lower-level capability framework. The production browser path uses a fixed capability id and GUID action id, but other future capabilities should avoid placing user/provider content in those identity fields because they are part of exact approval and audit scope.
 - `BrowserHostRuntime.Describe(...)` still retains raw `LastError` in its trusted internal outcome for goal/recovery infrastructure; public browser product callers and browser-goal presentation paths are constrained, but future trusted internal consumers must not render it directly.
 - Provider catalogs can change; model listing does not prove quota, inference success, tool calling, context length, or every capability. A real Nebius inference smoke test remains required.
 - Prompt-injection detection remains heuristic; capability gates and approvals remain mandatory defense-in-depth.
@@ -100,4 +93,4 @@ Validation / evidence this run:
 - Lower-level `NebiusResearchClientRuntime.Create(...)` retains a same-key compatibility fallback for legacy unit/contract callers; production composition/preflight are stricter. Remove only after executable migration coverage exists.
 
 ## Single Best Next Task
-Obtain a real .NET 8-capable Windows restore/build/test signal and fix every compile/runtime defect exposed by recent migrations. If executable validation remains unavailable, audit **browser exact approval-scope construction and audit retention** end-to-end: prove sensitive typed values/upload material are not copied into durable audit authority strings, introduce a stable privacy-safe scope fingerprint for audit if needed while preserving byte-for-byte live approval equality, and add restart/adversarial regressions.
+Obtain a real .NET 8-capable Windows restore/build/test signal and fix every compile/runtime defect exposed by recent migrations. If executable validation remains unavailable, harden the **generic capability identity/audit boundary**: validate/bound `CapabilityId`, `ActionId`, and tool-name audit metadata so future capabilities cannot accidentally place user/provider secrets or control characters in durable approval/audit identity fields, while preserving the fixed `browser.agent` + GUID browser authority contract.

@@ -27,8 +27,9 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Provider diagnostic `message` remains separately bounded to 1024 characters and is display/audit evidence only; it is never promoted into structured failure classification.
 - `ProviderFailureCode` is valid only when `RemoteResearchProvenance.State == RemoteFailed`; inconsistent structured failure metadata is rejected at durable boundaries.
 - `NebiusFailureRemediationPolicy` remains narrower than evidence validation. Only verified local allowlist entries currently map to guidance: `NotEnoughResources` and `Quota`. Provider messages and unknown codes cannot authorize retry/resubmit/cancel, resize resources, change projects, spend money, or cause any other side effect.
-- Generic job-handler/provider exception text now crosses `JobFailureDiagnostic` before durable `LastError`: detail is bounded to 768 characters, control/whitespace characters are normalized, and an NVIDEA-owned `Execution error (untrusted):` prefix prevents generic exceptions from impersonating legacy Nebius remote-failure evidence.
+- Generic job-handler/provider exception text crosses `JobFailureDiagnostic` before durable `LastError`: detail is bounded to 768 characters, control/whitespace characters are normalized, and an NVIDEA-owned `Execution error (untrusted):` prefix prevents generic exceptions from impersonating legacy Nebius remote-failure evidence.
 - Generic exception text is no longer copied into append-only audit summaries; retry/exhaustion transitions remain driven only by exception occurrence and attempt count.
+- Product-facing WPF exception failures now cross `DesktopUiFailureProjector`, which intentionally ignores exception message/type details and emits fixed local text for invocation, browser execution/recovery/discovery, download quarantine/recovery/export/discard, and audit-retention inspection.
 - Windows voice invocation is local/review-first. Deterministic judging tools include `Nvidea.PersonalAiDemoEval`, `Nvidea.PersonalAiAdversarialEval`, `Nvidea.JudgingEvidenceVerifier`, `Nvidea.DemoPackageValidator`, and `Nvidea.NebiusModelCatalogCheck`.
 
 ## Persistent Progress History
@@ -55,26 +56,40 @@ Separated dispatch signing/verification from result encryption/decryption across
 - Unified raw `stateDetails.code` / `state_details.code` parsing with `ProviderFailureCodeTrust`; unknown bounded codes remain evidence-only.
 - Added raw JSON → parser → reconciler → CAS persistence coverage for provider failure-code canonicalization.
 
-### 2026-09-13 — Generic job diagnostic taint-boundary hardening
-Completed in this run:
+### 2026-09-13 — Generic durable diagnostic taint boundary
 - Audited `ResearchJobStatus`, `NebiusFailureRemediationPolicy`, `ResearchProductUiState`, `ResumableJobOrchestrator`, and audit persistence for remaining `LastError`/provider-text authority.
-- Confirmed research product action enabling and Nebius remediation are state/structured-provenance driven rather than display-text driven.
-- Found one remaining generic taint path: arbitrary handler exception messages were persisted verbatim in `LastError` and copied verbatim into append-only audit summaries.
-- Added `JobFailureDiagnostic` as the generic durable diagnostic boundary. It keeps at most 768 normalized characters, removes control-character/log-line structure, and prepends the fixed NVIDEA-owned `Execution error (untrusted):` marker.
-- Updated `ResumableJobOrchestrator` to preserve the existing retry/exhaustion semantics while storing only the bounded diagnostic and emitting fixed NVIDEA-authored audit summaries. Raw handler/provider exception text is no longer copied into audit evidence.
-- Added adversarial tests for oversized/control-character messages, legacy Nebius evidence-prefix spoofing, controls-only fallback, and an orchestrator integration case proving a fake `Quota` remote-failure string cannot become Nebius remediation and cannot leak into the failure audit summary.
+- Added `JobFailureDiagnostic` so arbitrary handler exception text is bounded, normalized, and visibly marked untrusted before durable persistence.
+- Removed raw handler/provider exception text from append-only audit summaries while preserving retry/exhaustion semantics.
+- Added adversarial coverage showing a fake Nebius `Quota` failure embedded in a generic exception cannot become remediation or trusted audit evidence.
+
+### 2026-09-13 — Desktop exception privacy boundary
+Completed in this run:
+- Re-read `progress.md` completely and inspected the current repository/head before changes.
+- Audited WPF/product-facing catch paths in `MainWindow.xaml.cs`, `MainWindow.Research.cs`, `MainWindow.Memory.cs`, `MainWindow.Voice.cs`, `MainWindow.Downloads.cs`, `MainWindow.Readiness.cs`, `MainWindow.Audit.cs`, and startup handling.
+- Confirmed research, memory, voice, readiness, and startup paths already used fixed/redacted user-facing failure text.
+- Found direct `Exception.Message` disclosure in main desktop invocation, browser execution, ambiguous browser recovery, recovery discovery, download quarantine snapshot/recovery/export/discard, and audit-retention inspection.
+- Added `DesktopUiFailureProjector` in `Nvidea.Core.Desktop`. The projector accepts the exception only as a required failure signal and intentionally never reads or returns its message/type/stack/payload. Each supported product surface maps to fixed NVIDEA-authored user/status text.
+- Routed the identified WPF catches through that projection boundary while preserving cancellation behavior, approval boundaries, no-replay guarantees, and download least-privilege semantics.
+- Added adversarial tests using a fake Nebius `Quota` failure, bearer secret, and private Windows path; all supported projections are required not to disclose those tokens or the original exception message.
+- Unknown projection surfaces fail closed with `ArgumentOutOfRangeException` instead of falling back to exception text.
 
 Engineering commits before this ledger update:
-- `229a2f6f4c3da5165803442e62ae6750986e6963` — add bounded generic job failure diagnostic boundary.
-- `882fd5bd6652fb55ba1d47346200d0db66d636b3` — quarantine handler/provider diagnostic text from audit summaries without changing retry semantics.
-- `207872eb1d56ac291ee84b77eaba9c30af5e6e02` — add adversarial job diagnostic taint-boundary coverage.
+- `2ddc9243da56708796ae989d149eff204b5f425d` — add privacy-safe desktop failure projection.
+- `2ca630a2469b8004d26055a4bd3432f1bc143dd4` — add adversarial projection tests.
+- `00318baebc4f522adab27070ac35a7af189cc329` — remove raw exception disclosure from invocation/browser/recovery UI.
+- `c58806c53c0a1f2ebc0dc16ba8c58029c0207ab9` — extend projection to download surfaces.
+- `8579d3dcd56be11412faf8b82d9e8efbd890bf46` — cover download projections in privacy tests.
+- `f98d22c9c1b8809df29f95363f119d0ac78897a2` — remove raw exception disclosure from download UI.
+- `831b3fb1bf2169e8601a99397bfcf3d53408cffd` — extend projection to audit viewer.
+- `6c0d42091297862ee6127cc8160d8d8f510bbe31` — cover audit projection in privacy tests.
+- `f8d4d0b9676850e4fe933797b933a27a841296db` — remove raw exception disclosure from audit-retention UI.
 
 Validation / evidence this run:
-- Re-read `progress.md` completely before implementation and inspected current commits/tree plus the research status/remediation/UI projection, generic orchestrator, audit trail, and existing orchestrator tests.
 - Verified before every GitHub mutation that the target repository was exactly `UnknownGod2011/NVIDEA`.
-- GitHub compare from prior ledger head `031c195347ed8adf0d4eb4cb7ff79c94ed972dfc` to engineering head `207872eb1d56ac291ee84b77eaba9c30af5e6e02`: **3 commits ahead / 0 behind**, changing only `JobFailureDiagnostic.cs`, `ResumableJobOrchestrator.cs`, and `JobFailureDiagnosticTests.cs`.
-- Static review confirms state transitions remain unchanged: retry vs terminal failure still depends only on attempt count after an exception; diagnostic text has no control-flow authority.
-- Static review confirms generic persisted exception text cannot start with the legacy Nebius failure-evidence prefix because the NVIDEA-owned untrusted prefix is prepended first.
+- GitHub compare from prior ledger head `f1e4cf53ebb994a77067550258a4f35d60a0be36` to engineering head `f8d4d0b9676850e4fe933797b933a27a841296db`: **9 commits ahead / 0 behind**.
+- Compare shows only five intended files changed before this ledger update: `DesktopUiFailureProjection.cs`, `MainWindow.xaml.cs`, `MainWindow.Downloads.cs`, `MainWindow.Audit.cs`, and `DesktopUiFailureProjectorTests.cs`.
+- Static review confirms exception text no longer enters those product UI catch paths; fixed guidance retains browser/download safety instructions without provider/tool/local payload disclosure.
+- Static review confirms cancellation paths remain distinct and unchanged; no consequential action, retry, replay, export, discard, or approval is authorized by the new projection layer.
 - `dotnet` and `csc` are unavailable in this execution environment; focused tests were committed but could not be executed here.
 - **No compile, xUnit, WPF, Worker, evaluator, or tool PASS is claimed.**
 - No GitHub Actions workflow was triggered merely to manufacture a green signal.
@@ -83,15 +98,13 @@ Validation / evidence this run:
 ## Security / Privacy / Failure Review
 - Provider failure `message` remains non-authoritative and is not promoted into structured provenance or product guidance.
 - `ProviderFailureCode` remains classification evidence only. Unknown/future bounded codes cannot trigger retries, resubmission, cancellation, resizing, project changes, billing actions, or other side effects.
-- One shared code-shape trust primitive covers raw Nebius provider ingestion and durable structured state, reducing policy drift between network and persistence boundaries.
 - Structured failure metadata has both shape and state invariants: it must be bounded/control-character-free and belong to `RemoteFailed` provenance.
 - Malformed or semantically inconsistent structured codes fail closed rather than falling back to legacy text.
-- Existing structured-code precedence is preserved: stale/conflicting legacy error text cannot override a valid populated structured code.
-- Legacy Nebius migration remains intentionally allowlist-only; generic exception text now carries a disjoint NVIDEA-owned prefix and cannot impersonate that evidence format.
-- Generic handler/provider diagnostics remain available in bounded `LastError` for troubleshooting, but are explicitly marked untrusted and do not enter append-only audit summaries.
-- Serverless lifecycle remains allowlisted rather than heuristic; diagnostic text cannot manufacture a terminal state.
-- Dispatch-signing/result-decryption private material remain client-local; worker/deployment plaintext receives only validated canonical public identities.
-- Existing encrypted transport, authenticated associated data, signed binding, cancellation/recovery, exact-once ingestion, Tavily/Nemotron behavior, browser safety, and Windows permission UX were not removed or weakened.
+- Legacy Nebius migration remains intentionally allowlist-only; generic exception text carries a disjoint NVIDEA-owned prefix and cannot impersonate that evidence format.
+- Generic handler/provider diagnostics remain available only in bounded durable troubleshooting state and do not enter append-only audit summaries.
+- WPF exception projection now suppresses raw exception messages across the identified desktop/browser/download/audit catch surfaces, preventing accidental display of provider payloads, credentials, local file paths, prompts, or forged failure evidence.
+- `DesktopUiFailureProjector` does not classify exceptions or select actions from exception content. It is presentation-only and has no retry, approval, browser, file, cloud, or billing authority.
+- Existing encrypted transport, authenticated associated data, signed binding, cancellation/recovery, exact-once ingestion, Tavily/Nemotron behavior, browser safety, download quarantine, and Windows permission UX were not removed or weakened.
 
 ## Known Blockers / Risks
 - No usable .NET 8 executable/compiler exists in this execution environment, so recent .NET/WPF/Worker changes still require a real restore/build/test/run before they can be considered compile-verified.
@@ -103,7 +116,7 @@ Validation / evidence this run:
 - Exact provider acceptance of Serverless Object Storage `Source` / `SourcePath` still requires a real job.
 - Only `NotEnoughResources` and `Quota` are allowlisted because those are the failure classifications verified from first-party evidence. Do not guess additional action classifications without current provider evidence or a real contract capture.
 - Lower-level `NebiusResearchClientRuntime.Create(...)` still retains a same-key compatibility fallback for legacy unit/contract callers; production live composition and deployment preflight are stricter. Remove only after executable migration coverage exists.
-- Other user-facing WPF catch/error paths may still render arbitrary local/provider `Exception.Message` text directly. That is primarily a privacy/presentation concern rather than current lifecycle authority, but should be audited and projected through explicit safe error surfaces.
+- Non-exception product text still needs a separate taint review: `DesktopAgentStatus.Detail`, browser outcome/recovery detail strings, filenames/URLs, and other runtime-provided display fields may be legitimate user-visible data but should be checked for provenance, bounds, control characters, and accidental authority before calling the desktop disclosure audit complete.
 
 ## Single Best Next Task
-Obtain a real .NET 8-capable Windows restore/build/test signal and fix every compile/runtime defect exposed by recent security/reliability migrations. If executable validation remains unavailable, audit the WPF/product-facing exception paths for raw `Exception.Message` disclosure and introduce a privacy-safe error projection so provider/tool/user-derived exception text cannot leak into desktop status/output or accidentally become future UI authority.
+Obtain a real .NET 8-capable Windows restore/build/test signal and fix every compile/runtime defect exposed by recent security/reliability migrations. If executable validation remains unavailable, perform the next desktop taint audit over non-exception runtime-provided display strings (`DesktopAgentStatus.Detail`, browser outcome/recovery details, download/browser metadata) and introduce bounded/provenance-aware projections where those values can contain provider/tool/site-controlled or private data.

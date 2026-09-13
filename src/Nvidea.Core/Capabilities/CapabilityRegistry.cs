@@ -6,17 +6,23 @@ public sealed class CapabilityRegistry : ICapabilityRegistry
 
     public CapabilityRegistry(IEnumerable<CapabilityDescriptor> descriptors)
     {
-        _descriptors = descriptors?.ToDictionary(x => x.Id, StringComparer.OrdinalIgnoreCase)
-            ?? throw new ArgumentNullException(nameof(descriptors));
-
-        if (_descriptors.Count == 0)
+        ArgumentNullException.ThrowIfNull(descriptors);
+        var validated = descriptors.ToArray();
+        if (validated.Length == 0)
             throw new ArgumentException("At least one capability must be registered.", nameof(descriptors));
+
+        foreach (var descriptor in validated)
+        {
+            ArgumentNullException.ThrowIfNull(descriptor);
+            CapabilityIdentityTrust.RequireCapabilityId(descriptor.Id, nameof(descriptors));
+        }
+
+        _descriptors = validated.ToDictionary(x => x.Id, StringComparer.OrdinalIgnoreCase);
     }
 
     public CapabilityDescriptor GetRequired(string capabilityId)
     {
-        if (string.IsNullOrWhiteSpace(capabilityId))
-            throw new ArgumentException("Capability id is required.", nameof(capabilityId));
+        CapabilityIdentityTrust.RequireCapabilityId(capabilityId, nameof(capabilityId));
 
         return _descriptors.TryGetValue(capabilityId, out var descriptor)
             ? descriptor
@@ -45,10 +51,16 @@ public sealed class CapabilityPermissionPolicy : ICapabilityPermissionPolicy
     public PermissionDecision Evaluate(CapabilityInvocation invocation)
     {
         ArgumentNullException.ThrowIfNull(invocation);
-        var descriptor = _registry.GetRequired(invocation.CapabilityId);
 
-        if (string.IsNullOrWhiteSpace(invocation.ActionId))
-            return Deny("Every invocation needs a stable action id for approval/audit scoping.");
+        // Identity fields participate directly in exact approval authority and durable
+        // audit evidence. Reject non-canonical/unbounded values before registry lookup
+        // or scope construction; never trim/sanitize them into a different authority.
+        if (!CapabilityIdentityTrust.IsValidCapabilityId(invocation.CapabilityId))
+            return Deny("Invocation capability id is not a valid bounded identity token.");
+        if (!CapabilityIdentityTrust.IsValidActionId(invocation.ActionId))
+            return Deny("Every invocation needs a valid bounded stable action id for approval/audit scoping.");
+
+        var descriptor = _registry.GetRequired(invocation.CapabilityId);
 
         if (!invocation.RequestedPermissions.IsSubsetOf(descriptor.Permissions))
             return Deny("Invocation requested permissions not declared by the registered capability.");

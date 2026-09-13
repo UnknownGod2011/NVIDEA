@@ -119,8 +119,12 @@ public sealed class BrowserActionJobHandler : IAgentJobHandler
 
         if (!receipt.Verified)
         {
-            throw new InvalidOperationException(
-                $"Browser action executed but verification failed: {receipt.VerificationDetail ?? "no verification detail"}");
+            // The driver says the side effect was issued, but fresh observation did not prove
+            // the intended postcondition. Retrying can duplicate submits/sends/uploads/etc.
+            // Signal ambiguity explicitly so the orchestrator leaves the durable Running
+            // checkpoint available for recovery instead of entering automatic retry.
+            throw new AmbiguousJobExecutionException(
+                "Browser action may have executed but its post-action state was not verified.");
         }
 
         return new JobStepResult(

@@ -28,7 +28,6 @@ public sealed record NebiusRemoteJobSnapshot(
 
 public static class NebiusServerlessJobSnapshotParser
 {
-    private const int MaxDiagnosticCodeLength = 128;
     private const int MaxDiagnosticMessageLength = 1024;
 
     public static IReadOnlyList<NebiusRemoteJobSnapshot> ParseList(NebiusServerlessResponse response)
@@ -115,7 +114,7 @@ public static class NebiusServerlessJobSnapshotParser
         if (!TryGetStateDetails(status, out var details))
             return null;
 
-        if (!TryReadBoundedDiagnosticField(details, "code", MaxDiagnosticCodeLength, out var code)
+        if (!TryReadProviderFailureCode(details, out var code)
             || !TryReadBoundedDiagnosticField(details, "message", MaxDiagnosticMessageLength, out var message))
         {
             return null;
@@ -138,6 +137,17 @@ public static class NebiusServerlessJobSnapshotParser
 
         details = hasCamelCase ? camelCaseDetails : snakeCaseDetails;
         return details.ValueKind == JsonValueKind.Object;
+    }
+
+    private static bool TryReadProviderFailureCode(JsonElement element, out string? value)
+    {
+        value = null;
+        if (!element.TryGetProperty("code", out var property))
+            return true;
+        if (property.ValueKind != JsonValueKind.String)
+            return false;
+
+        return ProviderFailureCodeTrust.TryCanonicalize(property.GetString(), out value);
     }
 
     private static bool TryReadBoundedDiagnosticField(

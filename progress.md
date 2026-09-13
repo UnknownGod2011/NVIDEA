@@ -23,8 +23,8 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Exact browser approval scopes contain only capability id + stable action id + ordered permissions; typed values, uploads, rationale, page/source URLs, and tool arguments are excluded.
 - Capability/action/tool identity authority is bounded canonical ASCII and reject-only; malformed identity is rejected before policy/scope/backend/audit execution.
 - `JsonLinesAuditTrail` enforces identity and semantic payload trust on append, protected/hash-chained reload, and legacy migration; `BoundedSegmentedAuditTrail` also enforces byte/retention ceilings.
-- `ResumableJobOrchestrator`, `NebiusResearchLifecycleReconciler`, and `RemoteResearchResultIngestor` validate prospective audit events before the durable state transitions they describe.
-- `ResearchCloudExecutionCoordinator` now additionally preflights the exact dynamic reservation-audit shape before handing a research stage to the remote runtime, preventing deterministic audit rejection from causing encrypted transport/provider side effects first.
+- `ResumableJobOrchestrator`, `NebiusResearchLifecycleReconciler`, and `RemoteResearchResultIngestor` validate prospective audit events before durable state transitions they describe.
+- Remote dispatch now has two pre-side-effect guard layers: `ResearchCloudExecutionCoordinator` preflights the reservation audit before entering the remote runtime, and `TwoPhaseNebiusResearchDispatcher` independently asks `RemoteResearchResultIngestor` to perform a no-mutation reservation/audit preflight before encrypted upload. `ReserveDispatchAsync` still reloads and validates again immediately before CAS.
 - Windows voice invocation is local/review-first. Deterministic judging tools include `Nvidea.PersonalAiDemoEval`, `Nvidea.PersonalAiAdversarialEval`, `Nvidea.JudgingEvidenceVerifier`, `Nvidea.DemoPackageValidator`, and `Nvidea.NebiusModelCatalogCheck`.
 
 ## Persistent Progress History
@@ -56,52 +56,59 @@ Added research/browser product runtimes, WPF lifecycle integration, restart-safe
 - `NebiusResearchLifecycleReconciler` validates cancellation/terminal audit events before CAS transitions and no longer persists provider-controlled diagnostic messages; only bounded provider failure codes can enter fixed NVIDEA-authored durable evidence.
 - `RemoteResearchResultIngestor` validates reserve, attach, and protected-result audit events before CAS. Result cleanup remains after successful CAS + audit append.
 - Added focused regressions proving malformed audit authority cannot reserve, attach, apply, clean up encrypted results, commit terminal lifecycle state, or trigger the Nebius cancellation control plane.
-- Relevant prior commits: `5569c5f998483f99fe27258e83ccfaf8a8246849`, `76b00276d33658d2b1bbd869d5b7d5db815cb6a4`, `6354f8b1aafc2921467523e200ecd8a470d8311c`, ledger `517a443e961cbd56adff9282caabea3496f6141e`.
+- Relevant commits include `5569c5f998483f99fe27258e83ccfaf8a8246849`, `76b00276d33658d2b1bbd869d5b7d5db815cb6a4`, `6354f8b1aafc2921467523e200ecd8a470d8311c`, ledger `517a443e961cbd56adff9282caabea3496f6141e`.
 
-### 2026-09-13 — Pre-dispatch remote side-effect audit preflight (latest run)
+### 2026-09-13 — Product-level pre-dispatch audit preflight
+- `ResearchCloudExecutionCoordinator.DispatchCurrentStageAsync(...)` validates the prospective reservation audit after exact cloud authorization and before `_remote.DispatchAsync(...)`.
+- Added a regression proving malformed durable capability identity yields zero remote-runtime calls and leaves the research job Pending/Local with no remote provenance.
+- Commits: `2e4766e3d4fe085275ad05a7a845d9b65284b877`, `866521ed39f658c62f501ab8de097f7d96359244`, ledger `471888a168800467b9e5017578bd5f4706c4b87e`.
+
+### 2026-09-13 — Lower-layer two-phase pre-upload hardening (latest run)
 Completed:
-- Re-read this ledger completely and inspected current head/recent commits, `TwoPhaseNebiusResearchDispatcher`, `ResearchCloudExecutionCoordinator`, `RemoteResearchResultIngestor`, `AuditEventTrust`, and the focused coordinator/two-phase tests before changing code.
-- Confirmed a remaining ordering gap at the product dispatch boundary: `TwoPhaseNebiusResearchDispatcher.PrepareAsync(...)` protects and uploads the encrypted work item before `RemoteResearchResultIngestor.ReserveDispatchAsync(...)` validates the reservation audit contract. Reservation failure attempts best-effort cleanup, but deterministic malformed audit authority could still create an unnecessary remote/object-store artifact first and cleanup itself can fail.
-- Preserved the critical existing exact-once rule that the durable `DispatchReserved` state must exist before Nebius Serverless `CreateAsync` is allowed.
-- Hardened `ResearchCloudExecutionCoordinator.DispatchCurrentStageAsync(...)` to construct and validate the same dynamic reservation-audit shape used by `RemoteResearchResultIngestor` immediately after exact cloud authorization validation and **before** `_remote.DispatchAsync(...)`.
-- The preflight covers capability id, action id (`jobId` in GUID-N form), event type, risk, summary, and the exact `jobType/state/executionLocation/attempt` metadata shape expected for `research.remote_dispatch_reserved`.
-- Validation is reject-only: it does not trim, normalize, rewrite, or broaden authority.
-- Added `Malformed_reservation_audit_identity_fails_before_remote_runtime_or_state_mutation` to `ResearchCloudExecutionCoordinatorTests`. The regression corrupts only the durable capability id with a newline-bearing identity, supplies otherwise-valid exact-stage cloud authorization, and requires rejection before the remote runtime is entered. It also requires the research job to remain `Pending`, `Local`, and without remote provenance.
+- Re-read this ledger completely and inspected current head/recent commits plus `RemoteResearchResultIngestor`, `TwoPhaseNebiusResearchDispatcher`, coordinator regressions, and existing two-phase dispatch tests before changing code.
+- Confirmed the lower-level bypass: a future direct caller of `TwoPhaseNebiusResearchDispatcher.DispatchWithReservationAsync(...)` could previously execute `PrepareAsync(...)` and `_transport.PutAsync(...)` before `ReserveDispatchAsync(...)` rejected malformed durable audit identity or deterministic ineligible state. Cleanup was best-effort, so product-level guarding alone was not sufficient as an invariant.
+- Added `RemoteResearchResultIngestor.PreflightDispatchReservationAsync(localJobId, checkpointStep)`. It loads the durable research job, applies the same deterministic reservation eligibility checks used by the real reservation path, projects the prospective `research.remote_dispatch_reserved` audit shape, and runs `AuditEventTrust.ValidateForPersistence(...)`. It performs no state mutation, no audit append, no transport operation, and no provider call.
+- Refactored reservation eligibility into one `ValidateDispatchReservationTarget(...)` helper so preflight and real reservation cannot drift on pending/local state, unfinished remote provenance, approval-bearing work, checkpoint existence, or exact checkpoint-step matching.
+- `ReserveDispatchAsync(...)` still reloads current state and repeats eligibility + audit validation before CAS. The preflight therefore reduces deterministic pre-upload failures without weakening race/concurrency safety.
+- `TwoPhaseNebiusResearchDispatcher.DispatchWithReservationAsync(...)` now executes: exact cloud authorization validation -> no-mutation reservation/audit preflight -> encryption/upload -> durable `DispatchReserved` CAS -> Nebius `CreateAsync` -> durable remote-id attachment -> optional binding publication.
+- `PrepareAsync(...)` still validates authorization again before protection/upload, preserving authorization defense in depth.
+- Added `DispatchWithReservationAsync_MalformedReservationAuditFailsBeforeUploadOrNebius`. It corrupts only the persisted research capability id with newline-bearing authority and requires rejection with **zero work-item `PutAsync` calls**, zero retained work items, **zero Nebius `CreateAsync` calls**, zero audit records, and unchanged durable state (`Pending`, `Local`, attempt 0, no remote provenance).
+- Instrumented the in-memory work-item transport with an explicit `PutCalls` counter so a put-then-delete sequence cannot falsely satisfy a `Count == 0` assertion.
+- Existing ineligible-state test now also verifies zero upload calls under the new preflight ordering.
 
 Engineering commits this run before this ledger update:
-- `2e4766e3d4fe085275ad05a7a845d9b65284b877` — preflight remote research reservation audit before dispatch.
-- `866521ed39f658c62f501ab8de097f7d96359244` — reject malformed reservation audit before remote dispatch.
+- `3214213a7402cdeb0bdee679d3cfecc9e05464fa` — add no-mutation remote dispatch reservation preflight.
+- `ca63342fb1c9a31fa58457d1473782b731946c2f` — preflight reservation before encrypted remote upload.
+- `9e7419edfd607b4cdc11356de137396657b26a4f` — prove malformed reservation audit cannot upload or dispatch.
 
 Validation / evidence this run:
 - Verified before every GitHub mutation that repository metadata reported exactly `repository_full_name: UnknownGod2011/NVIDEA`, default branch `main`.
-- Starting head: `517a443e961cbd56adff9282caabea3496f6141e`.
-- GitHub compare from starting head to engineering head `866521ed39f658c62f501ab8de097f7d96359244` reports **2 commits ahead / 0 behind** and exactly two intended files changed: `ResearchCloudExecutionCoordinator.cs` and `ResearchCloudExecutionCoordinatorTests.cs`.
-- Static ordering evidence: `ResearchWorkItemProtector.ValidateAuthorization(...)` still runs first; then `ValidateDispatchReservationAudit(current)` invokes `AuditEventTrust.ValidateForPersistence(...)`; only after both succeed can `_remote.DispatchAsync(...)` run.
-- This means the production coordinator cannot enter the remote runtime—and therefore cannot reach two-phase encryption/upload or Nebius create—when the deterministic reservation audit contract is malformed.
-- Existing lower-layer `RemoteResearchResultIngestor.ReserveDispatchAsync(...)` still validates the actual prospective audit again immediately before CAS, preserving defense in depth if state changed or a lower layer is invoked outside the coordinator.
-- Environment probe found no usable `dotnet`, `csc`, `msbuild`, or `mcs` executable.
-- **No compile, xUnit, WPF, Worker, evaluator, or live integration PASS is claimed.** The new test is persisted but unexecuted in this environment.
+- Starting head: `471888a168800467b9e5017578bd5f4706c4b87e`.
+- GitHub compare from starting head to engineering head `9e7419edfd607b4cdc11356de137396657b26a4f` reports **3 commits ahead / 0 behind** and exactly three intended files changed: `RemoteResearchResultIngestor.cs`, `TwoPhaseNebiusResearchDispatcher.cs`, and `TwoPhaseNebiusResearchDispatcherTests.cs`.
+- Static ordering evidence: lower-level dispatcher validates cloud authorization and awaits `PreflightDispatchReservationAsync(...)` before it can call `PrepareAsync(...)`; `PrepareAsync(...)` is the only path in this dispatcher that calls `_transport.PutAsync(...)`.
+- Static defense-in-depth evidence: `ReserveDispatchAsync(...)` independently reloads state, reruns `ValidateDispatchReservationTarget(...)`, constructs the actual replacement + audit, validates that audit, and only then attempts CAS.
+- Environment probe again found no usable `dotnet`, `csc`, `msbuild`, or `mcs` executable.
+- **No compile, xUnit, WPF, Worker, evaluator, or live integration PASS is claimed.** New tests are persisted but unexecuted in this environment.
 - No GitHub Actions workflow was triggered merely to manufacture a green signal.
 - No live Nebius, Tavily, Object Storage, Serverless, Playwright, Ollama, or paid inference operation was performed.
 
 ## Security / Privacy / Failure Review
-- Producer-side audit prevalidation plus sink-side audit validation remains defense in depth; neither layer normalizes approval/capability authority.
-- Exact cloud authorization is still checked against local job/checkpoint/lifetime before remote dispatch.
-- The new coordinator guard specifically prevents a deterministic malformed audit contract from causing encrypted work-item upload/provider work first in the production dispatch path.
-- Two-phase serverless semantics remain intact: encrypted preparation can precede reservation only after product-level audit preflight; durable `DispatchReserved` must still precede Nebius `CreateAsync`; remote-id attachment still follows create; binding publication still follows durable attachment.
-- A lower-level caller that bypasses `ResearchCloudExecutionCoordinator` can still invoke `TwoPhaseNebiusResearchDispatcher` directly and therefore still relies on post-upload reservation validation plus best-effort cleanup. This is intentionally recorded as remaining work rather than overstating the fix.
-- Audit append/storage I/O can still fail independently after a semantically prevalidated state transition. Semantic prevalidation removes deterministic contract rejection after mutation but does not create an atomic transaction across the job store and audit filesystem.
+- Exact cloud authorization remains reject-only and is checked before any remote preparation. The lower dispatcher now independently enforces deterministic reservation/audit trust before remote storage side effects.
+- The durable `DispatchReserved` state still precedes Nebius `CreateAsync`; this critical no-replay invariant was not weakened.
+- Remote-id binding still publishes only after durable attachment, so the worker cannot gain authoritative remote identity from a pre-attachment binding.
+- The new preflight intentionally does not reserve state. A concurrent local state change can still occur after preflight and before `ReserveDispatchAsync`; the real reservation reload/CAS then fails and uploaded ciphertext is best-effort deleted. This race cannot cause Nebius creation because `StartPreparedAsync` remains after successful durable reservation.
+- Audit append/storage I/O can still fail independently after a semantically prevalidated CAS. Semantic prevalidation prevents deterministic trust-contract rejection after mutation but does not provide a cross-store atomic transaction.
 - Existing browser ambiguous-execution recovery, emergency stop, permission gating, terminal checkpoint scrubbing, encrypted research transport, and local/cloud separation were not weakened.
 
 ## Known Blockers / Risks
 - No usable .NET 8 executable/compiler exists in this environment, so recent Core/WPF/Worker changes still require a real restore/build/test/run before compile confidence is justified.
-- The new coordinator regression is statically reviewed but unexecuted until a .NET environment is available.
-- Direct lower-level use of `TwoPhaseNebiusResearchDispatcher` can still upload encrypted work before reservation-audit validation. Production composition is now guarded by the coordinator, but the invariant should be pushed into the lower layer so it cannot be bypassed accidentally.
-- Other direct `AuditEvent`/`IAuditTrail.AppendAsync` producers may still need ordering review.
+- The new lower-layer regressions are statically reviewed but unexecuted until a .NET environment is available.
+- A state race after no-mutation preflight but before real reservation can still upload an encrypted work item that then requires best-effort cleanup; Nebius creation remains blocked unless durable reservation succeeds.
 - Audit append/storage I/O is not transactionally coupled to the job store.
+- Other direct `AuditEvent` / `IAuditTrail.AppendAsync` producers may still need ordering review.
 - Provider catalogs can change; model listing does not prove quota, inference success, tool calling, context length, or every capability. A real Nebius inference smoke test remains required.
 - Prompt-injection detection remains heuristic; capability gates and approvals remain mandatory defense in depth.
 - Real Windows UX, embedding ranking, Playwright authenticated-session behavior, and Nebius Object Storage/Serverless execution still require live environment validation.
 
 ## Single Best Next Task
-Push the new pre-dispatch invariant down into the **lower-level two-phase dispatch boundary** so it cannot be bypassed by a future direct caller: add a no-mutation reservation/audit preflight API to `RemoteResearchResultIngestor` (sharing the same candidate/audit construction logic as `ReserveDispatchAsync`), call it from `TwoPhaseNebiusResearchDispatcher.DispatchWithReservationAsync(...)` **before** `PrepareAsync(...)` uploads encrypted work, and add a focused regression proving malformed durable audit identity yields zero transport `PutAsync`, zero Nebius `CreateAsync`, and unchanged local state. Preserve the existing second validation immediately before CAS. If a real .NET 8 Windows build environment becomes available first, run restore/build/Core tests/WPF build/Worker build and record exact failures rather than assuming success.
+If a real .NET 8 Windows build environment becomes available, immediately run restore/build/Core tests/WPF build/Worker build and record exact failures rather than assuming success. Otherwise perform a targeted **remaining direct-audit-producer ordering audit**: enumerate every `AuditEvent` / `IAuditTrail.AppendAsync` producer outside the already-hardened resumable-job, browser-capability, Nebius lifecycle, remote-result, coordinator, and two-phase paths; identify any producer where malformed dynamic audit data can still be discovered only after durable or external side effects; harden the highest-risk path with producer-side `AuditEventTrust` prevalidation and adversarial no-side-effect tests. Do not duplicate policy where sink validation is sufficient and no mutation/side effect precedes append.

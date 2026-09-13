@@ -16,6 +16,13 @@ public static class RemoteResearchFailureProvenanceMigration
             return record;
 
         var canonicalCode = ProviderFailureCodeTrust.CanonicalizeOrThrow(provenance.ProviderFailureCode);
+        if (canonicalCode is not null
+            && provenance.State != RemoteResearchProvenanceState.RemoteFailed)
+        {
+            throw new InvalidDataException(
+                "Provider failure code is only valid for RemoteFailed remote research provenance.");
+        }
+
         if (!string.Equals(canonicalCode, provenance.ProviderFailureCode, StringComparison.Ordinal))
         {
             record = record with

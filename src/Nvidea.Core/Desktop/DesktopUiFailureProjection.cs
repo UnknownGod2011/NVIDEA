@@ -10,6 +10,7 @@ public enum DesktopUiFailureSurface
     DownloadRecovery = 5,
     DownloadExport = 6,
     DownloadDiscard = 7,
+    AuditStatus = 8,
 }
 
 public sealed record DesktopUiFailureProjection(
@@ -62,6 +63,10 @@ public static class DesktopUiFailureProjector
             DesktopUiFailureSurface.DownloadDiscard => new(
                 "Download discard failed safely. No broader delete permission was granted, and raw browser/local exception details were withheld.",
                 "Download — discard failed safely"),
+
+            DesktopUiFailureSurface.AuditStatus => new(
+                "Audit retention status could not be read safely. Raw local-store and diagnostic exception details were withheld.",
+                "Audit — read-only status failed safely"),
 
             _ => throw new ArgumentOutOfRangeException(nameof(surface), surface, "Unknown desktop failure surface."),
         };

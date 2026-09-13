@@ -325,7 +325,13 @@ public sealed class NebiusTokenFactoryClient : IAgentInferenceClient
 
 public sealed class NebiusApiException : Exception
 {
+    private const string QuarantinedResponseDiagnostic = "Provider response diagnostics quarantined.";
+
     public HttpStatusCode StatusCode { get; }
+
+    // Retained for API compatibility, but intentionally never contains the raw
+    // provider response body. Provider error bodies can echo credentials, signed
+    // URLs, prompts, or other sensitive data and must not cross this boundary.
     public string ResponseExcerpt { get; }
 
     private NebiusApiException(HttpStatusCode statusCode, string responseExcerpt)
@@ -337,9 +343,7 @@ public sealed class NebiusApiException : Exception
 
     public static NebiusApiException FromResponse(HttpStatusCode statusCode, string body)
     {
-        var sanitized = (body ?? string.Empty).ReplaceLineEndings(" ").Trim();
-        if (sanitized.Length > 2000)
-            sanitized = sanitized[..2000];
-        return new NebiusApiException(statusCode, sanitized);
+        _ = body;
+        return new NebiusApiException(statusCode, QuarantinedResponseDiagnostic);
     }
 }

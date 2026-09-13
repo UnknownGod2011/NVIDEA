@@ -78,6 +78,12 @@ public sealed class BoundedSegmentedAuditTrail : IAuditTrail
     public async Task AppendAsync(AuditEvent auditEvent, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(auditEvent);
+
+        // The production facade is also the semantic trust boundary for descriptive audit fields.
+        // Reject before measurement, locking, reads, directory creation, rotation, or persistence so
+        // control text, secret-labelled metadata and storage-amplification payloads have no side effect.
+        AuditPayloadTrust.ValidateForPersistence(auditEvent, nameof(auditEvent));
+
         var eventBytes = MeasurePayloadBytes(auditEvent);
         if (eventBytes > _payloadPolicy.MaxEventPayloadBytes)
         {

@@ -166,7 +166,70 @@ public sealed class TwoPhaseNebiusResearchDispatcherTests
                 dispatcher.DispatchWithReservationAsync(workItem, authorization, ingestor));
 
             Assert.Equal(0, serverless.CreateCalls);
+            Assert.Equal(0, transport.PutCalls);
             Assert.Equal(0, transport.Count);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task DispatchWithReservationAsync_MalformedReservationAuditFailsBeforeUploadOrNebius()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            using var workerRsa = RSA.Create(2048);
+            using var clientRsa = RSA.Create(2048);
+            var store = new JsonAgentJobStore(Path.Combine(root, "jobs.json"), new PassThroughProtector());
+            var transport = new MemoryWorkItemTransport();
+            var audit = new MemoryAuditTrail();
+            var now = DateTimeOffset.UtcNow;
+            var job = CreatePendingJob(now);
+            job = job with
+            {
+                Definition = job.Definition with { CapabilityId = "research.deep\nforged" }
+            };
+            await store.SaveAsync(job);
+
+            var serverless = new InspectingServerlessClient(_ => throw new InvalidOperationException("must not be called"));
+            var ingestor = new RemoteResearchResultIngestor(
+                store,
+                new EmptyResultTransport(),
+                clientRsa.ExportPkcs8PrivateKeyPem(),
+                audit,
+                transport);
+            var dispatcher = new TwoPhaseNebiusResearchDispatcher(serverless, transport, CreateOptions(workerRsa));
+            var workItem = new RemoteResearchWorkItem(
+                job.JobId,
+                job.Checkpoint!.Step,
+                job.Checkpoint.Payload,
+                false,
+                now,
+                now.AddHours(1));
+            var authorization = new ResearchCloudAuthorization(
+                job.JobId,
+                job.Checkpoint.Step,
+                true,
+                ResearchWorkItemProtector.DisclosureVersion,
+                now);
+
+            await Assert.ThrowsAnyAsync<ArgumentException>(() =>
+                dispatcher.DispatchWithReservationAsync(workItem, authorization, ingestor));
+
+            Assert.Equal(0, transport.PutCalls);
+            Assert.Equal(0, transport.Count);
+            Assert.Equal(0, serverless.CreateCalls);
+            Assert.Empty(audit.Events);
+
+            var persisted = await store.GetAsync(job.JobId);
+            Assert.NotNull(persisted);
+            Assert.Equal(AgentJobState.Pending, persisted!.State);
+            Assert.Equal(JobExecutionLocation.Local, persisted.ExecutionLocation);
+            Assert.Equal(0, persisted.Attempt);
+            Assert.Null(persisted.RemoteResearch);
         }
         finally
         {
@@ -231,11 +294,13 @@ public sealed class TwoPhaseNebiusResearchDispatcherTests
     private sealed class MemoryWorkItemTransport : IProtectedResearchWorkItemTransport
     {
         private readonly Dictionary<string, ProtectedResearchWorkItemEnvelope> _items = new(StringComparer.Ordinal);
+        public int PutCalls { get; private set; }
         public int Count => _items.Count;
         public bool Contains(string id) => _items.ContainsKey(id);
 
         public Task PutAsync(ProtectedResearchWorkItemEnvelope envelope, CancellationToken cancellationToken = default)
         {
+            PutCalls++;
             _items[envelope.OpaqueWorkItemId] = envelope;
             return Task.CompletedTask;
         }

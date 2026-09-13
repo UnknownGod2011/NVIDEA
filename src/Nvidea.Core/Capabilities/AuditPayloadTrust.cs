@@ -9,7 +9,7 @@ public static class AuditPayloadTrust
 {
     public const int MaxEventTypeLength = 96;
     public const int MaxApprovalScopeLength = 512;
-    public const int MaxSummaryLength = 1_024;
+    public const int MaxSummaryLength = 16_384;
     public const int MaxMetadataEntries = 16;
     public const int MaxMetadataKeyLength = 64;
     public const int MaxMetadataValueLength = 512;

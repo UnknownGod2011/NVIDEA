@@ -36,6 +36,7 @@ public sealed class BrowserGoalImmediateEvidenceTrustTests
         Assert.Equal(BrowserGoalStatus.WaitingForApproval, result.Status);
         Assert.Equal(exactScope, result.PendingExactScope);
         Assert.Equal(jobId, result.PendingJobId);
+        Assert.Null(result.PendingAction);
         Assert.NotNull(result.Detail);
         Assert.True(result.Detail!.Length <= BrowserGoalEvidenceTrust.MaxSessionDetailCharacters);
         Assert.DoesNotContain('\r', result.Detail);

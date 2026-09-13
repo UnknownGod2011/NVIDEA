@@ -48,6 +48,9 @@ public sealed class BrowserCapabilityBackend : ICapabilityToolBackend
 /// </summary>
 public sealed class BrowserCapabilityExecutionService
 {
+    private const string PostExecutionDiagnostic =
+        "Browser action executed but post-action observation or verification failed. Raw driver/site diagnostics are quarantined.";
+
     private readonly string _capabilityId;
     private readonly IBrowserDriver _driver;
     private readonly BrowserSafetyPolicy _browserSafety;
@@ -178,7 +181,7 @@ public sealed class BrowserCapabilityExecutionService
         {
             throw;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             return new BrowserCapabilityExecutionResult(
                 new BrowserActionReceipt(
@@ -189,10 +192,10 @@ public sealed class BrowserCapabilityExecutionService
                     DateTimeOffset.UtcNow,
                     DriverReportedSuccess: true,
                     Verified: false,
-                    VerificationDetail: "Browser action executed but post-action observation or verification failed.",
+                    VerificationDetail: PostExecutionDiagnostic,
                     before.Url,
                     before.Url,
-                    ex.Message),
+                    PostExecutionDiagnostic),
                 RequiresApproval: false);
         }
     }

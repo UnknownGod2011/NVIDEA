@@ -21,7 +21,7 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Trust boundaries include `ProviderFailureCodeTrust`, `JobFailureDiagnostic`, `DesktopUiFailureProjector`, `DesktopDisplayTextTrust`, `BrowserProductOutcomeTrust`, `BrowserGoalEvidenceTrust`, `CapabilityIdentityTrust`, `AuditPayloadTrust`, and `AuditEventTrust`.
 - Exact browser approval scopes exclude typed values, uploads, rationale, page/source URLs, and tool arguments.
 - `JsonLinesAuditTrail` enforces identity and semantic payload trust on append, protected/hash-chained reload, and legacy migration; `BoundedSegmentedAuditTrail` also enforces byte/retention ceilings.
-- `ResumableJobOrchestrator`, Nebius lifecycle reconciliation, remote-result ingestion, coordinator dispatch, and two-phase dispatch validate prospective audit events before the durable/external transitions they describe.
+- `ResumableJobOrchestrator`, Nebius lifecycle reconciliation, remote-result ingestion, coordinator dispatch, two-phase dispatch, browser download handoff/discard, and generic capability execution now validate prospective audit events before the durable/external/approval transition they describe.
 - Remote dispatch ordering is: exact cloud authorization -> no-mutation reservation/audit preflight -> encrypt/upload -> durable `DispatchReserved` -> Nebius create -> durable remote-id attachment -> optional binding publication.
 - Windows voice invocation is local/review-first. Deterministic judging tools include `Nvidea.PersonalAiDemoEval`, `Nvidea.PersonalAiAdversarialEval`, `Nvidea.JudgingEvidenceVerifier`, `Nvidea.DemoPackageValidator`, and `Nvidea.NebiusModelCatalogCheck`.
 
@@ -39,36 +39,40 @@ Added `AuditPayloadTrust` and `AuditEventTrust`; enforced them in `JsonLinesAudi
 ### 2026-09-13 — Nebius remote-research ordering hardening
 Hardened lifecycle cancellation/terminal transitions, quarantined provider diagnostic messages, and validated reserve/attach/result audit events before CAS. Added product-level and lower-level pre-dispatch audit preflight so malformed durable authority cannot reach encrypted upload or Nebius creation in deterministic cases. `RemoteResearchResultIngestor.PreflightDispatchReservationAsync(...)` is no-mutation; `ReserveDispatchAsync(...)` still reloads and revalidates immediately before CAS.
 
-### 2026-09-14 — Consequential download approval/audit ordering (latest run)
+### 2026-09-14 — Consequential browser approval/audit ordering
+Hardened browser download handoff and discard so the exact `*.started` audit event is validated before a single-use approval is consumed, and the same event instance is then appended before export/delete.
+
+### 2026-09-14 — Generic capability approval/audit ordering (latest run)
 Completed:
-- Re-read this ledger completely and inspected the current NVIDEA head plus remaining direct audit producers in browser download handoff/discard paths.
-- Identified a transaction-ordering weakness: `BrowserDownloadHandoffService.ExportAsync(...)` and `BrowserDownloadDiscardService.DiscardAsync(...)` consumed the short-lived single-use approval via `ScopedApprovalAuthorizer.TryAuthorize(...)` before the corresponding `*.started` audit event had been semantically validated. A deterministic malformed audit contract could therefore burn a valid user approval even though the file export/delete side effect never began.
-- Refactored both services to construct the exact prospective `*.started` `AuditEvent`, run `AuditEventTrust.ValidateForPersistence(...)`, and only then attempt to consume the exact approval.
-- The same prevalidated event instance is appended immediately after successful authorization and before the actual quarantine export/discard side effect. This avoids validation drift between preflight and append.
-- Extracted per-service `CreateAuditEvent(...)` helpers so regular audit emission and preflight use exactly the same event shape.
-- Exact approval scope generation, policy evaluation, destination binding, digest binding, hash/path verification, single-use semantics, and quarantine side-effect implementations were not changed.
+- Re-read this ledger and inspected the current NVIDEA head plus the generic `CapabilityToolExecutor` authorization/audit ordering.
+- Found a remaining generic transaction-ordering defect: for approval-gated tool calls, `ScopedApprovalAuthorizer.TryAuthorize(...)` could consume a short-lived single-use grant before the corresponding `tool.execution_started` audit event had passed semantic trust validation.
+- Refactored `CapabilityToolExecutor` to construct the exact `tool.execution_started` `AuditEvent`, validate it via `AuditEventTrust.ValidateForPersistence(...)`, and only then attempt approval consumption.
+- The same prevalidated event instance is appended immediately after successful authorization and before the concrete backend tool call. Non-approval calls also benefit: malformed deterministic start-audit data is rejected before backend execution.
+- Extracted `CreateAuditEvent(...)` so start preflight and normal audit emission share one event-construction path and cannot drift structurally.
+- Added `MalformedExecutionStartedAudit_DoesNotConsumeSingleUseApprovalOrExecuteBackend` in `CapabilityAuditPrivacyTests`. It injects a newline-bearing forged approval scope through a custom permission policy, requires `ArgumentException`, zero backend executions, zero audit appends, then proves the grant is still usable exactly once afterward.
 
 Engineering commits this run before this ledger update:
-- `32648a36fcb36286b675e939535847dc685b1f34` — prevalidate download handoff audit before consuming approval.
-- `380ee113d541c40081c46282fb5ee6769042633e` — prevalidate download discard audit before consuming approval.
+- `98a60cccd0770c172c27d33a7c212412a8acb811` — prevalidate tool-start audit before consuming approval.
+- `ac3adf77d3e41be50264be9b54760a3a98355ac6` — regression proving approval remains unconsumed on audit rejection.
 
 Validation / evidence this run:
 - Before every GitHub mutation, repository metadata reported exactly `repository_full_name: UnknownGod2011/NVIDEA`, default branch `main`.
-- Starting head was `cdcc71f8434122b329794815d64ce5016c22d4ff`.
-- Static ordering review confirms both consequential services now execute: rebuild current plan -> exact-plan equivalence check -> construct started audit -> `AuditEventTrust.ValidateForPersistence(...)` -> consume exact approval -> append that same event -> perform file export/delete.
+- Starting head was `59fc9707a30ff99fc84b2ab15a890ff99bb3258b`.
+- Static ordering review confirms generic capability execution now follows: validate capability/action/tool identity -> evaluate current policy -> construct exact start audit -> `AuditEventTrust.ValidateForPersistence(...)` -> consume exact approval when required -> append same start audit -> execute backend.
+- The adversarial test directly checks the single-use grant remains unconsumed after deterministic audit rejection.
 - This run did not mutate `UnknownGod2011/keyboard.wtf` or any other repository.
 - No GitHub Actions workflow, live Nebius, Tavily, Object Storage, Serverless, Playwright, Ollama, or paid inference operation was triggered.
-- A usable .NET compiler/runtime was still not available to this execution environment, so **no compile, xUnit, WPF, Worker, evaluator, or live integration PASS is claimed**. The changes were statically reviewed only.
+- `dotnet`, `csc`, `msbuild`, and `mcs` were not present in the execution environment, so **no compile, xUnit, WPF, Worker, evaluator, or live integration PASS is claimed**. Changes were statically reviewed only.
 
 ## Security / Privacy / Failure Review
-- Consequential download approvals are now not consumed before deterministic audit-contract validation succeeds.
-- Audit append/storage I/O can still fail after approval consumption because audit storage and approval state are not one atomic transaction. The new ordering removes deterministic semantic rejection from that window but cannot make independent storage I/O transactional.
+- Single-use capability approvals can no longer be deterministically consumed by malformed start-audit authority before a tool call begins.
+- Backend/provider/site exception text remains excluded from durable audit summaries.
+- Audit append/storage I/O can still fail after approval consumption because approval state and audit storage are not one atomic transaction. Prevalidation removes deterministic semantic rejection from that window but cannot make independent storage I/O transactional.
 - Browser ambiguous-execution recovery, emergency stop, exact approval gating, encrypted research transport, and local/cloud separation were not weakened.
-- Download handoff continues to bind the exact destination through the action/approval scope and fingerprint; discard continues to bind the exact download digest.
 
 ## Known Blockers / Risks
 - No usable .NET 8 executable/compiler is available in this environment; recent Core/WPF/Worker changes still require a real restore/build/test/run before compile confidence is justified.
-- The latest approval/audit ordering changes are statically reviewed but unexecuted.
+- Latest capability approval/audit ordering changes are statically reviewed but unexecuted.
 - Audit append/storage I/O is not transactionally coupled to approval consumption or the job store.
 - Other direct `AuditEvent` / `IAuditTrail.AppendAsync` producers may still need ordering review.
 - A state race after remote dispatch preflight but before reservation can still upload an encrypted work item requiring best-effort cleanup; Nebius creation remains blocked unless durable reservation succeeds.
@@ -77,4 +81,4 @@ Validation / evidence this run:
 - Real Windows UX, embedding ranking, Playwright authenticated-session behavior, and Nebius Object Storage/Serverless execution still require live environment validation.
 
 ## Single Best Next Task
-If a real .NET 8 Windows build environment becomes available, immediately run restore/build/Core tests/WPF build/Worker build and record exact failures. Otherwise continue the **remaining direct-audit-producer ordering audit**, prioritizing consequential operations where approval/state/external side effects occur before audit validation. Add focused adversarial tests for the handoff/discard ordering when a compilable test environment or clearly matching existing test fixtures are available; do not duplicate policy where sink validation is already sufficient and no mutation precedes append.
+If a real .NET 8 Windows build environment becomes available, immediately run restore/build/Core tests/WPF build/Worker build and record exact failures. Otherwise continue the **remaining direct-audit-producer ordering audit**, prioritizing any path where a single-use approval, durable state transition, or external side effect still occurs before deterministic audit validation. Avoid duplicating policy where the sink is already sufficient and no mutation precedes append.

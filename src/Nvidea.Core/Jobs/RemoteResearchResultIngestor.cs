@@ -125,12 +125,16 @@ public sealed class RemoteResearchResultIngestor
             RemoteResearch = provenance,
             UpdatedAt = DateTimeOffset.UtcNow
         };
+        var reservationAudit = PrepareAudit(
+            replacement,
+            "research.remote_dispatch_reserved",
+            "Encrypted research stage reserved before Nebius job creation.");
 
         var applied = await _store.CompareExchangeAsync(current, replacement, cancellationToken).ConfigureAwait(false);
         if (!applied)
             throw new InvalidOperationException("Research state changed while remote dispatch was being reserved.");
 
-        await AppendAuditAsync(replacement, "research.remote_dispatch_reserved", "Encrypted research stage reserved before Nebius job creation.", cancellationToken).ConfigureAwait(false);
+        await AppendAuditAsync(reservationAudit, cancellationToken).ConfigureAwait(false);
         return replacement;
     }
 
@@ -174,11 +178,15 @@ public sealed class RemoteResearchResultIngestor
             RemoteResearch = provenance,
             UpdatedAt = DateTimeOffset.UtcNow
         };
+        var dispatchAudit = PrepareAudit(
+            replacement,
+            "research.remote_dispatched",
+            "Reserved encrypted research stage attached to Nebius Serverless provenance.");
 
         if (!await _store.CompareExchangeAsync(current, replacement, cancellationToken).ConfigureAwait(false))
             throw new InvalidOperationException("Research state changed while remote dispatch provenance was being attached.");
 
-        await AppendAuditAsync(replacement, "research.remote_dispatched", "Reserved encrypted research stage attached to Nebius Serverless provenance.", cancellationToken).ConfigureAwait(false);
+        await AppendAuditAsync(dispatchAudit, cancellationToken).ConfigureAwait(false);
         return replacement;
     }
 
@@ -244,11 +252,15 @@ public sealed class RemoteResearchResultIngestor
             RemoteResearch = appliedProvenance,
             UpdatedAt = currentTime
         };
+        var resultAudit = PrepareAudit(
+            replacement,
+            "research.remote_result_applied",
+            "Protected remote research result applied exactly once.");
 
         if (!await _store.CompareExchangeAsync(current, replacement, cancellationToken).ConfigureAwait(false))
             throw new InvalidOperationException("Research state changed while protected remote result was being applied.");
 
-        await AppendAuditAsync(replacement, "research.remote_result_applied", "Protected remote research result applied exactly once.", cancellationToken).ConfigureAwait(false);
+        await AppendAuditAsync(resultAudit, cancellationToken).ConfigureAwait(false);
         await CleanupProtectedPayloadsAsync(provenance.OpaqueWorkItemId).ConfigureAwait(false);
         return replacement;
     }
@@ -271,19 +283,24 @@ public sealed class RemoteResearchResultIngestor
         return job;
     }
 
-    private Task AppendAuditAsync(AgentJobRecord job, string eventType, string summary, CancellationToken cancellationToken) =>
-        _auditTrail.AppendAsync(
-            new AuditEvent(
-                Guid.NewGuid(), DateTimeOffset.UtcNow, job.Definition.CapabilityId, job.JobId.ToString("N"), eventType,
-                job.Definition.Risk, true, false, string.Empty, summary,
-                new Dictionary<string, string>
-                {
-                    ["jobType"] = job.Definition.JobType,
-                    ["state"] = job.State.ToString(),
-                    ["executionLocation"] = job.ExecutionLocation.ToString(),
-                    ["attempt"] = job.Attempt.ToString()
-                }),
-            cancellationToken);
+    private static AuditEvent PrepareAudit(AgentJobRecord job, string eventType, string summary)
+    {
+        var auditEvent = new AuditEvent(
+            Guid.NewGuid(), DateTimeOffset.UtcNow, job.Definition.CapabilityId, job.JobId.ToString("N"), eventType,
+            job.Definition.Risk, true, false, string.Empty, summary,
+            new Dictionary<string, string>
+            {
+                ["jobType"] = job.Definition.JobType,
+                ["state"] = job.State.ToString(),
+                ["executionLocation"] = job.ExecutionLocation.ToString(),
+                ["attempt"] = job.Attempt.ToString()
+            });
+        AuditEventTrust.ValidateForPersistence(auditEvent, nameof(job));
+        return auditEvent;
+    }
+
+    private Task AppendAuditAsync(AuditEvent auditEvent, CancellationToken cancellationToken) =>
+        _auditTrail.AppendAsync(auditEvent, cancellationToken);
 
     private static async Task TryDeleteAsync(IProtectedResearchResultTransport transport, string opaqueWorkItemId)
     {

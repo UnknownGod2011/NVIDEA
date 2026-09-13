@@ -56,7 +56,7 @@ public sealed class JsonLinesAuditTrail : IAuditTrail
 
     public async Task AppendAsync(AuditEvent auditEvent, CancellationToken cancellationToken = default)
     {
-        ValidateEvent(auditEvent);
+        ValidateAppendEvent(auditEvent);
 
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -182,7 +182,7 @@ public sealed class JsonLinesAuditTrail : IAuditTrail
                 throw new InvalidDataException("Audit trail hash-chain integrity check failed.");
 
             var auditEvent = DecodeEvent(line);
-            ValidateEvent(auditEvent);
+            ValidatePersistedEvent(auditEvent);
             events.Add(auditEvent);
             previousHash = line.Hash;
             expectedSequence++;
@@ -207,7 +207,7 @@ public sealed class JsonLinesAuditTrail : IAuditTrail
                 throw new InvalidDataException("Legacy audit trail contains malformed JSON; migration was aborted.", ex);
             }
 
-            ValidateEvent(parsed);
+            ValidatePersistedEvent(parsed);
             if (result.Any(x => x.EventId == parsed.EventId))
                 throw new InvalidDataException($"Legacy audit trail contains duplicate event id '{parsed.EventId}'; migration was aborted.");
             result.Add(parsed);
@@ -522,13 +522,26 @@ public sealed class JsonLinesAuditTrail : IAuditTrail
         return true;
     }
 
-    private static void ValidateEvent(AuditEvent auditEvent)
+    private static void ValidateAppendEvent(AuditEvent auditEvent)
     {
         ArgumentNullException.ThrowIfNull(auditEvent);
         if (auditEvent.EventId == Guid.Empty)
             throw new ArgumentException("Audit events require a non-empty event id.", nameof(auditEvent));
-        if (string.IsNullOrWhiteSpace(auditEvent.CapabilityId) || string.IsNullOrWhiteSpace(auditEvent.ActionId))
-            throw new ArgumentException("Audit events require capability and action identifiers.", nameof(auditEvent));
+
+        CapabilityIdentityTrust.RequireCapabilityId(auditEvent.CapabilityId, nameof(auditEvent));
+        CapabilityIdentityTrust.RequireActionId(auditEvent.ActionId, nameof(auditEvent));
+    }
+
+    private static void ValidatePersistedEvent(AuditEvent auditEvent)
+    {
+        try
+        {
+            ValidateAppendEvent(auditEvent);
+        }
+        catch (ArgumentException ex)
+        {
+            throw new InvalidDataException("Audit trail contains an event with invalid capability/action identity authority.", ex);
+        }
     }
 
     private sealed record AuditLine(

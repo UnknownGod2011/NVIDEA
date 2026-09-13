@@ -36,6 +36,9 @@ public interface ICapabilityToolExecutor
 /// </summary>
 public sealed class CapabilityToolExecutor : ICapabilityToolExecutor
 {
+    private const string ExecutionFailureAuditSummary =
+        "Tool execution failed after authorization; backend diagnostic text was withheld from audit.";
+
     private readonly ICapabilityPermissionPolicy _policy;
     private readonly ScopedApprovalAuthorizer _approvals;
     private readonly IAuditTrail _auditTrail;
@@ -105,12 +108,21 @@ public sealed class CapabilityToolExecutor : ICapabilityToolExecutor
                 .ConfigureAwait(false);
             throw;
         }
-        catch (Exception ex)
+        catch
         {
-            // A consumed approval is intentionally NOT restored. When a consequential
-            // call fails ambiguously, a retry must obtain fresh user approval rather
-            // than risk duplicating a side effect.
-            await AuditAsync(request, decision, "tool.execution_failed", true, approved, ex.Message, cancellationToken)
+            // Backend/provider/site exception text is untrusted diagnostic material and may contain
+            // secrets, local paths, page content or forged control language. Preserve the exception
+            // for the immediate caller, but never copy its message into durable audit evidence.
+            // A consumed approval is intentionally NOT restored. When a consequential call fails
+            // ambiguously, a retry must obtain fresh user approval rather than risk duplicating a side effect.
+            await AuditAsync(
+                    request,
+                    decision,
+                    "tool.execution_failed",
+                    true,
+                    approved,
+                    ExecutionFailureAuditSummary,
+                    cancellationToken)
                 .ConfigureAwait(false);
             throw;
         }

@@ -46,6 +46,29 @@ public sealed class BrowserActionTerminalCheckpointTests
     }
 
     [Fact]
+    public async Task Ambiguous_browser_execution_stays_running_and_is_never_auto_retried()
+    {
+        var store = new InMemoryStore();
+        var handler = new AmbiguousBrowserHandler();
+        var orchestrator = Create(store, handler);
+        var initial = new AgentJobCheckpoint("browser.action.pending", SensitivePayload, DateTimeOffset.UtcNow);
+        var created = await orchestrator.CreateAsync(Definition(maxAttempts: 3), initial);
+
+        var ambiguous = await orchestrator.RunNextStepAsync(created.JobId);
+        var repeated = await orchestrator.RunNextStepAsync(created.JobId);
+
+        Assert.Equal(AgentJobState.Running, ambiguous.State);
+        Assert.Equal(AgentJobState.Running, repeated.State);
+        Assert.Equal(1, ambiguous.Attempt);
+        Assert.Equal(1, repeated.Attempt);
+        Assert.Equal(1, handler.ExecutionCount);
+        Assert.Equal("browser.action.pending", ambiguous.Checkpoint?.Step);
+        Assert.Equal(SensitivePayload, ambiguous.Checkpoint?.Payload);
+        Assert.Null(ambiguous.NextAttemptAt);
+        Assert.Equal("Execution outcome is ambiguous; fresh verification is required before replay.", ambiguous.LastError);
+    }
+
+    [Fact]
     public async Task Cancelling_approval_paused_browser_job_scrubs_action_and_scope()
     {
         var store = new InMemoryStore();
@@ -88,6 +111,18 @@ public sealed class BrowserActionTerminalCheckpointTests
 
         public Task<JobStepResult> ExecuteStepAsync(AgentJobRecord job, CancellationToken cancellationToken = default) =>
             throw new InvalidOperationException("simulated browser failure");
+    }
+
+    private sealed class AmbiguousBrowserHandler : IAgentJobHandler
+    {
+        public string JobType => "browser.action";
+        public int ExecutionCount { get; private set; }
+
+        public Task<JobStepResult> ExecuteStepAsync(AgentJobRecord job, CancellationToken cancellationToken = default)
+        {
+            ExecutionCount++;
+            throw new AmbiguousJobExecutionException("untrusted detail must not control retry");
+        }
     }
 
     private sealed class ApprovalBrowserHandler : IAgentJobHandler

@@ -44,12 +44,13 @@ public sealed class NebiusResearchLifecycleFailureProvenanceTests
                     "job-123",
                     now));
 
+            const string providerMessage = "Provider-controlled diagnostic text must stay non-authoritative. bearer=secret-do-not-persist";
             var expectedName = NebiusResearchLifecycleReconciler.GetDeterministicRemoteJobName(opaqueId);
             var client = new FakeServerlessClient
             {
                 GetResponse = new NebiusServerlessResponse(
                     HttpStatusCode.OK,
-                    $$"""{"metadata":{"id":"job-123","name":"{{expectedName}}"},"status":{"state":"FAILED","stateDetails":{"code":"{{providerCode}}","message":"Provider-controlled diagnostic text must stay non-authoritative."}}}""")
+                    $$"""{"metadata":{"id":"job-123","name":"{{expectedName}}"},"status":{"state":"FAILED","stateDetails":{"code":"{{providerCode}}","message":"{{providerMessage}}"}}}""")
             };
             var reconciler = new NebiusResearchLifecycleReconciler(store, client, ingestor, audit);
 
@@ -64,8 +65,14 @@ public sealed class NebiusResearchLifecycleFailureProvenanceTests
             Assert.NotNull(durable);
             Assert.Equal(providerCode, durable!.RemoteResearch!.ProviderFailureCode);
             Assert.Equal(returned.RemoteResearch, durable.RemoteResearch);
-            Assert.Contains("Provider diagnostic (untrusted)", returned.LastError, StringComparison.Ordinal);
-            Assert.Contains(audit.Events, e => e.EventType == "research.remote_failed");
+            Assert.Equal($"Nebius remote research stage failed. Provider failure code: {providerCode}.", returned.LastError);
+            Assert.DoesNotContain(providerMessage, returned.LastError, StringComparison.Ordinal);
+
+            var failureAudit = Assert.Single(audit.Events.Where(e => e.EventType == "research.remote_failed"));
+            Assert.Equal(
+                $"Nebius reported a terminal failure for the remote research stage. Provider failure code: {providerCode}.",
+                failureAudit.Summary);
+            Assert.DoesNotContain(providerMessage, failureAudit.Summary, StringComparison.Ordinal);
         }
         finally
         {

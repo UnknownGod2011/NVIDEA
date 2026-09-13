@@ -166,10 +166,17 @@ public partial class MainWindow : Window
                     : await _browserHost.CancelAsync(outcome.JobId, CancellationToken.None);
             }
 
-            OutputBox.Text = DesktopDisplayTextTrust.Canonicalize(
-                outcome.Message,
-                420,
-                "Browser action finished without a displayable diagnostic.");
+            OutputBox.Text = outcome.State switch
+            {
+                AgentJobState.WaitingForApproval => "Browser action is paused and has not executed. Explicit one-time approval is required.",
+                AgentJobState.Completed => "Browser action completed and its intended post-action state was verified.",
+                AgentJobState.Cancelled => "Browser action was cancelled safely.",
+                AgentJobState.Failed => "Browser action failed safely. Runtime diagnostics were withheld from the desktop view.",
+                AgentJobState.RetryScheduled => "Browser action failed safely and remains eligible only for policy-controlled retry.",
+                AgentJobState.Pending => "Browser action is durably queued and has not executed yet.",
+                AgentJobState.Running => "Browser action has an ambiguous in-flight checkpoint and will not be replayed automatically.",
+                _ => "Browser action state is unavailable."
+            };
             StatusText.Text = $"Browser — {outcome.State}";
         }
         catch (OperationCanceledException)

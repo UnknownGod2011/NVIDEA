@@ -73,9 +73,7 @@ public sealed class JsonLinesAuditPayloadTrustTests
             using var lineDocument = JsonDocument.Parse((await File.ReadAllLinesAsync(path)).Single());
             var root = lineDocument.RootElement;
             var poisoned = CreateEvent(
-                eventId: Guid.Parse(root.GetProperty("payload").GetString() is not null
-                    ? "11111111-1111-1111-1111-111111111111"
-                    : "11111111-1111-1111-1111-111111111111"),
+                eventId: Guid.Parse("11111111-1111-1111-1111-111111111111"),
                 summary: "trusted-looking\nforged-authority");
             var payload = Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(poisoned, JsonOptions));
             var version = root.GetProperty("version").GetInt32();

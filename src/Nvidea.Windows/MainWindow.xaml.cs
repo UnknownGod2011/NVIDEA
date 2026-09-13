@@ -114,7 +114,9 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            OutputBox.Text = $"NVIDEA could not complete this request.\n\n{ex.Message}";
+            var failure = DesktopUiFailureProjector.Project(DesktopUiFailureSurface.Invocation, ex);
+            OutputBox.Text = failure.UserMessage;
+            StatusText.Text = failure.StatusMessage;
         }
         finally
         {
@@ -174,8 +176,9 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            OutputBox.Text = $"Browser action could not complete.\n\n{ex.Message}\n\nIf Playwright Chromium is not installed, install the browser binaries for Microsoft.Playwright 1.62.0 and retry.";
-            StatusText.Text = "Browser — failed safely";
+            var failure = DesktopUiFailureProjector.Project(DesktopUiFailureSurface.BrowserAction, ex);
+            OutputBox.Text = failure.UserMessage;
+            StatusText.Text = failure.StatusMessage;
         }
         finally
         {
@@ -231,8 +234,9 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            OutputBox.Text = $"Recovery inspection could not complete. The interrupted action was not retried.\n\n{ex.Message}";
-            StatusText.Text = "Recovery — failed safely; human resolution required";
+            var failure = DesktopUiFailureProjector.Project(DesktopUiFailureSurface.BrowserRecovery, ex);
+            OutputBox.Text = failure.UserMessage;
+            StatusText.Text = failure.StatusMessage;
         }
         finally
         {
@@ -273,10 +277,12 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             // Recovery discovery is read-only and must never prevent the rest of the desktop shell
-            // from starting. Surface the local store problem without initializing/executing browser work.
+            // from starting. Surface only fixed local guidance; store/provider details can contain
+            // local paths, secrets, or untrusted remote text.
             _recoveryCandidate = null;
             RecoveryPanel.Visibility = Visibility.Collapsed;
-            StatusText.Text = $"Recovery state unavailable — {ex.Message}";
+            var failure = DesktopUiFailureProjector.Project(DesktopUiFailureSurface.RecoveryDiscovery, ex);
+            StatusText.Text = failure.StatusMessage;
         }
         finally
         {

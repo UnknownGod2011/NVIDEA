@@ -141,8 +141,26 @@ public sealed class ResumableJobOrchestrator
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             _ephemeralApprovals.Revoke(jobId);
-            var cancelled = BrowserActionTerminalCheckpoint.ScrubIfTerminal(
-                running with { State = AgentJobState.Cancelled, LastError = "Cancelled", UpdatedAt = DateTimeOffset.UtcNow });
+            if (string.Equals(running.Definition.JobType, BrowserActionTerminalCheckpoint.JobType, StringComparison.OrdinalIgnoreCase))
+            {
+                var ambiguousCancellation = running with
+                {
+                    LastError = "Browser execution was cancelled while in flight; fresh verification is required before replay.",
+                    NextAttemptAt = null,
+                    UpdatedAt = DateTimeOffset.UtcNow
+                };
+                await _store.SaveAsync(ambiguousCancellation, CancellationToken.None).ConfigureAwait(false);
+                await AuditAsync(
+                    ambiguousCancellation,
+                    "job.cancellation_ambiguous",
+                    false,
+                    false,
+                    "Browser execution was cancelled while in flight; automatic replay was blocked pending fresh verification.",
+                    CancellationToken.None).ConfigureAwait(false);
+                return ambiguousCancellation;
+            }
+
+            var cancelled = running with { State = AgentJobState.Cancelled, LastError = "Cancelled", UpdatedAt = DateTimeOffset.UtcNow };
             await _store.SaveAsync(cancelled, CancellationToken.None).ConfigureAwait(false);
             await AuditAsync(cancelled, "job.cancelled", false, false, "Job cancelled.", CancellationToken.None).ConfigureAwait(false);
             return cancelled;
@@ -268,10 +286,22 @@ public sealed class ResumableJobOrchestrator
         var job = await GetRequiredAsync(jobId, cancellationToken).ConfigureAwait(false);
         if (job.State is AgentJobState.Completed or AgentJobState.Failed or AgentJobState.Cancelled) return job;
         _ephemeralApprovals.Revoke(jobId);
-        var cancelled = BrowserActionTerminalCheckpoint.ScrubIfTerminal(
-            job with { State = AgentJobState.Cancelled, LastError = "Cancelled by user", UpdatedAt = DateTimeOffset.UtcNow });
+        var cancelledRaw = job with { State = AgentJobState.Cancelled, LastError = "Cancelled by user", UpdatedAt = DateTimeOffset.UtcNow };
+        var cancelled = job.State == AgentJobState.Running
+            && string.Equals(job.Definition.JobType, BrowserActionTerminalCheckpoint.JobType, StringComparison.OrdinalIgnoreCase)
+            ? cancelledRaw
+            : BrowserActionTerminalCheckpoint.ScrubIfTerminal(cancelledRaw);
         await _store.SaveAsync(cancelled, cancellationToken).ConfigureAwait(false);
-        await AuditAsync(cancelled, "job.cancelled", false, false, "Job cancelled by user.", cancellationToken).ConfigureAwait(false);
+        await AuditAsync(
+            cancelled,
+            "job.cancelled",
+            false,
+            false,
+            job.State == AgentJobState.Running
+                && string.Equals(job.Definition.JobType, BrowserActionTerminalCheckpoint.JobType, StringComparison.OrdinalIgnoreCase)
+                ? "In-flight browser job cancelled; executable checkpoint retained only for ambiguous-side-effect verification."
+                : "Job cancelled by user.",
+            cancellationToken).ConfigureAwait(false);
         return cancelled;
     }
 

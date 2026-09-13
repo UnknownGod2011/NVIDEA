@@ -12,7 +12,6 @@ public sealed record NebiusFailureRemediation(
 
 public static class NebiusFailureRemediationPolicy
 {
-    private const int MaxProviderCodeLength = 128;
     private const string FailureEvidencePrefix =
         "Nebius remote research stage failed. Provider diagnostic (untrusted): code=";
 
@@ -27,18 +26,17 @@ public static class NebiusFailureRemediationPolicy
         "Nebius project quota appears insufficient for this Serverless request. Review the project quota and cost limits, then request quota or manually choose an approved project/resource shape.");
 
     /// <summary>
-    /// Classifies only an exact normalized provider code. Unknown, malformed, oversized,
-    /// or control-character-bearing values produce no guidance. This method is pure and
-    /// has no authority to retry, cancel, resubmit, resize, or otherwise mutate a job.
+    /// Classifies only an exact normalized provider code. Unknown or malformed values produce no
+    /// guidance. Evidence validation is delegated to ProviderFailureCodeTrust and remains separate
+    /// from this policy's much narrower action/guidance allowlist.
     /// </summary>
     public static NebiusFailureRemediation? Classify(string? providerCode)
     {
-        if (string.IsNullOrWhiteSpace(providerCode))
+        if (!ProviderFailureCodeTrust.TryCanonicalize(providerCode, out var normalized)
+            || normalized is null)
+        {
             return null;
-
-        var normalized = providerCode.Trim();
-        if (normalized.Length > MaxProviderCodeLength || normalized.Any(char.IsControl))
-            return null;
+        }
 
         if (string.Equals(normalized, CapacityUnavailable.ProviderCode, StringComparison.OrdinalIgnoreCase))
             return CapacityUnavailable;

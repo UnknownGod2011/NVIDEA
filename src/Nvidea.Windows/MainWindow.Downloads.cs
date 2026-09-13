@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Threading;
 using Microsoft.Win32;
 using Nvidea.Core.Browser;
+using Nvidea.Core.Desktop;
 
 namespace Nvidea.Windows;
 
@@ -79,7 +80,8 @@ public partial class MainWindow
             DownloadPanel.Visibility = Visibility.Collapsed;
             DownloadReviewButton.IsEnabled = false;
             DownloadDiscardButton.IsEnabled = false;
-            StatusText.Text = $"Download quarantine unavailable — {ex.Message}";
+            var failure = DesktopUiFailureProjector.Project(DesktopUiFailureSurface.DownloadSnapshot, ex);
+            StatusText.Text = failure.StatusMessage;
         }
     }
 
@@ -133,8 +135,9 @@ public partial class MainWindow
         }
         catch (Exception ex)
         {
-            OutputBox.Text = $"Download recovery failed safely. No file was exported and no website action was replayed.\n\n{ex.Message}";
-            StatusText.Text = "Download recovery — failed safely";
+            var failure = DesktopUiFailureProjector.Project(DesktopUiFailureSurface.DownloadRecovery, ex);
+            OutputBox.Text = failure.UserMessage;
+            StatusText.Text = failure.StatusMessage;
         }
         finally
         {
@@ -195,8 +198,9 @@ public partial class MainWindow
         }
         catch (Exception ex)
         {
-            OutputBox.Text = $"Download handoff failed safely. No broader file permission was granted.\n\n{ex.Message}";
-            StatusText.Text = "Download — failed safely";
+            var failure = DesktopUiFailureProjector.Project(DesktopUiFailureSurface.DownloadExport, ex);
+            OutputBox.Text = failure.UserMessage;
+            StatusText.Text = failure.StatusMessage;
         }
         finally
         {
@@ -254,8 +258,9 @@ public partial class MainWindow
         }
         catch (Exception ex)
         {
-            OutputBox.Text = $"Download discard failed safely. No broader delete permission was granted.\n\n{ex.Message}";
-            StatusText.Text = "Download — discard failed safely";
+            var failure = DesktopUiFailureProjector.Project(DesktopUiFailureSurface.DownloadDiscard, ex);
+            OutputBox.Text = failure.UserMessage;
+            StatusText.Text = failure.StatusMessage;
         }
         finally
         {

@@ -1,4 +1,5 @@
 using System.Windows;
+using Nvidea.Core.Desktop;
 
 namespace Nvidea.Windows;
 
@@ -49,8 +50,9 @@ public partial class MainWindow
         }
         catch (Exception ex)
         {
-            OutputBox.Text = $"Audit retention status could not be read safely.\n\n{ex.Message}";
-            StatusText.Text = "Audit — read-only status failed safely";
+            var failure = DesktopUiFailureProjector.Project(DesktopUiFailureSurface.AuditStatus, ex);
+            OutputBox.Text = failure.UserMessage;
+            StatusText.Text = failure.StatusMessage;
         }
         finally
         {

@@ -23,9 +23,10 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - `NebiusResearchWorkerRuntimeConfiguration` is the single worker environment boundary; credential-free topology/model/timing validation occurs before private-key/provider-secret reads.
 - Nebius Serverless lifecycle interpretation is explicitly allowlisted. Bounded `state_details` diagnostics are untrusted evidence only and never determine lifecycle transitions.
 - Durable remote provenance contains optional structured `ProviderFailureCode`. Newly verified remote failures place the parsed code into terminal provenance before CAS, so immediate and persisted records agree.
-- `ProviderFailureCodeTrust` is now the dedicated evidence trust boundary for structured provider failure codes: maximum 128 characters, surrounding-whitespace canonicalization, control-character rejection, unknown-code preservation, and no remediation authority.
-- `JsonAgentJobStore` already routes save, CAS replacement, and load through `RemoteResearchFailureProvenanceMigration`; that migration now applies `ProviderFailureCodeTrust`, so malformed pre-existing/populated structured codes fail closed at durable-state boundaries and valid unknown codes are canonicalized.
-- `NebiusFailureRemediationPolicy` is separate from evidence validation. Only verified local allowlist entries currently map to guidance: `NotEnoughResources` and `Quota`. Provider messages and unknown codes cannot authorize retry/resubmit/cancel, resize resources, change projects, spend money, or cause any other side effect.
+- `ProviderFailureCodeTrust` is the dedicated evidence trust boundary for structured provider failure codes: maximum 128 characters, surrounding-whitespace canonicalization, control-character rejection, unknown-code preservation, and no remediation authority.
+- `RemoteResearchFailureProvenanceMigration` and `JsonAgentJobStore` enforce that malformed structured codes fail closed at save/CAS/load boundaries.
+- **New invariant:** `ProviderFailureCode` is valid only when `RemoteResearchProvenance.State == RemoteFailed`. Structured failure metadata on cancelled, expired, dispatched, reserved, completed, or other provenance states is rejected as inconsistent durable state.
+- `NebiusFailureRemediationPolicy` remains separate from evidence validation. Only verified local allowlist entries currently map to guidance: `NotEnoughResources` and `Quota`. Provider messages and unknown codes cannot authorize retry/resubmit/cancel, resize resources, change projects, spend money, or cause any other side effect.
 - Windows voice invocation is local/review-first. Deterministic judging tools include `Nvidea.PersonalAiDemoEval`, `Nvidea.PersonalAiAdversarialEval`, `Nvidea.JudgingEvidenceVerifier`, `Nvidea.DemoPackageValidator`, and `Nvidea.NebiusModelCatalogCheck`.
 
 ## Persistent Progress History
@@ -48,31 +49,27 @@ Separated dispatch signing/verification from result encryption/decryption across
 - Added fixed local remediation for `NotEnoughResources` and `Quota`; provider messages never select guidance or actions.
 - Added optional `RemoteResearchProvenance.ProviderFailureCode`, durable migration from recognized legacy failure evidence, CAS equivalence over the structured field, and product UI precedence for structured provenance.
 - Lifecycle reconciliation now places the parsed failure code into terminal provenance before CAS, closing the previous in-memory/durable mismatch.
+- Added `ProviderFailureCodeTrust` as the shared structured-evidence validator/canonicalizer and routed durable migration/remediation through it.
 
-### 2026-09-13 — Shared provider failure-code trust boundary
+### 2026-09-13 — Provider failure provenance-state invariant
 Completed in this run:
-- Added `ProviderFailureCodeTrust` as the single evidence validator/canonicalizer for structured provider failure classifications. It accepts absent values, trims bounded values, preserves well-formed unknown/future codes, rejects values over 128 characters, and rejects control characters.
-- Kept evidence validation deliberately separate from remediation authorization: accepting an unknown code as evidence does **not** grant UI guidance or execution authority.
-- Hardened `RemoteResearchFailureProvenanceMigration` so already-populated structured codes are validated/canonicalized instead of bypassing migration. Malformed populated codes fail closed with `InvalidDataException` rather than silently falling back to legacy `LastError` text.
-- Because `JsonAgentJobStore.SaveAsync`, CAS replacement, and load already call `RemoteResearchFailureProvenanceMigration`, the structured-code invariant is now enforced at all three durable job-store boundaries without duplicating store logic.
-- Updated `NebiusFailureRemediationPolicy.Classify` to reuse `ProviderFailureCodeTrust` rather than maintaining a separate length/control-character validator. The remediation allowlist remains narrower and side-effect-free.
-- Added `ProviderFailureCodeTrustTests` covering absent values, canonicalization, bounded unknown evidence, oversize/control-character rejection, unknown-code preservation without remediation authority, malformed structured-provenance rejection, and continued legacy allowlist migration.
-- Added `ProviderFailureCodePersistenceBoundaryTests` covering save/reload canonicalization of unknown structured evidence and rejection-before-persistence for oversized/control-character-bearing structured codes.
+- Hardened `RemoteResearchFailureProvenanceMigration.Migrate(...)` so a non-null canonical `ProviderFailureCode` is accepted only for `RemoteResearchProvenanceState.RemoteFailed`.
+- Records that carry failure classification on cancelled/expired/dispatched/reserved/other provenance now fail closed with `InvalidDataException` instead of silently preserving semantically inconsistent structured metadata.
+- Preserved legacy behavior for valid remote failures: bounded unknown codes remain evidence-only, recognized legacy failure evidence can still migrate when the structured field is absent, and remediation authority remains narrower than evidence validation.
+- Added `ProviderFailureCodeTrustTests.Migration_RejectsStructuredFailureCodeOutsideRemoteFailedProvenance`.
+- Added `ProviderFailureCodePersistenceBoundaryTests.JobStore_Save_RejectsStructuredFailureCodeOnNonFailureProvenance`, proving rejection occurs before protected job-state persistence.
 
 Engineering commits before this ledger update:
-- `485d3d1257d6020278abbb997948de816074588d` — add shared provider failure code trust boundary.
-- `a00deacfb784f47cc95008482774e6f29140489e` — enforce provider failure code trust at durable migration boundary.
-- `82649c96a12bf4fcf589e8df725f2c17c00fe725` — reuse shared provider failure code trust in remediation policy.
-- `118b915f37040f87bc3389a806ad4d9c6de90e55` — test shared provider failure code trust boundary.
-- `f6771c353eaa405dfc95a690a0b6be903fea8342` — test provider failure code persistence boundary.
+- `7c9328b21c186fae528739cc524aaf1459495644` — reject provider failure codes outside remote failure provenance.
+- `9a24fed646767bb0d9307642cf4ee8472eceb253` — test provider failure-code provenance-state invariant.
+- `e4ea57231589af50542f994ad1a478c99190014e` — reject inconsistent provider failure code at job-store boundary.
 
 Validation / evidence this run:
-- Re-read `progress.md` completely before implementation and inspected current recent commits, `NebiusResearchLifecycleReconciler`, `JsonAgentJobStore`, `RemoteResearchFailureProvenanceMigration`, `NebiusFailureRemediationPolicy`, `ResearchJobStatus`, and existing persistence tests.
-- Verified before every GitHub mutation that the write target was exactly `UnknownGod2011/NVIDEA`.
-- GitHub compare from prior ledger head `8f83b260e72b4e7b4c3d561544c1f89d4b41c24c` to engineering head `f6771c353eaa405dfc95a690a0b6be903fea8342`: **5 commits ahead / 0 behind**, with changes limited to the shared trust primitive, migration/remediation policy, and focused tests.
-- Static review confirms `JsonAgentJobStore.SaveAsync`, `CompareExchangeAsync`, and load all pass records through `RemoteResearchFailureProvenanceMigration`, so the new trust primitive covers new writes, CAS replacements, and restored pre-existing structured records.
-- Static review confirms product remediation remains separate: unknown but well-formed evidence is retained while `NebiusFailureRemediationPolicy` returns no guidance for it.
-- This environment still exposes neither `dotnet` nor `csc`; focused tests were committed but could not be executed here.
+- Re-read `progress.md` completely before implementation and inspected current repository state, `NebiusResearchLifecycleReconciler`, `ProviderFailureCodeTrust`, `RemoteResearchFailureProvenanceMigration`, and focused persistence tests.
+- Verified before every GitHub mutation that the target repository was exactly `UnknownGod2011/NVIDEA`.
+- GitHub compare from prior ledger head `7b9b220e21982dc5207a4c577c094e3a4b79ca47` to engineering head `e4ea57231589af50542f994ad1a478c99190014e`: **3 commits ahead / 0 behind**, touching only the migration and its two focused test files.
+- Static review confirms the new check executes before legacy migration and before `JsonAgentJobStore` persists a replacement, so inconsistent structured state cannot be normalized into authority or written as valid state.
+- `dotnet` and `csc` are still unavailable in this execution environment; focused tests were committed but could not be executed here.
 - **No compile, xUnit, WPF, Worker, evaluator, or tool PASS is claimed.**
 - No GitHub Actions workflow was triggered merely to manufacture a green signal.
 - No live Nebius, Tavily, Object Storage, Serverless, Playwright, Ollama, or paid inference operation was performed.
@@ -80,8 +77,9 @@ Validation / evidence this run:
 ## Security / Privacy / Failure Review
 - Provider failure `message` remains non-authoritative and is not promoted into structured provenance or product guidance.
 - `ProviderFailureCode` remains classification evidence only. Unknown/future bounded codes cannot trigger retries, resubmission, cancellation, resizing, project changes, billing actions, or other side effects.
-- Malformed structured codes now fail closed at durable save/CAS/load boundaries instead of bypassing the original live-parser bound.
-- Existing structured-code precedence is preserved: stale/conflicting legacy error text cannot override a populated valid structured code.
+- Structured failure metadata now has both shape and state invariants: it must be bounded/control-character-free **and** belong to `RemoteFailed` provenance.
+- Malformed or semantically inconsistent structured codes fail closed at durable save/CAS/load boundaries rather than falling back to legacy text.
+- Existing structured-code precedence is preserved: stale/conflicting legacy error text cannot override a valid populated structured code.
 - Legacy migration remains intentionally allowlist-only; arbitrary legacy text does not become structured authority.
 - Serverless lifecycle remains allowlisted rather than heuristic; diagnostic text cannot manufacture a terminal state.
 - Dispatch-signing/result-decryption private material remain client-local; worker/deployment plaintext receives only validated canonical public identities.
@@ -95,7 +93,7 @@ Validation / evidence this run:
 - Real `embeddinggemma` ranking quality still needs a local Ollama evaluation corpus.
 - No live Object Storage bucket/static key, digest-pinned registry image, MysteryBox refs, subnet, Serverless token, or real Serverless job has been provisioned/validated here.
 - Exact provider acceptance of Serverless Object Storage `Source` / `SourcePath` still requires a real job.
-- `NebiusServerlessJobSnapshotParser` still enforces the same 128-character/control-character rules locally for diagnostic codes rather than delegating that field directly to `ProviderFailureCodeTrust`. Downstream durable state is protected, but parser-level policy duplication should be removed when safely editing/rebuilding that file.
+- `NebiusServerlessJobSnapshotParser` still independently enforces the same 128-character/control-character failure-code rules rather than delegating code canonicalization to `ProviderFailureCodeTrust`. Downstream durable state is protected, but parser-level policy duplication remains.
 - Only `NotEnoughResources` and `Quota` are allowlisted because those are the failure classifications verified from first-party evidence. Do not guess additional action classifications without current provider evidence or a real contract capture.
 - Lower-level `NebiusResearchClientRuntime.Create(...)` still retains a same-key compatibility fallback for legacy unit/contract callers; production live composition and deployment preflight are stricter. Remove only after executable migration coverage exists.
 

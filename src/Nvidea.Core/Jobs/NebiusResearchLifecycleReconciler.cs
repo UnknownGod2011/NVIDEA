@@ -349,20 +349,16 @@ public sealed class NebiusResearchLifecycleReconciler
             RemoteResearch = provenance with { State = RemoteResearchProvenanceState.CancelRequested },
             UpdatedAt = DateTimeOffset.UtcNow
         };
+        var cancellationAudit = PrepareAudit(
+            replacement,
+            "research.remote_cancel_requested",
+            "Nebius research cancellation was durably requested before contacting the control plane.");
+
         if (!await _store.CompareExchangeAsync(current, replacement, cancellationToken).ConfigureAwait(false))
             throw new InvalidOperationException("Research state changed while cancellation was being reserved.");
 
-        await AppendAuditAsync(replacement, "research.remote_cancel_requested", "Nebius research cancellation was durably requested before contacting the control plane.", cancellationToken).ConfigureAwait(false);
-
-        try
-        {
-            await _serverless.CancelAsync(provenance.RemoteJobId, cancellationToken).ConfigureAwait(false);
-        }
-        catch
-        {
-            throw;
-        }
-
+        await AppendAuditAsync(cancellationAudit, cancellationToken).ConfigureAwait(false);
+        await _serverless.CancelAsync(provenance.RemoteJobId, cancellationToken).ConfigureAwait(false);
         return replacement;
     }
 
@@ -441,21 +437,13 @@ public sealed class NebiusResearchLifecycleReconciler
     {
         const string baseError = "Nebius remote research stage failed.";
         const string baseAudit = "Nebius reported a terminal failure for the remote research stage.";
-        if (diagnostic is null)
+        var providerCode = diagnostic?.Code;
+        if (string.IsNullOrWhiteSpace(providerCode))
             return (baseError, baseAudit);
 
-        var fields = new List<string>(2);
-        if (!string.IsNullOrWhiteSpace(diagnostic.Code))
-            fields.Add($"code={diagnostic.Code}");
-        if (!string.IsNullOrWhiteSpace(diagnostic.Message))
-            fields.Add($"message={diagnostic.Message}");
-        if (fields.Count == 0)
-            return (baseError, baseAudit);
-
-        var detail = string.Join("; ", fields);
         return (
-            $"{baseError} Provider diagnostic (untrusted): {detail}.",
-            $"{baseAudit} Provider diagnostic (untrusted): {detail}.");
+            $"{baseError} Provider failure code: {providerCode}.",
+            $"{baseAudit} Provider failure code: {providerCode}.");
     }
 
     private async Task<AgentJobRecord> FinalizeTerminalAsync(
@@ -486,10 +474,12 @@ public sealed class NebiusResearchLifecycleReconciler
             },
             UpdatedAt = now
         };
+        var terminalAudit = PrepareAudit(replacement, eventType, summary);
+
         if (!await _store.CompareExchangeAsync(current, replacement, cancellationToken).ConfigureAwait(false))
             throw new InvalidOperationException("Research state changed while remote terminal state was being finalized.");
 
-        await AppendAuditAsync(replacement, eventType, summary, cancellationToken).ConfigureAwait(false);
+        await AppendAuditAsync(terminalAudit, cancellationToken).ConfigureAwait(false);
         await _ingestor.CleanupProtectedPayloadsAsync(provenance.OpaqueWorkItemId).ConfigureAwait(false);
         return replacement;
     }
@@ -505,17 +495,22 @@ public sealed class NebiusResearchLifecycleReconciler
         return job;
     }
 
-    private Task AppendAuditAsync(AgentJobRecord job, string eventType, string summary, CancellationToken cancellationToken) =>
-        _auditTrail.AppendAsync(
-            new AuditEvent(
-                Guid.NewGuid(), DateTimeOffset.UtcNow, job.Definition.CapabilityId, job.JobId.ToString("N"), eventType,
-                job.Definition.Risk, true, false, string.Empty, summary,
-                new Dictionary<string, string>
-                {
-                    ["jobType"] = job.Definition.JobType,
-                    ["state"] = job.State.ToString(),
-                    ["executionLocation"] = job.ExecutionLocation.ToString(),
-                    ["attempt"] = job.Attempt.ToString()
-                }),
-            cancellationToken);
+    private static AuditEvent PrepareAudit(AgentJobRecord job, string eventType, string summary)
+    {
+        var auditEvent = new AuditEvent(
+            Guid.NewGuid(), DateTimeOffset.UtcNow, job.Definition.CapabilityId, job.JobId.ToString("N"), eventType,
+            job.Definition.Risk, true, false, string.Empty, summary,
+            new Dictionary<string, string>
+            {
+                ["jobType"] = job.Definition.JobType,
+                ["state"] = job.State.ToString(),
+                ["executionLocation"] = job.ExecutionLocation.ToString(),
+                ["attempt"] = job.Attempt.ToString()
+            });
+        AuditEventTrust.ValidateForPersistence(auditEvent, nameof(job));
+        return auditEvent;
+    }
+
+    private Task AppendAuditAsync(AuditEvent auditEvent, CancellationToken cancellationToken) =>
+        _auditTrail.AppendAsync(auditEvent, cancellationToken);
 }

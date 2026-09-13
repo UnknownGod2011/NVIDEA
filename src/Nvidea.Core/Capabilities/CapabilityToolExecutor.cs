@@ -80,6 +80,20 @@ public sealed class CapabilityToolExecutor : ICapabilityToolExecutor
             return new CapabilityToolResult(false, false, false, decision.Reason, decision.ApprovalScope);
         }
 
+        // The start record is the durable statement that authorization succeeded and a
+        // concrete tool call is about to begin. Validate that exact record before a
+        // single-use approval can be consumed. Otherwise a malformed dynamic policy
+        // decision could deterministically burn valid user authority even though no
+        // auditable execution transition can be persisted.
+        var executionStartedAudit = CreateAuditEvent(
+            request,
+            decision,
+            "tool.execution_started",
+            allowed: true,
+            approved: true,
+            "Tool execution started.");
+        AuditEventTrust.ValidateForPersistence(executionStartedAudit);
+
         var approved = !decision.RequiresApproval;
         if (decision.RequiresApproval)
         {
@@ -95,8 +109,7 @@ public sealed class CapabilityToolExecutor : ICapabilityToolExecutor
             }
         }
 
-        await AuditAsync(request, decision, "tool.execution_started", true, approved, "Tool execution started.", cancellationToken)
-            .ConfigureAwait(false);
+        await _auditTrail.AppendAsync(executionStartedAudit, cancellationToken).ConfigureAwait(false);
 
         try
         {
@@ -141,7 +154,20 @@ public sealed class CapabilityToolExecutor : ICapabilityToolExecutor
         string summary,
         CancellationToken cancellationToken)
     {
-        return _auditTrail.AppendAsync(new AuditEvent(
+        return _auditTrail.AppendAsync(
+            CreateAuditEvent(request, decision, eventType, allowed, approved, summary),
+            cancellationToken);
+    }
+
+    private static AuditEvent CreateAuditEvent(
+        CapabilityToolRequest request,
+        PermissionDecision decision,
+        string eventType,
+        bool allowed,
+        bool approved,
+        string summary)
+    {
+        return new AuditEvent(
             Guid.NewGuid(),
             DateTimeOffset.UtcNow,
             request.Invocation.CapabilityId,
@@ -157,6 +183,6 @@ public sealed class CapabilityToolExecutor : ICapabilityToolExecutor
                 ["tool"] = request.ToolName,
                 ["permissions"] = string.Join(',', decision.EffectivePermissions.OrderBy(x => x).Select(x => x.ToString())),
                 ["untrustedSourcePresent"] = (!string.IsNullOrWhiteSpace(request.Invocation.UntrustedSource)).ToString()
-            }), cancellationToken);
+            });
     }
 }

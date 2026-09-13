@@ -5,6 +5,11 @@ namespace Nvidea.Core.Desktop;
 /// websites, browser drivers, or tool/runtime diagnostics. The projection is deliberately
 /// presentation/planner-context only: it must never change approval scope, job identity,
 /// lifecycle state, or replay authority.
+///
+/// Pending browser actions are intentionally discarded at this boundary. Crash recovery and
+/// approval resume are keyed by the durable child job id plus exact approval scope; retaining the
+/// original action would unnecessarily persist typed values, upload paths, locators, rationale,
+/// and postcondition material after the child job has become the source of truth.
 /// </summary>
 public static class BrowserGoalEvidenceTrust
 {
@@ -25,6 +30,9 @@ public static class BrowserGoalEvidenceTrust
                 session.Detail,
                 MaxSessionDetailCharacters,
                 "Browser goal status detail omitted."),
+            // Recovery authority lives in PendingJobId/PendingExactScope and the durable child job.
+            // Never retain action payloads (typed values, upload paths, etc.) in parent goal state.
+            PendingAction = null,
             VerifiedSteps = projectedSteps
         };
     }

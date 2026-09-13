@@ -23,10 +23,12 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - `NebiusResearchWorkerRuntimeConfiguration` is the single worker environment boundary; credential-free topology/model/timing validation occurs before private-key/provider-secret reads.
 - Nebius Serverless lifecycle interpretation is explicitly allowlisted. Bounded `state_details` diagnostics are untrusted evidence only and never determine lifecycle transitions.
 - Durable remote provenance contains optional structured `ProviderFailureCode`. Newly verified remote failures place the parsed code into terminal provenance before CAS, so immediate and persisted records agree.
-- `ProviderFailureCodeTrust` is the single evidence-shape trust boundary for provider failure codes: maximum 128 characters, surrounding-whitespace canonicalization, control-character rejection, unknown-code preservation, and no remediation authority. The raw Serverless snapshot parser, durable migration/store boundaries, and remediation classification all consume that shared canonicalization contract.
+- `ProviderFailureCodeTrust` is the single evidence-shape trust boundary for provider failure codes: maximum 128 characters, surrounding-whitespace canonicalization, control-character rejection, unknown-code preservation, and no remediation authority.
 - Provider diagnostic `message` remains separately bounded to 1024 characters and is display/audit evidence only; it is never promoted into structured failure classification.
 - `ProviderFailureCode` is valid only when `RemoteResearchProvenance.State == RemoteFailed`; inconsistent structured failure metadata is rejected at durable boundaries.
 - `NebiusFailureRemediationPolicy` remains narrower than evidence validation. Only verified local allowlist entries currently map to guidance: `NotEnoughResources` and `Quota`. Provider messages and unknown codes cannot authorize retry/resubmit/cancel, resize resources, change projects, spend money, or cause any other side effect.
+- Generic job-handler/provider exception text now crosses `JobFailureDiagnostic` before durable `LastError`: detail is bounded to 768 characters, control/whitespace characters are normalized, and an NVIDEA-owned `Execution error (untrusted):` prefix prevents generic exceptions from impersonating legacy Nebius remote-failure evidence.
+- Generic exception text is no longer copied into append-only audit summaries; retry/exhaustion transitions remain driven only by exception occurrence and attempt count.
 - Windows voice invocation is local/review-first. Deterministic judging tools include `Nvidea.PersonalAiDemoEval`, `Nvidea.PersonalAiAdversarialEval`, `Nvidea.JudgingEvidenceVerifier`, `Nvidea.DemoPackageValidator`, and `Nvidea.NebiusModelCatalogCheck`.
 
 ## Persistent Progress History
@@ -50,24 +52,29 @@ Separated dispatch signing/verification from result encryption/decryption across
 - Added optional `RemoteResearchProvenance.ProviderFailureCode`, durable migration from recognized legacy failure evidence, CAS equivalence over the structured field, and product UI precedence for structured provenance.
 - Lifecycle reconciliation places parsed failure classification into terminal provenance before CAS, keeping returned and persisted records consistent.
 - Added `ProviderFailureCodeTrust` and enforced the state invariant that structured failure codes are valid only on `RemoteFailed` provenance.
+- Unified raw `stateDetails.code` / `state_details.code` parsing with `ProviderFailureCodeTrust`; unknown bounded codes remain evidence-only.
+- Added raw JSON → parser → reconciler → CAS persistence coverage for provider failure-code canonicalization.
 
-### 2026-09-13 — Unified raw-provider to durable failure-code trust boundary
+### 2026-09-13 — Generic job diagnostic taint-boundary hardening
 Completed in this run:
-- Removed the duplicate 128-character/control-character provider-code policy from `NebiusServerlessJobSnapshotParser` and routed raw `stateDetails.code` / `state_details.code` through `ProviderFailureCodeTrust.TryCanonicalize(...)`.
-- Kept the provider diagnostic message policy intentionally independent at 1024 characters; unsafe code or message still discards the complete diagnostic without affecting lifecycle parsing.
-- Preserved lifecycle authority: provider diagnostics cannot turn an unknown state into success/failure, and unknown well-formed codes remain evidence-only.
-- Added parser-level parity tests proving whitespace canonicalization and oversized-code rejection are exactly governed by the shared trust primitive.
-- Added an end-to-end raw-JSON → parser → reconciler → CAS job store regression. A whitespace-padded unknown code becomes canonical `FutureProviderCode` in both the immediately returned record and the reloaded durable record, while `NebiusFailureRemediationPolicy` still returns no guidance for it.
+- Audited `ResearchJobStatus`, `NebiusFailureRemediationPolicy`, `ResearchProductUiState`, `ResumableJobOrchestrator`, and audit persistence for remaining `LastError`/provider-text authority.
+- Confirmed research product action enabling and Nebius remediation are state/structured-provenance driven rather than display-text driven.
+- Found one remaining generic taint path: arbitrary handler exception messages were persisted verbatim in `LastError` and copied verbatim into append-only audit summaries.
+- Added `JobFailureDiagnostic` as the generic durable diagnostic boundary. It keeps at most 768 normalized characters, removes control-character/log-line structure, and prepends the fixed NVIDEA-owned `Execution error (untrusted):` marker.
+- Updated `ResumableJobOrchestrator` to preserve the existing retry/exhaustion semantics while storing only the bounded diagnostic and emitting fixed NVIDEA-authored audit summaries. Raw handler/provider exception text is no longer copied into audit evidence.
+- Added adversarial tests for oversized/control-character messages, legacy Nebius evidence-prefix spoofing, controls-only fallback, and an orchestrator integration case proving a fake `Quota` remote-failure string cannot become Nebius remediation and cannot leak into the failure audit summary.
 
 Engineering commits before this ledger update:
-- `41eaf88ee0f2636f73348032df889fa86243614b` — unify Nebius failure-code trust boundary.
-- `275ab1a77eca5bd9ab3e87f06eb5cde607f8f1f1` — test Nebius failure-code trust end to end.
+- `229a2f6f4c3da5165803442e62ae6750986e6963` — add bounded generic job failure diagnostic boundary.
+- `882fd5bd6652fb55ba1d47346200d0db66d636b3` — quarantine handler/provider diagnostic text from audit summaries without changing retry semantics.
+- `207872eb1d56ac291ee84b77eaba9c30af5e6e02` — add adversarial job diagnostic taint-boundary coverage.
 
 Validation / evidence this run:
-- Re-read `progress.md` completely before implementation and inspected the repository tree, `NebiusResearchLifecycleReconciler`, `NebiusServerlessJobSnapshotParser`, `ProviderFailureCodeTrust`, and existing diagnostic/provenance tests.
+- Re-read `progress.md` completely before implementation and inspected current commits/tree plus the research status/remediation/UI projection, generic orchestrator, audit trail, and existing orchestrator tests.
 - Verified before every GitHub mutation that the target repository was exactly `UnknownGod2011/NVIDEA`.
-- GitHub compare from prior ledger head `fe1665d3b9e23e06e7ae2b9c696f601b507355b3` to engineering head `275ab1a77eca5bd9ab3e87f06eb5cde607f8f1f1`: **2 commits ahead / 0 behind**, touching only `NebiusResearchLifecycleReconciler.cs` and `NebiusServerlessFailureDiagnosticTests.cs`.
-- Static review confirms raw provider codes now cross the same canonicalization primitive used at durable boundaries, while the independent provider-message bound and fail-closed lifecycle parser remain unchanged.
+- GitHub compare from prior ledger head `031c195347ed8adf0d4eb4cb7ff79c94ed972dfc` to engineering head `207872eb1d56ac291ee84b77eaba9c30af5e6e02`: **3 commits ahead / 0 behind**, changing only `JobFailureDiagnostic.cs`, `ResumableJobOrchestrator.cs`, and `JobFailureDiagnosticTests.cs`.
+- Static review confirms state transitions remain unchanged: retry vs terminal failure still depends only on attempt count after an exception; diagnostic text has no control-flow authority.
+- Static review confirms generic persisted exception text cannot start with the legacy Nebius failure-evidence prefix because the NVIDEA-owned untrusted prefix is prepended first.
 - `dotnet` and `csc` are unavailable in this execution environment; focused tests were committed but could not be executed here.
 - **No compile, xUnit, WPF, Worker, evaluator, or tool PASS is claimed.**
 - No GitHub Actions workflow was triggered merely to manufacture a green signal.
@@ -76,11 +83,12 @@ Validation / evidence this run:
 ## Security / Privacy / Failure Review
 - Provider failure `message` remains non-authoritative and is not promoted into structured provenance or product guidance.
 - `ProviderFailureCode` remains classification evidence only. Unknown/future bounded codes cannot trigger retries, resubmission, cancellation, resizing, project changes, billing actions, or other side effects.
-- One shared code-shape trust primitive now covers raw provider ingestion and durable structured state, reducing policy drift between network and persistence boundaries.
+- One shared code-shape trust primitive covers raw Nebius provider ingestion and durable structured state, reducing policy drift between network and persistence boundaries.
 - Structured failure metadata has both shape and state invariants: it must be bounded/control-character-free and belong to `RemoteFailed` provenance.
 - Malformed or semantically inconsistent structured codes fail closed rather than falling back to legacy text.
 - Existing structured-code precedence is preserved: stale/conflicting legacy error text cannot override a valid populated structured code.
-- Legacy migration remains intentionally allowlist-only; arbitrary legacy text does not become structured authority.
+- Legacy Nebius migration remains intentionally allowlist-only; generic exception text now carries a disjoint NVIDEA-owned prefix and cannot impersonate that evidence format.
+- Generic handler/provider diagnostics remain available in bounded `LastError` for troubleshooting, but are explicitly marked untrusted and do not enter append-only audit summaries.
 - Serverless lifecycle remains allowlisted rather than heuristic; diagnostic text cannot manufacture a terminal state.
 - Dispatch-signing/result-decryption private material remain client-local; worker/deployment plaintext receives only validated canonical public identities.
 - Existing encrypted transport, authenticated associated data, signed binding, cancellation/recovery, exact-once ingestion, Tavily/Nemotron behavior, browser safety, and Windows permission UX were not removed or weakened.
@@ -95,6 +103,7 @@ Validation / evidence this run:
 - Exact provider acceptance of Serverless Object Storage `Source` / `SourcePath` still requires a real job.
 - Only `NotEnoughResources` and `Quota` are allowlisted because those are the failure classifications verified from first-party evidence. Do not guess additional action classifications without current provider evidence or a real contract capture.
 - Lower-level `NebiusResearchClientRuntime.Create(...)` still retains a same-key compatibility fallback for legacy unit/contract callers; production live composition and deployment preflight are stricter. Remove only after executable migration coverage exists.
+- Other user-facing WPF catch/error paths may still render arbitrary local/provider `Exception.Message` text directly. That is primarily a privacy/presentation concern rather than current lifecycle authority, but should be audited and projected through explicit safe error surfaces.
 
 ## Single Best Next Task
-Obtain a real .NET 8-capable Windows restore/build/test signal and fix every compile/runtime defect exposed by recent security/reliability migrations. If executable validation remains unavailable, audit all remaining consumers of provider diagnostic text and legacy `LastError` for accidental control-flow/remediation authority, then add adversarial taint/provenance regressions wherever untrusted provider strings can still cross a product or audit boundary.
+Obtain a real .NET 8-capable Windows restore/build/test signal and fix every compile/runtime defect exposed by recent security/reliability migrations. If executable validation remains unavailable, audit the WPF/product-facing exception paths for raw `Exception.Message` disclosure and introduce a privacy-safe error projection so provider/tool/user-derived exception text cannot leak into desktop status/output or accidentally become future UI authority.

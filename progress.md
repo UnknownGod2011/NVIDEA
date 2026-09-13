@@ -14,7 +14,7 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - .NET 8 core in `src/Nvidea.Core`, WPF Windows host in `src/Nvidea.Windows`, deployable remote worker in `src/Nvidea.Worker`.
 - NVIDIA Nemotron through Nebius Token Factory with retries, cancellation/timeouts, structured tool calling, response-schema support, and Nano/Super/Ultra routing.
 - Layered personal memory with privacy-aware writes, provenance, semantic/recency/importance retrieval, local embeddings, migration/re-indexing, and maintenance UX.
-- Tavily Search + Extract research with multi-query planning, canonical deduplication, evidence quality/freshness/diversity ranking, citations/provenance, resumable checkpoints, and explicit untrusted-evidence handling.
+- Tavily Search + Extract research with multi-query planning, canonical deduplication, evidence quality/freshness/diversity ranking, citations/provenance, resumable checkpoints, explicit untrusted-evidence handling, and diagnostic quarantine on Extract fallback.
 - Safe Playwright browser agent with persistent Chromium state, popup tracking, plan-act-observe-verify, prompt-injection detection, consequential-action approvals, quarantined downloads, emergency stop, crash recovery, and no automatic replay after ambiguous side effects.
 - Protected local state uses Windows CurrentUser DPAPI by default; job state uses durable CAS, leases, and hash-chained/segmented audit.
 - Remote research uses encrypted opaque work items, signed resource-ID bindings, two-phase dispatch, lifecycle reconciliation, durable cancellation, exact-once result ingestion, race-safe cleanup, Nebius Object Storage, and Serverless-mounted worker transport.
@@ -23,7 +23,8 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - `JsonLinesAuditTrail` enforces identity and semantic payload trust on append, protected/hash-chained reload, and legacy migration; `BoundedSegmentedAuditTrail` also enforces byte/retention ceilings.
 - `ResumableJobOrchestrator`, Nebius lifecycle reconciliation, remote-result ingestion, coordinator dispatch, two-phase dispatch, browser download handoff/discard, and generic capability execution validate prospective audit events before the durable/external/approval transition they describe.
 - Remote dispatch ordering is: exact cloud authorization -> no-mutation reservation/audit preflight -> encrypt/upload -> durable `DispatchReserved` -> Nebius create -> durable remote-id attachment -> optional binding publication.
-- Browser capability execution and the legacy browser executor now quarantine raw driver/site exception text from receipts; user-facing/durable flows receive only fixed NVIDEA-authored browser diagnostics.
+- Browser capability execution and the legacy browser executor quarantine raw driver/site exception text from receipts; user-facing/durable flows receive only fixed NVIDEA-authored browser diagnostics.
+- Tavily Extract failure fallback preserves already-collected search evidence but no longer copies provider/network exception messages into `ResearchBatch.Warnings`, preventing those diagnostics from entering resumable research checkpoints.
 - Windows voice invocation is local/review-first. Deterministic judging tools include `Nvidea.PersonalAiDemoEval`, `Nvidea.PersonalAiAdversarialEval`, `Nvidea.JudgingEvidenceVerifier`, `Nvidea.DemoPackageValidator`, and `Nvidea.NebiusModelCatalogCheck`.
 
 ## Persistent Progress History
@@ -43,45 +44,47 @@ Hardened lifecycle cancellation/terminal transitions, quarantined provider diagn
 ### 2026-09-14 — Consequential browser approval/audit ordering
 Hardened browser download handoff/discard and generic `CapabilityToolExecutor` so exact start-audit data is validated before single-use approvals are consumed. The same prevalidated event instance is appended before the external operation/backend call.
 
-### 2026-09-14 — Browser diagnostic privacy hardening (latest run)
+### 2026-09-14 — Browser diagnostic privacy hardening
+Hardened the current browser capability path and legacy browser executor so raw driver/site `Exception.Message` content cannot cross into browser receipts. Added adversarial bearer-token regressions requiring only fixed NVIDEA-authored quarantine diagnostics.
+
+### 2026-09-14 — Tavily Extract diagnostic privacy hardening (latest run)
 Completed:
-- Re-read this ledger and inspected the current NVIDEA head, browser capability boundary, browser job handler, legacy browser executor, and relevant privacy projection code.
-- Identified a remaining privacy path: raw browser driver/site exception messages could be copied into `BrowserActionReceipt.Error`; browser job handling can incorporate receipt errors into a handler exception, while `JobFailureDiagnostic` bounds/control-normalizes untrusted text but does not redact embedded credentials/tokens.
-- Hardened `BrowserCapabilityExecutionService` so failures during post-action observation/verification no longer copy `Exception.Message` into `BrowserActionReceipt`. It emits a fixed NVIDEA-authored diagnostic stating raw driver/site diagnostics are quarantined.
-- Hardened the legacy `BrowserAgentExecutor` in the same way for driver/verification failures, preserving safe retry/verification semantics while removing raw exception text from receipts.
-- Added `BrowserDiagnosticPrivacyTests` with adversarial bearer-like exception messages. Coverage requires both the current capability path and legacy executor to omit the injected secret from `Error` and `VerificationDetail` while retaining a useful canonical quarantine message.
+- Re-read this ledger, inspected the current head/recent commits, durable research checkpoint path, Nebius client diagnostics, Tavily Search/Extract implementation, and existing Tavily enrichment regressions.
+- Identified a concrete durable-state privacy leak: `TavilyResearchClient.EnrichAsync(...)` appended `ex.Message` to `ResearchBatch.Warnings` when Extract degraded to existing search evidence. `ResearchJobHandler` serializes prepared research evidence into resumable checkpoints, so a transport/provider diagnostic could become durable local/cloud job state.
+- Replaced the raw exception interpolation with a fixed NVIDEA-authored warning: Extract is unavailable, search evidence is retained, and raw provider/network diagnostics are quarantined. Cancellation requested by the caller is still rethrown and fallback behavior is otherwise unchanged.
+- Added `Enrich_quarantines_transport_exception_diagnostics_from_warnings`, injecting a bearer-like secret and credential-bearing URL through `HttpRequestException`. The regression requires retained search evidence/credit accounting while forbidding the token, `Bearer`, and `token=` from the warning and requiring the fixed quarantine signal.
 
 Engineering commits this run before this ledger update:
-- `07e97ff5261379585b1e2f9ab57b1a889019f70c` — quarantine current browser capability exception diagnostics.
-- `1d99ee1c9713b66bfe345d294e8eb02f46ff3430` — quarantine legacy browser driver exception diagnostics.
-- `dc1097a6ff3ff93470eceef0f8ce38d775b8151b` — focused browser diagnostic privacy regressions.
+- `703f2477d751d3fd9ab21e7e0ad74ad348f91492` — quarantine Tavily Extract transport/provider diagnostics from research warnings.
+- `33dd8774287990699a61468115f9e23095ac11f8` — focused Tavily Extract diagnostic privacy regression.
 
 Validation / evidence this run:
-- Before every GitHub mutation, repository metadata reported exactly `full_name: UnknownGod2011/NVIDEA`, default branch `main`.
-- Starting head was `4e16c7f2389734a9bae34f4e8e9e695892b1d8b1`.
-- Static data-flow review confirms the current browser capability path no longer copies post-execution observation/verifier exception text into receipts, and the legacy executor no longer copies driver exception text into receipts.
-- The new regressions inject `Bearer super-secret-browser-token` and require it to be absent from both receipt error fields.
+- Before every GitHub mutation, repository metadata reported exactly `repository_full_name: UnknownGod2011/NVIDEA`, default branch `main`.
+- Starting head was `82e4037a3a1c581c3da83cd917ee397276a248fe`.
+- Static data-flow review confirms Extract fallback no longer copies `Exception.Message` into `ResearchBatch.Warnings`; `ResearchJobHandler` persists prepared evidence, so the change closes that durable-checkpoint path at its source.
+- The new regression injects `Bearer super-secret-tavily-token` plus a `?token=` URL and requires both to be absent from warnings while the existing search evidence survives.
 - This run did not mutate `UnknownGod2011/keyboard.wtf` or any other repository.
 - No GitHub Actions workflow, live Nebius, Tavily, Object Storage, Serverless, Playwright, Ollama, or paid inference operation was triggered.
-- `dotnet`, `csc`, `msbuild`, and `mcs` are still absent from the execution environment, so **no compile, xUnit, WPF, Worker, evaluator, or live integration PASS is claimed**. Changes were statically reviewed only.
+- Runtime inspection still reports `dotnet`, `csc`, `msbuild`, and `mcs` absent, so **no compile, xUnit, WPF, Worker, evaluator, or live integration PASS is claimed**. Changes were statically reviewed only.
 
 ## Security / Privacy / Failure Review
-- Raw browser driver/site diagnostic messages no longer cross the browser receipt boundary in the hardened current and legacy execution paths; bearer-like tokens, URLs with secrets, local paths, or provider-specific diagnostic details cannot be copied from `Exception.Message` through those catch blocks.
+- Raw browser driver/site diagnostics no longer cross the hardened browser receipt boundaries.
+- Tavily Extract fallback no longer persists raw provider/network exception messages through research warnings/checkpoints; availability degradation still preserves collected search evidence.
 - Single-use capability approvals cannot be deterministically consumed by malformed start-audit authority before a tool call begins.
 - Backend/provider/site exception text remains excluded from durable audit summaries.
 - Audit append/storage I/O can still fail after approval consumption because approval state and audit storage are not one atomic transaction. Prevalidation removes deterministic semantic rejection from that window but cannot make independent storage I/O transactional.
-- Browser ambiguous-execution recovery, emergency stop, exact approval gating, encrypted research transport, and local/cloud separation were not weakened.
+- Browser ambiguous-execution recovery, emergency stop, exact approval gating, encrypted research transport, Tavily source provenance, and local/cloud separation were not weakened.
 
 ## Known Blockers / Risks
 - No usable .NET 8 executable/compiler is available in this environment; recent Core/WPF/Worker changes still require a real restore/build/test/run before compile confidence is justified.
-- Latest browser diagnostic privacy tests are statically reviewed but unexecuted.
+- Latest Tavily diagnostic privacy regression is statically reviewed but unexecuted.
 - Audit append/storage I/O is not transactionally coupled to approval consumption or the job store.
 - Other direct `AuditEvent` / `IAuditTrail.AppendAsync` producers may still need ordering review.
-- Other browser/provider exception-to-state paths should continue to be audited for embedded secret leakage even when bounded/control-normalized.
+- Other provider/browser/network exception-to-state paths should continue to be audited for embedded secret leakage even when bounded/control-normalized.
 - A state race after remote dispatch preflight but before reservation can still upload an encrypted work item requiring best-effort cleanup; Nebius creation remains blocked unless durable reservation succeeds.
 - Provider catalogs can change; a real Nebius inference smoke test remains required.
 - Prompt-injection detection remains heuristic; capability gates and approvals remain mandatory defense in depth.
-- Real Windows UX, embedding ranking, Playwright authenticated-session behavior, and Nebius Object Storage/Serverless execution still require live environment validation.
+- Real Windows UX, embedding ranking, Playwright authenticated-session behavior, Tavily live behavior, and Nebius Object Storage/Serverless execution still require live environment validation.
 
 ## Single Best Next Task
-If a real .NET 8 Windows build environment becomes available, immediately run restore/build/Core tests/WPF build/Worker build and record exact failures. Otherwise continue the **privacy + direct-audit-producer boundary audit**, prioritizing any remaining path where raw provider/browser exception text can enter durable state or where a single-use approval, durable mutation, or external side effect occurs before deterministic audit validation. Avoid duplicating policy where the sink is already sufficient and no mutation precedes append.
+If a real .NET 8 Windows build environment becomes available, immediately run restore/build/Core tests/WPF build/Worker build and record exact failures. Otherwise continue the **privacy + direct-audit-producer boundary audit**, next tracing Nebius/other provider diagnostic fields (including any consumer of raw response excerpts) and remaining direct audit producers to ensure raw diagnostics cannot enter durable/UI state and deterministic audit rejection cannot happen after approval, durable mutation, or external side effects. Avoid duplicating policy where the existing sink is already sufficient.

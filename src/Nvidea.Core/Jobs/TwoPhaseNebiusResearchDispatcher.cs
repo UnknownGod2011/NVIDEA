@@ -109,6 +109,15 @@ public sealed class TwoPhaseNebiusResearchDispatcher
     {
         ArgumentNullException.ThrowIfNull(ingestor);
 
+        // Authorization and deterministic reservation/audit trust must both succeed before any
+        // encrypted object is uploaded. ReserveDispatchAsync repeats the same reservation checks
+        // immediately before CAS, so this no-mutation preflight does not replace concurrency safety.
+        ResearchWorkItemProtector.ValidateAuthorization(authorization, workItem);
+        await ingestor.PreflightDispatchReservationAsync(
+            workItem.LocalJobId,
+            workItem.CheckpointStep,
+            cancellationToken).ConfigureAwait(false);
+
         var prepared = await PrepareAsync(workItem, authorization, cancellationToken).ConfigureAwait(false);
         try
         {

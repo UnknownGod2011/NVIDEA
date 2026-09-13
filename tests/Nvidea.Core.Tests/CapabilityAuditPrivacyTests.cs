@@ -100,6 +100,51 @@ public sealed class CapabilityAuditPrivacyTests
         Assert.DoesNotContain("query-secret", waiting.ApprovalScope, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task MalformedExecutionStartedAudit_DoesNotConsumeSingleUseApprovalOrExecuteBackend()
+    {
+        var actionId = Guid.NewGuid().ToString("N");
+        var approvalScope = $"browser.agent|{actionId}|BrowserWrite\nforged=true";
+        var decision = new PermissionDecision(
+            Allowed: true,
+            RequiresApproval: true,
+            EffectiveRisk: CapabilityRiskLevel.High,
+            EffectivePermissions: new HashSet<DataPermission> { DataPermission.BrowserWrite },
+            Reason: "Requires exact approval.",
+            ApprovalScope: approvalScope);
+        var policy = new FixedDecisionPolicy(decision);
+        var approvals = new ScopedApprovalAuthorizer();
+        var grant = approvals.Grant(decision, TimeSpan.FromMinutes(5));
+        var audit = new RecordingAuditTrail();
+        var backend = new CountingBackend();
+        var executor = new CapabilityToolExecutor(policy, approvals, audit, backend);
+        var invocation = new CapabilityInvocation(
+            "browser.agent",
+            actionId,
+            new HashSet<DataPermission> { DataPermission.BrowserWrite },
+            CapabilityRiskLevel.High,
+            Consequential: true);
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            executor.ExecuteAsync(new CapabilityToolRequest(
+                invocation,
+                "browser.execute",
+                new Dictionary<string, object?>(),
+                grant)));
+
+        Assert.Equal(0, backend.ExecutionCount);
+        Assert.Empty(audit.Events);
+
+        // The failed execution never reached the authorization consumption step.
+        Assert.True(approvals.TryAuthorize(grant, decision));
+        Assert.False(approvals.TryAuthorize(grant, decision));
+    }
+
+    private sealed class FixedDecisionPolicy(PermissionDecision decision) : ICapabilityPermissionPolicy
+    {
+        public PermissionDecision Evaluate(CapabilityInvocation invocation) => decision;
+    }
+
     private sealed class ThrowingBackend(string message) : ICapabilityToolBackend
     {
         public Task<object?> ExecuteAsync(

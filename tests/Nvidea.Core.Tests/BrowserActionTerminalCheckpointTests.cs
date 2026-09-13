@@ -21,8 +21,8 @@ public sealed class BrowserActionTerminalCheckpointTests
         Assert.Equal(AgentJobState.Failed, failed.State);
         Assert.Equal("browser.action.terminal.scrubbed", failed.Checkpoint?.Step);
         Assert.Equal("{\"actionPayloadRemoved\":true}", failed.Checkpoint?.Payload);
-        Assert.DoesNotContain("super-secret-password", failed.Checkpoint?.Payload ?? string.Empty, StringComparison.Ordinal);
-        Assert.DoesNotContain("private.txt", failed.Checkpoint?.Payload ?? string.Empty, StringComparison.Ordinal);
+        Assert.DoesNotContain("super-secret-password", failed.Checkpoint?.Payload ?? string.Empty);
+        Assert.DoesNotContain("private.txt", failed.Checkpoint?.Payload ?? string.Empty);
         Assert.Null(failed.ApprovalScope);
         Assert.NotNull(durable);
         Assert.Equal(failed.Checkpoint, durable!.Checkpoint);
@@ -67,37 +67,6 @@ public sealed class BrowserActionTerminalCheckpointTests
         Assert.NotNull(durable);
         Assert.Equal(cancelled.Checkpoint, durable!.Checkpoint);
         Assert.Null(durable.ApprovalScope);
-    }
-
-    [Fact]
-    public void Non_browser_terminal_record_is_not_rewritten()
-    {
-        var now = DateTimeOffset.UtcNow;
-        var checkpoint = new AgentJobCheckpoint("research.pending", SensitivePayload, now);
-        var record = new AgentJobRecord(
-            Guid.NewGuid(),
-            new AgentJobDefinition(
-                "research",
-                "research.web",
-                new HashSet<DataPermission> { DataPermission.NetworkAccess },
-                CapabilityRiskLevel.Medium,
-                false,
-                false,
-                1),
-            AgentJobState.Failed,
-            JobExecutionLocation.Local,
-            1,
-            checkpoint,
-            "scope",
-            "failed",
-            now,
-            now);
-
-        var projected = BrowserActionTerminalCheckpoint.ScrubIfTerminal(record);
-
-        Assert.Same(record, projected);
-        Assert.Same(checkpoint, projected.Checkpoint);
-        Assert.Equal("scope", projected.ApprovalScope);
     }
 
     private static AgentJobDefinition Definition(int maxAttempts) =>

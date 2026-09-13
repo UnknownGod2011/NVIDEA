@@ -6,7 +6,8 @@ namespace Nvidea.Core.Desktop;
 /// Product-facing browser authority boundary. UI/plugin callers receive only the browser operations
 /// that preserve NVIDEA's durable-job, exact-approval, download-quarantine and cancellation policy.
 /// The underlying <see cref="BrowserHostRuntime"/> remains trusted infrastructure and is never
-/// returned to product callers.
+/// returned to product callers. Browser outcomes are projected again here so durable/provider/tool
+/// diagnostics and raw site-controlled presentation text never become product API output.
 /// </summary>
 public sealed class BrowserProductRuntime
 {
@@ -17,21 +18,30 @@ public sealed class BrowserProductRuntime
         _host = host ?? throw new ArgumentNullException(nameof(host));
     }
 
-    public Task<BrowserJobOutcome> StartActionAsync(
+    public async Task<BrowserJobOutcome> StartActionAsync(
         BrowserAction action,
-        CancellationToken cancellationToken = default) =>
-        _host.StartActionAsync(action, cancellationToken);
+        CancellationToken cancellationToken = default)
+    {
+        var outcome = await _host.StartActionAsync(action, cancellationToken).ConfigureAwait(false);
+        return BrowserProductOutcomeTrust.Project(outcome);
+    }
 
-    public Task<BrowserJobOutcome> ApproveAndResumeAsync(
+    public async Task<BrowserJobOutcome> ApproveAndResumeAsync(
         Guid jobId,
         string exactScope,
-        CancellationToken cancellationToken = default) =>
-        _host.ApproveAndResumeAsync(jobId, exactScope, cancellationToken);
+        CancellationToken cancellationToken = default)
+    {
+        var outcome = await _host.ApproveAndResumeAsync(jobId, exactScope, cancellationToken).ConfigureAwait(false);
+        return BrowserProductOutcomeTrust.Project(outcome);
+    }
 
-    public Task<BrowserJobOutcome> CancelAsync(
+    public async Task<BrowserJobOutcome> CancelAsync(
         Guid jobId,
-        CancellationToken cancellationToken = default) =>
-        _host.CancelAsync(jobId, cancellationToken);
+        CancellationToken cancellationToken = default)
+    {
+        var outcome = await _host.CancelAsync(jobId, cancellationToken).ConfigureAwait(false);
+        return BrowserProductOutcomeTrust.Project(outcome);
+    }
 
     public Task<IReadOnlyList<BrowserDownloadRecord>> ListDownloadsAsync(
         CancellationToken cancellationToken = default) =>

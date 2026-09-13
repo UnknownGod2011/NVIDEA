@@ -119,6 +119,25 @@ public sealed class ResumableJobOrchestrator
             await _store.SaveAsync(updated, cancellationToken).ConfigureAwait(false);
             return updated;
         }
+        catch (AmbiguousJobExecutionException)
+        {
+            _ephemeralApprovals.Revoke(jobId);
+            var ambiguous = running with
+            {
+                LastError = "Execution outcome is ambiguous; fresh verification is required before replay.",
+                NextAttemptAt = null,
+                UpdatedAt = DateTimeOffset.UtcNow
+            };
+            await _store.SaveAsync(ambiguous, cancellationToken).ConfigureAwait(false);
+            await AuditAsync(
+                ambiguous,
+                "job.execution_ambiguous",
+                false,
+                false,
+                "Job may have produced a side effect but verification was inconclusive; automatic retry was blocked.",
+                cancellationToken).ConfigureAwait(false);
+            return ambiguous;
+        }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             _ephemeralApprovals.Revoke(jobId);

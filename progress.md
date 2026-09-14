@@ -12,111 +12,81 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 
 ## Current Product / Architecture State
 - .NET 8 core in `src/Nvidea.Core`, WPF Windows host in `src/Nvidea.Windows`, deployable remote worker in `src/Nvidea.Worker`.
-- NVIDIA Nemotron through Nebius Token Factory with retries, cancellation/timeouts, structured tool calling, response-schema support, and Nano/Super/Ultra routing.
-- Layered personal memory with privacy-aware writes, provenance, semantic/recency/importance retrieval, local embeddings, migration/re-indexing, and maintenance UX.
-- Tavily Search + Extract research with multi-query planning, canonical deduplication, evidence quality/freshness/diversity ranking, citations/provenance, resumable checkpoints, explicit untrusted-evidence handling, and diagnostic quarantine on Extract fallback.
+- NVIDIA Nemotron through Nebius Token Factory with structured tool calling, retries/timeouts/cancellation, response-schema support, and fast/deep model routing.
+- Layered personal memory with privacy-aware writes, provenance, semantic/recency/importance retrieval, local embeddings, migration/re-indexing, retention/edit/delete controls, and maintenance UX.
+- Tavily Search + Extract research with multi-query planning, canonical deduplication, source quality/freshness/diversity ranking, citations/provenance, resumable checkpoints, explicit untrusted-evidence handling, and provider-diagnostic quarantine.
 - Safe Playwright browser agent with persistent Chromium state, popup tracking, plan-act-observe-verify, prompt-injection detection, consequential-action approvals, quarantined downloads, emergency stop, crash recovery, and no automatic replay after ambiguous side effects.
-- Protected local state uses Windows CurrentUser DPAPI by default; jobs use durable CAS, leases, and hash-chained/segmented audit.
-- Remote research uses encrypted opaque work items, signed resource-ID bindings, two-phase dispatch, lifecycle reconciliation, crash-resumable durable cancellation, exact-once result ingestion, race-safe cleanup, Nebius Object Storage, and Serverless-mounted worker transport.
-- Remote dispatch ordering is: exact cloud authorization -> no-mutation reservation/audit preflight -> encrypt/upload -> durable `DispatchReserved` -> Nebius create -> durable remote-id attachment -> optional binding publication.
-- Trust boundaries include `ProviderFailureCodeTrust`, `JobFailureDiagnostic`, `DesktopUiFailureProjector`, `DesktopDisplayTextTrust`, `BrowserProductOutcomeTrust`, `BrowserGoalEvidenceTrust`, `CapabilityIdentityTrust`, `AuditPayloadTrust`, and `AuditEventTrust`.
-- Consequential browser download handoff/discard, generic capability execution, generic jobs, and remote research transitions prevalidate deterministic audit contracts before approval consumption, durable state transition, or external side effect where the architecture permits it.
-- Browser driver/site diagnostics, typed URL mismatch details, Tavily Extract failures, Nebius Token Factory response/transport failures, Nebius Serverless transport/timeouts/cancellation, and Nebius Object Storage caller-cancellation/lower-level client failures are quarantined at their provider/product boundaries.
-- Windows voice invocation is local/review-first. Deterministic judging tools include `Nvidea.PersonalAiDemoEval`, `Nvidea.PersonalAiAdversarialEval`, `Nvidea.JudgingEvidenceVerifier`, `Nvidea.DemoPackageValidator`, and `Nvidea.NebiusModelCatalogCheck`.
+- Protected local state uses Windows CurrentUser DPAPI by default; jobs use durable compare-and-swap and audit uses protected hash-chained storage/tail sealing.
+- Remote research uses encrypted opaque work items, signed resource-ID bindings, two-phase dispatch, lifecycle reconciliation, crash-resumable cancellation, exact-once protected-result ingestion, cancellation-vs-terminal race handling, Nebius Object Storage, and Serverless-mounted worker transport.
+- Provider/product diagnostic boundaries quarantine raw browser driver/site failures, typed credential-bearing URL mismatch details, Tavily Extract failures, Nebius Token Factory HTTP/transport failures, Nebius Serverless transport/timeout/cancellation failures, and Nebius Object Storage caller-cancellation/lower-level client failures.
+- Deterministic judging tools include `Nvidea.PersonalAiDemoEval`, `Nvidea.PersonalAiAdversarialEval`, `Nvidea.JudgingEvidenceVerifier`, `Nvidea.DemoPackageValidator`, and `Nvidea.NebiusModelCatalogCheck`.
 
 ## Persistent Progress History
 
-### 2026-09-06 to 2026-09-12 — Core platform and judging infrastructure
-Added Nebius/Nemotron inference, layered memory, Tavily research, capability approvals/audit, durable jobs, Playwright execution, Windows shell, DPAPI state protection, persistent browser sessions/downloads, crash recovery, encrypted Nebius remote execution, two-phase dispatch, signed resource binding, exact-once ingestion, lifecycle/cancellation reconciliation, local voice, semantic-memory migration UX, judging/evaluator tooling, protocol trust, endpoint/redirect trust, RSA role separation, deployment preflight policy reuse, and open-source/demo documentation.
+### 2026-09-06 to 2026-09-12 — Core product and judging infrastructure
+Implemented the Windows shell, Nebius/Nemotron inference, layered memory, Tavily research, capability permissions/audit, durable jobs, Playwright browser execution, DPAPI state protection, persistent browser sessions/downloads, crash recovery, encrypted Nebius remote execution, two-phase dispatch, signed resource binding, exact-once ingestion, lifecycle/cancellation reconciliation, local voice, semantic-memory migration UX, judging/evaluator tooling, protocol trust, endpoint/redirect trust, deployment preflight, and open-source/demo documentation.
 
-### 2026-09-13 — Browser exact-once/privacy hardening
-Added provider-failure provenance and diagnostic quarantine, privacy-safe desktop/browser projections, safe legacy goal migration, parent/child checkpoint minimization, terminal checkpoint scrubbing, and explicit ambiguous execution handling. Executed-but-unverified browser actions stay `Running`, receive no automatic retry, and require fresh verification. Capability/action/tool authority became bounded canonical ASCII and reject-only.
+### 2026-09-13 to 2026-09-14 — Exact-once, audit, privacy, and remote-lifecycle hardening
+- Browser executed-but-unverified actions remain durable `Running` and require fresh verification; they are never automatically replayed.
+- Added `AuditPayloadTrust` / `AuditEventTrust` and deterministic prevalidation before many approval, state-mutation, and external-effect boundaries.
+- Hardened browser download handoff/discard and generic capability execution so exact start-audit data is validated before single-use approval consumption.
+- Quarantined browser/provider diagnostics and credential-bearing URL mismatch details at their boundaries.
+- Remote dispatch now reserves local provenance before Nebius creation and binds protected results to exact opaque id, remote id, checkpoint, protocol, and authenticated envelope.
+- Cancellation is durable and crash-resumable: active provider jobs are re-cancelled after fresh verification, `Cancelling` waits, only verified `Cancelled` becomes cancellation success, verified `Failed` becomes failure, and verified `Completed` uses a narrowly gated authenticated result-ingestion path.
+- Completed-after-cancel and failed-after-cancel races now converge truthfully without false cancellation-success audit events.
 
-### 2026-09-13 — Durable audit and generic job ordering hardening
-Added `AuditPayloadTrust` and `AuditEventTrust`; enforced them in JSONL/segmented audit append/reload/migration. `ResumableJobOrchestrator` validates audits before creation, approval transitions, cancellation/failure, and ambiguous recovery. Malformed handler-produced audit/approval data after execution starts leaves the job `Running`, preventing replay.
+Key recent commits before this run:
+- `e66381b78752c6141e8d9ac192ea307e48cf0968` — crash-resumable Nebius cancellation.
+- `fd763848104e9c5420b4175e5246fbd1e887e8da` — truthful failed cancellation race.
+- `563e3e06187720fb0b175eadb50e79df8ede8b2d` / `cd0946c41d1124cc495fea455cdbdd610afa8b19` / `1092b7d548dc20aa650b5defb5119803744bd235` — completed cancellation race ingestion/lifecycle/tests.
 
-### 2026-09-13 — Nebius remote-research ordering hardening
-Hardened lifecycle cancellation/terminal transitions, quarantined provider diagnostic messages, and validated reserve/attach/result audit events before CAS. Added product-level and lower-level pre-dispatch audit preflight so malformed durable authority cannot deterministically reach encrypted upload or Nebius creation. `RemoteResearchResultIngestor.PreflightDispatchReservationAsync(...)` is no-mutation; `ReserveDispatchAsync(...)` still reloads and revalidates immediately before CAS.
-
-### 2026-09-14 — Consequential approval/audit ordering
-Hardened browser download handoff/discard and generic `CapabilityToolExecutor` so exact start-audit data is validated before single-use approvals are consumed. The same prevalidated event instance is appended before the external operation/backend call.
-
-### 2026-09-14 — Browser and provider diagnostic privacy
-- Browser receipt boundaries no longer retain raw driver/site exception text.
-- Typed `UrlEquals` postcondition mismatches do not echo expected/observed credential-bearing URLs; exact matching semantics remain unchanged.
-- Tavily Extract fallback preserves search evidence while dropping raw provider/network exception text.
-- Nebius Token Factory drops raw HTTP response bodies and raw retry/final transport diagnostics while retaining safe status classification.
-- Nebius Serverless replaces raw network/timeout/cancellation diagnostics while retaining safe HTTP status and caller-cancellation semantics.
-- Nebius Object Storage caller cancellation preserves the caller token while replacing provider text; lower-level AWS/network/stream failures are quarantined without masking local programming failures.
-
-### 2026-09-14 — Crash-resumable Nebius cancellation
-- `RequestCancellationAsync(...)` persists `CancelRequested` before contacting Nebius.
-- `ReconcileCancellationAsync(...)` re-verifies exact remote provenance and re-drives cancellation only when fresh provider state is still `Pending`/`Running`.
-- `Cancelling` remains wait-only; confirmed `Cancelled` is the only cancellation-success path.
-- Added regression coverage for a lost first control-plane cancel delivery and for malformed audit authority being rejected before redrive.
-
-Engineering commits:
-- `e66381b78752c6141e8d9ac192ea307e48cf0968` — redrive durable Nebius cancellation after crash window.
-- `feb55a002c2f5503952d5b153f63f2790d7b111c` — cover crash-safe Nebius cancellation redrive.
-
-### 2026-09-14 — Failed cancellation terminal-race resolution
-- A durable `CancelRequested` research job that fresh verified Nebius state reports as `FAILED` now converges truthfully to local `Failed` / `RemoteFailed` rather than remaining unresolved.
-- The branch records `research.remote_failed_after_cancel_request`, preserves only trusted failure classification, cleans protected payloads, and never emits cancellation success.
-
-Engineering commits:
-- `fd763848104e9c5420b4175e5246fbd1e887e8da` — resolve failed remote cancellation races truthfully.
-- `f08d9f636ddddf17a3b8f0fa25cb87c51140135a` — cover failed cancellation terminal race.
-
-### 2026-09-14 — Completed cancellation terminal-race recovery (latest run)
+### 2026-09-14 — Durable audit outbox for protected remote-result application (latest run)
 Completed:
-- Re-read this ledger completely and inspected the current remote research lifecycle, exact-once protected-result ingestor, cancellation recovery regressions, and test visibility before changing code.
-- Closed the remaining `CancelRequested` + provider `COMPLETED` race without weakening ordinary result ingestion.
-- Refactored `RemoteResearchResultIngestor` around one shared exact-once ingestion core while keeping public `IngestAsync(...)` strictly gated to `RemoteResearchProvenanceState.Dispatched`.
-- Added internal `IngestCompletedAfterCancellationRequestedAsync(...)`, which is separately gated to an exact durable `CancelRequested` stage and additionally requires the exact freshly verified Nebius remote-job id. It reuses all existing protocol/version checks, exact checkpoint binding, envelope provenance checks, authenticated decryption, future-time bounds, no-approval-authority rule, result provenance validation, audit trust validation, compare-and-swap, and protected-payload cleanup.
-- The recovery path emits the distinct audit event `research.remote_result_applied_after_cancel_request`; successful application transitions provenance to `ResultApplied` and execution back to local instead of falsely claiming cancellation.
-- `NebiusResearchLifecycleReconciler.ReconcileCancellationAsync(...)` now handles verified provider `Completed` by invoking only that narrow recovery path. A missing protected result leaves the durable job `CancelRequested` while the persisted authenticated work-item lifetime is still open; after expiry it truthfully finalizes `Failed` / `Expired` with `research.remote_result_expired_after_cancel_request`.
-- No additional cancel call is issued after fresh provider state is already `Completed`.
-- Added focused regressions covering: successful protected-result recovery when completion wins the race; public ordinary ingestion still rejecting `CancelRequested`; substituted verified remote id rejection; waiting without mutation while the protected-result lifetime remains open; truthful expiry after that lifetime; no `research.remote_cancelled` event on either completion-race outcome; and exact cleanup after successful ingestion.
+- Re-read this ledger and inspected the durable job store, append-only audit trail, remote-result ingestor, lifecycle reconciler, and existing audit-ordering tests before changing code.
+- Identified a concrete crash window in exact-once protected remote-result ingestion: the authenticated result CAS could succeed and the subsequent audit append could fail, leaving durable state at `ResultApplied` while the corresponding audit record was absent.
+- Added optional `AgentJobRecord.PendingAuditEvent`. Because it is persisted inside the same protected job record, the exact result-state transition and exact validated audit intent can now be committed by one job-store CAS.
+- Updated `JsonAgentJobStore.VersionEquivalent(...)` so pending audit content is part of CAS identity. Structural audit comparison includes event identity, timestamps, capability/action/type/risk/approval fields, summary, and exact metadata. Remote provenance CAS equivalence now also includes `WorkItemExpiresAt`, `TerminalAt`, and provider failure code, closing previously omitted version fields.
+- Added `DurableJobAuditOutbox`: it validates the pending event, proves the exact event id/content is already present or appends it, tolerates a concurrent equivalent append by re-reading, fails closed on same-id conflicting content, and only then CAS-clears the pending marker. Clear retries are bounded.
+- Wired protected remote-result ingestion to stage `PendingAuditEvent` in the same CAS that transitions to `ResultApplied`; protected result/work-item cleanup now occurs only after the audit is confirmed durable and the marker is cleared.
+- Added `RemoteResearchResultIngestor.RecoverPendingAuditAsync(...)`. A fresh ingestor instance can recover the CAS->audit crash window without re-running remote work or a handler. For result-application events it performs protected-payload cleanup only after audit recovery succeeds.
+- Normal ingestor entry points call pending-audit recovery before beginning new remote-result/dispatch work, preventing a later ingestor operation from silently overwriting a stranded audit marker.
+- Added fault-injection tests covering: audit storage failure after result CAS; durable marker/evidence retention after that failure; restart recovery; exactly-once audit append across repeated recovery; already-appended-but-not-cleared recovery; and fail-closed handling when the audit trail contains the same event id with conflicting content.
 
 Engineering commits this run before this ledger update:
-- `563e3e06187720fb0b175eadb50e79df8ede8b2d` — add narrowly gated completed-after-cancellation result ingestion.
-- `cd0946c41d1124cc495fea455cdbdd610afa8b19` — resolve verified `Completed` cancellation races with wait/expiry semantics.
-- `1092b7d548dc20aa650b5defb5119803744bd235` — add completed-cancellation race regressions.
+- `8bed3481f54fba21c46d604d9f924eb56d05ac6a` — add durable pending-audit slot to job records.
+- `0abedc84dca667a022db8a6c62b5711847f02363` — include pending audit and complete remote provenance in job CAS identity.
+- `8145c7bb812777b557608ddb1eef2ce59cfd49fb` — add recoverable durable job audit outbox.
+- `567aa999f6b5db181820c424942144ddf52eb0ad` — make protected remote-result audit crash recoverable.
+- `854f216268bb67b2719279ead8af61458dd59c07` — add outbox crash/restart/conflict regressions.
 
 Validation / evidence this run:
-- Before every GitHub mutation, repository metadata reported exactly `repository_full_name: UnknownGod2011/NVIDEA`, default branch `main`.
-- Starting head was `31fa47b4a0ca3475bceaeeb4e27c1a263f82490c`.
-- Before this ledger commit, GitHub compare reported the branch **3 commits ahead / 0 behind** the starting head, restricted to `src/Nvidea.Core/Jobs/RemoteResearchResultIngestor.cs`, `src/Nvidea.Core/Jobs/NebiusResearchLifecycleReconciler.cs`, and `tests/Nvidea.Core.Tests/NebiusResearchCompletedCancellationRaceTests.cs`.
-- Production diff before this ledger update: result ingestor +50/-7; lifecycle reconciler +30/-3. Focused test suite: +324 lines.
-- Commit-level review confirms public `IngestAsync(...)` still hard-codes required provenance `Dispatched`; the dedicated recovery method hard-codes `CancelRequested` and an exact expected remote id before reading/applying protected output.
-- The reconciler reaches the dedicated recovery path only after `GetVerifiedRemoteAsync(...)` has matched the durable remote id and deterministic remote name and parsed provider state as `Completed`.
-- Result audit construction still passes through `AuditEventTrust.ValidateForPersistence(...)` before the compare-and-swap mutation; successful result application remains exact-once through the existing durable CAS boundary.
-- `dotnet`, `csc`, `msbuild`, and `mcs` are unavailable in this environment, so **no compile, xUnit, WPF, Worker, evaluator, or live integration PASS is claimed**.
-- A local read-only clone attempt could not resolve `github.com` from the shell runtime; GitHub validation therefore used the connected repository API and commit/compare evidence.
-- This run did not mutate `UnknownGod2011/keyboard.wtf` or any other repository.
-- No GitHub Actions workflow, live Nebius, Tavily, Object Storage, Serverless, Playwright, Ollama, or paid inference operation was triggered.
+- Before every GitHub mutation, repository metadata reported exact full name `UnknownGod2011/NVIDEA`; no other repository was mutated.
+- Starting head was `ad78b0e1148be0ac013bf9d66bef5826311b3a5f`.
+- Before this ledger commit, GitHub compare reported **5 commits ahead / 0 behind** the starting head.
+- The pre-ledger diff is restricted to `JobContracts.cs`, `JsonAgentJobStore.cs`, new `DurableJobAuditOutbox.cs`, `RemoteResearchResultIngestor.cs`, and new `RemoteResearchAuditOutboxRecoveryTests.cs`.
+- Commit-level diff review confirms the result path changed from `CAS -> audit append -> cleanup` to `CAS(result + pending exact audit) -> ensure exact audit durable -> CAS clear marker -> cleanup`.
+- `Nvidea.Core.Tests` has `InternalsVisibleTo`, so the focused tests can directly exercise the internal recovery/outbox contracts.
+- `dotnet`, `csc`, `msbuild`, and `mcs` are still unavailable in this execution environment. **No compilation, xUnit, WPF, Worker, evaluator, or live integration PASS is claimed.**
+- No GitHub Actions workflow and no live/paid Nebius, Tavily, Object Storage, Serverless, Playwright, Ollama, or inference operation was triggered.
 
 ## Security / Privacy / Failure Review
-- Cancellation outcome is now truthful across all verified terminal states: only provider `Cancelled` yields local cancellation; provider `Failed` yields failure; provider `Completed` can apply only an authenticated protected result tied to the exact durable job/provenance.
-- The completed-race path does not broaden normal ingestion authority. It is internal, state-specific, and additionally binds the caller's freshly verified remote id to durable provenance before result transport is trusted.
-- Protected results still cannot grant approval authority, alter the expected local stage provenance, substitute opaque/remote ids, or bypass authenticated decryption and checkpoint binding.
-- Missing results after verified completion remain retryable only until the already-persisted authenticated transport lifetime expires; no new wall-clock convention is introduced.
-- Successful completion-race recovery and expiry use distinct audit events and never claim `research.remote_cancelled`.
-- Audit validation remains before exact-once result CAS; protected-payload cleanup remains after successful CAS/audit and is best effort.
-- Existing provider/browser diagnostic quarantine and approval/audit ordering boundaries remain unchanged.
-- Audit append/storage I/O is still not transactionally coupled to job-store CAS or approval consumption in independent-store flows.
+- Pending audit data is persisted in the same locally protected job store as the state transition; it is not a second plaintext sidecar.
+- The outbox persists the already-validated exact `AuditEvent`, rather than reconstructing authority or free-form audit content after restart.
+- Recovery never replays the remote stage, handler, approval, or consequential tool action. It only proves/appends the audit and clears its durable marker.
+- A same-id audit record with different content is treated as integrity conflict and leaves the marker intact.
+- Protected remote payloads remain available while audit persistence is failing, so restart recovery retains evidence; cleanup is delayed until audit durability is proven.
+- Existing `AuditEventTrust` validation remains before the result-state CAS.
+- The outbox is currently integrated only into **protected remote-result application**. Reserve/attach, lifecycle terminal transitions, generic job transitions, and approval-consuming flows still use independent state/audit writes unless separately hardened.
+- The primary Nebius lifecycle reconciler currently loads job state directly before its dispatched-state eligibility check. Therefore a process restart that lands specifically on `ResultApplied + PendingAuditEvent` is recoverable through `RemoteResearchResultIngestor.RecoverPendingAuditAsync(...)`, but lifecycle reconciliation is not yet automatically wired to invoke that recovery before rejecting the no-longer-dispatched state. This is a known integration gap, not claimed as solved.
 
 ## Known Blockers / Risks
-- No usable .NET 8 executable/compiler is available in this environment; recent Core/WPF/Worker changes still require a real restore/build/test/run before compile confidence is justified.
-- The new completed-cancellation regressions are statically reviewed but unexecuted.
-- Live Nebius Serverless behavior still needs an integration test proving the observed transition/race shapes (`CANCELLING` -> `COMPLETED`/`FAILED`/`CANCELLED`) and practical cancellation retry cadence under real control-plane timing.
-- Audit append/storage I/O is not transactionally coupled to approval consumption or the job store; a process/storage failure after a CAS but before audit append can still leave durable state ahead of the audit stream.
-- Other direct `AuditEvent` / `IAuditTrail.AppendAsync` producers may still need ordering and crash-recovery review.
-- Other provider/browser/network exception-to-state paths should continue to be audited for embedded secret leakage even when bounded/control-normalized.
-- A state race after remote dispatch preflight but before reservation can still upload an encrypted work item requiring best-effort cleanup; Nebius creation remains blocked unless durable reservation succeeds.
-- Provider catalogs can change; a real Nebius inference smoke test remains required.
-- Prompt-injection detection remains heuristic; capability gates and approvals remain mandatory defense in depth.
-- Real Windows UX, embedding ranking, Playwright authenticated-session behavior, Tavily live behavior, and Nebius Object Storage/Serverless execution still require live environment validation.
+- No usable .NET 8 executable/compiler is available here; all recent Core/WPF/Worker changes still require real restore/build/test/run validation.
+- New outbox regressions are statically reviewed but unexecuted.
+- Wire the lifecycle/startup recovery path to drain pending job-audit markers automatically before state-specific reconciliation; otherwise the new result outbox requires an ingestor recovery call after restart.
+- Expand the outbox pattern only after the focused path is validated: reserve/attach, remote terminal transitions, generic job transitions, and approval-consumption boundaries still have CAS/write -> audit-append crash windows.
+- Blind low-level `JsonAgentJobStore.SaveAsync(...)` remains trusted infrastructure and can replace a record; higher-level product paths should continue to prefer constrained CAS/lifecycle APIs.
+- Live Nebius Serverless/Object Storage behavior, provider catalog drift, real Windows UX, authenticated Playwright sessions, Tavily live behavior, and semantic ranking still need environment validation.
+- Prompt-injection detection is heuristic; permissions, confirmation gates, untrusted-tool boundaries, and post-action verification remain mandatory defense in depth.
 
 ## Single Best Next Task
-If a real .NET 8 Windows build environment becomes available, immediately run restore/build/Core tests/WPF build/Worker build and record exact failures. Otherwise perform the next **direct audit-producer crash-ordering pass**: identify a consequential state transition where job-store CAS can succeed but audit append can fail, add a durable/recoverable audit-outbox or equivalent narrowly scoped reconciliation mechanism, and prove with fault-injection tests that restart recovery cannot silently lose the audit event or replay the consequential action. Then continue provider-diagnostic and live-integration hardening.
+Wire **automatic pending-audit recovery into the Nebius remote-research lifecycle/startup reconciliation path before state eligibility checks**, with a restart regression proving that `ResultApplied + PendingAuditEvent` heals to an exactly-once audit and cleanup without provider polling, remote-result replay, or external side effects. Once that focused path is executable and stable, extend the same durable outbox pattern to the next highest-consequence CAS->audit boundary rather than broad-rewriting all audit producers at once.

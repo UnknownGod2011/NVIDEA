@@ -50,6 +50,68 @@ internal sealed class DurableJobExternalActionIntent
     }
 
     /// <summary>
+    /// Persists a new external-action intent and its exact audit authority, or reuses an already
+    /// durable equivalent intent after restart. Existing intent always wins over a newly prepared
+    /// audit event: callers must not manufacture another delivery identity merely because a prior
+    /// provider call failed or its result became ambiguous.
+    /// </summary>
+    public async Task<AgentJobRecord> StageOrReuseAndFlushAsync(
+        AgentJobRecord current,
+        AuditEvent newAuditEvent,
+        DurableExternalActionKind kind,
+        string targetId,
+        DateTimeOffset? createdAt = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+        ArgumentNullException.ThrowIfNull(newAuditEvent);
+        ValidateTargetId(targetId);
+
+        if (current.PendingExternalAction is not null)
+        {
+            ValidatePending(current, kind, targetId);
+            return current.PendingAuditEvent is null
+                ? current
+                : await FlushAuditAsync(current, cancellationToken).ConfigureAwait(false);
+        }
+
+        var staged = Stage(current, newAuditEvent, kind, targetId, createdAt);
+        if (!await _store.CompareExchangeAsync(current, staged, cancellationToken).ConfigureAwait(false))
+            throw new InvalidOperationException("Job state changed while the external action intent was being staged.");
+
+        return await FlushAuditAsync(staged, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Returns the exact pending action only when both its semantic kind and provider target match
+    /// the freshly authenticated lifecycle context. This is a fail-closed substitution boundary:
+    /// a stale/corrupt action can never redirect a later provider call or be silently cleared.
+    /// </summary>
+    public PendingExternalAction ValidatePending(
+        AgentJobRecord record,
+        DurableExternalActionKind expectedKind,
+        string expectedTargetId)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+        ValidateTargetId(expectedTargetId);
+
+        var pending = record.PendingExternalAction
+            ?? throw new InvalidOperationException("No durable external action is pending.");
+        if (pending.Kind != expectedKind)
+            throw new InvalidDataException("Pending external action kind does not match the expected provider operation.");
+        if (!string.Equals(pending.TargetId, expectedTargetId, StringComparison.Ordinal))
+            throw new InvalidDataException("Pending external action target does not match authenticated remote provenance.");
+        if (pending.ActionId == Guid.Empty || pending.AuditEventId == Guid.Empty)
+            throw new InvalidDataException("Pending external action identity is invalid.");
+        if (pending.CreatedAt == default)
+            throw new InvalidDataException("Pending external action creation time is invalid.");
+        if (record.PendingAuditEvent is not null && record.PendingAuditEvent.EventId != pending.AuditEventId)
+            throw new InvalidDataException("Pending external action is bound to a different audit event.");
+
+        return pending;
+    }
+
+    /// <summary>
     /// Makes the exact audit bound to the pending external action durable. The action intent remains
     /// persisted after this returns and must not be cleared merely because an attempted provider call
     /// returned or threw; callers clear only after provider state makes replay unnecessary.

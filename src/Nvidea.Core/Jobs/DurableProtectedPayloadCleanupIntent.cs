@@ -21,7 +21,7 @@ internal sealed class DurableProtectedPayloadCleanupIntent
         ArgumentNullException.ThrowIfNull(record);
         ValidateOpaqueWorkItemId(opaqueWorkItemId);
 
-        if (record.PendingProtectedPayloadCleanup is { } existing)
+        if (record.PendingProtectedPayloadCleanup is not null)
         {
             ValidatePending(record, opaqueWorkItemId);
             return record;

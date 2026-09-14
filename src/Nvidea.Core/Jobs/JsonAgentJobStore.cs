@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Nvidea.Core.Capabilities;
 using Nvidea.Core.Security;
 
 namespace Nvidea.Core.Jobs;
@@ -195,7 +196,8 @@ public sealed class JsonAgentJobStore : IAgentJobStore
             || !string.Equals(actual.ApprovalScope, expected.ApprovalScope, StringComparison.Ordinal)
             || !string.Equals(actual.LastError, expected.LastError, StringComparison.Ordinal)
             || !DefinitionEquivalent(actual.Definition, expected.Definition)
-            || !CheckpointVersionEquivalent(actual.Checkpoint, expected.Checkpoint))
+            || !CheckpointVersionEquivalent(actual.Checkpoint, expected.Checkpoint)
+            || !AuditEventEquivalent(actual.PendingAuditEvent, expected.PendingAuditEvent))
         {
             return false;
         }
@@ -212,7 +214,46 @@ public sealed class JsonAgentJobStore : IAgentJobStore
             && a.DispatchedAt == e.DispatchedAt
             && a.State == e.State
             && a.ResultAppliedAt == e.ResultAppliedAt
+            && a.WorkItemExpiresAt == e.WorkItemExpiresAt
+            && a.TerminalAt == e.TerminalAt
             && string.Equals(a.ProviderFailureCode, e.ProviderFailureCode, StringComparison.Ordinal);
+    }
+
+    internal static bool AuditEventEquivalent(AuditEvent? actual, AuditEvent? expected)
+    {
+        if (ReferenceEquals(actual, expected))
+            return true;
+        if (actual is null || expected is null)
+            return false;
+        if (actual.EventId != expected.EventId
+            || actual.OccurredAt != expected.OccurredAt
+            || !string.Equals(actual.CapabilityId, expected.CapabilityId, StringComparison.Ordinal)
+            || !string.Equals(actual.ActionId, expected.ActionId, StringComparison.Ordinal)
+            || !string.Equals(actual.EventType, expected.EventType, StringComparison.Ordinal)
+            || actual.Risk != expected.Risk
+            || actual.Allowed != expected.Allowed
+            || actual.Approved != expected.Approved
+            || !string.Equals(actual.ApprovalScope, expected.ApprovalScope, StringComparison.Ordinal)
+            || !string.Equals(actual.Summary, expected.Summary, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (ReferenceEquals(actual.Metadata, expected.Metadata))
+            return true;
+        if (actual.Metadata is null || expected.Metadata is null || actual.Metadata.Count != expected.Metadata.Count)
+            return false;
+
+        foreach (var pair in actual.Metadata)
+        {
+            if (!expected.Metadata.TryGetValue(pair.Key, out var expectedValue)
+                || !string.Equals(pair.Value, expectedValue, StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static bool DefinitionEquivalent(AgentJobDefinition actual, AgentJobDefinition expected) =>

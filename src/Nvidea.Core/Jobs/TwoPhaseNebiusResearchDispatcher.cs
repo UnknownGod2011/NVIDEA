@@ -14,9 +14,9 @@ public sealed record PreparedNebiusResearchDispatch(
 /// <summary>
 /// Coordinates the crash-sensitive Serverless dispatch boundary in two phases:
 /// 1) encrypt/upload the work item and durably reserve its exact opaque id/checkpoint/expiry locally;
-/// 2) only after that CAS succeeds, create the Nebius job and attach the returned remote id.
-/// When a binding publisher is configured, the authoritative remote-id binding is published only
-/// after durable attachment succeeds, so a worker can never observe an unauthoritative pre-create id.
+/// 2) when configured, durably commit the exact encrypted envelope digest before provider creation;
+/// 3) only after those local CAS boundaries succeed, create the Nebius job and attach its remote id.
+/// The authoritative signed binding is published only after durable attachment succeeds.
 /// </summary>
 public sealed class TwoPhaseNebiusResearchDispatcher
 {
@@ -24,17 +24,20 @@ public sealed class TwoPhaseNebiusResearchDispatcher
     private readonly IProtectedResearchWorkItemTransport _transport;
     private readonly NebiusResearchDispatchOptions _options;
     private readonly ResearchDispatchBindingPublisher? _bindingPublisher;
+    private readonly DurableResearchEnvelopeCommitment? _envelopeCommitment;
 
     public TwoPhaseNebiusResearchDispatcher(
         INebiusServerlessJobClient serverless,
         IProtectedResearchWorkItemTransport transport,
         NebiusResearchDispatchOptions options,
-        ResearchDispatchBindingPublisher? bindingPublisher = null)
+        ResearchDispatchBindingPublisher? bindingPublisher = null,
+        DurableResearchEnvelopeCommitment? envelopeCommitment = null)
     {
         _serverless = serverless ?? throw new ArgumentNullException(nameof(serverless));
         _transport = transport ?? throw new ArgumentNullException(nameof(transport));
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _bindingPublisher = bindingPublisher;
+        _envelopeCommitment = envelopeCommitment;
         ValidateOptions(options);
     }
 
@@ -119,9 +122,10 @@ public sealed class TwoPhaseNebiusResearchDispatcher
             cancellationToken).ConfigureAwait(false);
 
         var prepared = await PrepareAsync(workItem, authorization, cancellationToken).ConfigureAwait(false);
+        AgentJobRecord reserved;
         try
         {
-            await ingestor.ReserveDispatchAsync(
+            reserved = await ingestor.ReserveDispatchAsync(
                 new RemoteResearchDispatchReservation(
                     prepared.LocalJobId,
                     prepared.CheckpointStep,
@@ -140,6 +144,18 @@ public sealed class TwoPhaseNebiusResearchDispatcher
         {
             await TryDeleteAsync(prepared.OpaqueWorkItemId).ConfigureAwait(false);
             throw;
+        }
+
+        if (_envelopeCommitment is not null)
+        {
+            // This CAS is intentionally after the reservation audit settles and before Nebius Create.
+            // If it fails, the durable reservation continues to own the protected payload and no
+            // provider work has been started. Recovery must never recompute this digest from a
+            // mutable shared mount.
+            reserved = await _envelopeCommitment.AttachAsync(
+                reserved.JobId,
+                prepared.Envelope,
+                cancellationToken).ConfigureAwait(false);
         }
 
         var receipt = await StartPreparedAsync(prepared, cancellationToken).ConfigureAwait(false);
@@ -167,6 +183,19 @@ public sealed class TwoPhaseNebiusResearchDispatcher
 
         var expiresAt = provenance.WorkItemExpiresAt
             ?? provenance.DispatchedAt + ResearchWorkItemProtector.MaxLifetime;
+        if (attached.RemoteWorkItemEnvelopeSha256 is { } commitment)
+        {
+            await _bindingPublisher.PublishEnvelopeBoundAsync(
+                provenance.OpaqueWorkItemId,
+                provenance.RemoteJobId,
+                commitment,
+                expiresAt,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        // Compatibility only for lower-level legacy compositions. The production runtime wires a
+        // DurableResearchEnvelopeCommitment, and the hardened worker rejects V1 for execution.
         await _bindingPublisher.PublishAsync(
             provenance.OpaqueWorkItemId,
             provenance.RemoteJobId,

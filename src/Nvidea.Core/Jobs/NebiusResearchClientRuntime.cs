@@ -56,17 +56,15 @@ public sealed class ResearchDispatchBindingCleanup
 }
 
 /// <summary>
-/// Client-only composition boundary for Nebius remote research. It deliberately constructs the
-/// dispatcher and lifecycle reconciler from one ResearchDispatchBindingPublisher instance so normal
-/// dispatch, crash recovery, and repeated reconciliation cannot accidentally use different signing
-/// identities. Client private keys never cross this boundary into Serverless job configuration.
+/// Client-only composition boundary for Nebius remote research. New dispatches persist the exact
+/// protected-envelope commitment before Serverless Create and publish V2 signed bindings from that
+/// durable trust root. Crash recovery likewise signs only the protected durable digest; it never
+/// re-hashes mutable shared transport state. Client private keys never cross this boundary into
+/// Serverless job configuration.
 ///
 /// The optional result-envelope private key preserves compatibility for lower-level fixtures. Live
 /// production composition always supplies a distinct key so RSA-PSS dispatch signing and OAEP-SHA256
 /// result decryption do not share one cryptographic identity.
-///
-/// Serverless execution should be exposed to product UX only after this runtime is backed by a live,
-/// authenticated shared transport and the narrow Nebius contract probe succeeds.
 /// </summary>
 public sealed class NebiusResearchClientRuntime : IRemoteResearchClientRuntime
 {
@@ -120,9 +118,19 @@ public sealed class NebiusResearchClientRuntime : IRemoteResearchClientRuntime
             : clientResultPrivateKeyPem;
 
         var publisher = new ResearchDispatchBindingPublisher(bindings, clientPrivateKeyPem);
+        var envelopeCommitment = new DurableResearchEnvelopeCommitment(store);
         var ingestor = new RemoteResearchResultIngestor(store, results, resultPrivateKeyPem, auditTrail, workItems);
-        var dispatcher = new TwoPhaseNebiusResearchDispatcher(serverless, workItems, options, publisher);
-        var reconciler = new NebiusResearchLifecycleReconciler(store, serverless, ingestor, auditTrail, publisher);
+        var dispatcher = new TwoPhaseNebiusResearchDispatcher(
+            serverless,
+            workItems,
+            options,
+            publisher,
+            envelopeCommitment);
+
+        // Binding publication is centralized in the V2-aware dispatcher/recovery layer. The
+        // reconciler deliberately receives no legacy publisher so it cannot create an unbound V1
+        // binding on a production recovery path.
+        var reconciler = new NebiusResearchLifecycleReconciler(store, serverless, ingestor, auditTrail);
         var recovery = new ResearchDispatchBindingRecovery(store, publisher);
         var cleanup = new ResearchDispatchBindingCleanup(bindings);
         return new NebiusResearchClientRuntime(dispatcher, reconciler, ingestor, publisher, recovery, cleanup);
@@ -134,10 +142,18 @@ public sealed class NebiusResearchClientRuntime : IRemoteResearchClientRuntime
         CancellationToken cancellationToken = default) =>
         Dispatcher.DispatchWithReservationAsync(workItem, authorization, Ingestor, cancellationToken);
 
-    public Task<AgentJobRecord> ReconcileReservedAsync(
+    public async Task<AgentJobRecord> ReconcileReservedAsync(
         Guid jobId,
-        CancellationToken cancellationToken = default) =>
-        Reconciler.ReconcileReservedAsync(jobId, cancellationToken);
+        CancellationToken cancellationToken = default)
+    {
+        var attached = await Reconciler.ReconcileReservedAsync(jobId, cancellationToken).ConfigureAwait(false);
+        if (attached.ExecutionLocation == JobExecutionLocation.NebiusServerless
+            && attached.RemoteResearch is { State: RemoteResearchProvenanceState.Dispatched })
+        {
+            await _bindingRecovery.EnsureAsync(jobId, cancellationToken).ConfigureAwait(false);
+        }
+        return attached;
+    }
 
     public async Task<AgentJobRecord> ReconcileDispatchedAsync(
         Guid jobId,
@@ -149,7 +165,7 @@ public sealed class NebiusResearchClientRuntime : IRemoteResearchClientRuntime
             return recovered;
 
         // A crash can happen after the durable remote id/audit commit but before the signed worker
-        // binding is published. Repair that local/shared-state gap before any provider observation.
+        // binding is published. Repair that gap from the original durable digest before provider IO.
         await _bindingRecovery.EnsureAsync(jobId, cancellationToken).ConfigureAwait(false);
 
         var result = await Reconciler.ReconcileDispatchedAsync(jobId, now, cancellationToken).ConfigureAwait(false);
@@ -161,8 +177,6 @@ public sealed class NebiusResearchClientRuntime : IRemoteResearchClientRuntime
         Guid jobId,
         CancellationToken cancellationToken = default)
     {
-        // Settle any stranded dispatch audit first, then make the exact persisted remote id resolvable
-        // by the worker before changing cancellation state or contacting the Nebius control plane.
         await Ingestor.RecoverPendingAuditAsync(jobId, cancellationToken).ConfigureAwait(false);
         await _bindingRecovery.EnsureAsync(jobId, cancellationToken).ConfigureAwait(false);
         return await Reconciler.RequestCancellationAsync(jobId, cancellationToken).ConfigureAwait(false);
@@ -176,8 +190,6 @@ public sealed class NebiusResearchClientRuntime : IRemoteResearchClientRuntime
         if (recovered is not null)
             return recovered;
 
-        // CancelRequested is still an active remote stage. Reconstruct a missing signed binding from
-        // durable provenance before polling or re-driving provider cancellation.
         await _bindingRecovery.EnsureAsync(jobId, cancellationToken).ConfigureAwait(false);
 
         var result = await Reconciler.ReconcileCancellationAsync(jobId, cancellationToken).ConfigureAwait(false);
@@ -185,11 +197,6 @@ public sealed class NebiusResearchClientRuntime : IRemoteResearchClientRuntime
         return result;
     }
 
-    /// <summary>
-    /// Drains a durable audit marker left after protected remote-result state was already committed.
-    /// This path is intentionally local: it does not query Nebius or replay result ingestion. Binding
-    /// cleanup happens only after the outbox event is proven durable and the marker has been cleared.
-    /// </summary>
     public async Task<AgentJobRecord> RecoverPendingAuditAsync(
         Guid jobId,
         CancellationToken cancellationToken = default)
@@ -199,11 +206,6 @@ public sealed class NebiusResearchClientRuntime : IRemoteResearchClientRuntime
         return result;
     }
 
-    /// <summary>
-    /// Direct exact-once ingestion entry point for callers that already have authoritative provider
-    /// completion evidence. The signed binding is cleaned only after IngestAsync has durably applied
-    /// the protected result and returned a local ResultApplied state.
-    /// </summary>
     public async Task<AgentJobRecord> IngestAsync(
         Guid jobId,
         DateTimeOffset? now = null,

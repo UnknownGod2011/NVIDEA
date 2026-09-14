@@ -22,7 +22,8 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - `PendingExternalAction` / `DurableJobExternalActionIntent` persist cancellation-redrive ambiguity independently from success state; transport success is never interpreted as provider cancellation success.
 - `PendingProtectedPayloadCleanup` / `DurableProtectedPayloadCleanupIntent` persist cleanup obligations with result/terminal state and retry partial deletes idempotently after restart.
 - Signed worker dispatch bindings are restart-recoverable from exact durable `Dispatched` / `CancelRequested` provenance before provider observation or cancellation; conflicting substituted bindings fail closed.
-- Worker-side dispatch binding consumption now supports bounded exponential retry for legitimately late publication, is capped by both configured wait budget and work-item expiry, rejects bindings that outlive the work item, and receives real process cancellation through the worker entrypoint.
+- Worker-side dispatch binding consumption uses bounded exponential retry for absent bindings and transient mounted-volume `IOException`, is capped by both configured wait budget and work-item expiry, and never retries malformed or cryptographically invalid content.
+- Remote worker process cancellation is threaded through staged-envelope reads, binding recovery, and worker execution. Linux/macOS/FreeBSD SIGTERM now receives a bounded 20-second cooperative grace window before forced exit; repeated SIGTERM exits immediately.
 - Deterministic judging tools include `Nvidea.PersonalAiDemoEval`, `Nvidea.PersonalAiAdversarialEval`, `Nvidea.JudgingEvidenceVerifier`, `Nvidea.DemoPackageValidator`, and `Nvidea.NebiusModelCatalogCheck`.
 
 ## Persistent Progress History
@@ -36,90 +37,80 @@ Implemented the Windows shell, Nebius/Nemotron inference, layered memory, Tavily
 - Quarantined browser/provider diagnostics, credential-bearing URL mismatch details, Tavily provider failures, and Nebius transport/cancellation diagnostics.
 - Remote dispatch reserves provenance before creation and binds protected results to exact opaque id, remote id, checkpoint, protocol, and authenticated envelope.
 - Cancellation is durable and crash-resumable. Only freshly verified provider `Cancelled` becomes cancellation success. Failed/completed cancellation races converge truthfully.
-- Added durable audit-outbox protection for result application, cancellation requests, terminal failure/cancellation/expiry, dispatch reservation, and remote-id attachment, with restart/fault-injection coverage.
+- Durable audit-outbox protection now covers result application, cancellation requests, terminal failure/cancellation/expiry, dispatch reservation, and remote-id attachment.
+- Durable external-action intent protects cancellation redrive ambiguity; durable protected-payload cleanup intent protects partial result/work-item deletion across restart.
+- Signed dispatch bindings are recoverable from durable job provenance before provider observation or cancellation.
 
 Selected lifecycle commits:
 - `e66381b78752c6141e8d9ac192ea307e48cf0968` — crash-resumable Nebius cancellation.
-- `fd763848104e9c5420b4175e5246fbd1e887e8da` — truthful failed cancellation race.
-- `8bed3481f54fba21c46d604d9f924eb56d05ac6a` / `8145c7bb812777b557608ddb1eef2ce59cfd49fb` / `567aa999f6b5db181820c424942144ddf52eb0ad` — audit-outbox foundation and result integration.
-- `9028621ca8430bbeaf8a2f6bc00230d104ca98a2` / `ebf3f30cae8007da8e5ac452de786c9f7486f7cb` — cancellation-request audit outbox.
-- `1f4a15b12ef35fc6cb0764425cf10fb9e06a9ea5` / `61cbce3f289f935bb3666757b0fa14d7d4140f64` — remote terminal audit outbox and recovery tests.
-- `d9ad5246e3d63a394c9e65dc5300352aadafdc1d` / `8fc33ef3194a4fdb19bc403851a1f566b183b6e6` / `dbde246acea66af694be7eebfe97ece30bac5ee3` — crash-recoverable dispatch reservation/attachment audits and payload ownership.
+- `8bed3481f54fba21c46d604d9f924eb56d05ac6a` / `9028621ca8430bbeaf8a2f6bc00230d104ca98a2` / `1f4a15b12ef35fc6cb0764425cf10fb9e06a9ea5` — audit-outbox foundation and lifecycle integration.
+- `6278afd91b96f3611e471b49de9dbba065627ec7` / `bd4083d078586a9234dbecccaba3a3f8aa2e90d8` — durable external actions and cancellation-redrive integration.
+- `338fe56587eaa96faa8942e10cbcbea3c894b3b7` / `862a4be206d4c442396fed6e54ac6f23d5cf5d77` / `a0ba803e075acfb523bae037e177d426c4ea7753` — protected-payload cleanup durability.
+- `d9ad5246e3d63a394c9e65dc5300352aadafdc1d` / `dbde246acea66af694be7eebfe97ece30bac5ee3` — crash-recoverable dispatch reservation/attachment audits.
+- `ae1a2dbe19066d94b1b0ac4ef9c987d0f1953112` / `74b9203d5c80875fec7cdcccf6015bd1c57a55b9` — signed binding restart recovery before provider effects.
 
-### 2026-09-14 — Durable external-action and cleanup recovery
-- Added `DurableExternalActionKind`, `PendingExternalAction`, CAS identity coverage, and `DurableJobExternalActionIntent` with restart-stable action reuse, audit-first ordering, exact provider-target validation, and fail-closed binding checks.
-- Wired Nebius cancellation redrive to one durable action identity. Active provider state reuses the same action; `Cancelling`/terminal provider truth clears it.
-- Added `PendingProtectedPayloadCleanup` and `DurableProtectedPayloadCleanupIntent`; result application and terminal settlement persist exact cleanup obligations and retry partial deletes idempotently after restart.
-
-Selected commits:
-- `1a68d07f95a7b1597ef2ebaffe4f71ccaf831a64` / `38ff800354826a15ac17081726e38db0f6e13a65` — action contracts and CAS identity.
-- `6278afd91b96f3611e471b49de9dbba065627ec7` / `51af3518cf18cd0a36f924c2aafae6237939be24` — durable action coordinator and restart-stable reuse.
-- `bd4083d078586a9234dbecccaba3a3f8aa2e90d8` / `53eda5e196dc95bb9d64f2d3a2313ec37975da5c` — production cancellation-redrive integration and fault tests.
-- `1a2d82ac63da3b10c4eb706fa3e6552b62ad4133` / `ecc6a89501090fd7d37aa7ac374fbd86b50bcc9e` — action/audit binding recovery hardening.
-- `ed287a3e6864ee11e88bb9d478bffce2ac57d473` / `338fe56587eaa96faa8942e10cbcbea3c894b3b7` / `53f324be012adacce3c8b77f37ec52c238cdcd54` — durable cleanup state/coordinator/CAS identity.
-- `862a4be206d4c442396fed6e54ac6f23d5cf5d77` / `0f05aeb2742528491c222878ea19f1cc039953f6` — result cleanup recovery and tests.
-- `a0ba803e075acfb523bae037e177d426c4ea7753` / `6504c61199796315e6780ff70064e92de060d345` / `1bad131d138cf1459134e9150e7c5f898ad96693` — terminal/partial cleanup recovery.
-
-### 2026-09-14 — Signed dispatch-binding restart recovery
-- Added provider-independent `ResearchDispatchBindingRecovery`, which reconstructs the exact signed `OpaqueWorkItemId -> RemoteJobId` binding from durable `Dispatched` / `CancelRequested` provenance and rejects conflicts.
-- Wired client reconciliation/cancellation paths to repair/verify binding before any Nebius observation or cancellation side effect.
-- Added idempotency, substituted-id, publication-failure, and provider-gating regressions.
+### 2026-09-14 — Bounded worker-side late-binding recovery
+- `ResearchDispatchBindingWaiter` retries initially absent binding publication with bounded exponential backoff, capped at 30 seconds per delay.
+- Effective worker binding deadline is `min(start + configured max wait, protected work-item expiry)`; transport-visible expiry can only shorten waiting.
+- Deadline is checked before and after transport reads, preventing a slow read from authorizing execution after expiry.
+- Signed binding lifetime may not exceed the associated work-item lifetime.
+- Worker bootstrap now threads a real process cancellation token through staged-envelope read, binding retry, and worker execution.
+- Focused regressions cover delayed publication, work-item expiry, lifetime mismatch, and cancellation during retry.
 
 Selected commits:
-- `ae1a2dbe19066d94b1b0ac4ef9c987d0f1953112` — durable-state signed binding recovery.
-- `74b9203d5c80875fec7cdcccf6015bd1c57a55b9` — binding recovery before remote lifecycle actions.
-- `05b75cf601532398c9e792cf110035e890b3f801` — crash-safe binding recovery regressions.
-- `8d2bb3a00d5852fd76275fd210f5ac4376235437` — persisted recovery ledger.
+- `3f766515c1403ad56a33941bccf10cf056a10731` — bounded binding backoff/lifetime enforcement.
+- `04cf3ab09fd8a84d0d473b358c331ee99c5bf0af` — bind wait to staged work-item expiry.
+- `517a493a9d019e5e2740601073800d3cc9dc159c` — late-binding regressions.
+- `aae28e3e930dd3499df9717f56e938e713bb3e2d` — process cancellation propagation.
 
-### 2026-09-14 — Bounded worker-side late-binding recovery (latest run)
+### 2026-09-14 — Mounted transport resilience and bounded SIGTERM shutdown (latest run)
 Completed:
-- Re-read this ledger first, inspected recent commits and the current worker bootstrap, signed-binding protector/publisher/waiter, runtime timing configuration, directory transport, and existing binding/trust tests before changing code.
-- Hardened `ResearchDispatchBindingWaiter` with bounded exponential retry for an initially absent signed binding. Retry starts at the configured poll interval, doubles without overflow, and caps at 30 seconds.
-- Added an overload that accepts the protected work-item expiry as an absolute upper bound. Effective deadline is `min(start + configured max wait, work-item expiry)`; transport-visible expiry can only shorten waiting and can never extend trust or the configured budget.
-- Enforced the deadline both before and after each transport read so a slow read cannot cause the worker to accept a binding after its execution window has expired.
-- A cryptographically valid signed binding is now also rejected if its signed `ExpiresAt` exceeds the associated protected work-item expiry. This prevents control-plane authority from outliving the payload lifecycle supplied to the worker.
-- Updated `Nvidea.Worker` bootstrap to read the staged protected work-item envelope before binding resolution, fail fast if it is unavailable, and pass its expiry only as a shortening deadline. Payload authenticity is still established later by the existing decrypt/authentication boundary; the transport-visible expiry is explicitly not treated as trust.
-- Found and fixed a production wiring gap: the waiter and worker APIs accepted cancellation, but `Program` passed `CancellationToken.None`. One process cancellation token is now threaded through staged-envelope read, binding retry, and `NebiusResearchWorker.ExecuteOneStageAsync`; Ctrl+C cancels in-flight retry/work rather than waiting for timeout.
-- Added deterministic focused regressions for delayed binding appearance after multiple reads, permanent absence bounded by work-item expiry, a signed binding outliving its work item, and cancellation during retry without another transport read.
+- Re-read this ledger first and inspected current `ResearchDispatchBindingWaiter`, `DirectoryProtectedResearchTransport`, worker bootstrap, tests, project target framework, and latest commits before changing code.
+- Verified via current Microsoft guidance that explicit `PosixSignalRegistration` is the appropriate low-level mechanism when application code needs direct termination-signal handling rather than a higher-level host lifetime.
+- Hardened `ResearchDispatchBindingWaiter` so only `IOException` thrown by the dispatch-binding transport read is treated as transient. The same absolute deadline and exponential backoff are reused; a mount outage therefore cannot extend authorization or worker lifetime.
+- Cancellation has precedence over retry: if shutdown races a transport `IOException`, the cancellation token is re-checked immediately and the worker stops without another read.
+- Malformed transport state (`InvalidOperationException`) and protocol/signature/identity failures remain outside the I/O catch and fail closed immediately; invalid signed content is never converted into a transient retry.
+- Added deterministic regressions for transient I/O recovery, persistent I/O bounded by work-item expiry, permanent transport-validation failure with exactly one read, cryptographic substitution with exactly one read, and shutdown racing transient I/O.
+- Added explicit POSIX SIGTERM handling in `Nvidea.Worker`. First SIGTERM suppresses immediate termination, cancels the existing process token, and starts a 20-second watchdog. Normal cooperative completion cancels that watchdog; a second SIGTERM or grace-period expiry forces exit code 143. Windows continues to use `Console.CancelKeyPress` for this executable path.
+- Added explicit `OperationCanceledException` handling for process shutdown so cancellation is reported as worker cancellation rather than a generic provider/worker failure.
 
 Files / architecture changed:
-- `src/Nvidea.Core/Jobs/ResearchDispatchBinding.cs` — lifetime-aware bounded exponential worker wait and binding/work-item lifetime trust check.
-- `src/Nvidea.Worker/Program.cs` — staged envelope expiry bound plus process cancellation propagation.
-- `tests/Nvidea.Core.Tests/ResearchDispatchBindingTests.cs` — delayed publication, expiry, lifetime mismatch, and cancellation regressions.
+- `src/Nvidea.Core/Jobs/ResearchDispatchBinding.cs` — narrow transient-I/O classification plus deadline/cancellation-preserving retry helper.
+- `tests/Nvidea.Core.Tests/ResearchDispatchBindingTests.cs` — mounted-volume I/O, permanent-failure, cryptographic fail-closed, expiry, and shutdown-race regressions.
+- `src/Nvidea.Worker/Program.cs` — bounded POSIX SIGTERM handling and shutdown-specific cancellation outcome.
 
 Engineering commits this run before this ledger update:
-- `3f766515c1403ad56a33941bccf10cf056a10731` — harden worker dispatch binding wait lifetime/backoff.
-- `04cf3ab09fd8a84d0d473b358c331ee99c5bf0af` — bound worker binding recovery by staged work-item expiry.
-- `517a493a9d019e5e2740601073800d3cc9dc159c` — add bounded worker dispatch-binding regressions.
-- `aae28e3e930dd3499df9717f56e938e713bb3e2d` — thread worker process cancellation through binding recovery and execution.
+- `21cbdb56a04f3b903a3d466fa63f33f43b8bcdf4` — retry transient worker binding I/O within deadline.
+- `451368b4e74be5a18755b6b68d308753a0065109` — mounted binding transport resilience regressions.
+- `a2b63b02dee5a692199a380091fdc182556562e6` — bounded SIGTERM shutdown for remote worker.
 
 Validation / evidence this run:
-- Before every successful GitHub mutation, repository metadata reported exact full name `UnknownGod2011/NVIDEA`; no other repository was mutated. One initial core-file write was rejected with HTTP 409 due a stale blob SHA and changed nothing; the current blob was re-read before retrying.
-- Starting head was `8d2bb3a00d5852fd76275fd210f5ac4376235437`; pre-ledger head is `aae28e3e930dd3499df9717f56e938e713bb3e2d`, four commits ahead / zero behind.
-- Effective pre-ledger diff is restricted to three intended files: `ResearchDispatchBinding.cs` (+77/-8), `Program.cs` (+27/-2), and `ResearchDispatchBindingTests.cs` (+132).
-- Static review confirms unsigned/substituted binding behavior remains fail-closed because every observed binding still passes `ResearchDispatchBindingProtector.Verify(...)` before use.
-- Static review confirms an untrusted transport expiry cannot make the worker wait longer: it is used only when earlier than the configured deadline. A maliciously shortened expiry can cause denial-of-service, but cannot increase authority or execution lifetime.
-- Static review confirms cancellation is checked before transport reads and passed to both transport operations and backoff delay, and production now supplies a cancellable token instead of `CancellationToken.None`.
-- `dotnet`, `csc`, `msbuild`, and `mcs` are unavailable in this execution environment. **No compilation, xUnit, WPF, Worker, evaluator, or live integration PASS is claimed.**
+- Before every GitHub mutation, repository metadata reported exact full name `UnknownGod2011/NVIDEA`; no other repository was mutated.
+- Starting head was `486b7ff52ff9b4e3bd5c9d49044f4b8a14977505`; pre-ledger head is `a2b63b02dee5a692199a380091fdc182556562e6`, three commits ahead / zero behind.
+- Effective pre-ledger diff is restricted to three intended files: `ResearchDispatchBinding.cs`, `ResearchDispatchBindingTests.cs`, and `Program.cs`.
+- Static review confirms retry catches only `IOException` from `_transport.GetAsync(...)`; signature/protocol/lifetime verification occurs after the catch and therefore still fails immediately.
+- Static review confirms every retry remains under the original absolute deadline and cancellation token. Persistent I/O cannot extend past work-item expiry.
+- Static review confirms first SIGTERM cancels the same token consumed by binding reads/backoff and worker execution; forced termination is bounded to 20 seconds if a dependency ignores cancellation.
+- `src/Nvidea.Worker/Nvidea.Worker.csproj` targets `net8.0`, where `PosixSignalRegistration` is available.
+- `dotnet`, `csc`, `msbuild`, and `mcs` remain unavailable in this execution environment. **No compilation, xUnit, Worker, WPF, evaluator, or live integration PASS is claimed.**
 - No GitHub Actions workflow and no live/paid Nebius, Tavily, Object Storage, Serverless, Playwright, Ollama, or inference operation was triggered.
 
 ## Security / Privacy / Failure Review
-- Late-binding retry handles only signed control-plane metadata; it does not expose prompts, evidence, user context, provider credentials, or decrypted research payloads.
-- Binding signature/protocol/opaque-id/remote-id/deterministic-name checks remain mandatory. Retry never converts invalid signed content into a transient condition; an observed invalid/conflicting binding fails immediately.
-- Work-item expiry is transport-visible before decryption and therefore is not authenticated at bootstrap. NVIDEA uses it only as a stricter upper bound; increasing it cannot exceed the independent configured wait budget, while decreasing it only fails closed earlier.
-- A binding whose own signed lifetime exceeds the staged work-item lifetime fails closed even if its signature is valid.
-- Deadline is checked after each transport read, so a blocking/slow read cannot return late and still authorize execution.
-- Backoff is bounded and cancellation-aware, preventing tight polling during delayed publication and allowing shutdown to interrupt delay/provider work.
-- Existing exact external-action, protected-payload cleanup, dispatch-audit, cancellation-race, and terminal-state protections remain unchanged.
+- I/O retry handles only signed control-plane binding reads; it does not expose prompts, evidence, user context, credentials, or decrypted research payloads.
+- Retry classification is intentionally narrow: `IOException` only at the transport read boundary. JSON/size/protocol/signature/identity failures are not retried.
+- Binding signature/protocol/opaque-id/remote-id/deterministic-name/lifetime checks remain mandatory after any successful read.
+- Work-item expiry remains transport-visible and unauthenticated at bootstrap; it can only shorten the wait budget, never extend authority.
+- SIGTERM does not introduce a separate execution path. It cancels the same token already used by staged-envelope read, binding wait, Tavily/Nebius work, and worker execution.
+- The watchdog bounds cooperative shutdown if a downstream dependency ignores cancellation, while a repeated SIGTERM gives operators an immediate escape hatch.
+- Existing external-action, protected-payload cleanup, audit-outbox, cancellation-race, and terminal-state protections remain unchanged.
 - Generic low-level `JsonAgentJobStore.SaveAsync(...)` remains trusted infrastructure; product paths should continue preferring constrained CAS/lifecycle APIs.
 
 ## Known Blockers / Risks
 - No usable .NET 8 executable/compiler is available here; the new Core/Worker/test changes are statically reviewed but unexecuted.
-- Live Nebius Serverless/Object Storage behavior, mounted-volume visibility/latency, authenticated worker execution, signed binding reads, provider catalog drift, real Windows UX, authenticated Playwright sessions, Tavily live behavior, and semantic ranking remain environment-validation items.
-- `Console.CancelKeyPress` gives the worker a real cancellation path for interactive/process console cancellation, but explicit Serverless/container `SIGTERM` handling has not yet been proven or wired with `PosixSignalRegistration`; abrupt platform termination may therefore still bypass graceful cancellation depending on host behavior.
-- Binding polling retries an absent binding, but an actual transient mounted-volume `IOException` currently propagates immediately rather than being classified/retried. Invalid/malformed/cryptographically conflicting binding data must continue to fail immediately and must never be retried as transient.
+- Live Nebius Serverless/Object Storage behavior, mounted-volume latency/failure modes, authenticated worker execution, actual SIGTERM delivery/grace behavior, signed binding reads, provider catalog drift, real Windows UX, authenticated Playwright sessions, Tavily live behavior, and semantic ranking remain environment-validation items.
+- The initial protected work-item envelope read in `Nvidea.Worker/Program.cs` is still a one-shot mounted-volume read before the binding waiter. A legitimate mount-propagation delay or transient `IOException` at that earlier boundary can still terminate the worker even though binding reads are now resilient.
 - Binding publication remains an idempotent external write rather than a separately persisted pending/completed marker; hardened client lifecycle paths reconstruct it before provider use.
 - `ResearchDispatchBindingCleanup` remains best-effort after terminal settlement. The binding contains no research payload and is signed/TTL-bounded, but cleanup is not represented as its own durable obligation.
 
 ## Single Best Next Task
-Harden **remote-worker shutdown and mounted-transport resilience** without weakening trust: add explicit bounded `SIGTERM`/process-shutdown cancellation for the Serverless worker, classify only genuinely transient binding-read I/O failures for retry under the existing absolute deadline/backoff, and add deterministic tests proving cancellation interrupts retry, transient I/O can recover, permanent/cryptographic failures fail closed immediately, and no retry extends past work-item expiry.
+Harden **initial protected work-item acquisition** with a dedicated bounded, cancellation-aware worker-side loader: tolerate only absent-object propagation and transient `IOException` under an independent/configured bootstrap deadline, reject malformed/oversized envelopes immediately, preserve the rule that transport-visible expiry cannot extend authority, and add deterministic tests proving delayed appearance/transient I/O recovery, cancellation, deadline exhaustion, and fail-closed malformed envelope behavior before binding resolution begins.

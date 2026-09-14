@@ -195,6 +195,7 @@ public sealed class JsonAgentJobStore : IAgentJobStore
             || actual.NextAttemptAt != expected.NextAttemptAt
             || !string.Equals(actual.ApprovalScope, expected.ApprovalScope, StringComparison.Ordinal)
             || !string.Equals(actual.LastError, expected.LastError, StringComparison.Ordinal)
+            || !string.Equals(actual.RemoteWorkItemEnvelopeSha256, expected.RemoteWorkItemEnvelopeSha256, StringComparison.Ordinal)
             || !DefinitionEquivalent(actual.Definition, expected.Definition)
             || !CheckpointVersionEquivalent(actual.Checkpoint, expected.Checkpoint)
             || !AuditEventEquivalent(actual.PendingAuditEvent, expected.PendingAuditEvent)

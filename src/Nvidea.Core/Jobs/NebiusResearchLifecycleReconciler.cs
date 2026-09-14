@@ -383,32 +383,59 @@ public sealed class NebiusResearchLifecycleReconciler
             || string.IsNullOrWhiteSpace(provenance.RemoteJobId))
             throw new InvalidOperationException("Only a durable CancelRequested research stage can reconcile cancellation.");
 
+        var externalAction = new DurableJobExternalActionIntent(_store, _auditTrail);
+        if (current.PendingExternalAction is not null)
+        {
+            externalAction.ValidatePending(
+                current,
+                DurableExternalActionKind.NebiusCancelRemoteResearch,
+                provenance.RemoteJobId);
+        }
+
         var remote = await GetVerifiedRemoteAsync(provenance, provenance.RemoteJobId, cancellationToken).ConfigureAwait(false);
         switch (remote.State)
         {
             case NebiusRemoteJobState.Pending:
             case NebiusRemoteJobState.Running:
             {
-                // CancelRequested is a durable intent, not proof that the control-plane call was
-                // delivered. A process can stop after the CAS/audit boundary or the first provider
-                // call can fail. Re-drive the still-actionable request only after fresh provider
-                // verification. This makes that crash window resumable without replaying a job.
+                // Fresh provider state proves cancellation is still actionable. Persist or reuse one
+                // exact side-effect identity and make its audit durable before delivery. The action
+                // deliberately remains durable after CancelAsync returns or throws; only later fresh
+                // provider state can prove that replay is no longer needed.
                 var retryAudit = PrepareAudit(
                     current,
                     "research.remote_cancel_redriven",
                     "Durable Nebius cancellation intent was re-driven after fresh provider state showed the job still active.");
-                await AppendAuditAsync(retryAudit, cancellationToken).ConfigureAwait(false);
+                var delivery = await externalAction.StageOrReuseAndFlushAsync(
+                    current,
+                    retryAudit,
+                    DurableExternalActionKind.NebiusCancelRemoteResearch,
+                    provenance.RemoteJobId,
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
+                externalAction.ValidatePending(
+                    delivery,
+                    DurableExternalActionKind.NebiusCancelRemoteResearch,
+                    provenance.RemoteJobId);
                 await _serverless.CancelAsync(provenance.RemoteJobId, cancellationToken).ConfigureAwait(false);
-                return current;
+                return delivery;
             }
 
             case NebiusRemoteJobState.Cancelling:
-                return current;
+                return await ClearPendingCancellationActionAsync(
+                    current,
+                    externalAction,
+                    provenance.RemoteJobId,
+                    cancellationToken).ConfigureAwait(false);
 
             case NebiusRemoteJobState.Cancelled:
+                current = await ClearPendingCancellationActionAsync(
+                    current,
+                    externalAction,
+                    provenance.RemoteJobId,
+                    cancellationToken).ConfigureAwait(false);
                 return await FinalizeTerminalAsync(
                     current,
-                    provenance,
+                    current.RemoteResearch!,
                     AgentJobState.Cancelled,
                     RemoteResearchProvenanceState.Cancelled,
                     lastError: null,
@@ -419,6 +446,11 @@ public sealed class NebiusResearchLifecycleReconciler
 
             case NebiusRemoteJobState.Completed:
             {
+                current = await ClearPendingCancellationActionAsync(
+                    current,
+                    externalAction,
+                    provenance.RemoteJobId,
+                    cancellationToken).ConfigureAwait(false);
                 var currentTime = DateTimeOffset.UtcNow;
                 try
                 {
@@ -430,14 +462,16 @@ public sealed class NebiusResearchLifecycleReconciler
                 }
                 catch (RemoteResearchResultNotAvailableException)
                 {
-                    var expiresAt = provenance.WorkItemExpiresAt
-                        ?? provenance.DispatchedAt + ResearchWorkItemProtector.MaxLifetime;
+                    var currentProvenance = current.RemoteResearch
+                        ?? throw new InvalidOperationException("Cancellation race lost remote provenance during reconciliation.");
+                    var expiresAt = currentProvenance.WorkItemExpiresAt
+                        ?? currentProvenance.DispatchedAt + ResearchWorkItemProtector.MaxLifetime;
                     if (currentTime < expiresAt)
                         return current;
 
                     return await FinalizeTerminalAsync(
                         current,
-                        provenance,
+                        currentProvenance,
                         AgentJobState.Failed,
                         RemoteResearchProvenanceState.Expired,
                         "Nebius completed the research stage before cancellation was confirmed, but its protected result was unavailable before the durable transport lifetime expired.",
@@ -450,10 +484,17 @@ public sealed class NebiusResearchLifecycleReconciler
 
             case NebiusRemoteJobState.Failed:
             {
+                current = await ClearPendingCancellationActionAsync(
+                    current,
+                    externalAction,
+                    provenance.RemoteJobId,
+                    cancellationToken).ConfigureAwait(false);
+                var currentProvenance = current.RemoteResearch
+                    ?? throw new InvalidOperationException("Cancellation race lost remote provenance during reconciliation.");
                 var failureEvidence = BuildRemoteFailureEvidence(remote.Diagnostic);
                 return await FinalizeTerminalAsync(
                     current,
-                    provenance,
+                    currentProvenance,
                     AgentJobState.Failed,
                     RemoteResearchProvenanceState.RemoteFailed,
                     failureEvidence.LastError,
@@ -509,6 +550,22 @@ public sealed class NebiusResearchLifecycleReconciler
         if (remote.State == NebiusRemoteJobState.Unknown)
             throw new InvalidOperationException("Verified Nebius job has an unknown lifecycle state; refusing durable mutation.");
         return remote;
+    }
+
+    private async Task<AgentJobRecord> ClearPendingCancellationActionAsync(
+        AgentJobRecord current,
+        DurableJobExternalActionIntent externalAction,
+        string remoteJobId,
+        CancellationToken cancellationToken)
+    {
+        if (current.PendingExternalAction is null)
+            return current;
+
+        var pending = externalAction.ValidatePending(
+            current,
+            DurableExternalActionKind.NebiusCancelRemoteResearch,
+            remoteJobId);
+        return await externalAction.ClearAsync(current, pending.ActionId, cancellationToken).ConfigureAwait(false);
     }
 
     private static (string LastError, string AuditSummary) BuildRemoteFailureEvidence(NebiusRemoteJobDiagnostic? diagnostic)

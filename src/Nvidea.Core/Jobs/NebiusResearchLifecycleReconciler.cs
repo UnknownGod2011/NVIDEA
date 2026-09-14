@@ -244,12 +244,6 @@ public sealed class NebiusResearchLifecycleReconciler
         return attached;
     }
 
-    /// <summary>
-    /// Reconciles an attached remote stage. RUNNING/PENDING remain nonterminal. FAILED/ERROR and
-    /// unexpected provider cancellation become durable local terminal states. COMPLETED attempts
-    /// protected result ingestion; a missing result remains retryable until the persisted encrypted
-    /// work-item lifetime expires, after which it becomes a truthful terminal failure.
-    /// </summary>
     public async Task<AgentJobRecord> ReconcileDispatchedAsync(
         Guid jobId,
         DateTimeOffset? now = null,
@@ -398,10 +392,6 @@ public sealed class NebiusResearchLifecycleReconciler
             case NebiusRemoteJobState.Pending:
             case NebiusRemoteJobState.Running:
             {
-                // Fresh provider state proves cancellation is still actionable. Persist or reuse one
-                // exact side-effect identity and make its audit durable before delivery. The action
-                // deliberately remains durable after CancelAsync returns or throws; only later fresh
-                // provider state can prove that replay is no longer needed.
                 var retryAudit = PrepareAudit(
                     current,
                     "research.remote_cancel_redriven",
@@ -609,6 +599,8 @@ public sealed class NebiusResearchLifecycleReconciler
             },
             UpdatedAt = now
         };
+        var cleanupIntent = new DurableProtectedPayloadCleanupIntent(_store);
+        replacement = cleanupIntent.Stage(replacement, provenance.OpaqueWorkItemId, now);
         var terminalAudit = PrepareAudit(replacement, eventType, summary);
         var auditOutbox = new DurableJobAuditOutbox(_store, _auditTrail);
         var staged = auditOutbox.Stage(replacement, terminalAudit);
@@ -617,32 +609,29 @@ public sealed class NebiusResearchLifecycleReconciler
             throw new InvalidOperationException("Research state changed while remote terminal state was being finalized.");
 
         var settled = await auditOutbox.FlushAsync(staged, cancellationToken).ConfigureAwait(false);
-        await _ingestor.CleanupProtectedPayloadsAsync(provenance.OpaqueWorkItemId).ConfigureAwait(false);
-        return settled;
+        return await _ingestor.RecoverPendingCleanupAsync(settled.JobId, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<AgentJobRecord> RecoverPendingAuditAsync(
         AgentJobRecord current,
         CancellationToken cancellationToken)
     {
-        if (current.PendingAuditEvent is null)
-            return current;
-
-        var auditOutbox = new DurableJobAuditOutbox(_store, _auditTrail);
-        var settled = await auditOutbox.FlushAsync(current, cancellationToken).ConfigureAwait(false);
-        if (IsSettledRemoteTerminal(settled))
+        if (current.PendingAuditEvent is not null)
         {
-            var provenance = settled.RemoteResearch
-                ?? throw new InvalidOperationException("Terminal remote research state is missing provenance required for cleanup.");
-            await _ingestor.CleanupProtectedPayloadsAsync(provenance.OpaqueWorkItemId).ConfigureAwait(false);
+            var auditOutbox = new DurableJobAuditOutbox(_store, _auditTrail);
+            current = await auditOutbox.FlushAsync(current, cancellationToken).ConfigureAwait(false);
         }
 
-        return settled;
+        if (current.PendingProtectedPayloadCleanup is not null)
+            current = await _ingestor.RecoverPendingCleanupAsync(current.JobId, cancellationToken).ConfigureAwait(false);
+
+        return current;
     }
 
     private static bool IsSettledRemoteTerminal(AgentJobRecord job)
     {
         if (job.PendingAuditEvent is not null
+            || job.PendingProtectedPayloadCleanup is not null
             || job.ExecutionLocation != JobExecutionLocation.Local
             || job.RemoteResearch is null)
         {

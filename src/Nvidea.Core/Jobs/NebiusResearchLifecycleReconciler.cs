@@ -374,21 +374,50 @@ public sealed class NebiusResearchLifecycleReconciler
             throw new InvalidOperationException("Only a durable CancelRequested research stage can reconcile cancellation.");
 
         var remote = await GetVerifiedRemoteAsync(provenance, provenance.RemoteJobId, cancellationToken).ConfigureAwait(false);
-        if (remote.State == NebiusRemoteJobState.Unknown)
-            throw new InvalidOperationException("Nebius cancellation status is unknown; durable cancellation remains pending.");
-        if (remote.State != NebiusRemoteJobState.Cancelled)
-            return current;
+        switch (remote.State)
+        {
+            case NebiusRemoteJobState.Pending:
+            case NebiusRemoteJobState.Running:
+            {
+                // CancelRequested is a durable intent, not proof that the control-plane call was
+                // delivered. A process can stop after the CAS/audit boundary or the first provider
+                // call can fail. Re-drive the still-actionable request only after fresh provider
+                // verification. This makes that crash window resumable without replaying a job.
+                var retryAudit = PrepareAudit(
+                    current,
+                    "research.remote_cancel_redriven",
+                    "Durable Nebius cancellation intent was re-driven after fresh provider state showed the job still active.");
+                await AppendAuditAsync(retryAudit, cancellationToken).ConfigureAwait(false);
+                await _serverless.CancelAsync(provenance.RemoteJobId, cancellationToken).ConfigureAwait(false);
+                return current;
+            }
 
-        return await FinalizeTerminalAsync(
-            current,
-            provenance,
-            AgentJobState.Cancelled,
-            RemoteResearchProvenanceState.Cancelled,
-            lastError: null,
-            "research.remote_cancelled",
-            "Nebius confirmed remote research cancellation.",
-            DateTimeOffset.UtcNow,
-            cancellationToken).ConfigureAwait(false);
+            case NebiusRemoteJobState.Cancelling:
+                return current;
+
+            case NebiusRemoteJobState.Cancelled:
+                return await FinalizeTerminalAsync(
+                    current,
+                    provenance,
+                    AgentJobState.Cancelled,
+                    RemoteResearchProvenanceState.Cancelled,
+                    lastError: null,
+                    "research.remote_cancelled",
+                    "Nebius confirmed remote research cancellation.",
+                    DateTimeOffset.UtcNow,
+                    cancellationToken).ConfigureAwait(false);
+
+            case NebiusRemoteJobState.Completed:
+                throw new InvalidOperationException(
+                    "Nebius completed the research stage before cancellation was confirmed; durable cancellation remains unresolved and requires explicit result reconciliation.");
+
+            case NebiusRemoteJobState.Failed:
+                throw new InvalidOperationException(
+                    "Nebius failed the research stage before cancellation was confirmed; durable cancellation remains unresolved and requires explicit terminal reconciliation.");
+
+            default:
+                throw new InvalidOperationException("Nebius cancellation status is unknown; durable cancellation remains pending.");
+        }
     }
 
     public static string GetDeterministicRemoteJobName(string opaqueWorkItemId) =>

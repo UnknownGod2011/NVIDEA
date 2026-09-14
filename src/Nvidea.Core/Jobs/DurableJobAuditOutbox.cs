@@ -44,6 +44,7 @@ internal sealed class DurableJobAuditOutbox
             if (pending is null)
                 return current;
 
+            ValidateExternalActionAuditBinding(current, pending);
             AuditEventTrust.ValidateForPersistence(pending, nameof(record));
             await EnsureAuditPresentAsync(pending, cancellationToken).ConfigureAwait(false);
 
@@ -86,6 +87,15 @@ internal sealed class DurableJobAuditOutbox
                 throw;
             EnsureEquivalent(existing, pending);
         }
+    }
+
+    private static void ValidateExternalActionAuditBinding(AgentJobRecord record, AuditEvent pending)
+    {
+        var action = record.PendingExternalAction;
+        if (action is null)
+            return;
+        if (action.AuditEventId == Guid.Empty || action.AuditEventId != pending.EventId)
+            throw new InvalidDataException("Pending external action is not bound to the pending audit event; audit recovery was aborted.");
     }
 
     private static AuditEvent? FindById(IReadOnlyList<AuditEvent> events, Guid eventId) =>

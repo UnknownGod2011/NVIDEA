@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using Nvidea.Core.Capabilities;
 using Nvidea.Core.Jobs;
+using Xunit;
 
 namespace Nvidea.Core.Tests;
 

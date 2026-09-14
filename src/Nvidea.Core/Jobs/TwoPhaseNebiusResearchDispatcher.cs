@@ -1,22 +1,9 @@
 namespace Nvidea.Core.Jobs;
 
 /// <summary>
-/// Encrypted preparation record for a single remote research stage. It intentionally contains no
-/// plaintext research payload; only opaque/local identity plus the already-protected envelope.
-/// </summary>
-public sealed record PreparedNebiusResearchDispatch(
-    Guid LocalJobId,
-    string CheckpointStep,
-    string OpaqueWorkItemId,
-    DateTimeOffset PreparedAt,
-    ProtectedResearchWorkItemEnvelope Envelope);
-
-/// <summary>
-/// Coordinates the crash-sensitive Serverless dispatch boundary in two phases:
-/// 1) encrypt/upload the work item and durably reserve its exact opaque id/checkpoint/expiry locally;
-/// 2) only after that CAS succeeds, create the Nebius job and attach the returned remote id.
-/// When a binding publisher is configured, the authoritative remote-id binding is published only
-/// after durable attachment succeeds, so a worker can never observe an unauthoritative pre-create id.
+/// Crash-consistent Nebius research dispatch. The encrypted work item is prepared first, then the
+/// exact local checkpoint/opaque id is durably reserved, and only then may Nebius job creation run.
+/// A reservation without a remote job id is deliberately ambiguous and must not be auto-replayed.
 /// </summary>
 public sealed class TwoPhaseNebiusResearchDispatcher
 {
@@ -35,100 +22,42 @@ public sealed class TwoPhaseNebiusResearchDispatcher
         _transport = transport ?? throw new ArgumentNullException(nameof(transport));
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _bindingPublisher = bindingPublisher;
-        ValidateOptions(options);
-    }
-
-    public async Task<PreparedNebiusResearchDispatch> PrepareAsync(
-        RemoteResearchWorkItem workItem,
-        ResearchCloudAuthorization authorization,
-        CancellationToken cancellationToken = default)
-    {
-        ResearchWorkItemProtector.ValidateAuthorization(authorization, workItem);
-        var envelope = ResearchWorkItemProtector.Protect(workItem, _options.WorkerPublicKeyPem);
-        await _transport.PutAsync(envelope, cancellationToken).ConfigureAwait(false);
-
-        return new PreparedNebiusResearchDispatch(
-            workItem.LocalJobId,
-            workItem.CheckpointStep,
-            envelope.OpaqueWorkItemId,
-            DateTimeOffset.UtcNow,
-            envelope);
-    }
-
-    public async Task<NebiusResearchDispatchReceipt> StartPreparedAsync(
-        PreparedNebiusResearchDispatch prepared,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(prepared);
-        if (prepared.LocalJobId == Guid.Empty
-            || string.IsNullOrWhiteSpace(prepared.CheckpointStep)
-            || string.IsNullOrWhiteSpace(prepared.OpaqueWorkItemId)
-            || !string.Equals(prepared.OpaqueWorkItemId, prepared.Envelope.OpaqueWorkItemId, StringComparison.Ordinal)
-            || !string.Equals(prepared.Envelope.ProtocolVersion, ResearchWorkItemProtector.ProtocolVersion, StringComparison.Ordinal))
-        {
-            throw new InvalidOperationException("Prepared remote research dispatch metadata is invalid.");
-        }
-
-        try
-        {
-            var spec = BuildSpec(prepared.OpaqueWorkItemId);
-            var response = await _serverless.CreateAsync(spec, cancellationToken).ConfigureAwait(false);
-            var remoteJobId = response.TryGetResourceId();
-            if (string.IsNullOrWhiteSpace(remoteJobId))
-            {
-                throw new InvalidOperationException(
-                    "Nebius accepted the Serverless create request but did not expose a job resource id. " +
-                    "The durable DispatchReserved state and encrypted work item must be retained for reconciliation.");
-            }
-
-            return new NebiusResearchDispatchReceipt(
-                prepared.LocalJobId,
-                prepared.CheckpointStep,
-                prepared.OpaqueWorkItemId,
-                remoteJobId,
-                DateTimeOffset.UtcNow);
-        }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("did not expose a job resource id", StringComparison.Ordinal))
-        {
-            throw;
-        }
-        catch
-        {
-            // Do not delete the local reservation here: the caller may not be able to prove whether
-            // the control plane accepted the request. The encrypted object is TTL-bounded and the
-            // durable reservation prevents accidental local replay.
-            throw;
-        }
+        ResearchWorkItemProtector.ValidatePublicKeyPem(_options.WorkerPublicKeyPem);
     }
 
     public async Task<AgentJobRecord> DispatchWithReservationAsync(
-        RemoteResearchWorkItem workItem,
+        RemoteResearchWorkItem item,
         ResearchCloudAuthorization authorization,
         RemoteResearchResultIngestor ingestor,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(item);
+        ArgumentNullException.ThrowIfNull(authorization);
         ArgumentNullException.ThrowIfNull(ingestor);
+        ValidateAuthorization(item, authorization);
 
-        // Authorization and deterministic reservation/audit trust must both succeed before any
-        // encrypted object is uploaded. ReserveDispatchAsync repeats the same reservation checks
-        // immediately before CAS, so this no-mutation preflight does not replace concurrency safety.
-        ResearchWorkItemProtector.ValidateAuthorization(authorization, workItem);
-        await ingestor.PreflightDispatchReservationAsync(
-            workItem.LocalJobId,
-            workItem.CheckpointStep,
-            cancellationToken).ConfigureAwait(false);
+        // This preflight validates immutable job/audit fields before ciphertext upload. The actual
+        // reservation repeats validation against fresh state immediately before its CAS.
+        await ingestor.PreflightDispatchReservationAsync(item.LocalJobId, item.InputCheckpointStep, cancellationToken)
+            .ConfigureAwait(false);
 
-        var prepared = await PrepareAsync(workItem, authorization, cancellationToken).ConfigureAwait(false);
+        var prepared = await PrepareAsync(item, cancellationToken).ConfigureAwait(false);
         try
         {
             await ingestor.ReserveDispatchAsync(
                 new RemoteResearchDispatchReservation(
-                    prepared.LocalJobId,
-                    prepared.CheckpointStep,
+                    item.LocalJobId,
+                    item.InputCheckpointStep,
                     prepared.OpaqueWorkItemId,
                     prepared.PreparedAt,
-                    prepared.Envelope.ExpiresAt),
+                    prepared.ExpiresAt),
                 cancellationToken).ConfigureAwait(false);
+        }
+        catch (RemoteResearchDispatchReservationAuditPendingException)
+        {
+            // The reservation CAS already owns this ciphertext. Deleting it here would leave a
+            // recoverable durable reservation pointing at a missing protected work item.
+            throw;
         }
         catch
         {
@@ -136,63 +65,130 @@ public sealed class TwoPhaseNebiusResearchDispatcher
             throw;
         }
 
-        var receipt = await StartPreparedAsync(prepared, cancellationToken).ConfigureAwait(false);
+        NebiusResearchDispatchReceipt receipt;
+        try
+        {
+            receipt = await StartPreparedAsync(prepared, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Intentionally retain both the durable reservation and encrypted work item. The provider
+            // call may have succeeded even when the response was lost, so retrying CreateAsync could
+            // duplicate expensive work.
+            throw;
+        }
+
         var attached = await ingestor.AttachDispatchAsync(receipt, cancellationToken).ConfigureAwait(false);
         await PublishBindingIfConfiguredAsync(attached, cancellationToken).ConfigureAwait(false);
         return attached;
     }
 
-    public string GetDeterministicRemoteJobName(string opaqueWorkItemId) =>
-        ResearchDispatchBindingProtector.GetDeterministicRemoteJobName(opaqueWorkItemId);
+    public async Task<PreparedNebiusResearchDispatch> PrepareAsync(
+        RemoteResearchWorkItem item,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        var encrypted = ResearchWorkItemProtector.Protect(item, _options.WorkerPublicKeyPem);
+        try
+        {
+            await _transport.PutAsync(encrypted, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            await TryDeleteAsync(encrypted.OpaqueWorkItemId).ConfigureAwait(false);
+            throw;
+        }
 
-    private async Task PublishBindingIfConfiguredAsync(AgentJobRecord attached, CancellationToken cancellationToken)
+        return new PreparedNebiusResearchDispatch(
+            item.LocalJobId,
+            item.InputCheckpointStep,
+            encrypted.OpaqueWorkItemId,
+            item.CreatedAt,
+            item.ExpiresAt,
+            DateTimeOffset.UtcNow);
+    }
+
+    public async Task<NebiusResearchDispatchReceipt> StartPreparedAsync(
+        PreparedNebiusResearchDispatch prepared,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(prepared);
+        var spec = CreateSpec(prepared.OpaqueWorkItemId);
+        var response = await _serverless.CreateAsync(spec, cancellationToken).ConfigureAwait(false);
+        var remoteJobId = NebiusServerlessJobClient.ParseCreatedJobId(response);
+        if (string.IsNullOrWhiteSpace(remoteJobId))
+            throw new InvalidOperationException("Nebius Serverless did not return a remote research job id.");
+
+        return new NebiusResearchDispatchReceipt(
+            prepared.LocalJobId,
+            prepared.InputCheckpointStep,
+            prepared.OpaqueWorkItemId,
+            remoteJobId,
+            DateTimeOffset.UtcNow);
+    }
+
+    private NebiusServerlessJobSpec CreateSpec(string opaqueWorkItemId)
+    {
+        if (string.IsNullOrWhiteSpace(opaqueWorkItemId))
+            throw new InvalidOperationException("Opaque work-item id is required for Nebius dispatch.");
+
+        var args = new[]
+        {
+            _options.WorkerDll,
+            "--work-item",
+            opaqueWorkItemId
+        };
+        return new NebiusServerlessJobSpec(
+            _options.WorkerImage,
+            _options.ContainerCommand,
+            args,
+            _options.EnvironmentVariables,
+            _options.Platform,
+            _options.Preset,
+            _options.Timeout,
+            _options.SubnetId,
+            _options.Disk,
+            _options.VolumeMounts,
+            _options.SharedMemorySize);
+    }
+
+    private async Task PublishBindingIfConfiguredAsync(
+        AgentJobRecord attached,
+        CancellationToken cancellationToken)
     {
         if (_bindingPublisher is null)
             return;
 
         var provenance = attached.RemoteResearch
-            ?? throw new InvalidOperationException("Attached remote research job is missing provenance.");
-        if (attached.ExecutionLocation != JobExecutionLocation.NebiusServerless
-            || provenance.State != RemoteResearchProvenanceState.Dispatched
+            ?? throw new InvalidOperationException("Attached research dispatch is missing remote provenance.");
+        if (provenance.State != RemoteResearchProvenanceState.Dispatched
             || string.IsNullOrWhiteSpace(provenance.RemoteJobId))
         {
-            throw new InvalidOperationException("Authoritative dispatch binding can only be published after durable remote-id attachment.");
+            throw new InvalidOperationException("Signed dispatch binding can only be published after a durable remote job id is attached.");
         }
 
-        var expiresAt = provenance.WorkItemExpiresAt
-            ?? provenance.DispatchedAt + ResearchWorkItemProtector.MaxLifetime;
         await _bindingPublisher.PublishAsync(
+            attached.JobId,
+            provenance.InputCheckpointStep,
             provenance.OpaqueWorkItemId,
             provenance.RemoteJobId,
-            expiresAt,
-            cancellationToken: cancellationToken).ConfigureAwait(false);
+            provenance.DispatchedAt,
+            cancellationToken).ConfigureAwait(false);
     }
 
-    private NebiusServerlessJobSpec BuildSpec(string opaqueWorkItemId)
+    private static void ValidateAuthorization(RemoteResearchWorkItem item, ResearchCloudAuthorization authorization)
     {
-        var environment = new Dictionary<string, string>(StringComparer.Ordinal)
+        if (!authorization.Approved)
+            throw new InvalidOperationException("Cloud research dispatch requires explicit user authorization.");
+        if (authorization.LocalJobId != item.LocalJobId
+            || !string.Equals(authorization.CheckpointStep, item.InputCheckpointStep, StringComparison.Ordinal))
         {
-            ["NVIDEA_RESEARCH_PROTOCOL"] = ResearchWorkItemProtector.ProtocolVersion
-        };
-        if (_options.EnvironmentVariables is not null)
-        {
-            foreach (var pair in _options.EnvironmentVariables)
-                environment.Add(pair.Key, pair.Value);
+            throw new InvalidOperationException("Cloud research authorization does not match the exact local research checkpoint.");
         }
-
-        return new NebiusServerlessJobSpec(
-            Name: GetDeterministicRemoteJobName(opaqueWorkItemId),
-            Image: _options.WorkerImage,
-            ContainerCommand: _options.ContainerCommand,
-            Arguments: $"Nvidea.Worker.dll research --work-item-id={opaqueWorkItemId}",
-            Platform: _options.Platform,
-            Preset: _options.Preset,
-            Timeout: _options.Timeout,
-            SubnetId: _options.SubnetId,
-            EnvironmentVariables: environment,
-            Disk: _options.Disk,
-            SecretEnvironmentVariables: _options.SecretEnvironmentVariables,
-            Volumes: _options.Volumes);
+        if (!string.Equals(authorization.DisclosureVersion, ResearchWorkItemProtector.DisclosureVersion, StringComparison.Ordinal))
+            throw new InvalidOperationException("Cloud research authorization disclosure version is unsupported.");
+        if (authorization.GrantedAt > item.ExpiresAt)
+            throw new InvalidOperationException("Cloud research authorization was granted after the work item expired.");
     }
 
     private async Task TryDeleteAsync(string opaqueWorkItemId)
@@ -203,25 +199,15 @@ public sealed class TwoPhaseNebiusResearchDispatcher
         }
         catch
         {
-            // Preparation cleanup is best effort; encrypted payloads are bounded by protocol TTL.
+            // Encrypted envelopes are self-expiring and contain no plaintext; cleanup is best effort.
         }
-    }
-
-    private static void ValidateOptions(NebiusResearchDispatchOptions options)
-    {
-        if (string.IsNullOrWhiteSpace(options.WorkerImage)
-            || string.IsNullOrWhiteSpace(options.WorkerPublicKeyPem)
-            || string.IsNullOrWhiteSpace(options.ContainerCommand)
-            || string.IsNullOrWhiteSpace(options.Platform)
-            || string.IsNullOrWhiteSpace(options.Preset)
-            || string.IsNullOrWhiteSpace(options.Timeout)
-            || string.IsNullOrWhiteSpace(options.SubnetId))
-        {
-            throw new ArgumentException("Worker image/key, command, platform, preset, timeout and subnet are required.", nameof(options));
-        }
-        if (options.Disk is null || string.IsNullOrWhiteSpace(options.Disk.Type) || options.Disk.SizeBytes <= 0)
-            throw new ArgumentException("An explicit positive-size Serverless disk is required.", nameof(options));
-        if (options.EnvironmentVariables?.ContainsKey("NVIDEA_RESEARCH_PROTOCOL") == true)
-            throw new ArgumentException("NVIDEA_RESEARCH_PROTOCOL is reserved by the dispatcher.", nameof(options));
     }
 }
+
+public sealed record PreparedNebiusResearchDispatch(
+    Guid LocalJobId,
+    string InputCheckpointStep,
+    string OpaqueWorkItemId,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset ExpiresAt,
+    DateTimeOffset PreparedAt);

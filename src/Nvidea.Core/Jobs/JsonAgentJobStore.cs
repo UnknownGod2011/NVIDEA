@@ -197,7 +197,8 @@ public sealed class JsonAgentJobStore : IAgentJobStore
             || !string.Equals(actual.LastError, expected.LastError, StringComparison.Ordinal)
             || !DefinitionEquivalent(actual.Definition, expected.Definition)
             || !CheckpointVersionEquivalent(actual.Checkpoint, expected.Checkpoint)
-            || !AuditEventEquivalent(actual.PendingAuditEvent, expected.PendingAuditEvent))
+            || !AuditEventEquivalent(actual.PendingAuditEvent, expected.PendingAuditEvent)
+            || !ExternalActionEquivalent(actual.PendingExternalAction, expected.PendingExternalAction))
         {
             return false;
         }
@@ -254,6 +255,20 @@ public sealed class JsonAgentJobStore : IAgentJobStore
         }
 
         return true;
+    }
+
+    internal static bool ExternalActionEquivalent(PendingExternalAction? actual, PendingExternalAction? expected)
+    {
+        if (ReferenceEquals(actual, expected))
+            return true;
+        if (actual is null || expected is null)
+            return false;
+
+        return actual.ActionId == expected.ActionId
+            && actual.Kind == expected.Kind
+            && string.Equals(actual.TargetId, expected.TargetId, StringComparison.Ordinal)
+            && actual.AuditEventId == expected.AuditEventId
+            && actual.CreatedAt == expected.CreatedAt;
     }
 
     private static bool DefinitionEquivalent(AgentJobDefinition actual, AgentJobDefinition expected) =>

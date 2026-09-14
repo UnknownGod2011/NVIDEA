@@ -234,9 +234,11 @@ public sealed class ResearchDispatchBindingPublisher
 }
 
 /// <summary>
-/// Worker-side delayed-publication boundary. Missing bindings are retried with bounded exponential
-/// backoff, but the worker never waits past either its configured budget or the protected work-item
-/// lifetime supplied by the caller. A transport-visible work-item expiry is used only as a stricter
+/// Worker-side delayed-publication boundary. Missing bindings and mounted-volume I/O faults are
+/// retried with bounded exponential backoff, but the worker never waits past either its configured
+/// budget or the protected work-item lifetime supplied by the caller. Only I/O failures at the
+/// transport-read boundary are considered transient; malformed or cryptographically invalid
+/// binding content is never retried. A transport-visible work-item expiry is used only as a stricter
 /// upper bound; it never extends the configured wait budget or authenticates the work item.
 /// </summary>
 public sealed class ResearchDispatchBindingWaiter
@@ -299,7 +301,26 @@ public sealed class ResearchDispatchBindingWaiter
             if (beforeRead >= deadline)
                 throw CreateTimeout(workItemExpiresAt, deadline);
 
-            var binding = await _transport.GetAsync(opaqueWorkItemId, cancellationToken).ConfigureAwait(false);
+            ProtectedResearchDispatchBinding? binding;
+            try
+            {
+                binding = await _transport.GetAsync(opaqueWorkItemId, cancellationToken).ConfigureAwait(false);
+            }
+            catch (IOException)
+            {
+                // A mounted Object Storage/volume read can fail transiently while the mount is
+                // reconnecting or propagating. Preserve cancellation precedence and retry only this
+                // narrow transport I/O class under the same absolute deadline/backoff. Deserialization,
+                // protocol, signature and identity failures occur outside this catch and fail closed.
+                cancellationToken.ThrowIfCancellationRequested();
+                var failedAt = DateTimeOffset.UtcNow;
+                if (failedAt >= deadline)
+                    throw CreateTimeout(workItemExpiresAt, deadline);
+
+                retryDelay = await DelayBeforeRetryAsync(retryDelay, deadline, cancellationToken).ConfigureAwait(false);
+                continue;
+            }
+
             var observedAt = DateTimeOffset.UtcNow;
             if (observedAt >= deadline)
                 throw CreateTimeout(workItemExpiresAt, deadline);
@@ -321,11 +342,23 @@ public sealed class ResearchDispatchBindingWaiter
                 return verified;
             }
 
-            var remaining = deadline - observedAt;
-            var delay = remaining < retryDelay ? remaining : retryDelay;
-            await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
-            retryDelay = NextBackoff(retryDelay);
+            retryDelay = await DelayBeforeRetryAsync(retryDelay, deadline, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private static async Task<TimeSpan> DelayBeforeRetryAsync(
+        TimeSpan retryDelay,
+        DateTimeOffset deadline,
+        CancellationToken cancellationToken)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (now >= deadline)
+            return retryDelay;
+
+        var remaining = deadline - now;
+        var delay = remaining < retryDelay ? remaining : retryDelay;
+        await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+        return NextBackoff(retryDelay);
     }
 
     private static TimeSpan NextBackoff(TimeSpan current)

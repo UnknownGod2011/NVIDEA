@@ -19,6 +19,24 @@ public enum JobExecutionLocation
     NebiusServerless
 }
 
+public enum DurableExternalActionKind
+{
+    NebiusCancelRemoteResearch
+}
+
+/// <summary>
+/// Durable, non-secret intent for an external side effect whose delivery may become ambiguous across
+/// process failure. The intent is deliberately separate from success state: its presence means the
+/// action may still require reconciliation, never that the provider accepted or completed it.
+/// AuditEventId binds the intent to the exact durable audit authority prepared for this attempt.
+/// </summary>
+public sealed record PendingExternalAction(
+    Guid ActionId,
+    DurableExternalActionKind Kind,
+    string TargetId,
+    Guid AuditEventId,
+    DateTimeOffset CreatedAt);
+
 public sealed record AgentJobDefinition(
     string JobType,
     string CapabilityId,
@@ -46,7 +64,8 @@ public sealed record AgentJobRecord(
     DateTimeOffset UpdatedAt,
     DateTimeOffset? NextAttemptAt = null,
     RemoteResearchProvenance? RemoteResearch = null,
-    AuditEvent? PendingAuditEvent = null);
+    AuditEvent? PendingAuditEvent = null,
+    PendingExternalAction? PendingExternalAction = null);
 
 public sealed record JobStepResult(
     bool Completed,

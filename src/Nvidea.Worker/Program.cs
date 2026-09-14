@@ -25,12 +25,24 @@ internal static class Program
             var transport = new DirectoryProtectedResearchTransport(runtime.BootstrapTrust.TransportRoot);
             var clientVerificationPublicKey = runtime.BootstrapTrust.ClientVerificationPublicKeyPem;
             var clientResultEncryptionPublicKey = runtime.BootstrapTrust.ClientResultEncryptionPublicKeyPem;
+
+            // The work-item envelope expiry is transport-visible metadata until the worker later
+            // authenticates/decrypts the envelope. Use it only to shorten binding wait lifetime;
+            // it must never extend the configured wait budget or establish payload trust.
+            var workItemTransport = (IProtectedResearchWorkItemTransport)transport;
+            var stagedWorkItem = await workItemTransport
+                .GetAsync(options.OpaqueWorkItemId, CancellationToken.None)
+                .ConfigureAwait(false)
+                ?? throw new InvalidOperationException("Protected remote research work item is unavailable.");
+
             var bindingWaiter = new ResearchDispatchBindingWaiter(
                 transport,
                 clientVerificationPublicKey,
                 pollInterval: runtime.BindingPollInterval,
                 maxWait: runtime.BindingMaxWait);
-            var binding = await bindingWaiter.WaitAsync(options.OpaqueWorkItemId, CancellationToken.None).ConfigureAwait(false);
+            var binding = await bindingWaiter
+                .WaitAsync(options.OpaqueWorkItemId, stagedWorkItem.ExpiresAt, CancellationToken.None)
+                .ConfigureAwait(false);
 
             var worker = new NebiusResearchWorker(
                 transport,

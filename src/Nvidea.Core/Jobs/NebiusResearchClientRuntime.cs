@@ -148,6 +148,20 @@ public sealed class NebiusResearchClientRuntime : IRemoteResearchClientRuntime
         Guid jobId,
         CancellationToken cancellationToken = default)
     {
+        try
+        {
+            // A still-pending atomic reservation audit proves ReserveAsync never returned and the
+            // original control flow therefore never reached Nebius Create. This is the one state in
+            // which provider creation is safe to resume directly after settling that exact audit.
+            return await Dispatcher.ResumeReservedAsync(jobId, Ingestor, cancellationToken).ConfigureAwait(false);
+        }
+        catch (RemoteResearchDispatchReservationRecoveryNotRequiredException)
+        {
+            // No pending reservation audit means the crash may have happened before, during, or
+            // after Create. Preserve the existing conservative name/list reconciliation and never
+            // issue a second Create merely because no remote id is attached locally.
+        }
+
         var attached = await Reconciler.ReconcileReservedAsync(jobId, cancellationToken).ConfigureAwait(false);
         if (attached.ExecutionLocation == JobExecutionLocation.NebiusServerless
             && attached.RemoteResearch is { State: RemoteResearchProvenanceState.Dispatched })

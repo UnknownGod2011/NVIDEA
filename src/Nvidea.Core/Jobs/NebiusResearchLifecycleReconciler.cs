@@ -408,8 +408,35 @@ public sealed class NebiusResearchLifecycleReconciler
                     cancellationToken).ConfigureAwait(false);
 
             case NebiusRemoteJobState.Completed:
-                throw new InvalidOperationException(
-                    "Nebius completed the research stage before cancellation was confirmed; durable cancellation remains unresolved and requires explicit result reconciliation.");
+            {
+                var currentTime = DateTimeOffset.UtcNow;
+                try
+                {
+                    return await _ingestor.IngestCompletedAfterCancellationRequestedAsync(
+                        jobId,
+                        remote.Id,
+                        currentTime,
+                        cancellationToken).ConfigureAwait(false);
+                }
+                catch (RemoteResearchResultNotAvailableException)
+                {
+                    var expiresAt = provenance.WorkItemExpiresAt
+                        ?? provenance.DispatchedAt + ResearchWorkItemProtector.MaxLifetime;
+                    if (currentTime < expiresAt)
+                        return current;
+
+                    return await FinalizeTerminalAsync(
+                        current,
+                        provenance,
+                        AgentJobState.Failed,
+                        RemoteResearchProvenanceState.Expired,
+                        "Nebius completed the research stage before cancellation was confirmed, but its protected result was unavailable before the durable transport lifetime expired.",
+                        "research.remote_result_expired_after_cancel_request",
+                        "Nebius completion won the cancellation race, but no protected result was available before expiry.",
+                        currentTime,
+                        cancellationToken).ConfigureAwait(false);
+                }
+            }
 
             case NebiusRemoteJobState.Failed:
             {

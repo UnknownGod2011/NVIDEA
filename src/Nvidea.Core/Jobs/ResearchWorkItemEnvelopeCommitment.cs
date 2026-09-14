@@ -152,11 +152,14 @@ public sealed class AtomicRemoteResearchDispatchReservation
 {
     private readonly JsonAgentJobStore _store;
     private readonly DurableJobAuditOutbox _auditOutbox;
+    private readonly RemoteResearchDispatchReservationRecovery _recovery;
 
     public AtomicRemoteResearchDispatchReservation(JsonAgentJobStore store, IAuditTrail auditTrail)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
-        _auditOutbox = new DurableJobAuditOutbox(_store, auditTrail ?? throw new ArgumentNullException(nameof(auditTrail)));
+        var durableAuditTrail = auditTrail ?? throw new ArgumentNullException(nameof(auditTrail));
+        _auditOutbox = new DurableJobAuditOutbox(_store, durableAuditTrail);
+        _recovery = new RemoteResearchDispatchReservationRecovery(_store, durableAuditTrail);
     }
 
     public async Task<AgentJobRecord> ReserveAsync(
@@ -220,6 +223,16 @@ public sealed class AtomicRemoteResearchDispatchReservation
             throw new RemoteResearchDispatchReservationAuditPendingException(ex);
         }
     }
+
+    /// <summary>
+    /// Settles and reloads a previously committed atomic DispatchReserved trust root using the same
+    /// protected store and audit trail that created it. This is the only restart authority consumed
+    /// by the production dispatcher before a post-crash Nebius Create call.
+    /// </summary>
+    public Task<AgentJobRecord> RecoverAsync(
+        Guid jobId,
+        CancellationToken cancellationToken = default) =>
+        _recovery.RecoverAuditAsync(jobId, cancellationToken);
 
     private static void ValidateTarget(AgentJobRecord current, string checkpointStep)
     {

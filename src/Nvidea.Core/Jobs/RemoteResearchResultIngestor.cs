@@ -65,6 +65,7 @@ public sealed class RemoteResearchResultIngestor
     private readonly IProtectedResearchWorkItemTransport? _workItems;
     private readonly IAuditTrail _auditTrail;
     private readonly DurableJobAuditOutbox _auditOutbox;
+    private readonly DurableProtectedPayloadCleanupIntent _cleanupIntent;
     private readonly string _clientPrivateKeyPem;
 
     public RemoteResearchResultIngestor(
@@ -78,6 +79,7 @@ public sealed class RemoteResearchResultIngestor
         _results = results ?? throw new ArgumentNullException(nameof(results));
         _auditTrail = auditTrail ?? throw new ArgumentNullException(nameof(auditTrail));
         _auditOutbox = new DurableJobAuditOutbox(_store, _auditTrail);
+        _cleanupIntent = new DurableProtectedPayloadCleanupIntent(_store);
         _workItems = workItems;
         _clientPrivateKeyPem = string.IsNullOrWhiteSpace(clientPrivateKeyPem)
             ? throw new ArgumentException("Client private key is required.", nameof(clientPrivateKeyPem))
@@ -237,27 +239,32 @@ public sealed class RemoteResearchResultIngestor
     }
 
     /// <summary>
-    /// Recovers a crash after a remote-result state CAS but before the matching audit append/marker
-    /// clear. No remote work or handler is replayed. Protected payloads are removed only after the
-    /// exact pending audit event is proven durable.
+    /// Recovers a crash after a remote-result state CAS but before its audit or protected-payload
+    /// cleanup is settled. No remote work or handler is replayed. Cleanup is attempted only after
+    /// the exact pending audit is proven durable, and its durable marker is cleared only after every
+    /// required transport delete succeeds.
     /// </summary>
     internal async Task<AgentJobRecord> RecoverPendingAuditAsync(
         Guid jobId,
         CancellationToken cancellationToken = default)
     {
         var current = await GetRequiredResearchWithoutAuditRecoveryAsync(jobId, cancellationToken).ConfigureAwait(false);
-        var pending = current.PendingAuditEvent;
-        if (pending is null)
-            return current;
+        if (current.PendingAuditEvent is not null)
+            current = await _auditOutbox.FlushAsync(current, cancellationToken).ConfigureAwait(false);
 
-        var recovered = await _auditOutbox.FlushAsync(current, cancellationToken).ConfigureAwait(false);
-        if (IsRemoteResultAppliedAudit(pending.EventType)
-            && recovered.RemoteResearch is { State: RemoteResearchProvenanceState.ResultApplied } applied)
-        {
-            await CleanupProtectedPayloadsAsync(applied.OpaqueWorkItemId).ConfigureAwait(false);
-        }
+        return await DrainPendingCleanupAsync(current, cancellationToken).ConfigureAwait(false);
+    }
 
-        return recovered;
+    /// <summary>
+    /// Local-only recovery hook used by lifecycle reconciliation after durable audit settlement.
+    /// It never contacts Nebius and never replays result ingestion.
+    /// </summary>
+    internal async Task<AgentJobRecord> RecoverPendingCleanupAsync(
+        Guid jobId,
+        CancellationToken cancellationToken = default)
+    {
+        var current = await GetRequiredResearchWithoutAuditRecoveryAsync(jobId, cancellationToken).ConfigureAwait(false);
+        return await DrainPendingCleanupAsync(current, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<AgentJobRecord> IngestCoreAsync(
@@ -331,6 +338,7 @@ public sealed class RemoteResearchResultIngestor
             RemoteResearch = appliedProvenance,
             UpdatedAt = currentTime
         };
+        replacement = _cleanupIntent.Stage(replacement, provenance.OpaqueWorkItemId, currentTime);
         var resultAudit = PrepareAudit(replacement, auditEventType, auditSummary);
         var durableReplacement = _auditOutbox.Stage(replacement, resultAudit);
 
@@ -338,15 +346,66 @@ public sealed class RemoteResearchResultIngestor
             throw new InvalidOperationException("Research state changed while protected remote result was being applied.");
 
         var committed = await _auditOutbox.FlushAsync(durableReplacement, cancellationToken).ConfigureAwait(false);
-        await CleanupProtectedPayloadsAsync(provenance.OpaqueWorkItemId).ConfigureAwait(false);
-        return committed;
+        return await DrainPendingCleanupAsync(committed, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Legacy best-effort cleanup surface retained for existing callers while terminal lifecycle
+    /// finalization migrates to the durable cleanup marker. New crash-consistent paths should use
+    /// RecoverPendingCleanupAsync/DrainPendingCleanupAsync instead.
+    /// </summary>
     public async Task CleanupProtectedPayloadsAsync(string opaqueWorkItemId)
     {
         await TryDeleteAsync(_results, opaqueWorkItemId).ConfigureAwait(false);
         if (_workItems is not null)
             await TryDeleteAsync(_workItems, opaqueWorkItemId).ConfigureAwait(false);
+    }
+
+    private async Task<AgentJobRecord> DrainPendingCleanupAsync(
+        AgentJobRecord current,
+        CancellationToken cancellationToken)
+    {
+        if (current.PendingProtectedPayloadCleanup is null)
+            return current;
+        if (current.PendingAuditEvent is not null)
+            throw new InvalidOperationException("Protected payload cleanup cannot run before its required audit is durable.");
+
+        var provenance = current.RemoteResearch
+            ?? throw new InvalidOperationException("Protected payload cleanup is missing remote research provenance.");
+        var pending = _cleanupIntent.ValidatePending(current, provenance.OpaqueWorkItemId);
+
+        await DeleteProtectedPayloadsRequiredAsync(pending.OpaqueWorkItemId, cancellationToken).ConfigureAwait(false);
+        return await _cleanupIntent.ClearAsync(current, pending.CleanupId, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task DeleteProtectedPayloadsRequiredAsync(
+        string opaqueWorkItemId,
+        CancellationToken cancellationToken)
+    {
+        var failed = false;
+        try
+        {
+            await _results.DeleteAsync(opaqueWorkItemId, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            failed = true;
+        }
+
+        if (_workItems is not null)
+        {
+            try
+            {
+                await _workItems.DeleteAsync(opaqueWorkItemId, cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                failed = true;
+            }
+        }
+
+        if (failed)
+            throw new InvalidOperationException("Protected research payload cleanup remains pending because at least one transport deletion failed.");
     }
 
     private async Task<AgentJobRecord> GetRequiredResearchAsync(Guid jobId, CancellationToken cancellationToken) =>
@@ -364,10 +423,6 @@ public sealed class RemoteResearchResultIngestor
             throw new InvalidOperationException("Remote result ingestion only accepts research jobs.");
         return job;
     }
-
-    private static bool IsRemoteResultAppliedAudit(string eventType) =>
-        string.Equals(eventType, "research.remote_result_applied", StringComparison.Ordinal)
-        || string.Equals(eventType, "research.remote_result_applied_after_cancel_request", StringComparison.Ordinal);
 
     private static void ValidateDispatchReservationTarget(AgentJobRecord current, string checkpointStep)
     {
@@ -428,7 +483,7 @@ public sealed class RemoteResearchResultIngestor
         }
         catch
         {
-            // Protected artifacts are bounded by protocol expiry; cleanup is best effort.
+            // Protected artifacts are bounded by protocol expiry; cleanup is best effort for legacy callers.
         }
     }
 
@@ -440,7 +495,7 @@ public sealed class RemoteResearchResultIngestor
         }
         catch
         {
-            // Protected artifacts are bounded by protocol expiry; cleanup is best effort.
+            // Protected artifacts are bounded by protocol expiry; cleanup is best effort for legacy callers.
         }
     }
 }

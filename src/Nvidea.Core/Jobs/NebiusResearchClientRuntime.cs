@@ -71,18 +71,21 @@ public sealed class ResearchDispatchBindingCleanup
 public sealed class NebiusResearchClientRuntime : IRemoteResearchClientRuntime
 {
     private readonly ResearchDispatchBindingCleanup _bindingCleanup;
+    private readonly ResearchDispatchBindingRecovery _bindingRecovery;
 
     private NebiusResearchClientRuntime(
         TwoPhaseNebiusResearchDispatcher dispatcher,
         NebiusResearchLifecycleReconciler reconciler,
         RemoteResearchResultIngestor ingestor,
         ResearchDispatchBindingPublisher bindingPublisher,
+        ResearchDispatchBindingRecovery bindingRecovery,
         ResearchDispatchBindingCleanup bindingCleanup)
     {
         Dispatcher = dispatcher;
         Reconciler = reconciler;
         Ingestor = ingestor;
         BindingPublisher = bindingPublisher;
+        _bindingRecovery = bindingRecovery;
         _bindingCleanup = bindingCleanup;
     }
 
@@ -120,8 +123,9 @@ public sealed class NebiusResearchClientRuntime : IRemoteResearchClientRuntime
         var ingestor = new RemoteResearchResultIngestor(store, results, resultPrivateKeyPem, auditTrail, workItems);
         var dispatcher = new TwoPhaseNebiusResearchDispatcher(serverless, workItems, options, publisher);
         var reconciler = new NebiusResearchLifecycleReconciler(store, serverless, ingestor, auditTrail, publisher);
+        var recovery = new ResearchDispatchBindingRecovery(store, publisher);
         var cleanup = new ResearchDispatchBindingCleanup(bindings);
-        return new NebiusResearchClientRuntime(dispatcher, reconciler, ingestor, publisher, cleanup);
+        return new NebiusResearchClientRuntime(dispatcher, reconciler, ingestor, publisher, recovery, cleanup);
     }
 
     public Task<AgentJobRecord> DispatchAsync(
@@ -144,15 +148,25 @@ public sealed class NebiusResearchClientRuntime : IRemoteResearchClientRuntime
         if (recovered is not null)
             return recovered;
 
+        // A crash can happen after the durable remote id/audit commit but before the signed worker
+        // binding is published. Repair that local/shared-state gap before any provider observation.
+        await _bindingRecovery.EnsureAsync(jobId, cancellationToken).ConfigureAwait(false);
+
         var result = await Reconciler.ReconcileDispatchedAsync(jobId, now, cancellationToken).ConfigureAwait(false);
         await _bindingCleanup.TryCleanupIfTerminalAsync(result).ConfigureAwait(false);
         return result;
     }
 
-    public Task<AgentJobRecord> RequestCancellationAsync(
+    public async Task<AgentJobRecord> RequestCancellationAsync(
         Guid jobId,
-        CancellationToken cancellationToken = default) =>
-        Reconciler.RequestCancellationAsync(jobId, cancellationToken);
+        CancellationToken cancellationToken = default)
+    {
+        // Settle any stranded dispatch audit first, then make the exact persisted remote id resolvable
+        // by the worker before changing cancellation state or contacting the Nebius control plane.
+        await Ingestor.RecoverPendingAuditAsync(jobId, cancellationToken).ConfigureAwait(false);
+        await _bindingRecovery.EnsureAsync(jobId, cancellationToken).ConfigureAwait(false);
+        return await Reconciler.RequestCancellationAsync(jobId, cancellationToken).ConfigureAwait(false);
+    }
 
     public async Task<AgentJobRecord> ReconcileCancellationAsync(
         Guid jobId,
@@ -161,6 +175,10 @@ public sealed class NebiusResearchClientRuntime : IRemoteResearchClientRuntime
         var recovered = await TryRecoverAppliedResultAsync(jobId, cancellationToken).ConfigureAwait(false);
         if (recovered is not null)
             return recovered;
+
+        // CancelRequested is still an active remote stage. Reconstruct a missing signed binding from
+        // durable provenance before polling or re-driving provider cancellation.
+        await _bindingRecovery.EnsureAsync(jobId, cancellationToken).ConfigureAwait(false);
 
         var result = await Reconciler.ReconcileCancellationAsync(jobId, cancellationToken).ConfigureAwait(false);
         await _bindingCleanup.TryCleanupIfTerminalAsync(result).ConfigureAwait(false);

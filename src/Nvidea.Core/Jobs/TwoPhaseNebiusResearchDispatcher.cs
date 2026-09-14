@@ -14,8 +14,8 @@ public sealed record PreparedNebiusResearchDispatch(
 /// <summary>
 /// Coordinates the crash-sensitive Serverless dispatch boundary in two phases:
 /// 1) encrypt/upload the work item and durably reserve its exact opaque id/checkpoint/expiry locally;
-/// 2) when configured, durably commit the exact encrypted envelope digest before provider creation;
-/// 3) only after those local CAS boundaries succeed, create the Nebius job and attach its remote id.
+/// 2) production composition atomically commits reservation provenance, audit intent and envelope digest;
+/// 3) only after that local trust root settles, create the Nebius job and attach its remote id.
 /// The authoritative signed binding is published only after durable attachment succeeds.
 /// </summary>
 public sealed class TwoPhaseNebiusResearchDispatcher
@@ -25,19 +25,22 @@ public sealed class TwoPhaseNebiusResearchDispatcher
     private readonly NebiusResearchDispatchOptions _options;
     private readonly ResearchDispatchBindingPublisher? _bindingPublisher;
     private readonly DurableResearchEnvelopeCommitment? _envelopeCommitment;
+    private readonly AtomicRemoteResearchDispatchReservation? _atomicReservation;
 
     public TwoPhaseNebiusResearchDispatcher(
         INebiusServerlessJobClient serverless,
         IProtectedResearchWorkItemTransport transport,
         NebiusResearchDispatchOptions options,
         ResearchDispatchBindingPublisher? bindingPublisher = null,
-        DurableResearchEnvelopeCommitment? envelopeCommitment = null)
+        DurableResearchEnvelopeCommitment? envelopeCommitment = null,
+        AtomicRemoteResearchDispatchReservation? atomicReservation = null)
     {
         _serverless = serverless ?? throw new ArgumentNullException(nameof(serverless));
         _transport = transport ?? throw new ArgumentNullException(nameof(transport));
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _bindingPublisher = bindingPublisher;
         _envelopeCommitment = envelopeCommitment;
+        _atomicReservation = atomicReservation;
         ValidateOptions(options);
     }
 
@@ -97,9 +100,6 @@ public sealed class TwoPhaseNebiusResearchDispatcher
         }
         catch
         {
-            // Do not delete the local reservation here: the caller may not be able to prove whether
-            // the control plane accepted the request. The encrypted object is TTL-bounded and the
-            // durable reservation prevents accidental local replay.
             throw;
         }
     }
@@ -112,9 +112,6 @@ public sealed class TwoPhaseNebiusResearchDispatcher
     {
         ArgumentNullException.ThrowIfNull(ingestor);
 
-        // Authorization and deterministic reservation/audit trust must both succeed before any
-        // encrypted object is uploaded. ReserveDispatchAsync repeats the same reservation checks
-        // immediately before CAS, so this no-mutation preflight does not replace concurrency safety.
         ResearchWorkItemProtector.ValidateAuthorization(authorization, workItem);
         await ingestor.PreflightDispatchReservationAsync(
             workItem.LocalJobId,
@@ -125,14 +122,31 @@ public sealed class TwoPhaseNebiusResearchDispatcher
         AgentJobRecord reserved;
         try
         {
-            reserved = await ingestor.ReserveDispatchAsync(
-                new RemoteResearchDispatchReservation(
-                    prepared.LocalJobId,
-                    prepared.CheckpointStep,
-                    prepared.OpaqueWorkItemId,
-                    prepared.PreparedAt,
-                    prepared.Envelope.ExpiresAt),
-                cancellationToken).ConfigureAwait(false);
+            var reservation = new RemoteResearchDispatchReservation(
+                prepared.LocalJobId,
+                prepared.CheckpointStep,
+                prepared.OpaqueWorkItemId,
+                prepared.PreparedAt,
+                prepared.Envelope.ExpiresAt);
+
+            if (_atomicReservation is not null)
+            {
+                reserved = await _atomicReservation.ReserveAsync(
+                    reservation,
+                    prepared.Envelope,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                reserved = await ingestor.ReserveDispatchAsync(reservation, cancellationToken).ConfigureAwait(false);
+                if (_envelopeCommitment is not null)
+                {
+                    reserved = await _envelopeCommitment.AttachAsync(
+                        reserved.JobId,
+                        prepared.Envelope,
+                        cancellationToken).ConfigureAwait(false);
+                }
+            }
         }
         catch (RemoteResearchDispatchReservationAuditPendingException)
         {
@@ -144,18 +158,6 @@ public sealed class TwoPhaseNebiusResearchDispatcher
         {
             await TryDeleteAsync(prepared.OpaqueWorkItemId).ConfigureAwait(false);
             throw;
-        }
-
-        if (_envelopeCommitment is not null)
-        {
-            // This CAS is intentionally after the reservation audit settles and before Nebius Create.
-            // If it fails, the durable reservation continues to own the protected payload and no
-            // provider work has been started. Recovery must never recompute this digest from a
-            // mutable shared mount.
-            reserved = await _envelopeCommitment.AttachAsync(
-                reserved.JobId,
-                prepared.Envelope,
-                cancellationToken).ConfigureAwait(false);
         }
 
         var receipt = await StartPreparedAsync(prepared, cancellationToken).ConfigureAwait(false);
@@ -194,8 +196,6 @@ public sealed class TwoPhaseNebiusResearchDispatcher
             return;
         }
 
-        // Compatibility only for lower-level legacy compositions. The production runtime wires a
-        // DurableResearchEnvelopeCommitment, and the hardened worker rejects V1 for execution.
         await _bindingPublisher.PublishAsync(
             provenance.OpaqueWorkItemId,
             provenance.RemoteJobId,

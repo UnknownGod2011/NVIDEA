@@ -26,6 +26,7 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Browser capability execution and the legacy browser executor quarantine raw driver/site exception text from receipts; user-facing/durable flows receive only fixed NVIDEA-authored browser diagnostics.
 - Tavily Extract failure fallback preserves already-collected search evidence but no longer copies provider/network exception messages into `ResearchBatch.Warnings`, preventing those diagnostics from entering resumable research checkpoints.
 - `NebiusApiException` no longer retains raw Token Factory response bodies in `ResponseExcerpt`; the compatibility property now contains a fixed NVIDEA-authored quarantine diagnostic only.
+- Nebius retry/final transport failures no longer retain or rethrow raw `HttpRequestException` diagnostic text; status code is preserved while message/inner diagnostics are replaced at the provider boundary.
 - Windows voice invocation is local/review-first. Deterministic judging tools include `Nvidea.PersonalAiDemoEval`, `Nvidea.PersonalAiAdversarialEval`, `Nvidea.JudgingEvidenceVerifier`, `Nvidea.DemoPackageValidator`, and `Nvidea.NebiusModelCatalogCheck`.
 
 ## Persistent Progress History
@@ -51,38 +52,46 @@ Hardened the current browser capability path and legacy browser executor so raw 
 ### 2026-09-14 — Tavily Extract diagnostic privacy hardening
 Closed a durable-state privacy leak where Tavily Extract fallback copied `HttpRequestException.Message` into `ResearchBatch.Warnings`; fallback now preserves collected search evidence but emits only a fixed quarantine warning. Added a bearer-token / credential-URL adversarial regression.
 
-### 2026-09-14 — Nebius Token Factory diagnostic privacy hardening (latest run)
+### 2026-09-14 — Nebius Token Factory response diagnostic privacy hardening
+- `NebiusApiException.FromResponse(...)` no longer retains up to 2,000 characters of raw Token Factory response body in public `ResponseExcerpt`.
+- `ResponseExcerpt` remains for source/API compatibility but contains only `Provider response diagnostics quarantined.`.
+- Added adversarial coverage requiring bearer-like tokens and credential-bearing URLs in provider bodies not to cross the exception boundary.
+- Engineering commits: `ab9c1d317a32ade9cf7daee2ee287de82a361aea`, `42c185f1b6c35a189a809ff47ad662da3ba8b886`.
+
+### 2026-09-14 — Nebius transport retry diagnostic privacy hardening (latest run)
 Completed:
-- Re-read this ledger completely and inspected current repository metadata, recent commits, the Nebius Token Factory client, and relevant privacy-test conventions.
-- Identified that `NebiusApiException.FromResponse(...)` retained up to 2,000 characters of raw Token Factory response body in public `ResponseExcerpt`. Provider error bodies can echo credentials, signed URLs, prompts, or other sensitive request context, so any later logger/state/UI consumer of this property could reintroduce secret leakage despite the exception `Message` itself being generic.
-- Changed `NebiusApiException` so `ResponseExcerpt` is retained for source/API compatibility but now contains only the fixed NVIDEA-authored value `Provider response diagnostics quarantined.`; the raw response body is intentionally discarded at the provider boundary.
-- Added `NebiusDiagnosticPrivacyTests.FromResponse_DoesNotExposeRawProviderBody`, injecting a bearer-like token and credential-bearing URL in a simulated provider error body and requiring both `ResponseExcerpt` and `Message` to remain free of those diagnostics.
+- Re-read this ledger completely and inspected the current repository head, Nebius Token Factory retry loop, and existing diagnostic-privacy regression.
+- Identified that retryable `HttpRequestException` objects were stored verbatim in `lastError`, while a final-attempt `HttpRequestException` escaped the catch filter entirely. Network/handler exception messages can include request destinations, proxy details, signed URLs, echoed headers, or other sensitive context, so this bypassed the provider-response-body quarantine added in the previous run.
+- Changed the Nebius client to quarantine **every** `HttpRequestException` immediately at the retry boundary. The replacement exception preserves `StatusCode` for operational classification but uses only the fixed NVIDEA-authored message `Nebius transport request failed; provider/network diagnostics quarantined.` and deliberately carries no raw inner exception.
+- Final-attempt transport failures now throw that quarantined exception rather than the provider/network exception object; intermediate retry state also retains only the quarantined form.
+- Extended `NebiusDiagnosticPrivacyTests` with a two-attempt transport failure containing a bearer-like token and credential-bearing URL. The regression requires both attempts to occur, status preservation, a null inner exception, and absence of the injected secret even from `exception.ToString()`.
 
 Engineering commits this run before this ledger update:
-- `ab9c1d317a32ade9cf7daee2ee287de82a361aea` — quarantine raw Nebius provider response diagnostics.
-- `42c185f1b6c35a189a809ff47ad662da3ba8b886` — focused Nebius diagnostic privacy regression.
+- `469b61c23dbf6e3f979ca7077f860dd5d60df356` — quarantine Nebius transport retry/final diagnostics.
+- `85bda2778ff4c3c90a4675957e6b2d867aff3c05` — adversarial final-transport diagnostic privacy regression.
 
 Validation / evidence this run:
-- Before every GitHub mutation, repository metadata reported exactly `repository_full_name: UnknownGod2011/NVIDEA`, default branch `main`.
-- Starting head was `2cee7fd08c092361964076f85deb18b3f69e0a1a`.
-- Static data-flow review confirms `NebiusApiException.FromResponse(...)` no longer persists or exposes any provider response-body bytes through `ResponseExcerpt`; status code and generic exception message remain available for operational classification.
-- New regression covers `Bearer super-secret-nebius-token` and a `?token=` URL in the provider body and requires neither to cross the exception boundary.
+- Before every GitHub mutation, repository metadata reported exactly `full_name: UnknownGod2011/NVIDEA`, default branch `main`.
+- Starting head was `813f632a75fcd385a5ecd5ba8f230b8472c3d31b`.
+- Static control-flow review confirms the old `catch (HttpRequestException ex) when (attempt < MaxAttempts)` escape path is gone; all transport exceptions now cross `QuarantineTransportFailure(...)` before retention or throw.
+- The test injects `Bearer super-secret-nebius-transport-token` plus a `?token=transport-query-secret` URL, exercises two failed attempts, and requires those values to be absent from both `Message` and full `ToString()` output.
+- `dotnet`, `csc`, `msbuild`, and `mcs` were checked again in the execution environment and none are available, so **no compile, xUnit, WPF, Worker, evaluator, or live integration PASS is claimed**.
 - This run did not mutate `UnknownGod2011/keyboard.wtf` or any other repository.
 - No GitHub Actions workflow, live Nebius, Tavily, Object Storage, Serverless, Playwright, Ollama, or paid inference operation was triggered.
-- Runtime/tooling constraints still prevent a real .NET restore/build/test in this environment, so **no compile, xUnit, WPF, Worker, evaluator, or live integration PASS is claimed**. Changes were statically reviewed only.
 
 ## Security / Privacy / Failure Review
 - Raw browser driver/site diagnostics no longer cross the hardened browser receipt boundaries.
 - Tavily Extract fallback no longer persists raw provider/network exception messages through research warnings/checkpoints; availability degradation still preserves collected search evidence.
-- Raw Nebius HTTP error bodies no longer cross the `NebiusApiException` boundary via `ResponseExcerpt`; downstream logging/state/UI consumers cannot accidentally persist those bodies through that property.
+- Raw Nebius HTTP error bodies no longer cross the `NebiusApiException` boundary via `ResponseExcerpt`.
+- Raw Nebius transport/network exception messages and inner exceptions no longer survive retry retention or final failure; HTTP status remains available where supplied by `HttpRequestException`.
 - Single-use capability approvals cannot be deterministically consumed by malformed start-audit authority before a tool call begins.
 - Backend/provider/site exception text remains excluded from durable audit summaries.
 - Audit append/storage I/O can still fail after approval consumption because approval state and audit storage are not one atomic transaction. Prevalidation removes deterministic semantic rejection from that window but cannot make independent storage I/O transactional.
-- Browser ambiguous-execution recovery, emergency stop, exact approval gating, encrypted research transport, Tavily source provenance, and local/cloud separation were not weakened.
+- Browser ambiguous-execution recovery, emergency stop, exact approval gating, encrypted research transport, Tavily source provenance, retry behavior, and local/cloud separation were not weakened.
 
 ## Known Blockers / Risks
 - No usable .NET 8 executable/compiler is available in this environment; recent Core/WPF/Worker changes still require a real restore/build/test/run before compile confidence is justified.
-- Latest Nebius diagnostic privacy regression is statically reviewed but unexecuted.
+- Latest Nebius transport diagnostic regression is statically reviewed but unexecuted.
 - Audit append/storage I/O is not transactionally coupled to approval consumption or the job store.
 - Other direct `AuditEvent` / `IAuditTrail.AppendAsync` producers may still need ordering review.
 - Other provider/browser/network exception-to-state paths should continue to be audited for embedded secret leakage even when bounded/control-normalized.
@@ -92,4 +101,4 @@ Validation / evidence this run:
 - Real Windows UX, embedding ranking, Playwright authenticated-session behavior, Tavily live behavior, and Nebius Object Storage/Serverless execution still require live environment validation.
 
 ## Single Best Next Task
-If a real .NET 8 Windows build environment becomes available, immediately run restore/build/Core tests/WPF build/Worker build and record exact failures. Otherwise continue the **privacy + direct-audit-producer boundary audit**, next tracing transport/provider exceptions that are retained as objects between retry attempts (including final `HttpRequestException` paths) and remaining direct audit producers to ensure raw diagnostics cannot enter durable/UI state and deterministic audit rejection cannot happen after approval, durable mutation, or external side effects. Avoid duplicating policy where the existing sink is already sufficient.
+If a real .NET 8 Windows build environment becomes available, immediately run restore/build/Core tests/WPF build/Worker build and record exact failures. Otherwise continue the **privacy + direct-audit-producer boundary audit**. The Nebius raw response-body and transport-exception paths are now quarantined; next prioritize remaining direct `AuditEvent` / `IAuditTrail.AppendAsync` producers and any other durable exception field where deterministic trust validation or diagnostic quarantine could still occur only after approval consumption, durable mutation, or an external side effect. Avoid duplicating policy where the existing sink is already sufficient.

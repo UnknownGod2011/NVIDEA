@@ -18,12 +18,11 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Safe Playwright browser agent with persistent Chromium state, popup tracking, plan-act-observe-verify, prompt-injection detection, consequential-action approvals, quarantined downloads, emergency stop, crash recovery, and no automatic replay after ambiguous side effects.
 - Protected local state uses Windows CurrentUser DPAPI by default; jobs use durable compare-and-swap and audit uses protected hash-chained storage/tail sealing.
 - Remote research uses encrypted opaque work items, signed resource-ID bindings, two-phase dispatch, lifecycle reconciliation, crash-resumable cancellation, exact-once protected-result ingestion, cancellation-vs-terminal race handling, Nebius Object Storage, and Serverless-mounted worker transport.
-- `DurableJobAuditOutbox` protects remote-result application, initial remote cancellation requests, and remote terminal lifecycle finalization by coupling exact validated audit intent to the same job CAS as the state transition.
-- `PendingExternalAction` / `DurableJobExternalActionIntent` persist external side-effect ambiguity independently from success state, bind one exact audit event, survive restart/provider ambiguity, validate action kind/provider target/audit binding, and clear only after fresh reconciliation proves replay unnecessary.
-- Nebius cancellation redrive is wired end-to-end to the durable external-action mechanism: active remote state stages/reuses one exact action identity before `CancelAsync`; `Cancelling`/terminal remote state clears that exact action before truthful lifecycle handling; transport success is never interpreted as cancellation success.
-- `PendingProtectedPayloadCleanup` / `DurableProtectedPayloadCleanupIntent` now persist protected remote-research cleanup obligations in the same CAS as result application or terminal lifecycle settlement. Required audit settles first, all required deletes are retried idempotently, and the exact cleanup marker is cleared only after every configured transport delete succeeds.
-- Lifecycle reconciliation drains stranded protected-payload cleanup locally before any provider replay; a partial result/work-item deletion failure remains durable and retries both deletes safely on restart.
-- Audit-outbox recovery refuses to flush a pending audit when a co-persisted external action is bound to a different audit-event id.
+- `DurableJobAuditOutbox` now protects remote dispatch reservation, remote-id attachment, result application, initial cancellation requests, and terminal failure/cancellation/expiry by coupling the exact validated audit intent to the same job CAS as its state transition.
+- A Nebius Serverless Create cannot start until `research.remote_dispatch_reserved` is proven durable. If reservation CAS succeeds but audit persistence fails, the durable reservation owns the encrypted work item and cleanup must not remove it.
+- `PendingExternalAction` / `DurableJobExternalActionIntent` persist cancellation-redrive ambiguity independently from success state, bind one exact audit event, survive restart/provider ambiguity, validate provider target/audit binding, and clear only after fresh provider reconciliation proves replay unnecessary.
+- `PendingProtectedPayloadCleanup` / `DurableProtectedPayloadCleanupIntent` persist protected remote-research cleanup obligations in the same CAS as result application or terminal settlement. Audit settles first, deletes retry idempotently, and the marker clears only after every required transport delete succeeds.
+- Lifecycle reconciliation drains stranded audit and cleanup obligations locally before provider replay where applicable.
 - Deterministic judging tools include `Nvidea.PersonalAiDemoEval`, `Nvidea.PersonalAiAdversarialEval`, `Nvidea.JudgingEvidenceVerifier`, `Nvidea.DemoPackageValidator`, and `Nvidea.NebiusModelCatalogCheck`.
 
 ## Persistent Progress History
@@ -47,91 +46,77 @@ Selected lifecycle commits:
 - `9028621ca8430bbeaf8a2f6bc00230d104ca98a2` / `ebf3f30cae8007da8e5ac452de786c9f7486f7cb` — cancellation-request audit outbox.
 - `1f4a15b12ef35fc6cb0764425cf10fb9e06a9ea5` / `61cbce3f289f935bb3666757b0fa14d7d4140f64` — remote terminal audit outbox and recovery tests.
 
-### 2026-09-14 — Durable external-action foundation and restart identity
-- Added `DurableExternalActionKind` and `PendingExternalAction` to durable job contracts.
-- Added complete pending-action content to job CAS identity so stale writers cannot erase or substitute ambiguous external delivery.
-- Added `DurableJobExternalActionIntent` with stage/audit-flush/clear ordering, strict provider-target validation, restart-stable `StageOrReuseAndFlushAsync(...)`, and fail-closed `ValidatePending(...)`.
-- Added regressions for audit-before-clear ordering, restart reuse, CAS protection, target substitution, corrupt kind/audit binding, and provider-target validation.
+### 2026-09-14 — Durable external-action foundation and cancellation redrive
+- Added `DurableExternalActionKind`, `PendingExternalAction`, CAS identity coverage, and `DurableJobExternalActionIntent` with restart-stable action reuse, audit-first ordering, exact provider-target validation, and fail-closed binding checks.
+- Wired Nebius cancellation redrive to one durable action identity. Active provider state reuses the same action; `Cancelling`/terminal provider truth clears it; transport success is never interpreted as cancellation success.
+- Added restart, substitution, corrupt-binding, audit failure, and ambiguous delivery regressions.
 
-Engineering commits:
-- `1a68d07f95a7b1597ef2ebaffe4f71ccaf831a64` / `38ff800354826a15ac17081726e38db0f6e13a65` — external-action contracts and CAS identity.
-- `6278afd91b96f3611e471b49de9dbba065627ec7` / `470243b945b5fd9230325d9fd3e55306fefc6501` — durable action coordinator and baseline tests.
-- `51af3518cf18cd0a36f924c2aafae6237939be24` / `71675a08d2e2159779ab9e2f5a43faedd0899096` — restart-stable reuse and substitution guards.
+Selected commits:
+- `1a68d07f95a7b1597ef2ebaffe4f71ccaf831a64` / `38ff800354826a15ac17081726e38db0f6e13a65` — action contracts and CAS identity.
+- `6278afd91b96f3611e471b49de9dbba065627ec7` / `51af3518cf18cd0a36f924c2aafae6237939be24` — durable action coordinator and restart-stable reuse.
+- `bd4083d078586a9234dbecccaba3a3f8aa2e90d8` / `53eda5e196dc95bb9d64f2d3a2313ec37975da5c` — production cancellation-redrive integration and fault tests.
+- `1a2d82ac63da3b10c4eb706fa3e6552b62ad4133` / `ecc6a89501090fd7d37aa7ac374fbd86b50bcc9e` — action/audit binding recovery hardening.
 
-### 2026-09-14 — Nebius cancellation redrive durable delivery integration
-- Replaced the production direct `research.remote_cancel_redriven` audit -> `CancelAsync` pairing with durable side-effect reconciliation.
-- Fresh `Pending`/`Running` provider state stages/reuses exactly one cancellation action, proves its audit durable, validates exact provider target/action metadata, and leaves delivery intent durable across success/failure ambiguity.
-- Fresh `Cancelling`, `Cancelled`, `Completed`, or `Failed` clears the exact pending cancellation action before truthful lifecycle handling.
-- Hardened audit-outbox recovery against mismatched action/audit binding.
-- Added cancellation-redrive and corrupt-binding fault/restart regressions.
+### 2026-09-14 — Durable protected-payload cleanup recovery
+- Added `PendingProtectedPayloadCleanup` to protected job state and complete cleanup-marker content to job CAS identity.
+- Added `DurableProtectedPayloadCleanupIntent` with provenance binding, bounded target validation, restart-stable reuse, audit-before-delete/clear ordering, and CAS-protected completion.
+- Protected-result ingestion and remote terminal failure/cancellation/expiry now commit state + cleanup intent + exact audit intent together.
+- Required cleanup attempts every configured artifact; partial deletion failure leaves the exact marker durable, so restart safely retries idempotent deletes.
+- Lifecycle reconciliation drains stranded cleanup locally before contacting Nebius and does not consider terminal settlement complete while cleanup remains pending.
 
-Engineering commits:
-- `bd4083d078586a9234dbecccaba3a3f8aa2e90d8` — integrate durable cancellation redrive into lifecycle reconciliation.
-- `53eda5e196dc95bb9d64f2d3a2313ec37975da5c` — cancellation-redrive durability/fault regressions.
-- `1a2d82ac63da3b10c4eb706fa3e6552b62ad4133` / `ecc6a89501090fd7d37aa7ac374fbd86b50bcc9e` — fail-closed action/audit binding recovery.
+Selected commits:
+- `ed287a3e6864ee11e88bb9d478bffce2ac57d473` / `338fe56587eaa96faa8942e10cbcbea3c894b3b7` / `53f324be012adacce3c8b77f37ec52c238cdcd54` — durable cleanup state/coordinator/CAS identity.
+- `862a4be206d4c442396fed6e54ac6f23d5cf5d77` / `0f05aeb2742528491c222878ea19f1cc039953f6` — result cleanup recovery and tests.
+- `a0ba803e075acfb523bae037e177d426c4ea7753` / `6504c61199796315e6780ff70064e92de060d345` — terminal cleanup recovery and tests.
+- `1bad131d138cf1459134e9150e7c5f898ad96693` — partial multi-artifact deletion recovery coverage.
 
-### 2026-09-14 — Durable protected-payload cleanup recovery (latest run)
+### 2026-09-14 — Crash-recoverable remote dispatch audits (latest run)
 Completed:
-- Re-read this ledger first, inspected current lifecycle/result-ingestion/audit/CAS code and recent commits, and selected the persisted cleanup gap as the highest-value unfinished reliability task.
-- Added `PendingProtectedPayloadCleanup` to protected durable job state and added its complete content to `JsonAgentJobStore` CAS identity, preventing stale writers from silently erasing or substituting cleanup obligation.
-- Added `DurableProtectedPayloadCleanupIntent` with exact provenance binding, bounded target validation, restart-stable reuse, audit-before-clear enforcement, and CAS-protected completion recording.
-- Remote protected-result ingestion now commits **result state + cleanup intent + exact audit intent** together. After audit durability, deletion of result/work-item payloads is required rather than silently best-effort. Any deletion failure leaves the exact cleanup intent durable and causes recovery to retry locally.
-- Remote terminal failure/cancellation/expiry finalization now likewise commits **terminal state + cleanup intent + exact audit intent** together, then settles audit and cleanup in order.
-- `ReconcileDispatchedAsync(...)` / `ReconcileCancellationAsync(...)` local recovery drains any stranded cleanup marker before checking terminal settlement or contacting Nebius. Terminal settlement is not considered complete while cleanup remains pending.
-- Required cleanup attempts every configured artifact even if one delete fails; the marker clears only if all deletes succeed. This supports partial cleanup such as result deletion succeeding while work-item deletion fails, then safe idempotent retry after restart.
-- The existing public best-effort cleanup surface remains only as compatibility API; hardened result and terminal lifecycle paths use the durable recovery route.
+- Re-read this ledger first and inspected recent commits, `RemoteResearchResultIngestor`, `DurableJobAuditOutbox`, `TwoPhaseNebiusResearchDispatcher`, cloud coordination, client runtime, signed binding code, and existing dispatch/audit tests.
+- `ReserveDispatchAsync(...)` now stages `research.remote_dispatch_reserved` into the durable job record and commits **DispatchReserved + exact PendingAuditEvent** in one CAS. It returns only after the outbox proves that exact audit durable.
+- Because `TwoPhaseNebiusResearchDispatcher` calls Nebius Create only after reservation returns, an audit-storage failure after reservation CAS can no longer allow unaudited provider work to start.
+- Added `RemoteResearchDispatchReservationAuditPendingException` to distinguish the post-CAS ownership boundary. If audit persistence fails after reservation committed, the dispatcher retains the encrypted work item instead of running its pre-reservation best-effort cleanup. Failures before reservation ownership still use the existing cleanup path.
+- `AttachDispatchAsync(...)` now commits **Dispatched + exact remote job id + exact `research.remote_dispatched` audit intent** in one CAS and then drains the outbox. An audit failure therefore leaves the truthful remote-id attachment durable and restart-recoverable rather than losing its audit.
+- Existing two-phase dispatch semantics, deterministic remote naming, provider-ambiguity behavior, and post-attachment signed binding publication ordering were preserved.
+- Added focused fault-injection coverage proving reservation audit failure leaves ciphertext + DispatchReserved + pending audit durable, performs zero Nebius Create calls, restart settles exactly one audit locally, and a repeated dispatch attempt still cannot create duplicate provider work.
+- Added attachment fault coverage proving audit failure leaves exact Dispatched/remote-id/attempt state + pending audit durable, and restart clears the marker exactly once without altering the remote binding.
 
 Files / architecture changed:
-- `src/Nvidea.Core/Jobs/JobContracts.cs` — durable cleanup marker contract.
-- `src/Nvidea.Core/Jobs/JsonAgentJobStore.cs` — cleanup marker is part of CAS identity.
-- `src/Nvidea.Core/Jobs/DurableProtectedPayloadCleanupIntent.cs` — exact stage/validate/clear coordinator.
-- `src/Nvidea.Core/Jobs/RemoteResearchResultIngestor.cs` — cleanup staged with result application; required deletion and local restart recovery.
-- `src/Nvidea.Core/Jobs/NebiusResearchLifecycleReconciler.cs` — terminal cleanup staging/recovery before provider replay.
-- `tests/Nvidea.Core.Tests/DurableProtectedPayloadCleanupIntentTests.cs` — marker ordering/substitution/CAS regressions.
-- `tests/Nvidea.Core.Tests/RemoteResearchPayloadCleanupRecoveryTests.cs` — result-ingestion cleanup failure/restart and already-deleted-artifact recovery.
-- `tests/Nvidea.Core.Tests/NebiusResearchTerminalPayloadCleanupRecoveryTests.cs` — terminal cleanup failure/restart without provider replay.
-- `tests/Nvidea.Core.Tests/RemoteResearchMultiArtifactCleanupRecoveryTests.cs` — partial multi-artifact deletion and idempotent retry.
+- `src/Nvidea.Core/Jobs/RemoteResearchResultIngestor.cs` — durable outbox staging/flush for reserve and attach plus explicit post-reservation audit-pending ownership exception.
+- `src/Nvidea.Core/Jobs/TwoPhaseNebiusResearchDispatcher.cs` — preserves reservation-owned ciphertext when only the committed reservation audit remains pending.
+- `tests/Nvidea.Core.Tests/RemoteResearchDispatchAuditOutboxTests.cs` — reservation/attachment audit fault and restart regressions.
 
 Engineering commits this run before this ledger update:
-- `ed287a3e6864ee11e88bb9d478bffce2ac57d473` — add durable protected-payload cleanup state.
-- `338fe56587eaa96faa8942e10cbcbea3c894b3b7` — add cleanup-intent coordinator.
-- `53f324be012adacce3c8b77f37ec52c238cdcd54` — version cleanup state in job CAS identity.
-- `c3a435fde2f6a4a4a7d38f119c170b6c937c96f6` — cleanup-intent regression coverage.
-- `862a4be206d4c442396fed6e54ac6f23d5cf5d77` — crash-recoverable result payload cleanup.
-- `0f05aeb2742528491c222878ea19f1cc039953f6` — result cleanup fault/restart tests.
-- `a0ba803e075acfb523bae037e177d426c4ea7753` — crash-recoverable terminal payload cleanup.
-- `6504c61199796315e6780ff70064e92de060d345` — terminal cleanup recovery regression.
-- `049b5db862a7bdb3a6be86595cd1accfc644c383` — static-review cleanup-intent tightening.
-- `1bad131d138cf1459134e9150e7c5f898ad96693` — partial multi-artifact cleanup recovery test.
+- `d9ad5246e3d63a394c9e65dc5300352aadafdc1d` — make remote dispatch reservation/attachment audits crash recoverable.
+- `8fc33ef3194a4fdb19bc403851a1f566b183b6e6` — preserve the original two-phase dispatcher while honoring the new reservation-owned payload boundary.
+- `dbde246acea66af694be7eebfe97ece30bac5ee3` — dispatch audit fault/restart regression suite.
 
 Validation / evidence this run:
 - Before every GitHub mutation, repository metadata reported exact full name `UnknownGod2011/NVIDEA`; no other repository was mutated.
-- Starting head was `b6b20b11a127378049b442caa748a9fa25388db3`; pre-ledger head is `1bad131d138cf1459134e9150e7c5f898ad96693`.
-- Static review confirms result and terminal transitions stage cleanup before the transition CAS, audit settlement precedes cleanup, cleanup failures leave the marker durable, and recovery drains cleanup before provider lifecycle reads.
-- Static review confirms partial result/work-item cleanup retries the already-successful delete safely and cannot clear the marker until all required deletes return successfully.
-- Static review confirms the marker target must exactly match durable remote provenance and cleanup completion uses CAS against the same exact cleanup id.
-- `dotnet`, `csc`, `msbuild`, and `mcs` are unavailable in this execution environment. **No compilation, xUnit, WPF, Worker, evaluator, or live integration PASS is claimed.**
+- Starting head was `45f84c153241678f179122057a5ace1a467d5713`; pre-ledger head was `dbde246acea66af694be7eebfe97ece30bac5ee3`.
+- Effective pre-ledger diff versus the starting head was limited to three intended files: `RemoteResearchResultIngestor.cs` (+26/-9), `TwoPhaseNebiusResearchDispatcher.cs` (+6), and the new dispatch-audit regression file (+274).
+- Static review confirms the reservation state and exact audit intent enter one CAS before any Nebius Create; the dispatcher cannot call Create while reservation audit flush is failing.
+- Static review confirms a post-reservation audit failure preserves the exact encrypted work-item id recorded in durable provenance instead of deleting the referenced payload.
+- Static review confirms remote-id attachment and its audit intent share one CAS; restart audit recovery does not invent or substitute a remote id.
+- Search found no remaining direct reservation/attachment `AppendAuditAsync` path.
+- `dotnet`, `csc`, `msbuild`, and `mcs` remain unavailable in this execution environment. **No compilation, xUnit, WPF, Worker, evaluator, or live integration PASS is claimed.**
 - No GitHub Actions workflow and no live/paid Nebius, Tavily, Object Storage, Serverless, Playwright, Ollama, or inference operation was triggered.
 
 ## Security / Privacy / Failure Review
-- External-action and cleanup intent remain inside the already protected job record; no plaintext sidecar or new secret store was introduced.
-- Cleanup metadata contains only the opaque work-item id already present in protected remote provenance plus a random cleanup id/timestamp; it contains no storage credential, payload body, model prompt, or provider secret.
-- Audit and external-action identity remain exact-bound by `AuditEventId`; mismatches fail closed.
-- CAS identity includes complete pending external-action and cleanup-marker state, preventing stale concurrent writers from silently erasing delivery/cleanup ambiguity.
-- Cleanup target is exact-bound to durable remote provenance before any delete. Corrupt/substituted target state fails closed.
-- Audit durability is required before cleanup marker clearing or deletion recovery. A deletion failure cannot roll back truthful result/terminal state and cannot masquerade as cleanup success.
-- Provider cancellation transport success/failure is never treated as provider lifecycle truth. Only a later authenticated provider read can clear/reconcile cancellation delivery.
-- A process crash after one protected artifact was already deleted but before another delete/marker clear is represented by the still-pending cleanup marker; restart repeats idempotent deletes and clears only after all succeed.
-- Remote reserve/attach transitions and generic job transitions still have independent state/write and audit operations unless separately hardened.
+- Dispatch audit intent remains inside the already protected durable job record; no plaintext sidecar, credential store, provider secret, research payload, or model prompt was introduced.
+- Reservation audit failure is now fail-closed before provider creation. The ciphertext is retained only because a durable reservation owns its exact opaque id and TTL.
+- Attachment audit failure cannot erase truthful provider identity: exact remote job id, checkpoint binding, attempt, provenance state, and pending audit remain protected in durable state.
+- Signed dispatch binding is still published only after `AttachDispatchAsync(...)` returns, so it cannot be published before `research.remote_dispatched` is proven durable.
+- Provider Create ambiguity is still treated conservatively: a durable `DispatchReserved` state is not automatically replayed merely because a create response was lost.
+- Existing exact external-action, cleanup-target, and audit-event identity checks remain unchanged.
+- Generic low-level `JsonAgentJobStore.SaveAsync(...)` remains trusted infrastructure; product paths should continue preferring constrained CAS/lifecycle APIs.
 
 ## Known Blockers / Risks
 - No usable .NET 8 executable/compiler is available here; recent Core/WPF/Worker changes still require real restore/build/test/run validation.
-- New cleanup-intent/result/terminal/partial-delete regressions are statically reviewed but unexecuted.
-- Live Nebius Object Storage delete/retry behavior remains unverified in this environment; the hardened path deliberately keeps cleanup pending on any transport exception rather than assuming provider success.
-- The retained public `CleanupProtectedPayloadsAsync(...)` compatibility surface is still best-effort. Current hardened remote-result and lifecycle paths no longer rely on it, but future callers should use the durable recovery path rather than this compatibility helper.
-- `IsSettledRemoteTerminal(...)` now refuses settlement while cleanup is pending, but unexpected/corrupt durable combinations should continue to be expanded in adversarial tests.
-- Blind low-level `JsonAgentJobStore.SaveAsync(...)` remains trusted infrastructure; product paths should prefer constrained CAS/lifecycle APIs.
-- Live Nebius Serverless/Object Storage behavior, provider catalog drift, real Windows UX, authenticated Playwright sessions, Tavily live behavior, and semantic ranking still need environment validation.
+- New dispatch-audit regressions are statically reviewed but unexecuted.
+- Live Nebius Serverless/Object Storage behavior, authenticated worker execution, signed binding reads, provider catalog drift, real Windows UX, authenticated Playwright sessions, Tavily live behavior, and semantic ranking remain environment-validation items.
+- A narrower crash window remains after a fully durable/audited remote-id attachment but before `ResearchDispatchBindingPublisher.PublishAsync(...)` finishes. Durable job state can truthfully say `Dispatched` while the worker-authoritative signed opaque-id -> remote-id binding is still absent. Audit recovery alone does not publish that missing binding.
+- The public `CleanupProtectedPayloadsAsync(...)` compatibility helper remains best-effort; hardened result/terminal paths use durable cleanup instead.
 
 ## Single Best Next Task
-Harden the remaining remote dispatch reservation/attachment audit crash windows. `ReserveDispatchAsync(...)` and `AttachDispatchAsync(...)` still CAS durable dispatch state and then append their audits independently. Move `research.remote_dispatch_reserved` and `research.remote_dispatched` onto the same durable outbox discipline used by result/cancellation/terminal state, add restart recovery that cannot create or attach provider work before the exact prior audit is durable, and add fault-injection tests for audit failure after reservation CAS, audit failure after attachment CAS, deterministic-name recovery, and no duplicate provider work. Preserve the existing two-phase dispatch and signed binding authority; do not weaken deterministic-provider verification.
+Close the signed dispatch-binding publication crash/restart gap. Make `NebiusResearchClientRuntime` / dispatch reconciliation detect a durable, audit-settled `Dispatched` state and idempotently publish/recover the exact signed `OpaqueWorkItemId -> RemoteJobId` binding **before** provider/result reconciliation can rely on worker authority. Never rerun Serverless Create, never accept a substituted remote id, and preserve the existing signing identity and TTL. Add fault/restart tests for: crash after attachment audit but before binding publication, publication transport failure, repeated recovery producing one equivalent authoritative binding, and zero provider Create/replay during recovery.

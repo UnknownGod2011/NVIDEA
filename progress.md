@@ -47,67 +47,57 @@ Hardened browser download handoff/discard and generic `CapabilityToolExecutor` s
 - Tavily Extract fallback preserves search evidence while dropping raw provider/network exception text.
 - Nebius Token Factory drops raw HTTP response bodies and raw retry/final transport diagnostics while retaining safe status classification.
 - Nebius Serverless replaces raw network/timeout/cancellation diagnostics while retaining safe HTTP status and caller-cancellation semantics.
+- Nebius Object Storage caller cancellation preserves the caller token while replacing provider text; lower-level AWS/network/stream failures are quarantined without masking local programming failures.
 
-### 2026-09-14 — Nebius Object Storage diagnostic privacy
-Completed:
-- Re-read this ledger fully and inspected the current repo state, recent commits, Object Storage implementation, pinned AWS SDK dependency, and live research composition before changing anything.
-- Identified that `NebiusObjectStorageClient` already sanitized `AmazonS3Exception` service failures and internal timeout messages, but caller-triggered `OperationCanceledException` and lower-level AWS SDK/network/stream exceptions could still escape with raw diagnostic text.
-- Added an explicit caller-cancellation boundary in `PutIfAbsentAsync`, `GetAsync`, and `DeleteAsync`. Caller cancellation now throws a fixed NVIDEA-authored `OperationCanceledException`, preserves the original caller `CancellationToken`, and deliberately retains no raw inner exception.
-- Added a lower-level diagnostic quarantine for `AmazonClientException`, `HttpRequestException`, and `IOException` in all three Object Storage operations. These now become fixed NVIDEA-authored `InvalidOperationException` messages before leaving the provider boundary.
-- Preserved catch ordering so trusted `AmazonS3Exception` handling still retains safe HTTP-status classification, `404` remains a read miss/idempotent delete, `412 PreconditionFailed` still protects create-once writes, `409` still follows the existing bounded retry policy, and internal timeout behavior remains unchanged.
-- Deliberately did not quarantine local programming/invariant exceptions such as `ArgumentException` and `InvalidOperationException`; these continue to surface as local correctness failures rather than being misclassified as provider diagnostics.
-- Added `NebiusObjectStorageDiagnosticPrivacyTests` covering caller-token preservation/no-inner-exception behavior, bearer/query-token diagnostic exclusion, and the quarantine type boundary for network/stream failures versus programming failures.
+### 2026-09-14 — Crash-resumable Nebius cancellation
+- `RequestCancellationAsync(...)` persists `CancelRequested` before contacting Nebius.
+- `ReconcileCancellationAsync(...)` now re-verifies exact remote provenance and re-drives cancellation only when fresh provider state is still `Pending`/`Running`.
+- `Cancelling` remains wait-only; confirmed `Cancelled` is the only cancellation-success path.
+- Added regression coverage for a lost first control-plane cancel delivery and for malformed audit authority being rejected before redrive.
 
 Engineering commits:
-- `0a1cf0c482b81282098838e438fc09bcf12ffbfe` — quarantine Object Storage client diagnostics.
-- `27f8249dae0d19ff18ef1b1de392fda623c7e702` — add Object Storage diagnostic privacy regressions.
-
-### 2026-09-14 — Crash-resumable Nebius cancellation (latest run)
-Completed:
-- Re-read this ledger and inspected the current remote-research lifecycle, product facade, client runtime, audit-ordering tests, and cancellation state machine before changing anything.
-- Found a concrete crash/failure window: `RequestCancellationAsync(...)` correctly persisted `CancelRequested` and its validated audit before calling Nebius, but if the process stopped or the first control-plane `CancelAsync(...)` failed after that durable transition, later `ReconcileCancellationAsync(...)` only polled provider state. A still-`RUNNING`/`PENDING` Nebius job could therefore keep consuming resources indefinitely even though local durable state said cancellation had been requested.
-- Verified against current official Nebius Serverless documentation that job cancellation is an explicit lifecycle operation (`nebius ai job cancel <job_ID>`) and stops the running container/resources; this makes re-driving an undelivered durable cancellation intent operationally significant rather than cosmetic.
-- Hardened `NebiusResearchLifecycleReconciler.ReconcileCancellationAsync(...)`: after fresh remote provenance verification, a `Pending` or `Running` provider state now means the durable cancellation intent is still actionable. NVIDEA prevalidates and appends a fixed `research.remote_cancel_redriven` audit event, then reissues the Nebius cancellation call and leaves the durable record `CancelRequested` until provider cancellation is actually confirmed.
-- A provider `Cancelling` state remains wait-only, avoiding needless repeated calls while cancellation is already in flight. `Cancelled` still CAS-finalizes to local `Cancelled` and cleans protected payloads. Unknown state remains fail-closed.
-- `Completed`/`Failed` observed after a cancellation request now surface an explicit unresolved terminal-race error rather than silently returning an indefinitely stuck `CancelRequested` record; this race still needs a dedicated truthful terminal-resolution path in a future run.
-- Added `NebiusResearchCancellationRecoveryTests` proving: (1) an initial transport failure after durable cancellation intent leaves `CancelRequested`; (2) reconciliation against fresh `RUNNING` state makes a second control-plane cancel call; (3) subsequent provider `CANCELLED` finalizes locally without another cancel; and (4) malformed dynamic audit identity is rejected before the redrive control-plane side effect.
-
-Engineering commits this run before this ledger update:
 - `e66381b78752c6141e8d9ac192ea307e48cf0968` — redrive durable Nebius cancellation after crash window.
 - `feb55a002c2f5503952d5b153f63f2790d7b111c` — cover crash-safe Nebius cancellation redrive.
 
+### 2026-09-14 — Failed cancellation terminal-race resolution (latest run)
+Completed:
+- Re-read this ledger fully and inspected the current remote research lifecycle reconciler, exact-once result ingestor, and existing cancellation recovery regressions before changing anything.
+- Closed one concrete terminal race: a durable `CancelRequested` research job that fresh verified Nebius state reports as `FAILED` no longer remains permanently unresolved.
+- `ReconcileCancellationAsync(...)` now treats verified provider failure as the truthful winner of the race. It finalizes the local job as `AgentJobState.Failed`, moves execution back to `Local`, records `RemoteResearchProvenanceState.RemoteFailed`, sets `TerminalAt`, preserves only trusted provider failure classification through the existing `BuildRemoteFailureEvidence(...)` path, and cleans protected transport payloads through the existing terminal-finalization path.
+- The branch emits the distinct audit event `research.remote_failed_after_cancel_request`, making it explicit that cancellation was requested but did not win the race. It never emits `research.remote_cancelled` for this case.
+- The same existing `FinalizeTerminalAsync(...)` path constructs and `AuditEventTrust`-validates the terminal audit before CAS durable mutation, so malformed dynamic audit authority cannot deterministically mutate the job into a terminal state.
+- Added a focused regression proving a cancellation request followed by verified provider `FAILED` produces durable `Failed/RemoteFailed`, does not make a second cancel call, records the distinct failure-after-cancel-request audit, and does not claim cancellation success.
+
+Engineering commits this run before this ledger update:
+- `fd763848104e9c5420b4175e5246fbd1e887e8da` — resolve failed remote cancellation races truthfully.
+- `f08d9f636ddddf17a3b8f0fa25cb87c51140135a` — cover failed cancellation terminal race.
+
 Validation / evidence this run:
 - Before every GitHub mutation, repository metadata reported exactly `repository_full_name: UnknownGod2011/NVIDEA`, default branch `main`.
-- Starting head was `7fa3833a472e925719aac2441408ce5acf7f8d45`.
-- Before this ledger commit, GitHub compare reported `main` **2 commits ahead / 0 behind**, with changes restricted to `src/Nvidea.Core/Jobs/NebiusResearchLifecycleReconciler.cs` and `tests/Nvidea.Core.Tests/NebiusResearchCancellationRecoveryTests.cs`.
-- The reconciler change is provider-state-gated: it does not blindly replay cancellation; it revalidates the exact remote id/name and only reissues when fresh provider state is `Pending` or `Running`.
-- The redrive audit is constructed and `AuditEventTrust`-validated before append and before the external cancellation call, so malformed durable authority cannot deterministically trigger the new side effect.
-- Current Nebius documentation reviewed this run: `https://docs.nebius.com/serverless/jobs/manage` and the current Serverless job CLI reference document cancellation as a supported job lifecycle operation.
+- Starting head was `2262f8e220582cf82a7bce8a410ee4171faa2cb5`.
+- Before this ledger commit, GitHub compare reported `main` **2 commits ahead / 0 behind**, restricted to `src/Nvidea.Core/Jobs/NebiusResearchLifecycleReconciler.cs` and `tests/Nvidea.Core.Tests/NebiusResearchCancellationRecoveryTests.cs`.
+- Lifecycle diff: 15 additions / 3 deletions. Test diff: 63 additions / 0 deletions.
+- The failure-race branch operates only after `GetVerifiedRemoteAsync(...)` confirms the exact remote id/name and a provider terminal `Failed` state.
+- Existing `FinalizeTerminalAsync(...)` performs audit construction/trust validation before compare-and-swap durable mutation and then best-effort protected-payload cleanup.
 - `dotnet`, `csc`, `msbuild`, and `mcs` remain unavailable in this execution environment, so **no compile, xUnit, WPF, Worker, evaluator, or live integration PASS is claimed**.
+- Direct shell GitHub access is unavailable in this runtime, so validation used the connected GitHub repository API rather than an unauthenticated local clone.
 - This run did not mutate `UnknownGod2011/keyboard.wtf` or any other repository.
 - No GitHub Actions workflow, live Nebius, Tavily, Object Storage, Serverless, Playwright, Ollama, or paid inference operation was triggered.
 
 ## Security / Privacy / Failure Review
-- Durable remote cancellation intent is now recoverable when the first Nebius cancel delivery is lost after local CAS/audit persistence; fresh provider state gates any re-drive.
-- The cancellation redrive audit is semantically validated before the external control-plane effect. Audit append I/O still precedes that effect, so a failed append leaves the durable intent retryable rather than silently contacting Nebius without audit evidence.
-- A provider `Cancelling` state does not cause another cancel call; confirmed `Cancelled` remains the only path that finalizes local cancellation.
-- Object Storage caller cancellation preserves cancellation identity/token while replacing arbitrary exception text and dropping raw inner exceptions.
-- Object Storage lower-level AWS SDK/network/stream failures are quarantined before they can enter downstream durable/UI diagnostics.
-- Trusted S3 status handling remains earlier and more specific than the generic quarantine, preserving create-once, not-found, retry, and safe status behavior.
-- Local programming/invariant exceptions are intentionally not swallowed by provider-failure quarantine.
-- Raw browser driver/site diagnostics and credential-bearing typed URL mismatch details do not cross hardened browser receipt/verification boundaries.
-- Tavily Extract fallback does not persist provider/network exception text through durable research warnings/checkpoints.
-- Raw Nebius Token Factory and Serverless provider/network diagnostics are quarantined while safe status/cancellation metadata remains available.
-- Single-use capability approvals cannot be deterministically consumed by malformed start-audit authority before a tool call begins.
-- Audit append/storage I/O can still fail after approval consumption in some independent-store flows; semantic prevalidation closes deterministic rejection but cannot make storage transactional.
-- Browser ambiguous-execution recovery, emergency stop, exact approval gating, encrypted research transport, Tavily provenance, retries, and local/cloud separation were not weakened.
+- A failed remote stage can no longer remain indefinitely `CancelRequested` solely because cancellation lost a race to provider failure.
+- Cancellation success is still never inferred from intent: only verified provider `Cancelled` finalizes local cancellation.
+- Failure-after-cancellation uses the same trusted failure-code projection and diagnostic quarantine as normal remote failure; raw provider message text is not promoted into durable user-facing failure state.
+- Terminal audit semantics are validated before durable failure mutation; protected payload cleanup remains after successful CAS/audit and is best effort.
+- Durable remote cancellation intent remains recoverable when the first Nebius cancel delivery is lost after local persistence; fresh provider state gates any re-drive.
+- Object Storage, Token Factory, Serverless, Tavily, browser receipt, URL-verification, and capability approval privacy/order boundaries from prior runs remain intact.
+- Audit append/storage I/O is still not transactionally coupled to job-store CAS or approval consumption in independent-store flows.
 
 ## Known Blockers / Risks
 - No usable .NET 8 executable/compiler is available in this environment; recent Core/WPF/Worker changes still require a real restore/build/test/run before compile confidence is justified.
-- The new cancellation-recovery regressions are statically reviewed but unexecuted.
-- A cancellation/provider terminal race remains unresolved: if a `CancelRequested` job is observed as provider `Completed` or `Failed` before cancellation confirmation, NVIDEA now surfaces the ambiguity instead of silently stalling, but it still needs a truthful terminal reconciliation path that cannot misreport a successful cancellation or discard a completed protected result.
-- Repeated fresh `Running` observations can cause another cancellation redrive. This is intentional recovery behavior, but live Nebius integration should verify response semantics and practical retry cadence under transient control-plane failures.
-- The AWS SDK may theoretically surface an unexpected non-`AmazonClientException` runtime exception family from a network path; current quarantine intentionally targets known client/network/stream categories without masking local programming failures.
+- The new failure-race regression is statically reviewed but unexecuted.
+- The **completed** side of the cancellation terminal race remains unresolved: if a `CancelRequested` job is verified `Completed`, NVIDEA currently refuses to falsely claim cancellation but cannot yet ingest the protected result because `RemoteResearchResultIngestor.IngestAsync(...)` intentionally accepts only `Dispatched` provenance. This needs a dedicated, narrowly authorized ingestion path rather than broadening ordinary ingestion eligibility.
+- Repeated fresh `Running` observations can re-drive cancellation. This is intentional recovery behavior, but live Nebius integration should verify response semantics and practical retry cadence under transient control-plane failures.
 - Audit append/storage I/O is not transactionally coupled to approval consumption or the job store.
 - Other direct `AuditEvent` / `IAuditTrail.AppendAsync` producers may still need ordering review.
 - Other provider/browser/network exception-to-state paths should continue to be audited for embedded secret leakage even when bounded/control-normalized.
@@ -117,4 +107,4 @@ Validation / evidence this run:
 - Real Windows UX, embedding ranking, Playwright authenticated-session behavior, Tavily live behavior, and Nebius Object Storage/Serverless execution still require live environment validation.
 
 ## Single Best Next Task
-If a real .NET 8 Windows build environment becomes available, immediately run restore/build/Core tests/WPF build/Worker build and record exact failures. Otherwise harden the **cancellation-vs-terminal race**: define and implement a truthful reconciliation path for durable `CancelRequested` jobs that Nebius reports as `Completed` or `Failed`, preserving protected results/failure provenance and audit ordering without falsely claiming cancellation success. Then continue the remaining direct `AuditEvent` / `IAuditTrail.AppendAsync` ordering and provider-diagnostic audits.
+If a real .NET 8 Windows build environment becomes available, immediately run restore/build/Core tests/WPF build/Worker build and record exact failures. Otherwise finish the **completed cancellation-vs-terminal race** with a dedicated fail-closed ingestion path that is callable only for an exact durable `CancelRequested` stage after verified provider `Completed`, preserves exact-once CAS/result provenance, waits for a protected result until authenticated transport expiry, and never broadens ordinary `IngestAsync(...)` eligibility. Then continue the remaining direct `AuditEvent` / `IAuditTrail.AppendAsync` ordering and provider-diagnostic audits.

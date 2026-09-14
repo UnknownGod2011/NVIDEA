@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
+using Nvidea.Core.Capabilities;
 
 namespace Nvidea.Core.Jobs;
 
@@ -77,9 +78,9 @@ public static class ResearchWorkItemEnvelopeCommitment
 
 /// <summary>
 /// Persists the originating client's envelope commitment before any Nebius create call is allowed.
-/// This is a second, local CAS after the audited dispatch reservation: if the process dies before this
-/// CAS, no remote create has occurred and recovery fails closed rather than signing mutable shared
-/// transport state. Once present, the commitment is immutable and participates in job-store CAS.
+/// Retained for lower-level/legacy compositions. Production dispatch uses
+/// <see cref="AtomicRemoteResearchDispatchReservation"/> so reservation provenance, audit intent and
+/// the envelope commitment share one compare-and-swap boundary.
 /// </summary>
 public sealed class DurableResearchEnvelopeCommitment
 {
@@ -138,5 +139,128 @@ public sealed class DurableResearchEnvelopeCommitment
             throw new InvalidOperationException("Research state changed while the work-item envelope commitment was being attached.");
 
         return replacement;
+    }
+}
+
+/// <summary>
+/// Production trust-root boundary for a remote research dispatch. The exact checkpoint reservation,
+/// opaque work-item identity/lifetime, validated audit intent, and canonical encrypted-envelope
+/// commitment are committed in one durable job CAS. Nebius Create must not run unless this method
+/// returns after settling the exact staged audit event.
+/// </summary>
+public sealed class AtomicRemoteResearchDispatchReservation
+{
+    private readonly JsonAgentJobStore _store;
+    private readonly DurableJobAuditOutbox _auditOutbox;
+
+    public AtomicRemoteResearchDispatchReservation(JsonAgentJobStore store, IAuditTrail auditTrail)
+    {
+        _store = store ?? throw new ArgumentNullException(nameof(store));
+        _auditOutbox = new DurableJobAuditOutbox(_store, auditTrail ?? throw new ArgumentNullException(nameof(auditTrail)));
+    }
+
+    public async Task<AgentJobRecord> ReserveAsync(
+        RemoteResearchDispatchReservation reservation,
+        ProtectedResearchWorkItemEnvelope envelope,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(reservation);
+        ArgumentNullException.ThrowIfNull(envelope);
+        if (reservation.LocalJobId == Guid.Empty)
+            throw new ArgumentException("Research job id is required.", nameof(reservation));
+        if (string.IsNullOrWhiteSpace(reservation.CheckpointStep)
+            || string.IsNullOrWhiteSpace(reservation.OpaqueWorkItemId))
+            throw new InvalidOperationException("Dispatch reservation metadata is incomplete.");
+        if (!string.Equals(reservation.OpaqueWorkItemId, envelope.OpaqueWorkItemId, StringComparison.Ordinal)
+            || !string.Equals(envelope.ProtocolVersion, ResearchWorkItemProtector.ProtocolVersion, StringComparison.Ordinal))
+            throw new CryptographicException("Protected work-item envelope does not match dispatch reservation identity.");
+
+        var expiresAt = reservation.WorkItemExpiresAt ?? envelope.ExpiresAt;
+        if (expiresAt != envelope.ExpiresAt
+            || expiresAt <= reservation.ReservedAt
+            || expiresAt - reservation.ReservedAt > ResearchWorkItemProtector.MaxLifetime)
+            throw new InvalidOperationException("Dispatch reservation does not match the protected work-item lifetime.");
+
+        var current = await _store.GetAsync(reservation.LocalJobId, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException($"Research job '{reservation.LocalJobId}' was not found.");
+        ValidateTarget(current, reservation.CheckpointStep);
+
+        var checkpoint = current.Checkpoint!;
+        var provenance = new RemoteResearchProvenance(
+            ProtocolVersion: ResearchWorkItemProtector.ProtocolVersion,
+            OpaqueWorkItemId: reservation.OpaqueWorkItemId,
+            RemoteJobId: null,
+            InputCheckpointStep: checkpoint.Step,
+            InputCheckpointSavedAt: checkpoint.SavedAt,
+            DispatchedAt: reservation.ReservedAt,
+            State: RemoteResearchProvenanceState.DispatchReserved,
+            WorkItemExpiresAt: expiresAt);
+        var replacement = current with
+        {
+            State = AgentJobState.Running,
+            ExecutionLocation = JobExecutionLocation.Local,
+            LastError = null,
+            NextAttemptAt = null,
+            RemoteResearch = provenance,
+            RemoteWorkItemEnvelopeSha256 = ResearchWorkItemEnvelopeCommitment.ComputeSha256(envelope),
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+        var audit = CreateReservationAudit(replacement);
+        var durableReplacement = _auditOutbox.Stage(replacement, audit);
+
+        if (!await _store.CompareExchangeAsync(current, durableReplacement, cancellationToken).ConfigureAwait(false))
+            throw new InvalidOperationException("Research state changed while atomic remote dispatch authority was being reserved.");
+
+        try
+        {
+            return await _auditOutbox.FlushAsync(durableReplacement, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not RemoteResearchDispatchReservationAuditPendingException)
+        {
+            throw new RemoteResearchDispatchReservationAuditPendingException(ex);
+        }
+    }
+
+    private static void ValidateTarget(AgentJobRecord current, string checkpointStep)
+    {
+        if (!string.Equals(current.Definition.JobType, ResearchJobHandler.Type, StringComparison.Ordinal))
+            throw new InvalidOperationException("Remote dispatch reservation only accepts research jobs.");
+        if (current.PendingAuditEvent is not null)
+            throw new InvalidOperationException("Remote dispatch reservation cannot replace an unsettled audit event.");
+        if (current.State != AgentJobState.Pending || current.ExecutionLocation != JobExecutionLocation.Local)
+            throw new InvalidOperationException("Only a pending local research stage can be reserved for remote dispatch.");
+        if (current.RemoteResearch is { State: not RemoteResearchProvenanceState.ResultApplied })
+            throw new InvalidOperationException("Research job already carries unfinished remote execution provenance.");
+        if (current.ApprovalScope is not null)
+            throw new InvalidOperationException("Approval-bearing research cannot be dispatched remotely.");
+
+        var checkpoint = current.Checkpoint
+            ?? throw new InvalidOperationException("Research dispatch requires a durable input checkpoint.");
+        if (!string.Equals(checkpoint.Step, checkpointStep, StringComparison.Ordinal))
+            throw new InvalidOperationException("Dispatch reservation does not match the current research checkpoint.");
+    }
+
+    private static AuditEvent CreateReservationAudit(AgentJobRecord job)
+    {
+        var auditEvent = new AuditEvent(
+            Guid.NewGuid(),
+            DateTimeOffset.UtcNow,
+            job.Definition.CapabilityId,
+            job.JobId.ToString("N"),
+            "research.remote_dispatch_reserved",
+            job.Definition.Risk,
+            true,
+            false,
+            string.Empty,
+            "Encrypted research stage, exact envelope commitment, and provider-dispatch authority reserved atomically.",
+            new Dictionary<string, string>
+            {
+                ["jobType"] = job.Definition.JobType,
+                ["state"] = job.State.ToString(),
+                ["executionLocation"] = job.ExecutionLocation.ToString(),
+                ["attempt"] = job.Attempt.ToString()
+            });
+        AuditEventTrust.ValidateForPersistence(auditEvent, nameof(job));
+        return auditEvent;
     }
 }

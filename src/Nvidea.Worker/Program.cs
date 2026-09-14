@@ -8,8 +8,17 @@ internal static class Program
 {
     private static async Task<int> Main(string[] args)
     {
+        using var shutdown = new CancellationTokenSource();
+        ConsoleCancelEventHandler cancelHandler = (_, eventArgs) =>
+        {
+            eventArgs.Cancel = true;
+            shutdown.Cancel();
+        };
+        Console.CancelKeyPress += cancelHandler;
+
         try
         {
+            var cancellationToken = shutdown.Token;
             var options = WorkerCommandLine.Parse(args);
 
             // Load the entire runtime through one trust-ordered environment boundary. Public
@@ -31,7 +40,7 @@ internal static class Program
             // it must never extend the configured wait budget or establish payload trust.
             var workItemTransport = (IProtectedResearchWorkItemTransport)transport;
             var stagedWorkItem = await workItemTransport
-                .GetAsync(options.OpaqueWorkItemId, CancellationToken.None)
+                .GetAsync(options.OpaqueWorkItemId, cancellationToken)
                 .ConfigureAwait(false)
                 ?? throw new InvalidOperationException("Protected remote research work item is unavailable.");
 
@@ -41,7 +50,7 @@ internal static class Program
                 pollInterval: runtime.BindingPollInterval,
                 maxWait: runtime.BindingMaxWait);
             var binding = await bindingWaiter
-                .WaitAsync(options.OpaqueWorkItemId, stagedWorkItem.ExpiresAt, CancellationToken.None)
+                .WaitAsync(options.OpaqueWorkItemId, stagedWorkItem.ExpiresAt, cancellationToken)
                 .ConfigureAwait(false);
 
             var worker = new NebiusResearchWorker(
@@ -54,7 +63,7 @@ internal static class Program
             await worker.ExecuteOneStageAsync(
                 options.OpaqueWorkItemId,
                 binding.RemoteJobId,
-                CancellationToken.None).ConfigureAwait(false);
+                cancellationToken).ConfigureAwait(false);
 
             Console.WriteLine("nvidea_worker_completed stage=research");
             return 0;
@@ -63,6 +72,10 @@ internal static class Program
         {
             Console.Error.WriteLine($"nvidea_worker_failed error_type={ex.GetType().Name}");
             return 1;
+        }
+        finally
+        {
+            Console.CancelKeyPress -= cancelHandler;
         }
     }
 

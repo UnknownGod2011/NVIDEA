@@ -160,6 +160,20 @@ public sealed class NebiusResearchClientRuntime : IRemoteResearchClientRuntime
     }
 
     /// <summary>
+    /// Drains a durable audit marker left after protected remote-result state was already committed.
+    /// This path is intentionally local: it does not query Nebius or replay result ingestion. Binding
+    /// cleanup happens only after the outbox event is proven durable and the marker has been cleared.
+    /// </summary>
+    public async Task<AgentJobRecord> RecoverPendingAuditAsync(
+        Guid jobId,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await Ingestor.RecoverPendingAuditAsync(jobId, cancellationToken).ConfigureAwait(false);
+        await _bindingCleanup.TryCleanupIfTerminalAsync(result).ConfigureAwait(false);
+        return result;
+    }
+
+    /// <summary>
     /// Direct exact-once ingestion entry point for callers that already have authoritative provider
     /// completion evidence. The signed binding is cleaned only after IngestAsync has durably applied
     /// the protected result and returned a local ResultApplied state.

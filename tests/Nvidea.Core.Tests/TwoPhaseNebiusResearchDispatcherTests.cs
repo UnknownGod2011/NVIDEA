@@ -73,6 +73,148 @@ public sealed class TwoPhaseNebiusResearchDispatcherTests
     }
 
     [Fact]
+    public async Task DispatchWithReservationAsync_AtomicReservationAuditFailureSkipsNebiusAndPreservesCiphertext()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            using var workerRsa = RSA.Create(2048);
+            using var clientRsa = RSA.Create(2048);
+            var store = new JsonAgentJobStore(Path.Combine(root, "jobs.json"), new PassThroughProtector());
+            var transport = new MemoryWorkItemTransport();
+            var audit = new MemoryAuditTrail { FailAppend = true };
+            var now = DateTimeOffset.UtcNow;
+            var job = CreatePendingJob(now);
+            await store.SaveAsync(job);
+            var ingestor = new RemoteResearchResultIngestor(
+                store,
+                new EmptyResultTransport(),
+                clientRsa.ExportPkcs8PrivateKeyPem(),
+                audit,
+                transport);
+            var atomic = new AtomicRemoteResearchDispatchReservation(store, audit);
+            var serverless = new InspectingServerlessClient(_ =>
+                Task.FromResult(new NebiusServerlessResponse(HttpStatusCode.OK, "{\"resourceId\":\"must-not-run\"}")));
+            var dispatcher = new TwoPhaseNebiusResearchDispatcher(
+                serverless,
+                transport,
+                CreateOptions(workerRsa),
+                atomicReservation: atomic);
+            var workItem = CreateWorkItem(job, now);
+            var authorization = CreateAuthorization(job, now);
+
+            await Assert.ThrowsAsync<RemoteResearchDispatchReservationAuditPendingException>(() =>
+                dispatcher.DispatchWithReservationAsync(workItem, authorization, ingestor));
+
+            Assert.Equal(0, serverless.CreateCalls);
+            Assert.Equal(1, transport.PutCalls);
+            Assert.Equal(0, transport.GetCalls);
+            Assert.Equal(1, transport.Count);
+
+            var durable = await store.GetAsync(job.JobId);
+            Assert.NotNull(durable);
+            Assert.Equal(AgentJobState.Running, durable!.State);
+            Assert.Equal(JobExecutionLocation.Local, durable.ExecutionLocation);
+            Assert.Equal(RemoteResearchProvenanceState.DispatchReserved, durable.RemoteResearch!.State);
+            Assert.Null(durable.RemoteResearch.RemoteJobId);
+            Assert.NotNull(durable.RemoteWorkItemEnvelopeSha256);
+            Assert.Equal("research.remote_dispatch_reserved", durable.PendingAuditEvent!.EventType);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RestartRecovery_SettlesAtomicAuditAndResumesWithoutReadingOrRewritingSharedWorkItem()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            using var workerRsa = RSA.Create(2048);
+            using var clientRsa = RSA.Create(2048);
+            var store = new JsonAgentJobStore(Path.Combine(root, "jobs.json"), new PassThroughProtector());
+            var transport = new MemoryWorkItemTransport();
+            var audit = new MemoryAuditTrail { FailAppend = true };
+            var now = DateTimeOffset.UtcNow;
+            var job = CreatePendingJob(now);
+            await store.SaveAsync(job);
+            var ingestor = new RemoteResearchResultIngestor(
+                store,
+                new EmptyResultTransport(),
+                clientRsa.ExportPkcs8PrivateKeyPem(),
+                audit,
+                transport);
+            var atomic = new AtomicRemoteResearchDispatchReservation(store, audit);
+            var firstServerless = new InspectingServerlessClient(_ =>
+                Task.FromResult(new NebiusServerlessResponse(HttpStatusCode.OK, "{\"resourceId\":\"must-not-run\"}")));
+            var firstDispatcher = new TwoPhaseNebiusResearchDispatcher(
+                firstServerless,
+                transport,
+                CreateOptions(workerRsa),
+                atomicReservation: atomic);
+
+            await Assert.ThrowsAsync<RemoteResearchDispatchReservationAuditPendingException>(() =>
+                firstDispatcher.DispatchWithReservationAsync(
+                    CreateWorkItem(job, now),
+                    CreateAuthorization(job, now),
+                    ingestor));
+
+            var stranded = await store.GetAsync(job.JobId);
+            Assert.NotNull(stranded);
+            var originalCommitment = stranded!.RemoteWorkItemEnvelopeSha256;
+            var opaqueWorkItemId = stranded.RemoteResearch!.OpaqueWorkItemId;
+            Assert.NotNull(originalCommitment);
+            Assert.True(transport.Contains(opaqueWorkItemId));
+            Assert.Equal(0, firstServerless.CreateCalls);
+
+            // Simulate a restarted client that cannot safely read mutable shared work-item bytes.
+            // Recovery must use only protected local provenance + the exact durable audit intent.
+            transport.ThrowOnGet = true;
+            audit.FailAppend = false;
+            var recovery = new RemoteResearchDispatchReservationRecovery(store, audit);
+            var recovered = await recovery.RecoverAuditAsync(job.JobId);
+
+            Assert.Null(recovered.PendingAuditEvent);
+            Assert.Equal(originalCommitment, recovered.RemoteWorkItemEnvelopeSha256);
+            Assert.Equal(RemoteResearchProvenanceState.DispatchReserved, recovered.RemoteResearch!.State);
+            Assert.Equal(1, transport.PutCalls);
+            Assert.Equal(0, transport.GetCalls);
+
+            var restartedIngestor = new RemoteResearchResultIngestor(
+                store,
+                new EmptyResultTransport(),
+                clientRsa.ExportPkcs8PrivateKeyPem(),
+                audit,
+                transport);
+            var restartedServerless = new InspectingServerlessClient(_ =>
+                Task.FromResult(new NebiusServerlessResponse(HttpStatusCode.OK, "{\"resourceId\":\"remote-after-restart\"}")));
+            var restartedDispatcher = new TwoPhaseNebiusResearchDispatcher(
+                restartedServerless,
+                transport,
+                CreateOptions(workerRsa));
+
+            var dispatched = await restartedDispatcher.ResumeReservedAsync(recovered, restartedIngestor);
+
+            Assert.Equal(1, restartedServerless.CreateCalls);
+            Assert.Equal(1, transport.PutCalls);
+            Assert.Equal(0, transport.GetCalls);
+            Assert.Equal(originalCommitment, dispatched.RemoteWorkItemEnvelopeSha256);
+            Assert.Equal(JobExecutionLocation.NebiusServerless, dispatched.ExecutionLocation);
+            Assert.Equal(RemoteResearchProvenanceState.Dispatched, dispatched.RemoteResearch!.State);
+            Assert.Equal("remote-after-restart", dispatched.RemoteResearch.RemoteJobId);
+            Assert.Equal(1, dispatched.Attempt);
+            Assert.Contains(audit.Events, e => e.EventType == "research.remote_dispatch_reserved");
+            Assert.Contains(audit.Events, e => e.EventType == "research.remote_dispatched");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task DispatchWithReservationAsync_AmbiguousCreateLeavesReservationFailClosed()
     {
         var root = CreateTempDirectory();
@@ -237,6 +379,21 @@ public sealed class TwoPhaseNebiusResearchDispatcherTests
         }
     }
 
+    private static RemoteResearchWorkItem CreateWorkItem(AgentJobRecord job, DateTimeOffset now) => new(
+        job.JobId,
+        job.Checkpoint!.Step,
+        job.Checkpoint.Payload,
+        ContainsPrivateOsData: false,
+        CreatedAt: now,
+        ExpiresAt: now.AddHours(1));
+
+    private static ResearchCloudAuthorization CreateAuthorization(AgentJobRecord job, DateTimeOffset now) => new(
+        job.JobId,
+        job.Checkpoint!.Step,
+        Approved: true,
+        ResearchWorkItemProtector.DisclosureVersion,
+        GrantedAt: now);
+
     private static NebiusResearchDispatchOptions CreateOptions(RSA workerRsa) => new(
         WorkerImage: "registry.example/nvidea-worker:sha256-test",
         WorkerPublicKeyPem: workerRsa.ExportSubjectPublicKeyInfoPem(),
@@ -295,7 +452,9 @@ public sealed class TwoPhaseNebiusResearchDispatcherTests
     {
         private readonly Dictionary<string, ProtectedResearchWorkItemEnvelope> _items = new(StringComparer.Ordinal);
         public int PutCalls { get; private set; }
+        public int GetCalls { get; private set; }
         public int Count => _items.Count;
+        public bool ThrowOnGet { get; set; }
         public bool Contains(string id) => _items.ContainsKey(id);
 
         public Task PutAsync(ProtectedResearchWorkItemEnvelope envelope, CancellationToken cancellationToken = default)
@@ -307,6 +466,9 @@ public sealed class TwoPhaseNebiusResearchDispatcherTests
 
         public Task<ProtectedResearchWorkItemEnvelope?> GetAsync(string opaqueWorkItemId, CancellationToken cancellationToken = default)
         {
+            GetCalls++;
+            if (ThrowOnGet)
+                throw new InvalidOperationException("mutable work-item transport must not be read during reservation recovery");
             _items.TryGetValue(opaqueWorkItemId, out var value);
             return Task.FromResult(value);
         }
@@ -328,13 +490,22 @@ public sealed class TwoPhaseNebiusResearchDispatcherTests
     private sealed class MemoryAuditTrail : IAuditTrail
     {
         public List<AuditEvent> Events { get; } = new();
+        public bool FailAppend { get; set; }
+
         public Task AppendAsync(AuditEvent auditEvent, CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (FailAppend)
+                throw new IOException("simulated audit append failure");
             Events.Add(auditEvent);
             return Task.CompletedTask;
         }
-        public Task<IReadOnlyList<AuditEvent>> ReadAllAsync(CancellationToken cancellationToken = default) =>
-            Task.FromResult<IReadOnlyList<AuditEvent>>(Events.ToArray());
+
+        public Task<IReadOnlyList<AuditEvent>> ReadAllAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult<IReadOnlyList<AuditEvent>>(Events.ToArray());
+        }
     }
 
     private sealed class PassThroughProtector : ILocalStateProtector

@@ -256,6 +256,10 @@ public sealed class NebiusResearchLifecycleReconciler
         CancellationToken cancellationToken = default)
     {
         var current = await GetRequiredResearchAsync(jobId, cancellationToken).ConfigureAwait(false);
+        current = await RecoverPendingAuditAsync(current, cancellationToken).ConfigureAwait(false);
+        if (IsSettledRemoteTerminal(current))
+            return current;
+
         var provenance = current.RemoteResearch
             ?? throw new InvalidOperationException("Research job has no remote execution provenance.");
         if (current.State != AgentJobState.Running
@@ -367,11 +371,9 @@ public sealed class NebiusResearchLifecycleReconciler
     public async Task<AgentJobRecord> ReconcileCancellationAsync(Guid jobId, CancellationToken cancellationToken = default)
     {
         var current = await GetRequiredResearchAsync(jobId, cancellationToken).ConfigureAwait(false);
-        if (current.PendingAuditEvent is not null)
-        {
-            var auditOutbox = new DurableJobAuditOutbox(_store, _auditTrail);
-            current = await auditOutbox.FlushAsync(current, cancellationToken).ConfigureAwait(false);
-        }
+        current = await RecoverPendingAuditAsync(current, cancellationToken).ConfigureAwait(false);
+        if (IsSettledRemoteTerminal(current))
+            return current;
 
         var provenance = current.RemoteResearch
             ?? throw new InvalidOperationException("Research job has no remote execution provenance.");
@@ -551,13 +553,52 @@ public sealed class NebiusResearchLifecycleReconciler
             UpdatedAt = now
         };
         var terminalAudit = PrepareAudit(replacement, eventType, summary);
+        var auditOutbox = new DurableJobAuditOutbox(_store, _auditTrail);
+        var staged = auditOutbox.Stage(replacement, terminalAudit);
 
-        if (!await _store.CompareExchangeAsync(current, replacement, cancellationToken).ConfigureAwait(false))
+        if (!await _store.CompareExchangeAsync(current, staged, cancellationToken).ConfigureAwait(false))
             throw new InvalidOperationException("Research state changed while remote terminal state was being finalized.");
 
-        await AppendAuditAsync(terminalAudit, cancellationToken).ConfigureAwait(false);
+        var settled = await auditOutbox.FlushAsync(staged, cancellationToken).ConfigureAwait(false);
         await _ingestor.CleanupProtectedPayloadsAsync(provenance.OpaqueWorkItemId).ConfigureAwait(false);
-        return replacement;
+        return settled;
+    }
+
+    private async Task<AgentJobRecord> RecoverPendingAuditAsync(
+        AgentJobRecord current,
+        CancellationToken cancellationToken)
+    {
+        if (current.PendingAuditEvent is null)
+            return current;
+
+        var auditOutbox = new DurableJobAuditOutbox(_store, _auditTrail);
+        var settled = await auditOutbox.FlushAsync(current, cancellationToken).ConfigureAwait(false);
+        if (IsSettledRemoteTerminal(settled))
+        {
+            var provenance = settled.RemoteResearch
+                ?? throw new InvalidOperationException("Terminal remote research state is missing provenance required for cleanup.");
+            await _ingestor.CleanupProtectedPayloadsAsync(provenance.OpaqueWorkItemId).ConfigureAwait(false);
+        }
+
+        return settled;
+    }
+
+    private static bool IsSettledRemoteTerminal(AgentJobRecord job)
+    {
+        if (job.PendingAuditEvent is not null
+            || job.ExecutionLocation != JobExecutionLocation.Local
+            || job.RemoteResearch is null)
+        {
+            return false;
+        }
+
+        return (job.State, job.RemoteResearch.State) switch
+        {
+            (AgentJobState.Failed, RemoteResearchProvenanceState.RemoteFailed) => true,
+            (AgentJobState.Failed, RemoteResearchProvenanceState.Expired) => true,
+            (AgentJobState.Cancelled, RemoteResearchProvenanceState.Cancelled) => true,
+            _ => false
+        };
     }
 
     private async Task<AgentJobRecord> GetRequiredResearchAsync(Guid jobId, CancellationToken cancellationToken)

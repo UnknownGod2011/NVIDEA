@@ -50,6 +50,19 @@ public sealed class RemoteResearchResultNotAvailableException : InvalidOperation
 }
 
 /// <summary>
+/// Raised only after a DispatchReserved state and its exact audit intent have already committed to
+/// the durable job record, but the audit outbox could not prove that event durable. Callers must
+/// preserve the encrypted work item because the durable reservation now owns that payload.
+/// </summary>
+public sealed class RemoteResearchDispatchReservationAuditPendingException : InvalidOperationException
+{
+    public RemoteResearchDispatchReservationAuditPendingException(Exception innerException)
+        : base("Remote research dispatch reservation committed, but its audit remains pending recovery.", innerException)
+    {
+    }
+}
+
+/// <summary>
 /// Applies one protected Nebius research result to the local durable job using a compare-and-swap
 /// boundary. Remote dispatch is two-phase: ReserveDispatchAsync first freezes the exact local
 /// checkpoint, opaque work-item id, and encrypted object expiry durably, then AttachDispatchAsync
@@ -140,13 +153,20 @@ public sealed class RemoteResearchResultIngestor
             replacement,
             "research.remote_dispatch_reserved",
             "Encrypted research stage reserved before Nebius job creation.");
+        var durableReplacement = _auditOutbox.Stage(replacement, reservationAudit);
 
-        var applied = await _store.CompareExchangeAsync(current, replacement, cancellationToken).ConfigureAwait(false);
+        var applied = await _store.CompareExchangeAsync(current, durableReplacement, cancellationToken).ConfigureAwait(false);
         if (!applied)
             throw new InvalidOperationException("Research state changed while remote dispatch was being reserved.");
 
-        await AppendAuditAsync(reservationAudit, cancellationToken).ConfigureAwait(false);
-        return replacement;
+        try
+        {
+            return await _auditOutbox.FlushAsync(durableReplacement, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not RemoteResearchDispatchReservationAuditPendingException)
+        {
+            throw new RemoteResearchDispatchReservationAuditPendingException(ex);
+        }
     }
 
     public async Task<AgentJobRecord> AttachDispatchAsync(
@@ -193,12 +213,12 @@ public sealed class RemoteResearchResultIngestor
             replacement,
             "research.remote_dispatched",
             "Reserved encrypted research stage attached to Nebius Serverless provenance.");
+        var durableReplacement = _auditOutbox.Stage(replacement, dispatchAudit);
 
-        if (!await _store.CompareExchangeAsync(current, replacement, cancellationToken).ConfigureAwait(false))
+        if (!await _store.CompareExchangeAsync(current, durableReplacement, cancellationToken).ConfigureAwait(false))
             throw new InvalidOperationException("Research state changed while remote dispatch provenance was being attached.");
 
-        await AppendAuditAsync(dispatchAudit, cancellationToken).ConfigureAwait(false);
-        return replacement;
+        return await _auditOutbox.FlushAsync(durableReplacement, cancellationToken).ConfigureAwait(false);
     }
 
     public Task<AgentJobRecord> IngestAsync(
@@ -471,9 +491,6 @@ public sealed class RemoteResearchResultIngestor
         AuditEventTrust.ValidateForPersistence(auditEvent, nameof(job));
         return auditEvent;
     }
-
-    private Task AppendAuditAsync(AuditEvent auditEvent, CancellationToken cancellationToken) =>
-        _auditTrail.AppendAsync(auditEvent, cancellationToken);
 
     private static async Task TryDeleteAsync(IProtectedResearchResultTransport transport, string opaqueWorkItemId)
     {

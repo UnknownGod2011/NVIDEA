@@ -30,6 +30,16 @@ public interface IRemoteResearchClientRuntime
     Task<AgentJobRecord> ReconcileCancellationAsync(
         Guid jobId,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Recovers a durable local audit outbox marker for a remote-research state transition without
+    /// polling the provider or replaying remote work. Implementations that do not persist such an
+    /// outbox may keep the default fail-closed behavior.
+    /// </summary>
+    Task<AgentJobRecord> RecoverPendingAuditAsync(
+        Guid jobId,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("This remote research runtime does not support durable audit recovery.");
 }
 
 /// <summary>
@@ -103,9 +113,10 @@ public sealed class ResearchCloudExecutionCoordinator : IResearchCloudExecutionC
         }, cancellationToken);
 
     /// <summary>
-    /// Advances only an already-remote lifecycle. A DispatchReserved record is reconciled without
-    /// assuming whether Nebius accepted the create call; a Dispatched record is checked for provider
-    /// completion/result ingestion; a cancellation request is reconciled independently.
+    /// Advances only an already-remote lifecycle. Before state-specific routing, a stranded durable
+    /// audit outbox marker is recovered locally. This closes the restart window where result
+    /// application succeeded but its audit append did not: recovery must not poll Nebius, replay the
+    /// remote result, or repeat any external action.
     /// </summary>
     public Task<ResearchJobStatus> ReconcileAsync(
         Guid jobId,
@@ -113,6 +124,19 @@ public sealed class ResearchCloudExecutionCoordinator : IResearchCloudExecutionC
         WithMutationLeaseAsync(async ct =>
         {
             var current = await GetRequiredResearchAsync(jobId, ct).ConfigureAwait(false);
+            if (current.PendingAuditEvent is not null)
+            {
+                current = await _remote.RecoverPendingAuditAsync(jobId, ct).ConfigureAwait(false);
+                if (current.PendingAuditEvent is not null)
+                    throw new InvalidOperationException("Remote research audit recovery returned with an unresolved durable audit marker.");
+
+                if (current.ExecutionLocation == JobExecutionLocation.Local
+                    && current.RemoteResearch is { State: RemoteResearchProvenanceState.ResultApplied })
+                {
+                    return ResearchJobStatus.FromRecord(current);
+                }
+            }
+
             var provenance = current.RemoteResearch
                 ?? throw new InvalidOperationException("Research job has no remote execution provenance to reconcile.");
 

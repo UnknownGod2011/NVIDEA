@@ -35,7 +35,7 @@ public static class ResearchWorkItemEnvelopeCommitment
     {
         if (string.IsNullOrWhiteSpace(value)
             || value.Length != HexLength
-            || value.Any(static ch => !(ch is >= '0' and <= '9' or >= 'a' and <= 'f')))
+            || value.Any(static ch => !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f'))))
         {
             throw new InvalidOperationException(
                 $"{parameterName ?? "Work-item envelope commitment"} must be a canonical lowercase SHA-256 hex digest.");

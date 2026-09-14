@@ -80,6 +80,8 @@ public sealed class NebiusServerlessJobClient : INebiusServerlessJobClient
 {
     private static readonly Uri DefaultBaseUri = new("https://api.nebius.cloud/");
     private static readonly string[] SensitiveNameMarkers = { "PASSWORD", "PASSWD", "SECRET", "TOKEN", "API_KEY", "APIKEY", "PRIVATE_KEY", "CREDENTIAL" };
+    private const string TransportFailureMessage = "Nebius Serverless transport request failed; provider/network diagnostics quarantined.";
+    private const string TimeoutFailureMessage = "Nebius Serverless request timed out; provider/network diagnostics quarantined.";
     private readonly HttpClient _httpClient;
     private readonly NebiusServerlessOptions _options;
     private readonly Uri _baseUri;
@@ -179,11 +181,27 @@ public sealed class NebiusServerlessJobClient : INebiusServerlessJobClient
                 EnsureJsonIfPresent(body);
                 return new NebiusServerlessResponse(response.StatusCode, body);
             }
-            catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested && attempt < _options.MaxRetries) { lastTransient = ex; await DelayAsync(attempt, cancellationToken).ConfigureAwait(false); }
-            catch (HttpRequestException ex) when (attempt < _options.MaxRetries && (ex.StatusCode is null || IsTransient(ex.StatusCode.Value))) { lastTransient = ex; await DelayAsync(attempt, cancellationToken).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                var quarantined = new TimeoutException(TimeoutFailureMessage);
+                if (attempt >= _options.MaxRetries) throw quarantined;
+                lastTransient = quarantined;
+                await DelayAsync(attempt, cancellationToken).ConfigureAwait(false);
+            }
+            catch (HttpRequestException ex)
+            {
+                var quarantined = QuarantineTransportFailure(ex);
+                if (attempt >= _options.MaxRetries || (ex.StatusCode is not null && !IsTransient(ex.StatusCode.Value)))
+                    throw quarantined;
+                lastTransient = quarantined;
+                await DelayAsync(attempt, cancellationToken).ConfigureAwait(false);
+            }
         }
-        throw lastTransient ?? new HttpRequestException("Nebius Serverless request failed after retries.");
+        throw lastTransient ?? new HttpRequestException(TransportFailureMessage);
     }
+
+    private static HttpRequestException QuarantineTransportFailure(HttpRequestException exception) =>
+        new(TransportFailureMessage, null, exception.StatusCode);
 
     private static void ValidateSpec(NebiusServerlessJobSpec spec)
     {

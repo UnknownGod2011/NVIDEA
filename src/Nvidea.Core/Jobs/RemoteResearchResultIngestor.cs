@@ -64,6 +64,7 @@ public sealed class RemoteResearchResultIngestor
     private readonly IProtectedResearchResultTransport _results;
     private readonly IProtectedResearchWorkItemTransport? _workItems;
     private readonly IAuditTrail _auditTrail;
+    private readonly DurableJobAuditOutbox _auditOutbox;
     private readonly string _clientPrivateKeyPem;
 
     public RemoteResearchResultIngestor(
@@ -76,6 +77,7 @@ public sealed class RemoteResearchResultIngestor
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _results = results ?? throw new ArgumentNullException(nameof(results));
         _auditTrail = auditTrail ?? throw new ArgumentNullException(nameof(auditTrail));
+        _auditOutbox = new DurableJobAuditOutbox(_store, _auditTrail);
         _workItems = workItems;
         _clientPrivateKeyPem = string.IsNullOrWhiteSpace(clientPrivateKeyPem)
             ? throw new ArgumentException("Client private key is required.", nameof(clientPrivateKeyPem))
@@ -234,6 +236,30 @@ public sealed class RemoteResearchResultIngestor
             cancellationToken);
     }
 
+    /// <summary>
+    /// Recovers a crash after a remote-result state CAS but before the matching audit append/marker
+    /// clear. No remote work or handler is replayed. Protected payloads are removed only after the
+    /// exact pending audit event is proven durable.
+    /// </summary>
+    internal async Task<AgentJobRecord> RecoverPendingAuditAsync(
+        Guid jobId,
+        CancellationToken cancellationToken = default)
+    {
+        var current = await GetRequiredResearchWithoutAuditRecoveryAsync(jobId, cancellationToken).ConfigureAwait(false);
+        var pending = current.PendingAuditEvent;
+        if (pending is null)
+            return current;
+
+        var recovered = await _auditOutbox.FlushAsync(current, cancellationToken).ConfigureAwait(false);
+        if (IsRemoteResultAppliedAudit(pending.EventType)
+            && recovered.RemoteResearch is { State: RemoteResearchProvenanceState.ResultApplied } applied)
+        {
+            await CleanupProtectedPayloadsAsync(applied.OpaqueWorkItemId).ConfigureAwait(false);
+        }
+
+        return recovered;
+    }
+
     private async Task<AgentJobRecord> IngestCoreAsync(
         Guid jobId,
         RemoteResearchProvenanceState requiredProvenanceState,
@@ -306,13 +332,14 @@ public sealed class RemoteResearchResultIngestor
             UpdatedAt = currentTime
         };
         var resultAudit = PrepareAudit(replacement, auditEventType, auditSummary);
+        var durableReplacement = _auditOutbox.Stage(replacement, resultAudit);
 
-        if (!await _store.CompareExchangeAsync(current, replacement, cancellationToken).ConfigureAwait(false))
+        if (!await _store.CompareExchangeAsync(current, durableReplacement, cancellationToken).ConfigureAwait(false))
             throw new InvalidOperationException("Research state changed while protected remote result was being applied.");
 
-        await AppendAuditAsync(resultAudit, cancellationToken).ConfigureAwait(false);
+        var committed = await _auditOutbox.FlushAsync(durableReplacement, cancellationToken).ConfigureAwait(false);
         await CleanupProtectedPayloadsAsync(provenance.OpaqueWorkItemId).ConfigureAwait(false);
-        return replacement;
+        return committed;
     }
 
     public async Task CleanupProtectedPayloadsAsync(string opaqueWorkItemId)
@@ -322,7 +349,12 @@ public sealed class RemoteResearchResultIngestor
             await TryDeleteAsync(_workItems, opaqueWorkItemId).ConfigureAwait(false);
     }
 
-    private async Task<AgentJobRecord> GetRequiredResearchAsync(Guid jobId, CancellationToken cancellationToken)
+    private async Task<AgentJobRecord> GetRequiredResearchAsync(Guid jobId, CancellationToken cancellationToken) =>
+        await RecoverPendingAuditAsync(jobId, cancellationToken).ConfigureAwait(false);
+
+    private async Task<AgentJobRecord> GetRequiredResearchWithoutAuditRecoveryAsync(
+        Guid jobId,
+        CancellationToken cancellationToken)
     {
         if (jobId == Guid.Empty)
             throw new ArgumentException("Research job id is required.", nameof(jobId));
@@ -332,6 +364,10 @@ public sealed class RemoteResearchResultIngestor
             throw new InvalidOperationException("Remote result ingestion only accepts research jobs.");
         return job;
     }
+
+    private static bool IsRemoteResultAppliedAudit(string eventType) =>
+        string.Equals(eventType, "research.remote_result_applied", StringComparison.Ordinal)
+        || string.Equals(eventType, "research.remote_result_applied_after_cancel_request", StringComparison.Ordinal);
 
     private static void ValidateDispatchReservationTarget(AgentJobRecord current, string checkpointStep)
     {

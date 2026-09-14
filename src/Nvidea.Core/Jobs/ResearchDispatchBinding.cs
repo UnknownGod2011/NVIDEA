@@ -233,8 +233,16 @@ public sealed class ResearchDispatchBindingPublisher
     }
 }
 
+/// <summary>
+/// Worker-side delayed-publication boundary. Missing bindings are retried with bounded exponential
+/// backoff, but the worker never waits past either its configured budget or the protected work-item
+/// lifetime supplied by the caller. A transport-visible work-item expiry is used only as a stricter
+/// upper bound; it never extends the configured wait budget or authenticates the work item.
+/// </summary>
 public sealed class ResearchDispatchBindingWaiter
 {
+    private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(30);
+
     private readonly IProtectedResearchDispatchBindingTransport _transport;
     private readonly string _clientPublicKeyPem;
     private readonly TimeSpan _pollInterval;
@@ -258,23 +266,84 @@ public sealed class ResearchDispatchBindingWaiter
             throw new ArgumentOutOfRangeException(nameof(maxWait), "Binding wait must cover at least one poll and be no more than 15 minutes.");
     }
 
-    public async Task<ProtectedResearchDispatchBinding> WaitAsync(
+    public Task<ProtectedResearchDispatchBinding> WaitAsync(
         string opaqueWorkItemId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        WaitCoreAsync(opaqueWorkItemId, workItemExpiresAt: null, cancellationToken);
+
+    public Task<ProtectedResearchDispatchBinding> WaitAsync(
+        string opaqueWorkItemId,
+        DateTimeOffset workItemExpiresAt,
+        CancellationToken cancellationToken = default) =>
+        WaitCoreAsync(opaqueWorkItemId, workItemExpiresAt, cancellationToken);
+
+    private async Task<ProtectedResearchDispatchBinding> WaitCoreAsync(
+        string opaqueWorkItemId,
+        DateTimeOffset? workItemExpiresAt,
+        CancellationToken cancellationToken)
     {
-        var deadline = DateTimeOffset.UtcNow + _maxWait;
+        var startedAt = DateTimeOffset.UtcNow;
+        var deadline = startedAt.Add(_maxWait);
+        if (workItemExpiresAt is { } absoluteExpiry && absoluteExpiry < deadline)
+            deadline = absoluteExpiry;
+
+        if (deadline <= startedAt)
+            throw new TimeoutException("Protected remote research work item expired before its authoritative dispatch binding became available.");
+
+        var retryDelay = _pollInterval;
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
+
+            var beforeRead = DateTimeOffset.UtcNow;
+            if (beforeRead >= deadline)
+                throw CreateTimeout(workItemExpiresAt, deadline);
+
             var binding = await _transport.GetAsync(opaqueWorkItemId, cancellationToken).ConfigureAwait(false);
+            var observedAt = DateTimeOffset.UtcNow;
+            if (observedAt >= deadline)
+                throw CreateTimeout(workItemExpiresAt, deadline);
+
             if (binding is not null)
-                return ResearchDispatchBindingProtector.Verify(binding, opaqueWorkItemId, _clientPublicKeyPem);
+            {
+                var verified = ResearchDispatchBindingProtector.Verify(
+                    binding,
+                    opaqueWorkItemId,
+                    _clientPublicKeyPem,
+                    observedAt);
 
-            var remaining = deadline - DateTimeOffset.UtcNow;
-            if (remaining <= TimeSpan.Zero)
-                throw new TimeoutException("Authoritative Nebius dispatch binding was not published before the worker wait deadline.");
+                if (workItemExpiresAt is { } itemExpiry && verified.ExpiresAt > itemExpiry)
+                {
+                    throw new CryptographicException(
+                        "Authoritative Nebius dispatch binding outlives the protected research work item.");
+                }
 
-            await Task.Delay(remaining < _pollInterval ? remaining : _pollInterval, cancellationToken).ConfigureAwait(false);
+                return verified;
+            }
+
+            var remaining = deadline - observedAt;
+            var delay = remaining < retryDelay ? remaining : retryDelay;
+            await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+            retryDelay = NextBackoff(retryDelay);
         }
+    }
+
+    private static TimeSpan NextBackoff(TimeSpan current)
+    {
+        if (current >= MaxBackoff)
+            return MaxBackoff;
+
+        var doubledTicks = current.Ticks > MaxBackoff.Ticks / 2
+            ? MaxBackoff.Ticks
+            : current.Ticks * 2;
+        return TimeSpan.FromTicks(Math.Min(doubledTicks, MaxBackoff.Ticks));
+    }
+
+    private static TimeoutException CreateTimeout(DateTimeOffset? workItemExpiresAt, DateTimeOffset deadline)
+    {
+        var reason = workItemExpiresAt is { } expiry && expiry <= deadline
+            ? "protected work-item expiry"
+            : "worker wait budget";
+        return new TimeoutException($"Authoritative Nebius dispatch binding was not published before the {reason} deadline.");
     }
 }

@@ -21,8 +21,13 @@ public sealed record NebiusResearchWorkerRuntimeConfiguration(
     public const string NebiusApiKeyEnvironmentVariable = "NEBIUS_API_KEY";
     public const string TavilyApiKeyEnvironmentVariable = "TAVILY_API_KEY";
     public const string WorkerPrivateKeyEnvironmentVariable = "NVIDEA_WORKER_PRIVATE_KEY_PEM";
+    public const string WorkItemPollSecondsEnvironmentVariable = "NVIDEA_WORK_ITEM_POLL_SECONDS";
+    public const string WorkItemWaitSecondsEnvironmentVariable = "NVIDEA_WORK_ITEM_WAIT_SECONDS";
     public const string BindingPollSecondsEnvironmentVariable = "NVIDEA_BINDING_POLL_SECONDS";
     public const string BindingWaitSecondsEnvironmentVariable = "NVIDEA_BINDING_WAIT_SECONDS";
+
+    public TimeSpan WorkItemPollInterval { get; init; } = TimeSpan.FromSeconds(1);
+    public TimeSpan WorkItemMaxWait { get; init; } = TimeSpan.FromSeconds(30);
 
     public static NebiusResearchWorkerRuntimeConfiguration Load(Func<string, string?>? environmentReader = null)
     {
@@ -31,6 +36,14 @@ public sealed record NebiusResearchWorkerRuntimeConfiguration(
         // This phase must remain credential-free. Any malformed public bootstrap or timing/provider
         // destination configuration fails without touching provider or worker private credentials.
         var bootstrapTrust = NebiusResearchWorkerBootstrapTrust.Load(read);
+        var workItemPollInterval = GetOptionalDurationSeconds(
+            read,
+            WorkItemPollSecondsEnvironmentVariable,
+            TimeSpan.FromSeconds(1));
+        var workItemMaxWait = GetOptionalDurationSeconds(
+            read,
+            WorkItemWaitSecondsEnvironmentVariable,
+            TimeSpan.FromSeconds(30));
         var bindingPollInterval = GetOptionalDurationSeconds(
             read,
             BindingPollSecondsEnvironmentVariable,
@@ -39,6 +52,17 @@ public sealed record NebiusResearchWorkerRuntimeConfiguration(
             read,
             BindingWaitSecondsEnvironmentVariable,
             TimeSpan.FromMinutes(5));
+
+        ValidateRetryWindow(
+            workItemPollInterval,
+            workItemMaxWait,
+            TimeSpan.FromMinutes(5),
+            "work-item bootstrap");
+        ValidateRetryWindow(
+            bindingPollInterval,
+            bindingMaxWait,
+            TimeSpan.FromMinutes(15),
+            "dispatch-binding");
 
         var baseUriText = read(NebiusBaseUrlEnvironmentVariable);
         var baseUri = string.IsNullOrWhiteSpace(baseUriText)
@@ -76,7 +100,11 @@ public sealed record NebiusResearchWorkerRuntimeConfiguration(
             tavily,
             bindingPollInterval,
             bindingMaxWait,
-            workerPrivateKey);
+            workerPrivateKey)
+        {
+            WorkItemPollInterval = workItemPollInterval,
+            WorkItemMaxWait = workItemMaxWait
+        };
     }
 
     /// <summary>
@@ -121,5 +149,24 @@ public sealed record NebiusResearchWorkerRuntimeConfiguration(
         }
 
         return TimeSpan.FromSeconds(seconds);
+    }
+
+    private static void ValidateRetryWindow(
+        TimeSpan pollInterval,
+        TimeSpan maxWait,
+        TimeSpan maximumWait,
+        string label)
+    {
+        if (pollInterval < TimeSpan.FromMilliseconds(100) || pollInterval > TimeSpan.FromSeconds(30))
+        {
+            throw new InvalidOperationException(
+                $"Worker {label} poll interval must be between 100 ms and 30 seconds.");
+        }
+
+        if (maxWait < pollInterval || maxWait > maximumWait)
+        {
+            throw new InvalidOperationException(
+                $"Worker {label} wait must cover at least one poll and be no more than {maximumWait.TotalMinutes:0} minutes.");
+        }
     }
 }

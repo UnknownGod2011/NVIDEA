@@ -198,7 +198,8 @@ public sealed class JsonAgentJobStore : IAgentJobStore
             || !DefinitionEquivalent(actual.Definition, expected.Definition)
             || !CheckpointVersionEquivalent(actual.Checkpoint, expected.Checkpoint)
             || !AuditEventEquivalent(actual.PendingAuditEvent, expected.PendingAuditEvent)
-            || !ExternalActionEquivalent(actual.PendingExternalAction, expected.PendingExternalAction))
+            || !ExternalActionEquivalent(actual.PendingExternalAction, expected.PendingExternalAction)
+            || !ProtectedPayloadCleanupEquivalent(actual.PendingProtectedPayloadCleanup, expected.PendingProtectedPayloadCleanup))
         {
             return false;
         }
@@ -268,6 +269,20 @@ public sealed class JsonAgentJobStore : IAgentJobStore
             && actual.Kind == expected.Kind
             && string.Equals(actual.TargetId, expected.TargetId, StringComparison.Ordinal)
             && actual.AuditEventId == expected.AuditEventId
+            && actual.CreatedAt == expected.CreatedAt;
+    }
+
+    internal static bool ProtectedPayloadCleanupEquivalent(
+        PendingProtectedPayloadCleanup? actual,
+        PendingProtectedPayloadCleanup? expected)
+    {
+        if (ReferenceEquals(actual, expected))
+            return true;
+        if (actual is null || expected is null)
+            return false;
+
+        return actual.CleanupId == expected.CleanupId
+            && string.Equals(actual.OpaqueWorkItemId, expected.OpaqueWorkItemId, StringComparison.Ordinal)
             && actual.CreatedAt == expected.CreatedAt;
     }
 

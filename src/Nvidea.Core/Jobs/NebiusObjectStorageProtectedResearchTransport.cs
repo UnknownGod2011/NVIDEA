@@ -113,9 +113,17 @@ public sealed class NebiusObjectStorageClient : IProtectedResearchObjectStoreCli
             {
                 throw new TimeoutException("Nebius Object Storage request timed out.");
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw CreateSanitizedCallerCancellation(cancellationToken);
+            }
             catch (AmazonS3Exception ex)
             {
                 throw CreateSanitizedStorageException("put", ex.StatusCode);
+            }
+            catch (Exception ex) when (IsQuarantinableClientFailure(ex))
+            {
+                throw CreateSanitizedClientFailure("put");
             }
         }
     }
@@ -165,9 +173,17 @@ public sealed class NebiusObjectStorageClient : IProtectedResearchObjectStoreCli
         {
             throw new TimeoutException("Nebius Object Storage request timed out.");
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw CreateSanitizedCallerCancellation(cancellationToken);
+        }
         catch (AmazonS3Exception ex)
         {
             throw CreateSanitizedStorageException("get", ex.StatusCode);
+        }
+        catch (Exception ex) when (IsQuarantinableClientFailure(ex))
+        {
+            throw CreateSanitizedClientFailure("get");
         }
     }
 
@@ -189,13 +205,30 @@ public sealed class NebiusObjectStorageClient : IProtectedResearchObjectStoreCli
         {
             throw new TimeoutException("Nebius Object Storage request timed out.");
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw CreateSanitizedCallerCancellation(cancellationToken);
+        }
         catch (AmazonS3Exception ex)
         {
             throw CreateSanitizedStorageException("delete", ex.StatusCode);
         }
+        catch (Exception ex) when (IsQuarantinableClientFailure(ex))
+        {
+            throw CreateSanitizedClientFailure("delete");
+        }
     }
 
     public void Dispose() => _client.Dispose();
+
+    internal static OperationCanceledException CreateSanitizedCallerCancellation(CancellationToken cancellationToken) =>
+        new("Nebius Object Storage request was canceled by the caller.", cancellationToken);
+
+    internal static InvalidOperationException CreateSanitizedClientFailure(string operation) =>
+        new($"Nebius Object Storage {operation} request failed before a trusted provider response was available.");
+
+    internal static bool IsQuarantinableClientFailure(Exception exception) =>
+        exception is AmazonClientException or HttpRequestException or IOException;
 
     private CancellationTokenSource CreateTimeoutToken(CancellationToken cancellationToken)
     {

@@ -77,7 +77,8 @@ public sealed record AgentJobRecord(
     RemoteResearchProvenance? RemoteResearch = null,
     AuditEvent? PendingAuditEvent = null,
     PendingExternalAction? PendingExternalAction = null,
-    PendingProtectedPayloadCleanup? PendingProtectedPayloadCleanup = null);
+    PendingProtectedPayloadCleanup? PendingProtectedPayloadCleanup = null,
+    string? RemoteWorkItemEnvelopeSha256 = null);
 
 public sealed record JobStepResult(
     bool Completed,

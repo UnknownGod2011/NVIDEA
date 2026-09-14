@@ -101,25 +101,25 @@ public sealed class ResearchWorkItemEnvelopeCommitmentTests
                 BenefitsFromBackgroundExecution: true);
             var checkpoint = new AgentJobCheckpoint("research.plan", "{}", now);
             var provenance = new RemoteResearchProvenance(
-                ResearchWorkItemProtector.ProtocolVersion,
-                envelope.OpaqueWorkItemId,
+                ProtocolVersion: ResearchWorkItemProtector.ProtocolVersion,
+                OpaqueWorkItemId: envelope.OpaqueWorkItemId,
                 RemoteJobId: null,
-                checkpoint.Step,
-                checkpoint.SavedAt,
-                now,
-                RemoteResearchProvenanceState.DispatchReserved,
+                InputCheckpointStep: checkpoint.Step,
+                InputCheckpointSavedAt: checkpoint.SavedAt,
+                DispatchedAt: now,
+                State: RemoteResearchProvenanceState.DispatchReserved,
                 WorkItemExpiresAt: envelope.ExpiresAt);
             var record = new AgentJobRecord(
-                Guid.NewGuid(),
-                definition,
-                AgentJobState.Running,
-                JobExecutionLocation.Local,
+                JobId: Guid.NewGuid(),
+                Definition: definition,
+                State: AgentJobState.Running,
+                ExecutionLocation: JobExecutionLocation.Local,
                 Attempt: 0,
-                checkpoint,
+                Checkpoint: checkpoint,
                 ApprovalScope: null,
                 LastError: null,
-                now,
-                now,
+                CreatedAt: now,
+                UpdatedAt: now,
                 RemoteResearch: provenance);
             await store.SaveAsync(record);
 

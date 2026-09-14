@@ -37,6 +37,17 @@ public sealed record PendingExternalAction(
     Guid AuditEventId,
     DateTimeOffset CreatedAt);
 
+/// <summary>
+/// Durable, non-secret proof that protected remote-research transport artifacts still require
+/// idempotent deletion. Presence means cleanup is owed; absence means no cleanup obligation is
+/// currently recorded. It never claims that a remote result or lifecycle transition succeeded.
+/// The opaque work-item id is already part of protected remote provenance and contains no credential.
+/// </summary>
+public sealed record PendingProtectedPayloadCleanup(
+    Guid CleanupId,
+    string OpaqueWorkItemId,
+    DateTimeOffset CreatedAt);
+
 public sealed record AgentJobDefinition(
     string JobType,
     string CapabilityId,
@@ -65,7 +76,8 @@ public sealed record AgentJobRecord(
     DateTimeOffset? NextAttemptAt = null,
     RemoteResearchProvenance? RemoteResearch = null,
     AuditEvent? PendingAuditEvent = null,
-    PendingExternalAction? PendingExternalAction = null);
+    PendingExternalAction? PendingExternalAction = null,
+    PendingProtectedPayloadCleanup? PendingProtectedPayloadCleanup = null);
 
 public sealed record JobStepResult(
     bool Completed,

@@ -197,20 +197,66 @@ public sealed class RemoteResearchResultIngestor
         return replacement;
     }
 
-    public async Task<AgentJobRecord> IngestAsync(
+    public Task<AgentJobRecord> IngestAsync(
         Guid jobId,
         DateTimeOffset? now = null,
+        CancellationToken cancellationToken = default) =>
+        IngestCoreAsync(
+            jobId,
+            RemoteResearchProvenanceState.Dispatched,
+            expectedRemoteJobId: null,
+            "research.remote_result_applied",
+            "Protected remote research result applied exactly once.",
+            now,
+            cancellationToken);
+
+    /// <summary>
+    /// Narrow recovery entry point for the cancellation-vs-completion race. The lifecycle reconciler
+    /// may call this only after it has freshly verified that the exact durable Nebius job is Completed.
+    /// Keeping this path separate prevents ordinary ingestion from accepting CancelRequested stages.
+    /// </summary>
+    internal Task<AgentJobRecord> IngestCompletedAfterCancellationRequestedAsync(
+        Guid jobId,
+        string verifiedRemoteJobId,
+        DateTimeOffset? now = null,
         CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(verifiedRemoteJobId))
+            throw new ArgumentException("Verified Nebius job id is required.", nameof(verifiedRemoteJobId));
+
+        return IngestCoreAsync(
+            jobId,
+            RemoteResearchProvenanceState.CancelRequested,
+            verifiedRemoteJobId,
+            "research.remote_result_applied_after_cancel_request",
+            "Verified Nebius completion won the cancellation race; protected remote research result applied exactly once.",
+            now,
+            cancellationToken);
+    }
+
+    private async Task<AgentJobRecord> IngestCoreAsync(
+        Guid jobId,
+        RemoteResearchProvenanceState requiredProvenanceState,
+        string? expectedRemoteJobId,
+        string auditEventType,
+        string auditSummary,
+        DateTimeOffset? now,
+        CancellationToken cancellationToken)
     {
         var current = await GetRequiredResearchAsync(jobId, cancellationToken).ConfigureAwait(false);
         var provenance = current.RemoteResearch
             ?? throw new InvalidOperationException("Research job has no remote execution provenance.");
         if (current.ExecutionLocation != JobExecutionLocation.NebiusServerless || current.State != AgentJobState.Running)
             throw new InvalidOperationException("Only an in-flight Nebius research stage can ingest a remote result.");
-        if (provenance.State != RemoteResearchProvenanceState.Dispatched || provenance.ResultAppliedAt is not null)
-            throw new InvalidOperationException("Remote research result has already been applied or is no longer ingestible.");
+        if (provenance.State != requiredProvenanceState || provenance.ResultAppliedAt is not null)
+            throw new InvalidOperationException("Remote research result has already been applied or is not eligible for this ingestion path.");
         if (string.IsNullOrWhiteSpace(provenance.RemoteJobId))
             throw new InvalidOperationException("Dispatched research provenance is missing the Nebius job id.");
+        if (expectedRemoteJobId is not null
+            && !string.Equals(provenance.RemoteJobId, expectedRemoteJobId, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("Verified remote completion does not match durable Nebius job provenance.");
+        }
         if (!string.Equals(provenance.ProtocolVersion, ResearchWorkItemProtector.ProtocolVersion, StringComparison.Ordinal))
             throw new InvalidOperationException("Remote research provenance protocol is unsupported.");
 
@@ -259,10 +305,7 @@ public sealed class RemoteResearchResultIngestor
             RemoteResearch = appliedProvenance,
             UpdatedAt = currentTime
         };
-        var resultAudit = PrepareAudit(
-            replacement,
-            "research.remote_result_applied",
-            "Protected remote research result applied exactly once.");
+        var resultAudit = PrepareAudit(replacement, auditEventType, auditSummary);
 
         if (!await _store.CompareExchangeAsync(current, replacement, cancellationToken).ConfigureAwait(false))
             throw new InvalidOperationException("Research state changed while protected remote result was being applied.");

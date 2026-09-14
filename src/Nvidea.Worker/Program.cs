@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Nvidea.Core.Jobs;
 using Nvidea.Core.Nebius;
 using Nvidea.Core.Research;
@@ -6,6 +7,8 @@ namespace Nvidea.Worker;
 
 internal static class Program
 {
+    private static readonly TimeSpan SigTermGracePeriod = TimeSpan.FromSeconds(20);
+
     private static async Task<int> Main(string[] args)
     {
         using var shutdown = new CancellationTokenSource();
@@ -15,6 +18,7 @@ internal static class Program
             shutdown.Cancel();
         };
         Console.CancelKeyPress += cancelHandler;
+        using var sigTermRegistration = RegisterSigTerm(shutdown);
 
         try
         {
@@ -68,6 +72,11 @@ internal static class Program
             Console.WriteLine("nvidea_worker_completed stage=research");
             return 0;
         }
+        catch (OperationCanceledException) when (shutdown.IsCancellationRequested)
+        {
+            Console.Error.WriteLine("nvidea_worker_cancelled reason=process_shutdown");
+            return 130;
+        }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"nvidea_worker_failed error_type={ex.GetType().Name}");
@@ -90,6 +99,75 @@ internal static class Program
         {
             AllowAutoRedirect = false
         }, disposeHandler: true);
+    }
+
+    /// <summary>
+    /// Container/serverless hosts conventionally terminate Linux workers with SIGTERM. Intercept it
+    /// explicitly, cancel all binding/provider work through the same process token, and allow a
+    /// short grace period for cooperative cleanup. A second SIGTERM, or expiry of the grace period,
+    /// terminates the process so a dependency that ignores cancellation cannot strand the instance.
+    /// Windows relies on Console.CancelKeyPress here; the remote worker image is Linux-oriented.
+    /// </summary>
+    private static IDisposable? RegisterSigTerm(CancellationTokenSource shutdown)
+    {
+        ArgumentNullException.ThrowIfNull(shutdown);
+        if (!(OperatingSystem.IsLinux() || OperatingSystem.IsMacOS() || OperatingSystem.IsFreeBSD()))
+            return null;
+
+        var watchdogCancellation = new CancellationTokenSource();
+        var requested = 0;
+        var registration = PosixSignalRegistration.Create(PosixSignal.SIGTERM, context =>
+        {
+            // Suppress immediate OS termination only while cooperative cancellation gets its bounded
+            // chance to finish. Repeated SIGTERM is treated as an operator request for immediate exit.
+            context.Cancel = true;
+            if (Interlocked.Exchange(ref requested, 1) != 0)
+            {
+                Environment.Exit(143);
+                return;
+            }
+
+            shutdown.Cancel();
+            _ = ForceExitAfterGraceAsync(watchdogCancellation.Token);
+        });
+
+        return new CompositeDisposable(registration, watchdogCancellation);
+    }
+
+    private static async Task ForceExitAfterGraceAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(SigTermGracePeriod, cancellationToken).ConfigureAwait(false);
+            Environment.Exit(143);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Normal process completion disposes the registration and cancels the watchdog.
+        }
+    }
+
+    private sealed class CompositeDisposable : IDisposable
+    {
+        private readonly IDisposable _registration;
+        private readonly CancellationTokenSource _watchdogCancellation;
+        private int _disposed;
+
+        public CompositeDisposable(IDisposable registration, CancellationTokenSource watchdogCancellation)
+        {
+            _registration = registration;
+            _watchdogCancellation = watchdogCancellation;
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+                return;
+
+            _watchdogCancellation.Cancel();
+            _registration.Dispose();
+            _watchdogCancellation.Dispose();
+        }
     }
 }
 

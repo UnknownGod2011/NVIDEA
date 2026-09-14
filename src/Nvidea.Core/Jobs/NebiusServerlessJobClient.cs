@@ -82,6 +82,7 @@ public sealed class NebiusServerlessJobClient : INebiusServerlessJobClient
     private static readonly string[] SensitiveNameMarkers = { "PASSWORD", "PASSWD", "SECRET", "TOKEN", "API_KEY", "APIKEY", "PRIVATE_KEY", "CREDENTIAL" };
     private const string TransportFailureMessage = "Nebius Serverless transport request failed; provider/network diagnostics quarantined.";
     private const string TimeoutFailureMessage = "Nebius Serverless request timed out; provider/network diagnostics quarantined.";
+    private const string CancelledMessage = "Nebius Serverless request canceled.";
     private readonly HttpClient _httpClient;
     private readonly NebiusServerlessOptions _options;
     private readonly Uri _baseUri;
@@ -180,6 +181,10 @@ public sealed class NebiusServerlessJobClient : INebiusServerlessJobClient
                 if (!response.IsSuccessStatusCode) throw new HttpRequestException($"Nebius Serverless request failed with HTTP {(int)response.StatusCode} ({response.StatusCode}).", null, response.StatusCode);
                 EnsureJsonIfPresent(body);
                 return new NebiusServerlessResponse(response.StatusCode, body);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw new OperationCanceledException(CancelledMessage, cancellationToken);
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {

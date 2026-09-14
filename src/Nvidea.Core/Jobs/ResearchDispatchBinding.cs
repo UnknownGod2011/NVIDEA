@@ -10,7 +10,8 @@ public sealed record ProtectedResearchDispatchBinding(
     string RemoteJobName,
     DateTimeOffset PublishedAt,
     DateTimeOffset ExpiresAt,
-    string Signature);
+    string Signature,
+    string? WorkItemEnvelopeSha256 = null);
 
 public interface IProtectedResearchDispatchBindingTransport
 {
@@ -29,14 +30,15 @@ public interface IProtectedResearchDispatchBindingTransport
 
 /// <summary>
 /// Authenticates the control-plane handoff that maps an opaque work-item id to the authoritative
-/// Nebius resource id returned after Serverless job creation. The binding contains no research
-/// payload. It is RSA-PSS/SHA-256 signed by the originating client and verified by the worker using
-/// the already-pinned client public key, preventing a writable shared transport from substituting
-/// another remote resource id without detection.
+/// Nebius resource id returned after Serverless job creation. V2 additionally signs the originating
+/// client's canonical SHA-256 commitment to the exact encrypted work-item envelope. A worker that
+/// requires V2 can therefore detect substitution by a writable shared transport before decryption or
+/// execution. V1 remains verifiable only for bounded legacy recovery/cancellation compatibility.
 /// </summary>
 public static class ResearchDispatchBindingProtector
 {
     public const string ProtocolVersion = "nvidea.research.dispatch-binding.v1";
+    public const string EnvelopeBoundProtocolVersion = "nvidea.research.dispatch-binding.v2";
     public static readonly TimeSpan MaxLifetime = TimeSpan.FromHours(24);
 
     public static ProtectedResearchDispatchBinding Sign(
@@ -44,28 +46,35 @@ public static class ResearchDispatchBindingProtector
         string remoteJobId,
         DateTimeOffset publishedAt,
         DateTimeOffset expiresAt,
-        string clientPrivateKeyPem)
-    {
-        ValidateOpaqueId(opaqueWorkItemId);
-        ValidateRemoteJobId(remoteJobId);
-        ValidateLifetime(publishedAt, expiresAt);
-        if (string.IsNullOrWhiteSpace(clientPrivateKeyPem))
-            throw new ArgumentException("Client private key is required.", nameof(clientPrivateKeyPem));
-
-        var remoteJobName = GetDeterministicRemoteJobName(opaqueWorkItemId);
-        var payload = BuildSignedPayload(opaqueWorkItemId, remoteJobId, remoteJobName, publishedAt, expiresAt);
-
-        using var rsa = RSA.Create();
-        rsa.ImportFromPem(clientPrivateKeyPem);
-        var signature = rsa.SignData(payload, HashAlgorithmName.SHA256, RSASignaturePadding.Pss);
-        return new ProtectedResearchDispatchBinding(
+        string clientPrivateKeyPem) =>
+        SignCore(
             ProtocolVersion,
             opaqueWorkItemId,
             remoteJobId,
-            remoteJobName,
+            workItemEnvelopeSha256: null,
             publishedAt,
             expiresAt,
-            Convert.ToBase64String(signature));
+            clientPrivateKeyPem);
+
+    public static ProtectedResearchDispatchBinding SignEnvelopeBound(
+        string opaqueWorkItemId,
+        string remoteJobId,
+        string workItemEnvelopeSha256,
+        DateTimeOffset publishedAt,
+        DateTimeOffset expiresAt,
+        string clientPrivateKeyPem)
+    {
+        ResearchWorkItemEnvelopeCommitment.ValidateCanonicalSha256(
+            workItemEnvelopeSha256,
+            nameof(workItemEnvelopeSha256));
+        return SignCore(
+            EnvelopeBoundProtocolVersion,
+            opaqueWorkItemId,
+            remoteJobId,
+            workItemEnvelopeSha256,
+            publishedAt,
+            expiresAt,
+            clientPrivateKeyPem);
     }
 
     public static ProtectedResearchDispatchBinding Verify(
@@ -76,8 +85,27 @@ public static class ResearchDispatchBindingProtector
     {
         ArgumentNullException.ThrowIfNull(binding);
         ValidateOpaqueId(expectedOpaqueWorkItemId);
-        if (!string.Equals(binding.ProtocolVersion, ProtocolVersion, StringComparison.Ordinal))
+        if (!string.Equals(binding.ProtocolVersion, ProtocolVersion, StringComparison.Ordinal)
+            && !string.Equals(binding.ProtocolVersion, EnvelopeBoundProtocolVersion, StringComparison.Ordinal))
+        {
             throw new InvalidOperationException("Unsupported remote research dispatch-binding protocol version.");
+        }
+
+        var isEnvelopeBound = string.Equals(
+            binding.ProtocolVersion,
+            EnvelopeBoundProtocolVersion,
+            StringComparison.Ordinal);
+        if (isEnvelopeBound)
+        {
+            ResearchWorkItemEnvelopeCommitment.ValidateCanonicalSha256(
+                binding.WorkItemEnvelopeSha256 ?? string.Empty,
+                nameof(binding.WorkItemEnvelopeSha256));
+        }
+        else if (!string.IsNullOrEmpty(binding.WorkItemEnvelopeSha256))
+        {
+            throw new CryptographicException("Legacy dispatch binding unexpectedly contains an envelope commitment.");
+        }
+
         if (!string.Equals(binding.OpaqueWorkItemId, expectedOpaqueWorkItemId, StringComparison.Ordinal))
             throw new CryptographicException("Remote research dispatch binding does not match the requested opaque work-item id.");
         ValidateOpaqueId(binding.OpaqueWorkItemId);
@@ -100,7 +128,14 @@ public static class ResearchDispatchBindingProtector
             throw new InvalidOperationException("Remote research dispatch binding signature is malformed.", ex);
         }
 
-        var payload = BuildSignedPayload(binding.OpaqueWorkItemId, binding.RemoteJobId, binding.RemoteJobName, binding.PublishedAt, binding.ExpiresAt);
+        var payload = BuildSignedPayload(
+            binding.ProtocolVersion,
+            binding.OpaqueWorkItemId,
+            binding.RemoteJobId,
+            binding.RemoteJobName,
+            binding.WorkItemEnvelopeSha256,
+            binding.PublishedAt,
+            binding.ExpiresAt);
         using var rsa = RSA.Create();
         rsa.ImportFromPem(clientPublicKeyPem);
         if (!rsa.VerifyData(payload, signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pss))
@@ -109,26 +144,105 @@ public static class ResearchDispatchBindingProtector
         return binding;
     }
 
+    public static ProtectedResearchDispatchBinding VerifyEnvelopeBound(
+        ProtectedResearchDispatchBinding binding,
+        ProtectedResearchWorkItemEnvelope envelope,
+        string clientPublicKeyPem,
+        DateTimeOffset? now = null)
+    {
+        ArgumentNullException.ThrowIfNull(envelope);
+        if (!string.Equals(binding.ProtocolVersion, EnvelopeBoundProtocolVersion, StringComparison.Ordinal))
+            throw new CryptographicException("Remote research worker requires an envelope-bound dispatch binding.");
+
+        var verified = Verify(binding, envelope.OpaqueWorkItemId, clientPublicKeyPem, now);
+        var actualCommitment = ResearchWorkItemEnvelopeCommitment.ComputeSha256(envelope);
+        if (!ResearchWorkItemEnvelopeCommitment.FixedTimeEquals(
+                verified.WorkItemEnvelopeSha256!,
+                actualCommitment))
+        {
+            throw new CryptographicException(
+                "Protected remote research work-item envelope does not match the client-signed dispatch commitment.");
+        }
+
+        return verified;
+    }
+
     public static string GetDeterministicRemoteJobName(string opaqueWorkItemId)
     {
         ValidateOpaqueId(opaqueWorkItemId);
         return $"nvidea-research-{opaqueWorkItemId[..12].ToLowerInvariant()}";
     }
 
-    private static byte[] BuildSignedPayload(
+    private static ProtectedResearchDispatchBinding SignCore(
+        string protocolVersion,
         string opaqueWorkItemId,
         string remoteJobId,
-        string remoteJobName,
+        string? workItemEnvelopeSha256,
         DateTimeOffset publishedAt,
-        DateTimeOffset expiresAt) =>
-        Encoding.UTF8.GetBytes(string.Join(
-            '\n',
-            ProtocolVersion,
+        DateTimeOffset expiresAt,
+        string clientPrivateKeyPem)
+    {
+        ValidateOpaqueId(opaqueWorkItemId);
+        ValidateRemoteJobId(remoteJobId);
+        ValidateLifetime(publishedAt, expiresAt);
+        if (string.IsNullOrWhiteSpace(clientPrivateKeyPem))
+            throw new ArgumentException("Client private key is required.", nameof(clientPrivateKeyPem));
+
+        var remoteJobName = GetDeterministicRemoteJobName(opaqueWorkItemId);
+        var payload = BuildSignedPayload(
+            protocolVersion,
             opaqueWorkItemId,
             remoteJobId,
             remoteJobName,
-            publishedAt.ToUniversalTime().ToString("O"),
-            expiresAt.ToUniversalTime().ToString("O")));
+            workItemEnvelopeSha256,
+            publishedAt,
+            expiresAt);
+
+        using var rsa = RSA.Create();
+        rsa.ImportFromPem(clientPrivateKeyPem);
+        var signature = rsa.SignData(payload, HashAlgorithmName.SHA256, RSASignaturePadding.Pss);
+        return new ProtectedResearchDispatchBinding(
+            protocolVersion,
+            opaqueWorkItemId,
+            remoteJobId,
+            remoteJobName,
+            publishedAt,
+            expiresAt,
+            Convert.ToBase64String(signature),
+            workItemEnvelopeSha256);
+    }
+
+    private static byte[] BuildSignedPayload(
+        string protocolVersion,
+        string opaqueWorkItemId,
+        string remoteJobId,
+        string remoteJobName,
+        string? workItemEnvelopeSha256,
+        DateTimeOffset publishedAt,
+        DateTimeOffset expiresAt)
+    {
+        var fields = string.Equals(protocolVersion, EnvelopeBoundProtocolVersion, StringComparison.Ordinal)
+            ? new[]
+            {
+                protocolVersion,
+                opaqueWorkItemId,
+                remoteJobId,
+                remoteJobName,
+                workItemEnvelopeSha256!,
+                publishedAt.ToUniversalTime().ToString("O"),
+                expiresAt.ToUniversalTime().ToString("O")
+            }
+            : new[]
+            {
+                protocolVersion,
+                opaqueWorkItemId,
+                remoteJobId,
+                remoteJobName,
+                publishedAt.ToUniversalTime().ToString("O"),
+                expiresAt.ToUniversalTime().ToString("O")
+            };
+        return Encoding.UTF8.GetBytes(string.Join('\n', fields));
+    }
 
     private static void ValidateLifetime(DateTimeOffset publishedAt, DateTimeOffset expiresAt)
     {
@@ -156,8 +270,8 @@ public static class ResearchDispatchBindingProtector
 
 /// <summary>
 /// Client-side publication boundary. Re-publication is idempotent only when the existing binding is
-/// validly signed by this client and points to the same authoritative resource id. A conflicting
-/// create-once object fails closed rather than being overwritten.
+/// validly signed by this client and points to the same authoritative resource id. New production
+/// dispatches use the envelope-bound overload; the V1 overload remains for bounded legacy recovery.
 /// </summary>
 public sealed class ResearchDispatchBindingPublisher
 {
@@ -179,12 +293,50 @@ public sealed class ResearchDispatchBindingPublisher
         _clientPublicKeyPem = rsa.ExportSubjectPublicKeyInfoPem();
     }
 
-    public async Task<ProtectedResearchDispatchBinding> PublishAsync(
+    public Task<ProtectedResearchDispatchBinding> PublishAsync(
         string opaqueWorkItemId,
         string remoteJobId,
         DateTimeOffset expiresAt,
         DateTimeOffset? now = null,
+        CancellationToken cancellationToken = default) =>
+        PublishCoreAsync(
+            opaqueWorkItemId,
+            remoteJobId,
+            expiresAt,
+            workItemEnvelopeSha256: null,
+            requireEnvelopeBound: false,
+            now,
+            cancellationToken);
+
+    public Task<ProtectedResearchDispatchBinding> PublishEnvelopeBoundAsync(
+        string opaqueWorkItemId,
+        string remoteJobId,
+        string workItemEnvelopeSha256,
+        DateTimeOffset expiresAt,
+        DateTimeOffset? now = null,
         CancellationToken cancellationToken = default)
+    {
+        ResearchWorkItemEnvelopeCommitment.ValidateCanonicalSha256(
+            workItemEnvelopeSha256,
+            nameof(workItemEnvelopeSha256));
+        return PublishCoreAsync(
+            opaqueWorkItemId,
+            remoteJobId,
+            expiresAt,
+            workItemEnvelopeSha256,
+            requireEnvelopeBound: true,
+            now,
+            cancellationToken);
+    }
+
+    private async Task<ProtectedResearchDispatchBinding> PublishCoreAsync(
+        string opaqueWorkItemId,
+        string remoteJobId,
+        DateTimeOffset expiresAt,
+        string? workItemEnvelopeSha256,
+        bool requireEnvelopeBound,
+        DateTimeOffset? now,
+        CancellationToken cancellationToken)
     {
         var current = now ?? DateTimeOffset.UtcNow;
         if (expiresAt <= current)
@@ -192,17 +344,25 @@ public sealed class ResearchDispatchBindingPublisher
 
         var existing = await _transport.GetAsync(opaqueWorkItemId, cancellationToken).ConfigureAwait(false);
         if (existing is not null)
-            return VerifyIdempotent(existing, opaqueWorkItemId, remoteJobId, current);
+            return VerifyIdempotent(existing, opaqueWorkItemId, remoteJobId, workItemEnvelopeSha256, requireEnvelopeBound, current);
 
         var boundedExpiry = expiresAt - current > ResearchDispatchBindingProtector.MaxLifetime
             ? current.Add(ResearchDispatchBindingProtector.MaxLifetime)
             : expiresAt;
-        var binding = ResearchDispatchBindingProtector.Sign(
-            opaqueWorkItemId,
-            remoteJobId,
-            current,
-            boundedExpiry,
-            _clientPrivateKeyPem);
+        var binding = requireEnvelopeBound
+            ? ResearchDispatchBindingProtector.SignEnvelopeBound(
+                opaqueWorkItemId,
+                remoteJobId,
+                workItemEnvelopeSha256!,
+                current,
+                boundedExpiry,
+                _clientPrivateKeyPem)
+            : ResearchDispatchBindingProtector.Sign(
+                opaqueWorkItemId,
+                remoteJobId,
+                current,
+                boundedExpiry,
+                _clientPrivateKeyPem);
 
         try
         {
@@ -211,12 +371,10 @@ public sealed class ResearchDispatchBindingPublisher
         }
         catch (InvalidOperationException)
         {
-            // Another local owner/recovery path may have won the create-once race. Accept that race
-            // only if the published object authenticates and names the same authoritative resource.
             var raced = await _transport.GetAsync(opaqueWorkItemId, cancellationToken).ConfigureAwait(false);
             if (raced is null)
                 throw;
-            return VerifyIdempotent(raced, opaqueWorkItemId, remoteJobId, current);
+            return VerifyIdempotent(raced, opaqueWorkItemId, remoteJobId, workItemEnvelopeSha256, requireEnvelopeBound, current);
         }
     }
 
@@ -224,22 +382,30 @@ public sealed class ResearchDispatchBindingPublisher
         ProtectedResearchDispatchBinding binding,
         string opaqueWorkItemId,
         string remoteJobId,
+        string? expectedCommitment,
+        bool requireEnvelopeBound,
         DateTimeOffset now)
     {
         var verified = ResearchDispatchBindingProtector.Verify(binding, opaqueWorkItemId, _clientPublicKeyPem, now);
         if (!string.Equals(verified.RemoteJobId, remoteJobId, StringComparison.Ordinal))
             throw new CryptographicException("Existing remote research dispatch binding targets a different Nebius resource id.");
+        if (requireEnvelopeBound)
+        {
+            if (!string.Equals(verified.ProtocolVersion, ResearchDispatchBindingProtector.EnvelopeBoundProtocolVersion, StringComparison.Ordinal)
+                || verified.WorkItemEnvelopeSha256 is null
+                || !ResearchWorkItemEnvelopeCommitment.FixedTimeEquals(verified.WorkItemEnvelopeSha256, expectedCommitment!))
+            {
+                throw new CryptographicException("Existing remote research dispatch binding targets a different protected work-item envelope.");
+            }
+        }
         return verified;
     }
 }
 
 /// <summary>
 /// Worker-side delayed-publication boundary. Missing bindings and mounted-volume I/O faults are
-/// retried with bounded exponential backoff, but the worker never waits past either its configured
-/// budget or the protected work-item lifetime supplied by the caller. Only I/O failures at the
-/// transport-read boundary are considered transient; malformed or cryptographically invalid
-/// binding content is never retried. A transport-visible work-item expiry is used only as a stricter
-/// upper bound; it never extends the configured wait budget or authenticates the work item.
+/// retried with bounded exponential backoff. The envelope-bound overload additionally verifies the
+/// exact staged encrypted envelope against the client-signed SHA-256 commitment before returning.
 /// </summary>
 public sealed class ResearchDispatchBindingWaiter
 {
@@ -271,17 +437,29 @@ public sealed class ResearchDispatchBindingWaiter
     public Task<ProtectedResearchDispatchBinding> WaitAsync(
         string opaqueWorkItemId,
         CancellationToken cancellationToken = default) =>
-        WaitCoreAsync(opaqueWorkItemId, workItemExpiresAt: null, cancellationToken);
+        WaitCoreAsync(opaqueWorkItemId, workItemExpiresAt: null, envelope: null, cancellationToken);
 
     public Task<ProtectedResearchDispatchBinding> WaitAsync(
         string opaqueWorkItemId,
         DateTimeOffset workItemExpiresAt,
         CancellationToken cancellationToken = default) =>
-        WaitCoreAsync(opaqueWorkItemId, workItemExpiresAt, cancellationToken);
+        WaitCoreAsync(opaqueWorkItemId, workItemExpiresAt, envelope: null, cancellationToken);
+
+    public Task<ProtectedResearchDispatchBinding> WaitAsync(
+        string opaqueWorkItemId,
+        ProtectedResearchWorkItemEnvelope envelope,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(envelope);
+        if (!string.Equals(opaqueWorkItemId, envelope.OpaqueWorkItemId, StringComparison.Ordinal))
+            throw new CryptographicException("Staged protected work item does not match the requested opaque id.");
+        return WaitCoreAsync(opaqueWorkItemId, envelope.ExpiresAt, envelope, cancellationToken);
+    }
 
     private async Task<ProtectedResearchDispatchBinding> WaitCoreAsync(
         string opaqueWorkItemId,
         DateTimeOffset? workItemExpiresAt,
+        ProtectedResearchWorkItemEnvelope? envelope,
         CancellationToken cancellationToken)
     {
         var startedAt = DateTimeOffset.UtcNow;
@@ -296,9 +474,7 @@ public sealed class ResearchDispatchBindingWaiter
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-
-            var beforeRead = DateTimeOffset.UtcNow;
-            if (beforeRead >= deadline)
+            if (DateTimeOffset.UtcNow >= deadline)
                 throw CreateTimeout(workItemExpiresAt, deadline);
 
             ProtectedResearchDispatchBinding? binding;
@@ -308,15 +484,9 @@ public sealed class ResearchDispatchBindingWaiter
             }
             catch (IOException)
             {
-                // A mounted Object Storage/volume read can fail transiently while the mount is
-                // reconnecting or propagating. Preserve cancellation precedence and retry only this
-                // narrow transport I/O class under the same absolute deadline/backoff. Deserialization,
-                // protocol, signature and identity failures occur outside this catch and fail closed.
                 cancellationToken.ThrowIfCancellationRequested();
-                var failedAt = DateTimeOffset.UtcNow;
-                if (failedAt >= deadline)
+                if (DateTimeOffset.UtcNow >= deadline)
                     throw CreateTimeout(workItemExpiresAt, deadline);
-
                 retryDelay = await DelayBeforeRetryAsync(retryDelay, deadline, cancellationToken).ConfigureAwait(false);
                 continue;
             }
@@ -327,18 +497,12 @@ public sealed class ResearchDispatchBindingWaiter
 
             if (binding is not null)
             {
-                var verified = ResearchDispatchBindingProtector.Verify(
-                    binding,
-                    opaqueWorkItemId,
-                    _clientPublicKeyPem,
-                    observedAt);
+                var verified = envelope is null
+                    ? ResearchDispatchBindingProtector.Verify(binding, opaqueWorkItemId, _clientPublicKeyPem, observedAt)
+                    : ResearchDispatchBindingProtector.VerifyEnvelopeBound(binding, envelope, _clientPublicKeyPem, observedAt);
 
                 if (workItemExpiresAt is { } itemExpiry && verified.ExpiresAt > itemExpiry)
-                {
-                    throw new CryptographicException(
-                        "Authoritative Nebius dispatch binding outlives the protected research work item.");
-                }
-
+                    throw new CryptographicException("Authoritative Nebius dispatch binding outlives the protected research work item.");
                 return verified;
             }
 

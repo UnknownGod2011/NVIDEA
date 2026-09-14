@@ -127,7 +127,7 @@ public sealed class TwoPhaseNebiusResearchDispatcherTests
     }
 
     [Fact]
-    public async Task RestartRecovery_SettlesAtomicAuditAndResumesWithoutReadingOrRewritingSharedWorkItem()
+    public async Task RestartRecovery_SettlesAtomicAuditBeforeCreateAndNeverReadsOrRewritesSharedWorkItem()
     {
         var root = CreateTempDirectory();
         try
@@ -146,14 +146,14 @@ public sealed class TwoPhaseNebiusResearchDispatcherTests
                 clientRsa.ExportPkcs8PrivateKeyPem(),
                 audit,
                 transport);
-            var atomic = new AtomicRemoteResearchDispatchReservation(store, audit);
+            var firstAtomic = new AtomicRemoteResearchDispatchReservation(store, audit);
             var firstServerless = new InspectingServerlessClient(_ =>
                 Task.FromResult(new NebiusServerlessResponse(HttpStatusCode.OK, "{\"resourceId\":\"must-not-run\"}")));
             var firstDispatcher = new TwoPhaseNebiusResearchDispatcher(
                 firstServerless,
                 transport,
                 CreateOptions(workerRsa),
-                atomicReservation: atomic);
+                atomicReservation: firstAtomic);
 
             await Assert.ThrowsAsync<RemoteResearchDispatchReservationAuditPendingException>(() =>
                 firstDispatcher.DispatchWithReservationAsync(
@@ -163,39 +163,39 @@ public sealed class TwoPhaseNebiusResearchDispatcherTests
 
             var stranded = await store.GetAsync(job.JobId);
             Assert.NotNull(stranded);
-            var originalCommitment = stranded!.RemoteWorkItemEnvelopeSha256;
+            var originalCommitment = stranded!.RemoteWorkItemEnvelopeSha256!;
             var opaqueWorkItemId = stranded.RemoteResearch!.OpaqueWorkItemId;
-            Assert.NotNull(originalCommitment);
             Assert.True(transport.Contains(opaqueWorkItemId));
+            Assert.Equal("research.remote_dispatch_reserved", stranded.PendingAuditEvent!.EventType);
             Assert.Equal(0, firstServerless.CreateCalls);
 
-            // Simulate a restarted client that cannot safely read mutable shared work-item bytes.
-            // Recovery must use only protected local provenance + the exact durable audit intent.
+            // Simulate a restarted client whose shared transport is deliberately unreadable.
+            // The atomic coordinator must settle the exact durable audit before provider creation.
             transport.ThrowOnGet = true;
             audit.FailAppend = false;
-            var recovery = new RemoteResearchDispatchReservationRecovery(store, audit);
-            var recovered = await recovery.RecoverAuditAsync(job.JobId);
-
-            Assert.Null(recovered.PendingAuditEvent);
-            Assert.Equal(originalCommitment, recovered.RemoteWorkItemEnvelopeSha256);
-            Assert.Equal(RemoteResearchProvenanceState.DispatchReserved, recovered.RemoteResearch!.State);
-            Assert.Equal(1, transport.PutCalls);
-            Assert.Equal(0, transport.GetCalls);
-
             var restartedIngestor = new RemoteResearchResultIngestor(
                 store,
                 new EmptyResultTransport(),
                 clientRsa.ExportPkcs8PrivateKeyPem(),
                 audit,
                 transport);
-            var restartedServerless = new InspectingServerlessClient(_ =>
-                Task.FromResult(new NebiusServerlessResponse(HttpStatusCode.OK, "{\"resourceId\":\"remote-after-restart\"}")));
+            var restartedAtomic = new AtomicRemoteResearchDispatchReservation(store, audit);
+            var restartedServerless = new InspectingServerlessClient(async _ =>
+            {
+                var atCreate = await store.GetAsync(job.JobId);
+                Assert.NotNull(atCreate);
+                Assert.Null(atCreate!.PendingAuditEvent);
+                Assert.Equal(originalCommitment, atCreate.RemoteWorkItemEnvelopeSha256);
+                Assert.Equal(RemoteResearchProvenanceState.DispatchReserved, atCreate.RemoteResearch!.State);
+                return new NebiusServerlessResponse(HttpStatusCode.OK, "{\"resourceId\":\"remote-after-restart\"}");
+            });
             var restartedDispatcher = new TwoPhaseNebiusResearchDispatcher(
                 restartedServerless,
                 transport,
-                CreateOptions(workerRsa));
+                CreateOptions(workerRsa),
+                atomicReservation: restartedAtomic);
 
-            var dispatched = await restartedDispatcher.ResumeReservedAsync(recovered, restartedIngestor);
+            var dispatched = await restartedDispatcher.ResumeReservedAsync(job.JobId, restartedIngestor);
 
             Assert.Equal(1, restartedServerless.CreateCalls);
             Assert.Equal(1, transport.PutCalls);

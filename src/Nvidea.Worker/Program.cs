@@ -39,15 +39,20 @@ internal static class Program
             var clientVerificationPublicKey = runtime.BootstrapTrust.ClientVerificationPublicKeyPem;
             var clientResultEncryptionPublicKey = runtime.BootstrapTrust.ClientResultEncryptionPublicKeyPem;
 
-            // The work-item envelope expiry is transport-visible metadata until the worker later
-            // authenticates/decrypts the envelope. Use it only to shorten binding wait lifetime;
-            // it must never extend the configured wait budget or establish payload trust.
+            // Mounted Object Storage can expose a short propagation/reconnect window before the
+            // encrypted work item is readable. Retry only absence and transport I/O under a bounded,
+            // cancellation-aware bootstrap budget; malformed or substituted envelopes fail closed.
             var workItemTransport = (IProtectedResearchWorkItemTransport)transport;
-            var stagedWorkItem = await workItemTransport
-                .GetAsync(options.OpaqueWorkItemId, cancellationToken)
-                .ConfigureAwait(false)
-                ?? throw new InvalidOperationException("Protected remote research work item is unavailable.");
+            var workItemLoader = new WorkerProtectedResearchWorkItemLoader(
+                workItemTransport,
+                pollInterval: runtime.WorkItemPollInterval,
+                maxWait: runtime.WorkItemMaxWait);
+            var stagedWorkItem = await workItemLoader
+                .LoadAsync(options.OpaqueWorkItemId, cancellationToken)
+                .ConfigureAwait(false);
 
+            // The staged envelope expiry is transport-visible until authenticated/decrypted later.
+            // It can only shorten the signed binding wait; it never extends configured authority.
             var bindingWaiter = new ResearchDispatchBindingWaiter(
                 transport,
                 clientVerificationPublicKey,

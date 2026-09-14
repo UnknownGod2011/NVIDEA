@@ -56,11 +56,11 @@ public sealed class ResearchDispatchBindingCleanup
 }
 
 /// <summary>
-/// Client-only composition boundary for Nebius remote research. New dispatches persist the exact
-/// protected-envelope commitment before Serverless Create and publish V2 signed bindings from that
-/// durable trust root. Crash recovery likewise signs only the protected durable digest; it never
-/// re-hashes mutable shared transport state. Client private keys never cross this boundary into
-/// Serverless job configuration.
+/// Client-only composition boundary for Nebius remote research. New dispatches atomically persist
+/// reservation provenance, the exact protected-envelope commitment and the reservation audit intent
+/// before Serverless Create, then publish V2 signed bindings from that durable trust root. Crash
+/// recovery likewise signs only the protected durable digest; it never re-hashes mutable shared
+/// transport state. Client private keys never cross this boundary into Serverless job configuration.
 ///
 /// The optional result-envelope private key preserves compatibility for lower-level fixtures. Live
 /// production composition always supplies a distinct key so RSA-PSS dispatch signing and OAEP-SHA256
@@ -119,13 +119,15 @@ public sealed class NebiusResearchClientRuntime : IRemoteResearchClientRuntime
 
         var publisher = new ResearchDispatchBindingPublisher(bindings, clientPrivateKeyPem);
         var envelopeCommitment = new DurableResearchEnvelopeCommitment(store);
+        var atomicReservation = new AtomicRemoteResearchDispatchReservation(store, auditTrail);
         var ingestor = new RemoteResearchResultIngestor(store, results, resultPrivateKeyPem, auditTrail, workItems);
         var dispatcher = new TwoPhaseNebiusResearchDispatcher(
             serverless,
             workItems,
             options,
-            publisher,
-            envelopeCommitment);
+            bindingPublisher: publisher,
+            envelopeCommitment: envelopeCommitment,
+            atomicReservation: atomicReservation);
 
         // Binding publication is centralized in the V2-aware dispatcher/recovery layer. The
         // reconciler deliberately receives no legacy publisher so it cannot create an unbound V1
@@ -164,8 +166,6 @@ public sealed class NebiusResearchClientRuntime : IRemoteResearchClientRuntime
         if (recovered is not null)
             return recovered;
 
-        // A crash can happen after the durable remote id/audit commit but before the signed worker
-        // binding is published. Repair that gap from the original durable digest before provider IO.
         await _bindingRecovery.EnsureAsync(jobId, cancellationToken).ConfigureAwait(false);
 
         var result = await Reconciler.ReconcileDispatchedAsync(jobId, now, cancellationToken).ConfigureAwait(false);

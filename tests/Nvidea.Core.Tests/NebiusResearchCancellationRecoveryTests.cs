@@ -79,6 +79,65 @@ public sealed class NebiusResearchCancellationRecoveryTests
     }
 
     [Fact]
+    public async Task ReconcileCancellationAsync_FinalizesVerifiedProviderFailureInsteadOfClaimingCancellation()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            using var rsa = RSA.Create(2048);
+            var store = new JsonAgentJobStore(Path.Combine(root, "jobs.json"), new PassThroughProtector());
+            var audit = new MemoryAuditTrail();
+            var ingestor = new RemoteResearchResultIngestor(
+                store,
+                new NullResultTransport(),
+                rsa.ExportPkcs8PrivateKeyPem(),
+                audit);
+            var now = DateTimeOffset.UtcNow;
+            var original = CreatePendingJob(now);
+            await store.SaveAsync(original);
+
+            const string opaqueId = "mY7FhPlAdtPz9xL4b8gU1cKqN3sW6vRt";
+            await ingestor.ReserveDispatchAsync(new RemoteResearchDispatchReservation(
+                original.JobId,
+                original.Checkpoint!.Step,
+                opaqueId,
+                now,
+                now.AddMinutes(20)));
+            await ingestor.AttachDispatchAsync(new NebiusResearchDispatchReceipt(
+                original.JobId,
+                original.Checkpoint.Step,
+                opaqueId,
+                "job-123",
+                now));
+
+            var expectedName = NebiusResearchLifecycleReconciler.GetDeterministicRemoteJobName(opaqueId);
+            var client = new RecoverableServerlessClient
+            {
+                GetResponse = FailedResponse(expectedName)
+            };
+            var reconciler = new NebiusResearchLifecycleReconciler(store, client, ingestor, audit);
+
+            await reconciler.RequestCancellationAsync(original.JobId);
+            Assert.Equal(1, client.CancelCalls);
+
+            var failed = await reconciler.ReconcileCancellationAsync(original.JobId);
+
+            Assert.Equal(AgentJobState.Failed, failed.State);
+            Assert.Equal(JobExecutionLocation.Local, failed.ExecutionLocation);
+            Assert.Equal(RemoteResearchProvenanceState.RemoteFailed, failed.RemoteResearch!.State);
+            Assert.NotNull(failed.RemoteResearch.TerminalAt);
+            Assert.Equal("Nebius remote research stage failed.", failed.LastError);
+            Assert.Equal(1, client.CancelCalls);
+            Assert.Contains(audit.Events, e => e.EventType == "research.remote_failed_after_cancel_request");
+            Assert.DoesNotContain(audit.Events, e => e.EventType == "research.remote_cancelled");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task ReconcileCancellationAsync_RejectsMalformedRedriveAuditBeforeSecondControlPlaneCall()
     {
         var root = CreateTempDirectory();
@@ -151,6 +210,10 @@ public sealed class NebiusResearchCancellationRecoveryTests
     private static NebiusServerlessResponse CancelledResponse(string expectedName) =>
         new(HttpStatusCode.OK,
             $$"""{"metadata":{"id":"job-123","name":"{{expectedName}}"},"status":{"state":"CANCELLED"}}""");
+
+    private static NebiusServerlessResponse FailedResponse(string expectedName) =>
+        new(HttpStatusCode.OK,
+            $$"""{"metadata":{"id":"job-123","name":"{{expectedName}}"},"status":{"state":"FAILED"}}""");
 
     private static AgentJobRecord CreatePendingJob(DateTimeOffset now) => new(
         Guid.NewGuid(),

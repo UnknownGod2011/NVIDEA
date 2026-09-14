@@ -412,8 +412,20 @@ public sealed class NebiusResearchLifecycleReconciler
                     "Nebius completed the research stage before cancellation was confirmed; durable cancellation remains unresolved and requires explicit result reconciliation.");
 
             case NebiusRemoteJobState.Failed:
-                throw new InvalidOperationException(
-                    "Nebius failed the research stage before cancellation was confirmed; durable cancellation remains unresolved and requires explicit terminal reconciliation.");
+            {
+                var failureEvidence = BuildRemoteFailureEvidence(remote.Diagnostic);
+                return await FinalizeTerminalAsync(
+                    current,
+                    provenance,
+                    AgentJobState.Failed,
+                    RemoteResearchProvenanceState.RemoteFailed,
+                    failureEvidence.LastError,
+                    "research.remote_failed_after_cancel_request",
+                    $"Cancellation lost a race with a verified terminal Nebius failure. {failureEvidence.AuditSummary}",
+                    DateTimeOffset.UtcNow,
+                    cancellationToken,
+                    providerFailureCode: remote.Diagnostic?.Code).ConfigureAwait(false);
+            }
 
             default:
                 throw new InvalidOperationException("Nebius cancellation status is unknown; durable cancellation remains pending.");

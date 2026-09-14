@@ -3,9 +3,24 @@ using Nvidea.Core.Capabilities;
 namespace Nvidea.Core.Jobs;
 
 /// <summary>
-/// Recovers an atomic remote-research DispatchReserved trust root after a crash or audit-delivery
-/// failure. Recovery consumes only the protected durable job record and its exact pending audit;
-/// it never re-reads, re-uploads, or re-hashes the mutable shared work-item transport.
+/// Raised when a DispatchReserved stage has no pending reservation audit. In that state a crash may
+/// have happened before, during, or after the Nebius Create request, so creating another provider job
+/// is not safe; callers must fall back to conservative provider reconciliation instead.
+/// </summary>
+public sealed class RemoteResearchDispatchReservationRecoveryNotRequiredException : InvalidOperationException
+{
+    public RemoteResearchDispatchReservationRecoveryNotRequiredException()
+        : base("Remote dispatch reservation has no pending reservation audit; provider creation cannot be safely replayed and requires reconciliation.")
+    {
+    }
+}
+
+/// <summary>
+/// Recovers an atomic remote-research DispatchReserved trust root after a reservation-audit delivery
+/// failure. A still-pending reservation audit is the durable proof that Atomic ReserveAsync never
+/// returned to its caller and therefore Nebius Create was never reached. Recovery consumes only the
+/// protected durable job record and that exact pending audit; it never re-reads, re-uploads, or
+/// re-hashes the mutable shared work-item transport.
 /// </summary>
 public sealed class RemoteResearchDispatchReservationRecovery
 {
@@ -33,8 +48,10 @@ public sealed class RemoteResearchDispatchReservationRecovery
             ?? throw new KeyNotFoundException($"Research job '{jobId}' was not found.");
         var expectedCommitment = ValidateDurableReservation(current);
 
-        if (current.PendingAuditEvent is { } pending
-            && !string.Equals(pending.EventType, ReservationAuditEventType, StringComparison.Ordinal))
+        var pending = current.PendingAuditEvent;
+        if (pending is null)
+            throw new RemoteResearchDispatchReservationRecoveryNotRequiredException();
+        if (!string.Equals(pending.EventType, ReservationAuditEventType, StringComparison.Ordinal))
         {
             throw new InvalidDataException(
                 "Dispatch reservation recovery found a different pending audit event and will not settle it as provider-dispatch authority.");

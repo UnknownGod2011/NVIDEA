@@ -57,7 +57,7 @@ public static class BrowserPostconditionEvaluator
                 var actual = Normalize(observation.Url);
                 return expected == actual
                     ? (true, "Exact URL postcondition verified.")
-                    : (false, $"Expected URL {expected}; observed {actual}.");
+                    : (false, "Fresh browser URL did not match the expected navigation destination.");
 
             case BrowserPostconditionKind.TitleContains:
                 return Contains(postcondition.Expected, observation.Title, "title");

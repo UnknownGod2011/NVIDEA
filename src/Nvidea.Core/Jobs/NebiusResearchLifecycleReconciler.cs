@@ -353,18 +353,26 @@ public sealed class NebiusResearchLifecycleReconciler
             replacement,
             "research.remote_cancel_requested",
             "Nebius research cancellation was durably requested before contacting the control plane.");
+        var auditOutbox = new DurableJobAuditOutbox(_store, _auditTrail);
+        var staged = auditOutbox.Stage(replacement, cancellationAudit);
 
-        if (!await _store.CompareExchangeAsync(current, replacement, cancellationToken).ConfigureAwait(false))
+        if (!await _store.CompareExchangeAsync(current, staged, cancellationToken).ConfigureAwait(false))
             throw new InvalidOperationException("Research state changed while cancellation was being reserved.");
 
-        await AppendAuditAsync(cancellationAudit, cancellationToken).ConfigureAwait(false);
+        var settled = await auditOutbox.FlushAsync(staged, cancellationToken).ConfigureAwait(false);
         await _serverless.CancelAsync(provenance.RemoteJobId, cancellationToken).ConfigureAwait(false);
-        return replacement;
+        return settled;
     }
 
     public async Task<AgentJobRecord> ReconcileCancellationAsync(Guid jobId, CancellationToken cancellationToken = default)
     {
         var current = await GetRequiredResearchAsync(jobId, cancellationToken).ConfigureAwait(false);
+        if (current.PendingAuditEvent is not null)
+        {
+            var auditOutbox = new DurableJobAuditOutbox(_store, _auditTrail);
+            current = await auditOutbox.FlushAsync(current, cancellationToken).ConfigureAwait(false);
+        }
+
         var provenance = current.RemoteResearch
             ?? throw new InvalidOperationException("Research job has no remote execution provenance.");
         if (current.State != AgentJobState.Running

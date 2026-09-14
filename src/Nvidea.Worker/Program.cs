@@ -51,19 +51,24 @@ internal static class Program
                 .LoadAsync(options.OpaqueWorkItemId, cancellationToken)
                 .ConfigureAwait(false);
 
-            // The staged envelope expiry is transport-visible until authenticated/decrypted later.
-            // It can only shorten the signed binding wait; it never extends configured authority.
+            // The V2 signed binding commits to the exact staged encrypted envelope. This comparison
+            // occurs before payload decryption or provider/model execution, so a writable shared mount
+            // cannot substitute a different validly encrypted envelope for the same opaque id.
             var bindingWaiter = new ResearchDispatchBindingWaiter(
                 transport,
                 clientVerificationPublicKey,
                 pollInterval: runtime.BindingPollInterval,
                 maxWait: runtime.BindingMaxWait);
             var binding = await bindingWaiter
-                .WaitAsync(options.OpaqueWorkItemId, stagedWorkItem.ExpiresAt, cancellationToken)
+                .WaitAsync(options.OpaqueWorkItemId, stagedWorkItem, cancellationToken)
                 .ConfigureAwait(false);
 
+            // Pin the already-verified envelope in memory for the execution primitive. The legacy
+            // worker API performs a work-item transport read internally; feeding it this one-object
+            // transport removes the verify-then-re-read TOCTOU against the writable shared mount.
+            var pinnedWorkItem = new PinnedResearchWorkItemTransport(stagedWorkItem);
             var worker = new NebiusResearchWorker(
-                transport,
+                pinnedWorkItem,
                 transport,
                 handler,
                 runtime.WorkerPrivateKeyPem,
@@ -93,11 +98,6 @@ internal static class Program
         }
     }
 
-    /// <summary>
-    /// Provider requests can contain bearer credentials, Tavily API keys, prompts and research
-    /// evidence. Automatic redirects are disabled so those values cannot be replayed to a different
-    /// origin if a provider or intermediary returns a redirect.
-    /// </summary>
     internal static HttpClient CreateProviderHttpClient()
     {
         return new HttpClient(new HttpClientHandler
@@ -106,13 +106,6 @@ internal static class Program
         }, disposeHandler: true);
     }
 
-    /// <summary>
-    /// Container/serverless hosts conventionally terminate Linux workers with SIGTERM. Intercept it
-    /// explicitly, cancel all binding/provider work through the same process token, and allow a
-    /// short grace period for cooperative cleanup. A second SIGTERM, or expiry of the grace period,
-    /// terminates the process so a dependency that ignores cancellation cannot strand the instance.
-    /// Windows relies on Console.CancelKeyPress here; the remote worker image is Linux-oriented.
-    /// </summary>
     private static IDisposable? RegisterSigTerm(CancellationTokenSource shutdown)
     {
         ArgumentNullException.ThrowIfNull(shutdown);
@@ -123,8 +116,6 @@ internal static class Program
         var requested = 0;
         var registration = PosixSignalRegistration.Create(PosixSignal.SIGTERM, context =>
         {
-            // Suppress immediate OS termination only while cooperative cancellation gets its bounded
-            // chance to finish. Repeated SIGTERM is treated as an operator request for immediate exit.
             context.Cancel = true;
             if (Interlocked.Exchange(ref requested, 1) != 0)
             {
@@ -148,7 +139,6 @@ internal static class Program
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            // Normal process completion disposes the registration and cancels the watchdog.
         }
     }
 
@@ -173,6 +163,39 @@ internal static class Program
             _registration.Dispose();
             _watchdogCancellation.Dispose();
         }
+    }
+
+    /// <summary>
+    /// Single-object immutable worker transport used only after the shared-mount envelope has passed
+    /// the client-signed V2 commitment check. It intentionally provides no mutation surface.
+    /// </summary>
+    private sealed class PinnedResearchWorkItemTransport : IProtectedResearchWorkItemTransport
+    {
+        private readonly ProtectedResearchWorkItemEnvelope _envelope;
+
+        public PinnedResearchWorkItemTransport(ProtectedResearchWorkItemEnvelope envelope)
+        {
+            _envelope = envelope ?? throw new ArgumentNullException(nameof(envelope));
+        }
+
+        public Task PutAsync(
+            ProtectedResearchWorkItemEnvelope envelope,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException("Pinned worker transport is read-only.");
+
+        public Task<ProtectedResearchWorkItemEnvelope?> GetAsync(
+            string opaqueWorkItemId,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult<ProtectedResearchWorkItemEnvelope?>(
+                string.Equals(opaqueWorkItemId, _envelope.OpaqueWorkItemId, StringComparison.Ordinal)
+                    ? _envelope
+                    : null);
+        }
+
+        public Task DeleteAsync(string opaqueWorkItemId, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException("Pinned worker transport is read-only.");
     }
 }
 

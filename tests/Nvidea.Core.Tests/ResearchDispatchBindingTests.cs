@@ -147,6 +147,104 @@ public sealed class ResearchDispatchBindingTests
     }
 
     [Fact]
+    public async Task Waiter_TransientMountedIo_RetriesAndRecoversUnderSameDeadline()
+    {
+        using var rsa = RSA.Create(2048);
+        var privatePem = rsa.ExportPkcs8PrivateKeyPem();
+        var publicPem = rsa.ExportSubjectPublicKeyInfoPem();
+        var now = DateTimeOffset.UtcNow;
+        var opaqueId = "abcdefghijklmnopqrstuvwx12345678";
+        var signed = ResearchDispatchBindingProtector.Sign(
+            opaqueId,
+            "job-authoritative-after-io",
+            now,
+            now.AddMinutes(5),
+            privatePem);
+        var transport = new SequencedBindingTransport(read => read < 3
+            ? throw new IOException("simulated transient mounted-volume read failure")
+            : signed);
+        var waiter = new ResearchDispatchBindingWaiter(
+            transport,
+            publicPem,
+            TimeSpan.FromMilliseconds(100),
+            TimeSpan.FromSeconds(2));
+
+        var resolved = await waiter.WaitAsync(opaqueId, now.AddMinutes(10));
+
+        Assert.Equal("job-authoritative-after-io", resolved.RemoteJobId);
+        Assert.Equal(3, transport.ReadCount);
+    }
+
+    [Fact]
+    public async Task Waiter_PersistentMountedIo_NeverRetriesPastWorkItemExpiry()
+    {
+        using var rsa = RSA.Create(2048);
+        var publicPem = rsa.ExportSubjectPublicKeyInfoPem();
+        var opaqueId = "abcdefghijklmnopqrstuvwx12345678";
+        var transport = new SequencedBindingTransport(_ =>
+            throw new IOException("simulated persistent mounted-volume read failure"));
+        var waiter = new ResearchDispatchBindingWaiter(
+            transport,
+            publicPem,
+            TimeSpan.FromMilliseconds(100),
+            TimeSpan.FromSeconds(5));
+
+        var error = await Assert.ThrowsAsync<TimeoutException>(() =>
+            waiter.WaitAsync(opaqueId, DateTimeOffset.UtcNow.AddMilliseconds(250)));
+
+        Assert.Contains("work-item expiry", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.InRange(transport.ReadCount, 1, 3);
+    }
+
+    [Fact]
+    public async Task Waiter_PermanentTransportValidationFailure_FailsImmediatelyWithoutRetry()
+    {
+        using var rsa = RSA.Create(2048);
+        var publicPem = rsa.ExportSubjectPublicKeyInfoPem();
+        var opaqueId = "abcdefghijklmnopqrstuvwx12345678";
+        var transport = new SequencedBindingTransport(_ =>
+            throw new InvalidOperationException("simulated malformed transport envelope"));
+        var waiter = new ResearchDispatchBindingWaiter(
+            transport,
+            publicPem,
+            TimeSpan.FromMilliseconds(100),
+            TimeSpan.FromSeconds(2));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            waiter.WaitAsync(opaqueId, DateTimeOffset.UtcNow.AddMinutes(5)));
+
+        Assert.Equal(1, transport.ReadCount);
+    }
+
+    [Fact]
+    public async Task Waiter_CryptographicallyInvalidBinding_FailsImmediatelyWithoutRetry()
+    {
+        using var rsa = RSA.Create(2048);
+        var privatePem = rsa.ExportPkcs8PrivateKeyPem();
+        var publicPem = rsa.ExportSubjectPublicKeyInfoPem();
+        var now = DateTimeOffset.UtcNow;
+        var opaqueId = "abcdefghijklmnopqrstuvwx12345678";
+        var signed = ResearchDispatchBindingProtector.Sign(
+            opaqueId,
+            "job-authoritative-1",
+            now,
+            now.AddMinutes(5),
+            privatePem);
+        var substituted = signed with { RemoteJobId = "job-substituted-after-signing" };
+        var transport = new SequencedBindingTransport(_ => substituted);
+        var waiter = new ResearchDispatchBindingWaiter(
+            transport,
+            publicPem,
+            TimeSpan.FromMilliseconds(100),
+            TimeSpan.FromSeconds(2));
+
+        await Assert.ThrowsAsync<CryptographicException>(() =>
+            waiter.WaitAsync(opaqueId, now.AddMinutes(10)));
+
+        Assert.Equal(1, transport.ReadCount);
+    }
+
+    [Fact]
     public async Task Waiter_WorkItemExpiryBoundsConfiguredWaitBudget()
     {
         using var rsa = RSA.Create(2048);
@@ -206,6 +304,30 @@ public sealed class ResearchDispatchBindingTests
         {
             cts.Cancel();
             return null;
+        });
+        var waiter = new ResearchDispatchBindingWaiter(
+            transport,
+            publicPem,
+            TimeSpan.FromSeconds(1),
+            TimeSpan.FromSeconds(2));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            waiter.WaitAsync(opaqueId, DateTimeOffset.UtcNow.AddMinutes(5), cts.Token));
+
+        Assert.Equal(1, transport.ReadCount);
+    }
+
+    [Fact]
+    public async Task Waiter_CancellationWinsOverTransientIoRetry()
+    {
+        using var rsa = RSA.Create(2048);
+        var publicPem = rsa.ExportSubjectPublicKeyInfoPem();
+        var opaqueId = "abcdefghijklmnopqrstuvwx12345678";
+        using var cts = new CancellationTokenSource();
+        var transport = new SequencedBindingTransport(_ =>
+        {
+            cts.Cancel();
+            throw new IOException("simulated mount failure racing shutdown");
         });
         var waiter = new ResearchDispatchBindingWaiter(
             transport,

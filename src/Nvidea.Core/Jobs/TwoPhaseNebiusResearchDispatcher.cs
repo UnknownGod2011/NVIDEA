@@ -75,33 +75,46 @@ public sealed class TwoPhaseNebiusResearchDispatcher
             throw new InvalidOperationException("Prepared remote research dispatch metadata is invalid.");
         }
 
-        try
-        {
-            var spec = BuildSpec(prepared.OpaqueWorkItemId);
-            var response = await _serverless.CreateAsync(spec, cancellationToken).ConfigureAwait(false);
-            var remoteJobId = response.TryGetResourceId();
-            if (string.IsNullOrWhiteSpace(remoteJobId))
-            {
-                throw new InvalidOperationException(
-                    "Nebius accepted the Serverless create request but did not expose a job resource id. " +
-                    "The durable DispatchReserved state and encrypted work item must be retained for reconciliation.");
-            }
+        return await CreateRemoteReceiptAsync(
+            prepared.LocalJobId,
+            prepared.CheckpointStep,
+            prepared.OpaqueWorkItemId,
+            cancellationToken).ConfigureAwait(false);
+    }
 
-            return new NebiusResearchDispatchReceipt(
-                prepared.LocalJobId,
-                prepared.CheckpointStep,
-                prepared.OpaqueWorkItemId,
-                remoteJobId,
-                DateTimeOffset.UtcNow);
-        }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("did not expose a job resource id", StringComparison.Ordinal))
-        {
-            throw;
-        }
-        catch
-        {
-            throw;
-        }
+    /// <summary>
+    /// Starts Nebius provider work directly from an audit-settled atomic DispatchReserved trust root.
+    /// This restart path intentionally does not read, write, or re-hash the shared work-item transport:
+    /// provider authority comes only from protected durable reservation provenance and its canonical
+    /// envelope commitment. The worker later proves the staged ciphertext matches that commitment.
+    /// </summary>
+    public async Task<NebiusResearchDispatchReceipt> StartReservedAsync(
+        AgentJobRecord reserved,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(reserved);
+        var provenance = ValidateProviderCreateAuthority(reserved);
+        return await CreateRemoteReceiptAsync(
+            reserved.JobId,
+            provenance.InputCheckpointStep,
+            provenance.OpaqueWorkItemId,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Completes provider creation, durable remote-id attachment, and signed-binding publication from
+    /// an already recovered atomic reservation. No preparation/upload step is repeated on restart.
+    /// </summary>
+    public async Task<AgentJobRecord> ResumeReservedAsync(
+        AgentJobRecord reserved,
+        RemoteResearchResultIngestor ingestor,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(ingestor);
+        var receipt = await StartReservedAsync(reserved, cancellationToken).ConfigureAwait(false);
+        var attached = await ingestor.AttachDispatchAsync(receipt, cancellationToken).ConfigureAwait(false);
+        await PublishBindingIfConfiguredAsync(attached, cancellationToken).ConfigureAwait(false);
+        return attached;
     }
 
     public async Task<AgentJobRecord> DispatchWithReservationAsync(
@@ -168,6 +181,71 @@ public sealed class TwoPhaseNebiusResearchDispatcher
 
     public string GetDeterministicRemoteJobName(string opaqueWorkItemId) =>
         ResearchDispatchBindingProtector.GetDeterministicRemoteJobName(opaqueWorkItemId);
+
+    private async Task<NebiusResearchDispatchReceipt> CreateRemoteReceiptAsync(
+        Guid localJobId,
+        string checkpointStep,
+        string opaqueWorkItemId,
+        CancellationToken cancellationToken)
+    {
+        var spec = BuildSpec(opaqueWorkItemId);
+        var response = await _serverless.CreateAsync(spec, cancellationToken).ConfigureAwait(false);
+        var remoteJobId = response.TryGetResourceId();
+        if (string.IsNullOrWhiteSpace(remoteJobId))
+        {
+            throw new InvalidOperationException(
+                "Nebius accepted the Serverless create request but did not expose a job resource id. " +
+                "The durable DispatchReserved state and encrypted work item must be retained for reconciliation.");
+        }
+
+        return new NebiusResearchDispatchReceipt(
+            localJobId,
+            checkpointStep,
+            opaqueWorkItemId,
+            remoteJobId,
+            DateTimeOffset.UtcNow);
+    }
+
+    private static RemoteResearchProvenance ValidateProviderCreateAuthority(AgentJobRecord reserved)
+    {
+        if (!string.Equals(reserved.Definition.JobType, ResearchJobHandler.Type, StringComparison.Ordinal)
+            || reserved.State != AgentJobState.Running
+            || reserved.ExecutionLocation != JobExecutionLocation.Local
+            || reserved.ApprovalScope is not null
+            || reserved.PendingAuditEvent is not null)
+        {
+            throw new InvalidOperationException(
+                "Nebius provider creation requires an audit-settled, approval-free local Running research reservation.");
+        }
+
+        var provenance = reserved.RemoteResearch
+            ?? throw new InvalidOperationException("Nebius provider creation requires durable remote dispatch reservation provenance.");
+        if (provenance.State != RemoteResearchProvenanceState.DispatchReserved
+            || !string.IsNullOrWhiteSpace(provenance.RemoteJobId)
+            || !string.Equals(provenance.ProtocolVersion, ResearchWorkItemProtector.ProtocolVersion, StringComparison.Ordinal)
+            || string.IsNullOrWhiteSpace(provenance.OpaqueWorkItemId))
+        {
+            throw new InvalidOperationException("Durable remote dispatch reservation is not eligible for Nebius provider creation.");
+        }
+
+        var checkpoint = reserved.Checkpoint
+            ?? throw new InvalidOperationException("Nebius provider creation requires the exact durable input checkpoint.");
+        if (!string.Equals(checkpoint.Step, provenance.InputCheckpointStep, StringComparison.Ordinal)
+            || checkpoint.SavedAt != provenance.InputCheckpointSavedAt)
+        {
+            throw new InvalidDataException("Durable dispatch reservation no longer matches its exact input checkpoint.");
+        }
+
+        if (provenance.WorkItemExpiresAt is not { } expiresAt || expiresAt <= DateTimeOffset.UtcNow)
+            throw new InvalidOperationException("Protected work item expired before Nebius provider creation could be resumed.");
+
+        var commitment = reserved.RemoteWorkItemEnvelopeSha256
+            ?? throw new InvalidDataException("Atomic dispatch reservation is missing its protected work-item envelope commitment.");
+        _ = ResearchWorkItemEnvelopeCommitment.ValidateCanonicalSha256(
+            commitment,
+            nameof(reserved.RemoteWorkItemEnvelopeSha256));
+        return provenance;
+    }
 
     private async Task PublishBindingIfConfiguredAsync(AgentJobRecord attached, CancellationToken cancellationToken)
     {

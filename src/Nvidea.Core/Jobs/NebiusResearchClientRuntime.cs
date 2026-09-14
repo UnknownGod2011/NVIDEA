@@ -140,6 +140,10 @@ public sealed class NebiusResearchClientRuntime : IRemoteResearchClientRuntime
         DateTimeOffset? now = null,
         CancellationToken cancellationToken = default)
     {
+        var recovered = await TryRecoverAppliedResultAsync(jobId, cancellationToken).ConfigureAwait(false);
+        if (recovered is not null)
+            return recovered;
+
         var result = await Reconciler.ReconcileDispatchedAsync(jobId, now, cancellationToken).ConfigureAwait(false);
         await _bindingCleanup.TryCleanupIfTerminalAsync(result).ConfigureAwait(false);
         return result;
@@ -154,6 +158,10 @@ public sealed class NebiusResearchClientRuntime : IRemoteResearchClientRuntime
         Guid jobId,
         CancellationToken cancellationToken = default)
     {
+        var recovered = await TryRecoverAppliedResultAsync(jobId, cancellationToken).ConfigureAwait(false);
+        if (recovered is not null)
+            return recovered;
+
         var result = await Reconciler.ReconcileCancellationAsync(jobId, cancellationToken).ConfigureAwait(false);
         await _bindingCleanup.TryCleanupIfTerminalAsync(result).ConfigureAwait(false);
         return result;
@@ -186,5 +194,20 @@ public sealed class NebiusResearchClientRuntime : IRemoteResearchClientRuntime
         var result = await Ingestor.IngestAsync(jobId, now, cancellationToken).ConfigureAwait(false);
         await _bindingCleanup.TryCleanupIfTerminalAsync(result).ConfigureAwait(false);
         return result;
+    }
+
+    private async Task<AgentJobRecord?> TryRecoverAppliedResultAsync(
+        Guid jobId,
+        CancellationToken cancellationToken)
+    {
+        var recovered = await Ingestor.RecoverPendingAuditAsync(jobId, cancellationToken).ConfigureAwait(false);
+        if (recovered.ExecutionLocation != JobExecutionLocation.Local
+            || recovered.RemoteResearch is not { State: RemoteResearchProvenanceState.ResultApplied })
+        {
+            return null;
+        }
+
+        await _bindingCleanup.TryCleanupIfTerminalAsync(recovered).ConfigureAwait(false);
+        return recovered;
     }
 }

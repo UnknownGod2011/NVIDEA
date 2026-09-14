@@ -141,6 +141,8 @@ public interface IAgentInferenceClient
 
 public sealed class NebiusTokenFactoryClient : IAgentInferenceClient
 {
+    private const string QuarantinedTransportDiagnostic = "Nebius transport request failed; provider/network diagnostics quarantined.";
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
@@ -201,9 +203,13 @@ public sealed class NebiusTokenFactoryClient : IAgentInferenceClient
             {
                 lastError = new TimeoutException("Nebius request timed out.");
             }
-            catch (HttpRequestException ex) when (attempt < _options.MaxAttempts)
+            catch (HttpRequestException ex)
             {
-                lastError = ex;
+                var quarantined = QuarantineTransportFailure(ex);
+                if (attempt == _options.MaxAttempts)
+                    throw quarantined;
+
+                lastError = quarantined;
             }
 
             var delay = TimeSpan.FromMilliseconds(250 * Math.Pow(2, attempt - 1));
@@ -211,6 +217,12 @@ public sealed class NebiusTokenFactoryClient : IAgentInferenceClient
         }
 
         throw lastError ?? new InvalidOperationException("Nebius request failed without an error response.");
+    }
+
+    private static HttpRequestException QuarantineTransportFailure(HttpRequestException exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        return new HttpRequestException(QuarantinedTransportDiagnostic, inner: null, exception.StatusCode);
     }
 
     private static JsonObject BuildPayload(AgentRequest request, string model)

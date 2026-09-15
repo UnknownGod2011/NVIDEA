@@ -53,24 +53,12 @@ public sealed class DurableResearchDispatchBindingLifecycleRaceTests
 
     private static async Task<AgentJobRecord> CreateDispatchedJobAsync(JsonAgentJobStore store, RemoteResearchResultIngestor ingestor, DateTimeOffset now)
     {
-        var definition = new AgentJobDefinition(
-            ResearchJobHandler.Type,
-            "research.deep",
-            new HashSet<DataPermission> { DataPermission.NetworkAccess },
-            CapabilityRiskLevel.Low,
-            ContainsPrivateOsData: false,
-            BenefitsFromBackgroundExecution: true,
-            MaxAttempts: 3);
-        var job = new AgentJobRecord(
-            Guid.NewGuid(), definition, AgentJobState.Pending, JobExecutionLocation.Local, 0,
-            new AgentJobCheckpoint(ResearchJobHandler.PlannedStep, "{\"plan\":true}", now),
-            null, null, now, now);
+        var definition = new AgentJobDefinition(ResearchJobHandler.Type, "research.deep", new HashSet<DataPermission> { DataPermission.NetworkAccess }, CapabilityRiskLevel.Low, false, true, 3);
+        var job = new AgentJobRecord(Guid.NewGuid(), definition, AgentJobState.Pending, JobExecutionLocation.Local, 0, new AgentJobCheckpoint(ResearchJobHandler.PlannedStep, "{\"plan\":true}", now), null, null, now, now);
         await store.SaveAsync(job);
         const string opaqueId = "mY7FhPlAdtPz9xL4b8gU1cKqN3sW6vRt";
-        await ingestor.ReserveDispatchAsync(new RemoteResearchDispatchReservation(
-            job.JobId, job.Checkpoint!.Step, opaqueId, now, now.AddHours(1)));
-        var attached = await ingestor.AttachDispatchAsync(new NebiusResearchDispatchReceipt(
-            job.JobId, job.Checkpoint.Step, opaqueId, "remote-lifecycle-42", now));
+        await ingestor.ReserveDispatchAsync(new RemoteResearchDispatchReservation(job.JobId, job.Checkpoint!.Step, opaqueId, now, now.AddHours(1)));
+        var attached = await ingestor.AttachDispatchAsync(new NebiusResearchDispatchReceipt(job.JobId, job.Checkpoint.Step, opaqueId, "remote-lifecycle-42", now));
         var envelopeBound = attached with { RemoteWorkItemEnvelopeSha256 = EnvelopeSha256, UpdatedAt = DateTimeOffset.UtcNow };
         Assert.True(await store.CompareExchangeAsync(attached, envelopeBound));
         return envelopeBound;
@@ -81,23 +69,14 @@ public sealed class DurableResearchDispatchBindingLifecycleRaceTests
         private readonly Func<Guid, PendingResearchDispatchBinding, Task> _action;
         public int Calls { get; private set; }
         public LifecycleObserver(Func<Guid, PendingResearchDispatchBinding, Task> action) => _action = action;
-        public async Task AfterPublishedAsync(Guid jobId, PendingResearchDispatchBinding obligation, CancellationToken cancellationToken)
-        {
-            Calls++;
-            await _action(jobId, obligation);
-        }
+        public async Task AfterPublishedAsync(Guid jobId, PendingResearchDispatchBinding obligation, CancellationToken cancellationToken) { Calls++; await _action(jobId, obligation); }
     }
 
     private sealed class RecordingServerlessClient : INebiusServerlessJobClient
     {
         public int CancelCalls { get; private set; }
         public string? LastCancelledId { get; private set; }
-        public Task<NebiusServerlessResponse> CancelAsync(string remoteJobId, CancellationToken cancellationToken = default)
-        {
-            CancelCalls++;
-            LastCancelledId = remoteJobId;
-            return Task.FromResult(new NebiusServerlessResponse(HttpStatusCode.OK, "{}"));
-        }
+        public Task<NebiusServerlessResponse> CancelAsync(string remoteJobId, CancellationToken cancellationToken = default) { CancelCalls++; LastCancelledId = remoteJobId; return Task.FromResult(new NebiusServerlessResponse(HttpStatusCode.OK, "{}")); }
         public Task<NebiusServerlessResponse> CreateAsync(NebiusServerlessJobSpec spec, CancellationToken cancellationToken = default) => throw new InvalidOperationException("Create must not be called.");
         public Task<NebiusServerlessResponse> GetAsync(string remoteJobId, CancellationToken cancellationToken = default) => throw new InvalidOperationException("Get must not be called.");
         public Task<NebiusServerlessResponse> ListAsync(CancellationToken cancellationToken = default) => throw new InvalidOperationException("List must not be called.");
@@ -107,27 +86,9 @@ public sealed class DurableResearchDispatchBindingLifecycleRaceTests
     {
         private readonly Dictionary<string, ProtectedResearchDispatchBinding> _items = new(StringComparer.Ordinal);
         public int PutCalls { get; private set; }
-        public Task PutAsync(ProtectedResearchDispatchBinding binding, CancellationToken cancellationToken = default)
-        {
-            if (_items.TryGetValue(binding.OpaqueWorkItemId, out var existing))
-            {
-                if (existing == binding) return Task.CompletedTask;
-                throw new InvalidOperationException("binding already exists");
-            }
-            _items.Add(binding.OpaqueWorkItemId, binding);
-            PutCalls++;
-            return Task.CompletedTask;
-        }
-        public Task<ProtectedResearchDispatchBinding?> GetAsync(string opaqueWorkItemId, CancellationToken cancellationToken = default)
-        {
-            _items.TryGetValue(opaqueWorkItemId, out var value);
-            return Task.FromResult(value);
-        }
-        public Task DeleteAsync(string opaqueWorkItemId, CancellationToken cancellationToken = default)
-        {
-            _items.Remove(opaqueWorkItemId);
-            return Task.CompletedTask;
-        }
+        public Task PutAsync(ProtectedResearchDispatchBinding binding, CancellationToken cancellationToken = default) { if (_items.TryGetValue(binding.OpaqueWorkItemId, out var existing)) { if (existing == binding) return Task.CompletedTask; throw new InvalidOperationException("binding already exists"); } _items.Add(binding.OpaqueWorkItemId, binding); PutCalls++; return Task.CompletedTask; }
+        public Task<ProtectedResearchDispatchBinding?> GetAsync(string opaqueWorkItemId, CancellationToken cancellationToken = default) { _items.TryGetValue(opaqueWorkItemId, out var value); return Task.FromResult(value); }
+        public Task DeleteAsync(string opaqueWorkItemId, CancellationToken cancellationToken = default) { _items.Remove(opaqueWorkItemId); return Task.CompletedTask; }
     }
 
     private sealed class EmptyResultTransport : IProtectedResearchResultTransport
@@ -140,11 +101,7 @@ public sealed class DurableResearchDispatchBindingLifecycleRaceTests
     private sealed class MemoryAuditTrail : IAuditTrail
     {
         private readonly List<AuditEvent> _events = new();
-        public Task AppendAsync(AuditEvent auditEvent, CancellationToken cancellationToken = default)
-        {
-            if (!_events.Any(existing => existing.Id == auditEvent.Id)) _events.Add(auditEvent);
-            return Task.CompletedTask;
-        }
+        public Task AppendAsync(AuditEvent auditEvent, CancellationToken cancellationToken = default) { if (!_events.Any(existing => existing.EventId == auditEvent.EventId)) _events.Add(auditEvent); return Task.CompletedTask; }
         public Task<IReadOnlyList<AuditEvent>> ReadAllAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<AuditEvent>>(_events.ToArray());
     }
 
@@ -154,10 +111,5 @@ public sealed class DurableResearchDispatchBindingLifecycleRaceTests
         public byte[] Unprotect(ReadOnlySpan<byte> protectedData, string purpose) => protectedData.ToArray();
     }
 
-    private static string CreateTempDirectory()
-    {
-        var path = Path.Combine(Path.GetTempPath(), "nvidea-binding-lifecycle-race-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(path);
-        return path;
-    }
+    private static string CreateTempDirectory() { var path = Path.Combine(Path.GetTempPath(), "nvidea-binding-lifecycle-race-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(path); return path; }
 }

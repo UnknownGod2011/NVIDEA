@@ -85,6 +85,6 @@ public static class RemoteResearchReservationTrustValidator
 
 public sealed record RemoteResearchReservationTrust(
     RemoteResearchProvenance Provenance,
-    JobCheckpoint Checkpoint,
+    AgentJobCheckpoint Checkpoint,
     string EnvelopeSha256,
     DateTimeOffset WorkItemExpiresAt);

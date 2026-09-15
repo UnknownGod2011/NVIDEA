@@ -82,12 +82,6 @@ public sealed class TwoPhaseNebiusResearchDispatcher
             cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>
-    /// Restarts provider dispatch from the atomic coordinator's protected durable state. The atomic
-    /// coordinator must first settle the exact reservation audit and reload the trust root from its
-    /// own store; callers cannot supply a stale in-memory record to bypass that ordering. Recovery
-    /// intentionally performs no shared work-item transport read, upload, or re-hash.
-    /// </summary>
     public async Task<AgentJobRecord> ResumeReservedAsync(
         Guid localJobId,
         RemoteResearchResultIngestor ingestor,
@@ -95,10 +89,7 @@ public sealed class TwoPhaseNebiusResearchDispatcher
     {
         ArgumentNullException.ThrowIfNull(ingestor);
         if (_atomicReservation is null)
-        {
-            throw new InvalidOperationException(
-                "Restarted remote dispatch requires the production atomic reservation coordinator.");
-        }
+            throw new InvalidOperationException("Restarted remote dispatch requires the production atomic reservation coordinator.");
 
         var recovered = await _atomicReservation.RecoverAsync(localJobId, cancellationToken).ConfigureAwait(false);
         var receipt = await StartRecoveredReservationAsync(recovered, cancellationToken).ConfigureAwait(false);
@@ -114,12 +105,8 @@ public sealed class TwoPhaseNebiusResearchDispatcher
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(ingestor);
-
         ResearchWorkItemProtector.ValidateAuthorization(authorization, workItem);
-        await ingestor.PreflightDispatchReservationAsync(
-            workItem.LocalJobId,
-            workItem.CheckpointStep,
-            cancellationToken).ConfigureAwait(false);
+        await ingestor.PreflightDispatchReservationAsync(workItem.LocalJobId, workItem.CheckpointStep, cancellationToken).ConfigureAwait(false);
 
         var prepared = await PrepareAsync(workItem, authorization, cancellationToken).ConfigureAwait(false);
         AgentJobRecord reserved;
@@ -134,27 +121,17 @@ public sealed class TwoPhaseNebiusResearchDispatcher
 
             if (_atomicReservation is not null)
             {
-                reserved = await _atomicReservation.ReserveAsync(
-                    reservation,
-                    prepared.Envelope,
-                    cancellationToken).ConfigureAwait(false);
+                reserved = await _atomicReservation.ReserveAsync(reservation, prepared.Envelope, cancellationToken).ConfigureAwait(false);
             }
             else
             {
                 reserved = await ingestor.ReserveDispatchAsync(reservation, cancellationToken).ConfigureAwait(false);
                 if (_envelopeCommitment is not null)
-                {
-                    reserved = await _envelopeCommitment.AttachAsync(
-                        reserved.JobId,
-                        prepared.Envelope,
-                        cancellationToken).ConfigureAwait(false);
-                }
+                    reserved = await _envelopeCommitment.AttachAsync(reserved.JobId, prepared.Envelope, cancellationToken).ConfigureAwait(false);
             }
         }
         catch (RemoteResearchDispatchReservationAuditPendingException)
         {
-            // The reservation CAS already owns this ciphertext. Deleting it here would leave a
-            // recoverable durable reservation pointing at a missing protected work item.
             throw;
         }
         catch
@@ -176,11 +153,11 @@ public sealed class TwoPhaseNebiusResearchDispatcher
         AgentJobRecord recovered,
         CancellationToken cancellationToken)
     {
-        var provenance = ValidateProviderCreateAuthority(recovered);
+        var trust = ValidateProviderCreateAuthority(recovered);
         return await CreateRemoteReceiptAsync(
             recovered.JobId,
-            provenance.InputCheckpointStep,
-            provenance.OpaqueWorkItemId,
+            trust.Provenance.InputCheckpointStep,
+            trust.Provenance.OpaqueWorkItemId,
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -194,59 +171,23 @@ public sealed class TwoPhaseNebiusResearchDispatcher
         var response = await _serverless.CreateAsync(spec, cancellationToken).ConfigureAwait(false);
         var remoteJobId = response.TryGetResourceId();
         if (string.IsNullOrWhiteSpace(remoteJobId))
-        {
-            throw new InvalidOperationException(
-                "Nebius accepted the Serverless create request but did not expose a job resource id. " +
-                "The durable DispatchReserved state and encrypted work item must be retained for reconciliation.");
-        }
+            throw new InvalidOperationException("Nebius accepted the Serverless create request but did not expose a job resource id. The durable DispatchReserved state and encrypted work item must be retained for reconciliation.");
 
-        return new NebiusResearchDispatchReceipt(
-            localJobId,
-            checkpointStep,
-            opaqueWorkItemId,
-            remoteJobId,
-            DateTimeOffset.UtcNow);
+        return new NebiusResearchDispatchReceipt(localJobId, checkpointStep, opaqueWorkItemId, remoteJobId, DateTimeOffset.UtcNow);
     }
 
-    private static RemoteResearchProvenance ValidateProviderCreateAuthority(AgentJobRecord recovered)
+    private static RemoteResearchReservationTrust ValidateProviderCreateAuthority(AgentJobRecord recovered)
     {
-        if (!string.Equals(recovered.Definition.JobType, ResearchJobHandler.Type, StringComparison.Ordinal)
-            || recovered.State != AgentJobState.Running
-            || recovered.ExecutionLocation != JobExecutionLocation.Local
-            || recovered.ApprovalScope is not null
-            || recovered.PendingAuditEvent is not null)
-        {
-            throw new InvalidOperationException(
-                "Nebius provider creation requires an audit-settled, approval-free local Running research reservation.");
-        }
-
-        var provenance = recovered.RemoteResearch
-            ?? throw new InvalidOperationException("Nebius provider creation requires durable remote dispatch reservation provenance.");
-        if (provenance.State != RemoteResearchProvenanceState.DispatchReserved
-            || !string.IsNullOrWhiteSpace(provenance.RemoteJobId)
-            || !string.Equals(provenance.ProtocolVersion, ResearchWorkItemProtector.ProtocolVersion, StringComparison.Ordinal)
-            || string.IsNullOrWhiteSpace(provenance.OpaqueWorkItemId))
-        {
-            throw new InvalidOperationException("Durable remote dispatch reservation is not eligible for Nebius provider creation.");
-        }
-
-        var checkpoint = recovered.Checkpoint
-            ?? throw new InvalidOperationException("Nebius provider creation requires the exact durable input checkpoint.");
-        if (!string.Equals(checkpoint.Step, provenance.InputCheckpointStep, StringComparison.Ordinal)
-            || checkpoint.SavedAt != provenance.InputCheckpointSavedAt)
-        {
-            throw new InvalidDataException("Durable dispatch reservation no longer matches its exact input checkpoint.");
-        }
-
-        if (provenance.WorkItemExpiresAt is not { } expiresAt || expiresAt <= DateTimeOffset.UtcNow)
-            throw new InvalidOperationException("Protected work item expired before Nebius provider creation could be resumed.");
-
-        var commitment = recovered.RemoteWorkItemEnvelopeSha256
-            ?? throw new InvalidDataException("Atomic dispatch reservation is missing its protected work-item envelope commitment.");
-        _ = ResearchWorkItemEnvelopeCommitment.ValidateCanonicalSha256(
-            commitment,
-            nameof(recovered.RemoteWorkItemEnvelopeSha256));
-        return provenance;
+        // Provider creation is allowed only after the exact reservation audit is durable. This check
+        // is intentionally separate from ValidateReserved: a marker-cleared reservation encountered
+        // independently after a crash is delivery-ambiguous and must go through provider reconciliation,
+        // never this method. ResumeReservedAsync reaches here only via AtomicRemoteResearchDispatchReservation.RecoverAsync,
+        // whose pending-audit proof establishes that the original dispatcher could not have reached Create.
+        RemoteResearchReservationTrustValidator.RequireAuditSettled(recovered);
+        return RemoteResearchReservationTrustValidator.ValidateReserved(
+            recovered,
+            DateTimeOffset.UtcNow,
+            requireUnexpired: true);
     }
 
     private async Task PublishBindingIfConfiguredAsync(AgentJobRecord attached, CancellationToken cancellationToken)
@@ -259,12 +200,9 @@ public sealed class TwoPhaseNebiusResearchDispatcher
         if (attached.ExecutionLocation != JobExecutionLocation.NebiusServerless
             || provenance.State != RemoteResearchProvenanceState.Dispatched
             || string.IsNullOrWhiteSpace(provenance.RemoteJobId))
-        {
             throw new InvalidOperationException("Authoritative dispatch binding can only be published after durable remote-id attachment.");
-        }
 
-        var expiresAt = provenance.WorkItemExpiresAt
-            ?? provenance.DispatchedAt + ResearchWorkItemProtector.MaxLifetime;
+        var expiresAt = provenance.WorkItemExpiresAt ?? provenance.DispatchedAt + ResearchWorkItemProtector.MaxLifetime;
         if (attached.RemoteWorkItemEnvelopeSha256 is { } commitment)
         {
             await _bindingPublisher.PublishEnvelopeBoundAsync(
@@ -318,7 +256,6 @@ public sealed class TwoPhaseNebiusResearchDispatcher
         }
         catch
         {
-            // Preparation cleanup is best effort; encrypted payloads are bounded by protocol TTL.
         }
     }
 
@@ -331,9 +268,7 @@ public sealed class TwoPhaseNebiusResearchDispatcher
             || string.IsNullOrWhiteSpace(options.Preset)
             || string.IsNullOrWhiteSpace(options.Timeout)
             || string.IsNullOrWhiteSpace(options.SubnetId))
-        {
             throw new ArgumentException("Worker image/key, command, platform, preset, timeout and subnet are required.", nameof(options));
-        }
         if (options.Disk is null || string.IsNullOrWhiteSpace(options.Disk.Type) || options.Disk.SizeBytes <= 0)
             throw new ArgumentException("An explicit positive-size Serverless disk is required.", nameof(options));
         if (options.EnvironmentVariables?.ContainsKey("NVIDEA_RESEARCH_PROTOCOL") == true)

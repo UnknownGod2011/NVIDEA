@@ -45,6 +45,110 @@ public sealed class DurableResearchDispatchBindingCompletionRaceTests
         }
     }
 
+    [Theory]
+    [InlineData(AgentJobState.Pending, RemoteResearchProvenanceState.ResultApplied)]
+    [InlineData(AgentJobState.Completed, RemoteResearchProvenanceState.ResultApplied)]
+    [InlineData(AgentJobState.Cancelled, RemoteResearchProvenanceState.Cancelled)]
+    [InlineData(AgentJobState.Failed, RemoteResearchProvenanceState.RemoteFailed)]
+    [InlineData(AgentJobState.Failed, RemoteResearchProvenanceState.Expired)]
+    public async Task EnsurePublishedAsync_PostPublishLegitimateLocalLifecycleTransition_ClearsExactObligation(
+        AgentJobState terminalState,
+        RemoteResearchProvenanceState provenanceState)
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            using var clientRsa = RSA.Create(2048);
+            var store = new JsonAgentJobStore(Path.Combine(root, "jobs.json"), new PassThroughProtector());
+            var job = await CreateDispatchedJobAsync(store, clientRsa, DateTimeOffset.UtcNow);
+            var transport = new MemoryBindingTransport();
+            var publisher = new ResearchDispatchBindingPublisher(transport, clientRsa.ExportPkcs8PrivateKeyPem());
+            PendingResearchDispatchBinding? publishedObligation = null;
+            var observer = new MutatingObserver(async (jobId, pending) =>
+            {
+                publishedObligation = pending;
+                var latest = (await store.GetAsync(jobId))!;
+                var now = DateTimeOffset.UtcNow;
+                var provenance = latest.RemoteResearch! with
+                {
+                    State = provenanceState,
+                    ResultAppliedAt = provenanceState == RemoteResearchProvenanceState.ResultApplied ? now : null,
+                    TerminalAt = provenanceState is RemoteResearchProvenanceState.Cancelled or RemoteResearchProvenanceState.RemoteFailed or RemoteResearchProvenanceState.Expired ? now : null
+                };
+                var mutated = latest with
+                {
+                    State = terminalState,
+                    ExecutionLocation = JobExecutionLocation.Local,
+                    RemoteResearch = provenance,
+                    UpdatedAt = now
+                };
+                Assert.True(await store.CompareExchangeAsync(latest, mutated));
+            });
+            var obligation = new DurableResearchDispatchBindingObligation(store, publisher, observer);
+
+            var completed = await obligation.EnsurePublishedAsync(job.JobId);
+
+            Assert.NotNull(publishedObligation);
+            Assert.Equal("remote-race-42", publishedObligation!.RemoteJobId);
+            Assert.Equal(EnvelopeSha256, publishedObligation.EnvelopeSha256);
+            Assert.Equal(terminalState, completed.State);
+            Assert.Equal(JobExecutionLocation.Local, completed.ExecutionLocation);
+            Assert.Equal(provenanceState, completed.RemoteResearch!.State);
+            Assert.Null(completed.PendingResearchDispatchBinding);
+            Assert.Equal(1, transport.PutCalls);
+            Assert.Equal(1, observer.Calls);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(AgentJobState.Completed, RemoteResearchProvenanceState.Cancelled)]
+    [InlineData(AgentJobState.Cancelled, RemoteResearchProvenanceState.ResultApplied)]
+    [InlineData(AgentJobState.Failed, RemoteResearchProvenanceState.ResultApplied)]
+    [InlineData(AgentJobState.Running, RemoteResearchProvenanceState.RemoteFailed)]
+    public async Task EnsurePublishedAsync_PostPublishInconsistentLifecyclePair_FailsClosedWithObligationPending(
+        AgentJobState state,
+        RemoteResearchProvenanceState provenanceState)
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            using var clientRsa = RSA.Create(2048);
+            var store = new JsonAgentJobStore(Path.Combine(root, "jobs.json"), new PassThroughProtector());
+            var job = await CreateDispatchedJobAsync(store, clientRsa, DateTimeOffset.UtcNow);
+            var transport = new MemoryBindingTransport();
+            var publisher = new ResearchDispatchBindingPublisher(transport, clientRsa.ExportPkcs8PrivateKeyPem());
+            var observer = new MutatingObserver(async (jobId, _) =>
+            {
+                var latest = (await store.GetAsync(jobId))!;
+                var mutated = latest with
+                {
+                    State = state,
+                    ExecutionLocation = JobExecutionLocation.Local,
+                    RemoteResearch = latest.RemoteResearch! with { State = provenanceState },
+                    UpdatedAt = DateTimeOffset.UtcNow
+                };
+                Assert.True(await store.CompareExchangeAsync(latest, mutated));
+            });
+            var obligation = new DurableResearchDispatchBindingObligation(store, publisher, observer);
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() => obligation.EnsurePublishedAsync(job.JobId));
+
+            var persisted = await store.GetAsync(job.JobId);
+            Assert.NotNull(persisted?.PendingResearchDispatchBinding);
+            Assert.Equal("remote-race-42", persisted!.PendingResearchDispatchBinding!.RemoteJobId);
+            Assert.Equal(EnvelopeSha256, persisted.PendingResearchDispatchBinding.EnvelopeSha256);
+            Assert.Equal(1, transport.PutCalls);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task EnsurePublishedAsync_PostPublishRemoteIdSubstitution_FailsClosedWithObligationPending()
     {
@@ -171,7 +275,7 @@ public sealed class DurableResearchDispatchBindingCompletionRaceTests
         private readonly List<AuditEvent> _events = new();
         public Task AppendAsync(AuditEvent auditEvent, CancellationToken cancellationToken = default)
         {
-            if (!_events.Any(existing => existing.Id == auditEvent.Id)) _events.Add(auditEvent);
+            if (!_events.Any(existing => existing.EventId == auditEvent.EventId)) _events.Add(auditEvent);
             return Task.CompletedTask;
         }
         public Task<IReadOnlyList<AuditEvent>> ReadAllAsync(CancellationToken cancellationToken = default) =>

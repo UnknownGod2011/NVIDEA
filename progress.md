@@ -26,39 +26,45 @@ Hardened the post-publication completion window with a bounded four-attempt prot
 ### 2026-09-15 — Deterministic post-publication race seam
 Added internal/test-only `IResearchDispatchBindingCompletionObserver` after successful shared V2 publication and before protected-state completion. Focused regressions prove a benign `Dispatched -> CancelRequested` transition converges with one publication, while remote-job-id substitution fails closed and leaves the exact obligation durable.
 
-### 2026-09-15 — Binding authority substitution matrix (latest run)
+### 2026-09-15 — Binding authority substitution matrix
+Added data-driven post-publication regressions for opaque work-item identity, canonical encrypted-envelope SHA-256 and expiry substitution. Together with remote-id coverage, all principal V2 obligation authority dimensions fail closed and preserve the original durable obligation.
+
+### 2026-09-15 — Real cancellation pipeline race (latest run)
 Completed:
-- Re-read this ledger completely and inspected the existing deterministic completion-race tests before mutation.
-- Verified before each GitHub mutation that the target repository was exactly `UnknownGod2011/NVIDEA`; no other repository was mutated.
-- Added `DurableResearchDispatchBindingAuthorityRaceTests`, extending deterministic post-publication adversarial coverage beyond remote-id substitution.
-- Added a data-driven mutation matrix for opaque work-item identity, canonical encrypted-envelope SHA-256, and expiry substitution after the signed V2 binding is already published but before protected-state completion.
-- Each mutation must throw/fail closed, leave the original exact `PendingResearchDispatchBinding` durable, and perform exactly one already-completed shared binding publication. The test also asserts the original remote id, opaque id, digest and expiry remain encoded in the pending obligation for restart/operator diagnosis.
+- Re-read this ledger completely and inspected the production binding coordinator, runtime wiring, lifecycle reconciler, cancellation audit/outbox path, and existing deterministic race tests before mutation.
+- Verified before every GitHub mutation that the target repository was exactly `UnknownGod2011/NVIDEA`; no other repository was mutated.
+- Added `DurableResearchDispatchBindingLifecycleRaceTests` using the internal post-publication observer to invoke the real `NebiusResearchLifecycleReconciler.RequestCancellationAsync` path rather than directly editing protected provenance.
+- The regression drives the actual CAS `Dispatched -> CancelRequested` transition, stages and flushes the durable `research.remote_cancel_requested` audit event, and performs the provider cancellation while V2 binding completion bookkeeping is paused.
+- The test requires the binding coordinator to converge afterward with the exact obligation cleared, no pending audit event, one signed binding transport write, one provider cancellation against the authoritative remote id, and one cancellation-request audit event.
+- Static review caught and corrected an initial test helper typo (`AuditEvent.Id` -> `AuditEvent.EventId`) before finalizing.
 
 Files changed:
-- `tests/Nvidea.Core.Tests/DurableResearchDispatchBindingAuthorityRaceTests.cs`
+- `tests/Nvidea.Core.Tests/DurableResearchDispatchBindingLifecycleRaceTests.cs`
 - `progress.md`
 
 Commits this run before ledger:
-- `d7a1734382f035d6b259f27b6625bbf3a4b0781f` — add binding completion authority-substitution regressions.
+- `d6fe04daa900456bf46f85e860341e0329976ad6` — add real cancellation-pipeline binding race regression.
+- `1bbdc6900ca5de674db783ff42355d301a181a7f` — correct audit identity helper in the new regression.
 
 Validation/evidence:
-- Static review reuses the same production `DurableResearchDispatchBindingObligation` and internal completion observer seam already used by the existing remote-id race regression; no production API or runtime behavior was changed.
-- The mutation matrix explicitly covers the remaining authority-bearing obligation dimensions requested by the prior run: opaque id, envelope digest and expiry. Remote-id substitution remains covered by `DurableResearchDispatchBindingCompletionRaceTests`.
-- Every adversarial case requires one transport publication only and a still-pending exact original obligation after failure; no second external side effect is authorized by the test path.
+- The test uses the production `DurableResearchDispatchBindingObligation`, `NebiusResearchLifecycleReconciler`, `DurableJobAuditOutbox` path reached by `RequestCancellationAsync`, `RemoteResearchResultIngestor`, and protected CAS job store; only provider/binding/result transports and audit sink are deterministic in-memory test doubles.
+- Consequential-side-effect assertions are explicit: binding `PutAsync` exactly once and Nebius `CancelAsync` exactly once, with no Create/Get/List provider calls permitted by the fake client.
+- The durable audit must be settled (`PendingAuditEvent == null`) and exactly one `research.remote_cancel_requested` event must exist before completion is accepted.
 - Executable validation remains unavailable: no usable `dotnet`, `csc` or `msbuild` is available here, so no compilation/xUnit/WPF/Worker PASS is claimed.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, Playwright, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
-- The deterministic seam remains internal/test-only and cannot be supplied through the public production constructor or configuration.
-- The new tests mutate protected provenance only after publication, so they test bookkeeping authority rather than granting publication authority.
-- Remote id, opaque id, envelope digest and expiry substitutions are now all explicitly regression-locked to preserve the original durable obligation instead of clearing it against changed provenance.
-- No plaintext research content, credentials, tokens or private keys were added to durable state or repository content.
+- The deterministic observer remains internal/test-only and cannot be supplied through the public production constructor or runtime configuration.
+- The new regression exercises real cancellation authority and audit sequencing after publication; it does not introduce any new production side-effect authority.
+- Binding completion is allowed only after the exact V2 authority fields remain unchanged. Existing remote-id/opaque-id/digest/expiry substitution regressions continue to preserve the original durable obligation on mismatch.
+- The cancellation provider call is asserted against the authoritative attached remote id, and the test fake rejects unrelated provider operations.
+- No plaintext research content, credentials, tokens or private keys were added to durable repository content.
 
 ## Known blockers / risks
 - No .NET 8 compiler/runtime in this environment; current changes are statically reviewed but unexecuted.
 - Live Nebius mounted-volume/Serverless behavior, worker auth, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
-- The deterministic seam still has not driven the entire lifecycle cancellation audit/outbox pipeline concurrently; the existing benign race test changes protected `CancelRequested` state directly.
-- Terminal-state behavior still needs an explicit policy/regression: an already-published obligation must never be silently erased if result ingestion or cancellation reaches a terminal job state before completion bookkeeping.
+- The real cancellation regression currently observes the fully flushed audit path. A crash/interruption while the cancellation audit itself is still pending should be fault-injected separately so restart convergence is proven across that intermediate durable state.
+- Terminal-state behavior still needs an explicit policy/regression: an already-published obligation must never be silently erased if result ingestion or cancellation reaches `Cancelled`, `Completed`, `Failed`, `ResultApplied`, `RemoteFailed`, or `Expired` before binding completion bookkeeping.
 
 ## Single Best Next Task
-Drive the real lifecycle cancellation intent + durable audit/outbox transition from the post-publication observer, rather than directly mutating provenance. Prove the exact binding obligation survives every intermediate audit state, converges without duplicate binding/provider side effects, and define/test fail-closed behavior if cancellation or result ingestion reaches a terminal job state before binding completion bookkeeping.
+Define and regression-lock terminal-state semantics for an already-published but not-yet-cleared V2 binding obligation. Fault-inject cancellation/result ingestion so the job reaches each legitimate terminal provenance state before completion bookkeeping, require exact authority-field continuity, and prove the obligation is either safely cleared as completed publication bookkeeping or intentionally retained for deterministic recovery—never silently dropped and never causing duplicate provider/binding side effects.

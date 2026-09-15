@@ -18,13 +18,11 @@ public partial class MainWindow
     {
         RefreshResearchReadiness();
         var readiness = _researchReadiness;
-        if (readiness is null)
-            return;
+        if (readiness is null) return;
 
-        // Keep judge-visible evidence bound to the same runtime-derived readiness object used by
-        // the product instead of maintaining a separate demo-only source of truth. The dialog
-        // deliberately reports unavailable providers as unavailable and never exposes secrets.
-        var dialog = new JudgeEvidenceDialog(readiness) { Owner = this };
+        // Readiness and observed milestones both come from production runtime state. The snapshot
+        // contains only closed evidence kinds + timestamps and performs no provider/browser action.
+        var dialog = new JudgeEvidenceDialog(readiness, _root.Desktop.SessionEvidenceSnapshot()) { Owner = this };
         dialog.ShowDialog();
     }
 
@@ -34,17 +32,12 @@ public partial class MainWindow
         try
         {
             var cloudMode = DesktopResearchCloudMode.FromEnvironment();
-            readiness = DesktopResearchReadiness
-                .InspectEnvironment(cloudMode)
-                .WithRuntimeState(
-                    lifecycleReady: _root.Research?.RemoteLifecycleAvailable == true,
-                    dispatchReady: _root.Research?.RemoteDispatchEnabled == true);
+            readiness = DesktopResearchReadiness.InspectEnvironment(cloudMode).WithRuntimeState(
+                lifecycleReady: _root.Research?.RemoteLifecycleAvailable == true,
+                dispatchReady: _root.Research?.RemoteDispatchEnabled == true);
         }
         catch
         {
-            // Successful composition has already validated provider construction. This catch is for
-            // a later environment mutation (for example a malformed opt-in flag) and intentionally
-            // avoids displaying the raw exception or any environment value.
             readiness = new DesktopResearchReadiness(
                 LocalResearchReady: _root.Research?.LocalExecutionAvailable == true,
                 NebiusLifecycleRequested: false,
@@ -56,7 +49,6 @@ public partial class MainWindow
 
         _researchReadiness = readiness;
         ResearchReadinessText.Text = readiness.ToStatusText();
-        ResearchReadinessDetailsButton.ToolTip =
-            "Open runtime-derived architecture evidence. Secret values, provider IDs, payloads, and raw provider errors are never displayed.";
+        ResearchReadinessDetailsButton.ToolTip = "Open runtime-derived architecture and session evidence. Secret values, provider IDs, payloads, and raw provider errors are never displayed.";
     }
 }

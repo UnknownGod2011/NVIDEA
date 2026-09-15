@@ -30,45 +30,46 @@ Added real `RemoteResearchResultIngestor.IngestAsync` races at the post-publicat
 Added pre-delete cleanup failure and successful-delete/lost-acknowledgement recovery coverage. Cleanup remains durable until deletion returns successfully; restart retries an already-absent result idempotently, preserves exactly-once audit/result application, and independently converges the outstanding V2 binding without republishing.
 
 ### 2026-09-15 — Published-binding multi-artifact cleanup recovery
-Added the real combined result + work-item cleanup race: result deletion succeeds, work-item deletion fails, restart repeats both deletes idempotently, cleanup clears only after both transports succeed, and binding recovery remains independently exactly-once.
+Added the real combined result + work-item cleanup race: result deletion succeeds, work-item deletion fails, restart repeats both deletes idempotently, cleanup clears only after both transports succeed, and binding recovery remains independently exactly-once. Extended this with the work-item successful-delete/lost-acknowledgement analogue so both encrypted transports are regression-specified as idempotent-delete dependencies.
 
-### 2026-09-15 — Ambiguous work-item deletion with published binding (latest run)
+### 2026-09-15 — Cleanup completion CAS contention hardening (latest run)
 Completed:
-- Re-read this ledger completely and inspected the current combined cleanup regression before mutation.
-- Verified immediately before each GitHub mutation that the target repository was exactly `UnknownGod2011/NVIDEA`; no other repository was mutated.
-- Extended `DurableResearchDispatchBindingMultiArtifactCleanupRaceTests` with the work-item analogue of successful-side-effect/lost-acknowledgement recovery.
-- Refactored the two closely related scenarios through one test harness without changing production code: (1) work-item delete fails before deletion, and (2) work-item delete actually removes the encrypted object then throws before acknowledgement.
-- In the ambiguous case, the crash boundary explicitly requires: result absent, work item absent, result audit settled exactly once, result checkpoint applied, cleanup marker still durable, binding marker still durable, and exactly one signed V2 binding publication.
-- Restart reconstructs the production ingestor and deliberately repeats both deletes. Both already-absent result and work-item deletion must be idempotent; only then may the shared cleanup obligation clear.
-- Fresh binding recovery then clears only the independently owned V2 bookkeeping obligation and requires binding transport publication count to remain exactly one.
+- Re-read this ledger completely and inspected the current multi-artifact cleanup regression, `RemoteResearchResultIngestor` cleanup ordering, `DurableProtectedPayloadCleanupIntent`, and `JsonAgentJobStore` CAS semantics before mutation.
+- Verified immediately before every GitHub mutation that the target repository was exactly `UnknownGod2011/NVIDEA`; no other repository was mutated.
+- Hardened `DurableProtectedPayloadCleanupIntent.ClearAsync` from one-shot CAS completion to bounded four-attempt convergence.
+- After a cleanup-completion CAS miss, the intent now reloads protected durable state and revalidates the exact cleanup id, opaque work-item target, remote provenance, and audit-settled precondition before retrying. It never reconstructs cleanup authority from mutable transport state.
+- Added an internal-only completion observer to deterministically exercise the narrow post-delete/pre-marker-clear race. Production construction supplies no observer.
+- Added `DurableProtectedPayloadCleanupContentionTests` with two contracts: a legitimate concurrent `Pending -> Completed` local research transition must survive cleanup completion while the exact independent V2 binding obligation remains untouched; perpetual contention must stop after four attempts and leave cleanup debt durable rather than spinning or falsely clearing it.
 
 Files changed:
-- `tests/Nvidea.Core.Tests/DurableResearchDispatchBindingMultiArtifactCleanupRaceTests.cs`
+- `src/Nvidea.Core/Jobs/DurableProtectedPayloadCleanupIntent.cs`
+- `tests/Nvidea.Core.Tests/DurableProtectedPayloadCleanupContentionTests.cs`
 - `progress.md`
 
 Commits this run before ledger:
-- `100a777d64c257557d3bda5e02bc78cfd15e9791` — test ambiguous work-item cleanup recovery with published binding.
+- `4354ba2fc29cad56e48186ff8f3d9fda74031c45` — harden cleanup completion against CAS contention.
+- `189e715bae42c08970c28ca7962e7a729c1ceedf` — test bounded cleanup completion CAS convergence.
 
 Validation/evidence:
-- Static review confirms the fault is injected after `WorkItemExists = false`, so it models a real successful external delete whose acknowledgement is lost rather than another pre-side-effect failure.
-- The intermediate assertions distinguish the two failure modes: the ordinary failure leaves the work item present; the ambiguous failure requires it already absent while cleanup debt remains durable.
-- Recovery requires two result-delete calls and two work-item-delete calls in both cases, proving retry behavior rather than silently treating local object absence as completion.
-- Audit remains exactly once, checkpoint remains at `ResearchJobHandler.EvidenceStep`, and binding transport remains one put after independent binding reconciliation.
+- Static review confirms a first-attempt concurrent terminal transition makes the original CAS stale; the retry reloads that newer state, validates the same cleanup authority, clears only `PendingProtectedPayloadCleanup`, and preserves the newer Completed checkpoint plus `PendingResearchDispatchBinding` byte-for-byte at record level.
+- The adversarial contention case mutates the protected record before every completion CAS. The implementation performs exactly four bounded attempts, then fails closed with the same cleanup id/opaque target still durable.
+- Existing production ordering still requires audit settlement before cleanup and remote deletions before `ClearAsync`; this change affects only local acknowledgement of already-successful cleanup.
+- No external API surface was broadened; the deterministic observer is internal and test-only through the existing test assembly internals access.
 - Executable validation remains unavailable: no usable `dotnet`, `csc` or `msbuild` is available here, so no compilation/xUnit/WPF/Worker PASS is claimed.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, Playwright, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
-- Cleanup acknowledgement is deliberately conservative: even when an external work-item delete probably succeeded, NVIDEA retains the durable cleanup obligation until a retry receives success.
-- Both encrypted transports are now regression-specified as idempotent-delete dependencies in the combined published-binding scenario.
-- Audit settlement remains prior to cleanup and is not replayed during deletion recovery.
-- Result application, cleanup and V2 binding publication remain independent obligations; recovery of one cannot silently clear or duplicate another.
-- No production API was broadened and no plaintext credentials, tokens, private keys or user research content were committed.
+- Cleanup completion now tolerates legitimate concurrent protected-state progress without overwriting it, while exact cleanup identity and provenance remain authority-locked on every retry.
+- Bounded retry prevents an attacker or pathological local writer from turning cleanup completion into an unbounded loop.
+- A changed cleanup id, changed opaque target, changed remote provenance, reintroduced pending audit, deleted job, or continued contention fails closed and retains/rejects cleanup debt rather than claiming success.
+- Independent durable obligations are not coupled: cleanup completion clears only its own marker and preserves V2 binding publication debt and all unrelated newer job state.
+- No production transport calls, credentials, tokens, private keys, plaintext research content, or paid services were introduced.
 
 ## Known blockers / risks
 - No .NET 8 compiler/runtime in this environment; current changes are statically reviewed but unexecuted.
 - Live Nebius mounted-volume/Serverless behavior, worker auth, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
-- Combined cleanup recovery now covers both work-item failure-before-delete and work-item successful-delete/lost-acknowledgement after result cleanup has succeeded.
-- The next unproven durability boundary is local cleanup-marker CAS failure/contention after both remote deletions have returned success; repeated recovery must not create unbounded retry behavior or interfere with independently pending binding/audit obligations.
+- Local cleanup completion now has bounded CAS convergence, but the deterministic regression currently exercises the cleanup intent directly after the conceptual transport-success boundary rather than injecting contention through `RemoteResearchResultIngestor` after two real fake-transport deletes.
+- The next useful reliability step is to compose this contention seam with the existing multi-artifact ingestion race so transport deletion counts, audit exact-once, result exact-once, cleanup bounded convergence, and binding exact-once are proven in one end-to-end deterministic scenario.
 
 ## Single Best Next Task
-Add deterministic coverage for cleanup-marker completion CAS contention/failure after both protected transports have returned successful deletion: simulate a concurrent legitimate state transition, prove cleanup completion retries/converges without replaying audit/result application, and ensure an independently outstanding V2 binding obligation remains exact-once and authority-locked.
+Wire the internal cleanup-completion observer through a test-only `RemoteResearchResultIngestor` construction path and extend the multi-artifact published-binding regression so both protected deletions succeed, a legitimate concurrent state transition wins the first cleanup-marker CAS, and the production ingestor converges on retry without re-deleting/reapplying/auditing or altering the independently pending V2 binding obligation.

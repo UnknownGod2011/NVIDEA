@@ -21,11 +21,11 @@ public partial class MainWindow
         if (readiness is null)
             return;
 
-        MessageBox.Show(
-            readiness.ToDetailsText(),
-            "NVIDEA research readiness",
-            MessageBoxButton.OK,
-            MessageBoxImage.Information);
+        // Keep judge-visible evidence bound to the same runtime-derived readiness object used by
+        // the product instead of maintaining a separate demo-only source of truth. The dialog
+        // deliberately reports unavailable providers as unavailable and never exposes secrets.
+        var dialog = new JudgeEvidenceDialog(readiness) { Owner = this };
+        dialog.ShowDialog();
     }
 
     private void RefreshResearchReadiness()
@@ -57,6 +57,6 @@ public partial class MainWindow
         _researchReadiness = readiness;
         ResearchReadinessText.Text = readiness.ToStatusText();
         ResearchReadinessDetailsButton.ToolTip =
-            "Read-only capability details. Secret values, provider IDs, payloads, and raw provider errors are never displayed.";
+            "Open runtime-derived architecture evidence. Secret values, provider IDs, payloads, and raw provider errors are never displayed.";
     }
 }

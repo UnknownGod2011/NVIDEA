@@ -9,11 +9,16 @@ namespace Nvidea.Core.Jobs;
 internal sealed class DurableProtectedPayloadCleanupIntent
 {
     private const int MaxOpaqueWorkItemIdLength = 512;
+    private const int MaxCompletionAttempts = 4;
     private readonly JsonAgentJobStore _store;
+    private readonly IProtectedPayloadCleanupCompletionObserver? _completionObserver;
 
-    internal DurableProtectedPayloadCleanupIntent(JsonAgentJobStore store)
+    internal DurableProtectedPayloadCleanupIntent(
+        JsonAgentJobStore store,
+        IProtectedPayloadCleanupCompletionObserver? completionObserver = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
+        _completionObserver = completionObserver;
     }
 
     internal AgentJobRecord Stage(AgentJobRecord record, string opaqueWorkItemId, DateTimeOffset? now = null)
@@ -72,24 +77,39 @@ internal sealed class DurableProtectedPayloadCleanupIntent
         ArgumentNullException.ThrowIfNull(current);
         if (cleanupId == Guid.Empty)
             throw new ArgumentException("Cleanup id is required.", nameof(cleanupId));
-        if (current.PendingAuditEvent is not null)
-            throw new InvalidOperationException("Protected payload cleanup cannot be marked complete before its required audit is durable.");
 
-        var pending = current.PendingProtectedPayloadCleanup
+        var expectedOpaqueWorkItemId = current.PendingProtectedPayloadCleanup?.OpaqueWorkItemId
             ?? throw new InvalidOperationException("Job has no pending protected payload cleanup intent.");
-        if (pending.CleanupId != cleanupId)
-            throw new InvalidOperationException("Pending protected payload cleanup changed before completion could be recorded.");
-        ValidatePending(current, pending.OpaqueWorkItemId);
 
-        var replacement = current with
+        for (var attempt = 0; attempt < MaxCompletionAttempts; attempt++)
         {
-            PendingProtectedPayloadCleanup = null,
-            UpdatedAt = DateTimeOffset.UtcNow
-        };
-        if (!await _store.CompareExchangeAsync(current, replacement, cancellationToken).ConfigureAwait(false))
-            throw new InvalidOperationException("Job changed while protected payload cleanup completion was being recorded.");
+            if (current.PendingAuditEvent is not null)
+                throw new InvalidOperationException("Protected payload cleanup cannot be marked complete before its required audit is durable.");
 
-        return replacement;
+            var pending = current.PendingProtectedPayloadCleanup
+                ?? throw new InvalidOperationException("Job has no pending protected payload cleanup intent.");
+            if (pending.CleanupId != cleanupId)
+                throw new InvalidOperationException("Pending protected payload cleanup changed before completion could be recorded.");
+            if (!string.Equals(pending.OpaqueWorkItemId, expectedOpaqueWorkItemId, StringComparison.Ordinal))
+                throw new InvalidOperationException("Pending protected payload cleanup target changed before completion could be recorded.");
+            ValidatePending(current, expectedOpaqueWorkItemId);
+
+            if (_completionObserver is not null)
+                await _completionObserver.BeforeCompletionCompareExchangeAsync(current.JobId, pending, attempt, cancellationToken).ConfigureAwait(false);
+
+            var replacement = current with
+            {
+                PendingProtectedPayloadCleanup = null,
+                UpdatedAt = DateTimeOffset.UtcNow
+            };
+            if (await _store.CompareExchangeAsync(current, replacement, cancellationToken).ConfigureAwait(false))
+                return replacement;
+
+            current = await _store.GetAsync(current.JobId, cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("Research job disappeared while protected payload cleanup completion was being recorded.");
+        }
+
+        throw new InvalidOperationException("Job kept changing while protected payload cleanup completion was being recorded.");
     }
 
     private static void ValidateOpaqueWorkItemId(string opaqueWorkItemId)
@@ -101,4 +121,13 @@ internal sealed class DurableProtectedPayloadCleanupIntent
             throw new InvalidOperationException("Protected payload cleanup requires a bounded opaque work-item id.");
         }
     }
+}
+
+internal interface IProtectedPayloadCleanupCompletionObserver
+{
+    Task BeforeCompletionCompareExchangeAsync(
+        Guid jobId,
+        PendingProtectedPayloadCleanup cleanup,
+        int attempt,
+        CancellationToken cancellationToken);
 }

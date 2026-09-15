@@ -18,45 +18,44 @@ Implemented Windows shell, Nebius/Nemotron inference, layered memory, Tavily res
 Hardened exact-once browser behavior and remote dispatch: durable external-action/cleanup/audit intents, exact remote provenance, crash-resumable cancellation, envelope commitment, V2 sender authenticity, pinned-envelope worker execution, bounded worker transport retry/SIGTERM, atomic reservation + audit + digest CAS, provider-delivery ambiguity reconciliation, shared reservation trust validation and final pre-Create durable authority revalidation.
 
 ### 2026-09-15 — Durable V2 binding publication obligation
-Added `PendingResearchDispatchBinding` and `DurableResearchDispatchBindingObligation`: the exact V2 publication intent is CAS-staged before shared binding-transport I/O, publication is idempotent, protected state is re-read/revalidated after publish, and the obligation is cleared only after successful publication. Restart/reconciliation consumes this obligation and fails closed on changed remote id, opaque id, digest or expiry. Fresh and resumed production dispatch both route envelope-bound publication through the same coordinator.
+Added `PendingResearchDispatchBinding` and `DurableResearchDispatchBindingObligation`: the exact V2 publication intent is CAS-staged before shared binding-transport I/O, publication is idempotent, protected state is re-read/revalidated after publish, and the obligation is cleared only after successful publication. Restart/reconciliation consumes this obligation and fails closed on changed remote id, opaque id, digest or expiry. Fresh and resumed production dispatch both route envelope-bound publication through the same coordinator. Fault coverage proves failed first publication preserves the exact obligation and blocks cancellation until restart republishes it.
 
-### 2026-09-15 — V2 publication failure/restart coverage (latest run)
+### 2026-09-15 — Binding completion race hardening (latest run)
 Completed:
-- Re-read this ledger completely and inspected recent commits, the durable obligation, binding publisher, recovery path and existing recovery tests before mutation.
-- Verified before each GitHub mutation that the target repository was exactly `UnknownGod2011/NVIDEA`; no other repository was mutated.
-- Upgraded `ResearchDispatchBindingRecoveryTests` from legacy/no-envelope fixtures to envelope-bound V2 fixtures with a canonical 64-hex commitment.
-- Added production-runtime fault injection for the critical first-publication failure: shared binding transport throws after the durable obligation is staged; the test asserts provider cancellation remains blocked and the exact pending opaque id, authoritative remote id, envelope SHA-256 and expiry survive in protected job state.
-- Simulates process restart by constructing a fresh `NebiusResearchClientRuntime` over the same protected store, removes the injected transport fault, and proves the restart publishes the exact staged V2 obligation, clears it only after successful publication, then proceeds to the provider cancellation exactly once.
-- Strengthened normal cancellation coverage to assert the binding visible before the consequential provider call is V2 and carries the expected envelope commitment.
-- Strengthened conflicting-binding coverage to assert a failed/conflicting shared publication leaves the durable V2 obligation pending rather than erasing publication debt.
-- Direct recovery idempotency coverage now uses the durable coordinator and asserts repeated recovery produces one shared transport write and no remaining obligation.
+- Re-read this ledger completely and inspected the durable obligation implementation plus binding recovery/cancellation tests before mutation.
+- Verified before every GitHub mutation that the target repository was exactly `UnknownGod2011/NVIDEA`; no other repository was mutated.
+- Hardened the post-publication completion window in `DurableResearchDispatchBindingObligation` with a bounded four-attempt protected-state re-read/CAS completion loop.
+- Split pre-publication authority from post-publication completion validation. Publication still requires an audit-settled active Nebius stage. After the exact V2 binding is externally visible, completion may tolerate a concurrent audit transition only while job type/state/location, remote provenance state, remote id, opaque id, envelope commitment and expiry remain exact.
+- If another recovery actor already cleared the exact obligation, completion now converges idempotently instead of failing.
+- If the obligation identity or any authority-bearing provenance changes, completion still fails closed and refuses to clear anything.
+- If protected state keeps changing through all bounded attempts, the method fails with the durable obligation still pending for restart recovery rather than spinning or weakening validation.
 
 Files changed:
-- `tests/Nvidea.Core.Tests/ResearchDispatchBindingRecoveryTests.cs`
+- `src/Nvidea.Core/Jobs/DurableResearchDispatchBindingObligation.cs`
 - `progress.md`
 
 Commits this run before ledger:
-- `48aa8de9901a32b05b5669ad52aca11460f0af48` — test durable V2 binding failure and restart recovery.
+- `0abd45de569adfff2f432be376a855cde0620f88` — harden binding completion against benign state races.
 
 Validation/evidence:
-- Static call-path review confirms the injected first publication failure occurs inside `ResearchDispatchBindingPublisher` only after `DurableResearchDispatchBindingObligation` has CAS-staged `PendingResearchDispatchBinding`.
-- The restart test exercises the actual production `NebiusResearchClientRuntime.Create(...)` composition rather than a test-only recovery coordinator.
-- Assertions pin all authority-bearing obligation fields (opaque id, remote id, digest, expiry), provider side-effect count, final obligation clearing, and the published V2 binding payload.
+- Static call-path review confirms the shared binding publication still occurs only after the exact durable obligation is staged and validated with settled audit state.
+- The relaxed audit check applies only after successful external publication and only to clearing the same equality-checked obligation; it cannot authorize a new provider/binding side effect.
+- Completion remains bounded and cancellation-aware through the store calls; no unbounded retry loop was introduced.
 - Executable validation remains unavailable: no usable `dotnet`, `csc` or `msbuild` is available here, so no compilation/xUnit/WPF/Worker PASS is claimed.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, Playwright, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
-- A failed first V2 publication is now regression-locked as durable debt: it cannot silently disappear and cannot permit provider cancellation before worker-verifiable binding publication succeeds.
-- Restart authority comes from protected local state; the test does not re-upload or re-hash mutable shared work-item storage.
-- Conflicting shared binding content fails closed while preserving the exact pending protected obligation.
-- The cancellation race is partially covered at the production boundary: cancellation is blocked while publication fails, and after restart the exact binding is published before the cancellation side effect. A narrower concurrent mutation race during the publish/re-read/CAS-clear window still deserves deterministic fault injection.
-- No research plaintext, credentials or secrets were added to durable obligation state or tests.
+- Pre-publication remains fail-closed on any pending audit event; audit transitions cannot create publication authority.
+- Post-publication completion is explicitly bookkeeping for an already-visible signed V2 binding. It may survive benign concurrent audit mutation but still pins every authority-bearing obligation field to protected provenance.
+- A substituted obligation ID, remote ID, opaque ID, digest, expiry, execution location, terminal state or unsupported provenance state prevents clearing.
+- Bounded CAS retry reduces restart-only recovery for benign local races without creating duplicate consequential provider actions.
+- No plaintext research content, credentials, tokens or private keys were added to durable state.
 
 ## Known blockers / risks
 - No .NET 8 compiler/runtime in this environment; current changes are statically reviewed but unexecuted.
 - Live Nebius mounted-volume/Serverless behavior, worker auth, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
-- Need deterministic concurrent-state mutation coverage while a binding publication is in flight, especially `CancelRequested` plus its audit/external-action transitions.
-- Need to inspect whether durable binding completion should tolerate a successfully published binding when protected-state CAS clearing loses a benign race, while still never clearing a substituted obligation.
+- The exact concurrent cancellation/audit mutation window still needs deterministic executable fault injection; current production logic is hardened but this run could not execute a race test.
+- Need to ensure lifecycle cancellation/result-ingestion transitions never legitimately move to a terminal state before an already-published obligation can be cleared; if they can, completion policy should be explicitly modeled rather than broadly relaxed.
 
 ## Single Best Next Task
-Add a deterministic in-flight cancellation/state-mutation fault test around `DurableResearchDispatchBindingObligation`: pause after successful shared V2 publication but before protected-state re-read/CAS clear, transition the job through the real cancellation intent/audit path, then prove the exact obligation is neither substituted nor erased and restart reconciliation converges safely without duplicate consequential provider actions. If that exposes benign CAS-clear starvation, harden the coordinator with a bounded, equality-checked completion retry rather than weakening its fail-closed checks.
+Add a deterministic test seam/fault harness around the post-publication/pre-clear boundary and exercise the real cancellation intent/audit transition concurrently. Prove a benign audit/CAS race converges without duplicate binding or provider actions, while substituted remote id/opaque id/digest/expiry and terminal-state mutations preserve the obligation and fail closed. Keep the seam internal/test-only rather than exposing timing controls in production APIs.

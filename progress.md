@@ -26,42 +26,45 @@ Split dispatch-binding validation into strict pre-publication authority and post
 ### 2026-09-15 — Real result-ingestion and interrupted recovery
 Added real `RemoteResearchResultIngestor.IngestAsync` races at the post-publication/pre-completion seam. Successful ingestion covers Pending/Completed ResultApplied convergence. Audit-failure injection proves result CAS, pending audit, cleanup debt and binding debt survive independently; restart flushes audit before cleanup and binding recovery does not republish or reapply the result.
 
-### 2026-09-15 — Cleanup failure and ambiguous post-delete recovery (latest run)
+### 2026-09-15 — Cleanup failure and ambiguous post-delete recovery
+Added pre-delete cleanup failure and successful-delete/lost-acknowledgement recovery coverage. Cleanup remains durable until deletion returns successfully; restart retries an already-absent result idempotently, preserves exactly-once audit/result application, and independently converges the outstanding V2 binding without republishing.
+
+### 2026-09-15 — Published-binding multi-artifact cleanup recovery (latest run)
 Completed:
-- Re-read this ledger completely and inspected the current result-ingestion cleanup ordering before mutation.
+- Re-read this ledger completely and inspected current cleanup tests plus `RemoteResearchResultIngestor` construction before mutation.
 - Verified before each GitHub mutation that the target repository was exactly `UnknownGod2011/NVIDEA`; no other repository was mutated.
-- Preserved the prior fail-before-delete restart regression and added `DurableResearchDispatchBindingPostDeleteCrashRecoveryTests` for the complementary ambiguous-delete boundary.
-- The new transport removes the protected result successfully and then throws once, accurately modeling a delete whose external side effect completed but whose acknowledgement was lost before local cleanup-marker clearing.
-- Production retains `PendingProtectedPayloadCleanup` because deletion completion cannot be proven, while the result CAS and audit are already durable and the V2 binding obligation remains independently outstanding.
-- Restart calls production `RecoverPendingCleanupAsync`; deletion is repeated against the already-absent object and must be harmless/idempotent, after which only the cleanup marker clears.
-- A fresh binding coordinator then converges the exact already-published V2 obligation. Binding transport `PutCalls` remains one, proving cleanup retry cannot cause a second external binding publication.
+- Added `DurableResearchDispatchBindingMultiArtifactCleanupRaceTests` around the real post-publication result-ingestion seam with both protected-result and protected-work-item transports enabled.
+- The injected ordering is: signed V2 binding publishes once; result CAS and audit settle; result payload deletion succeeds; protected work-item deletion fails; the single cleanup obligation and independent binding obligation both remain durable.
+- Restart uses a fresh `RemoteResearchResultIngestor` and repeats both deletes. Result deletion against the already-absent artifact is required to be idempotent; work-item deletion then succeeds; cleanup clears only after both transports return successfully.
+- A fresh binding coordinator subsequently reconciles the already-published exact V2 binding. The binding transport remains at one put, proving multi-artifact cleanup recovery cannot republish it.
+- Regression assertions also lock exactly-one result audit and unchanged applied checkpoint, preventing cleanup recovery from replaying result application.
 
 Files changed:
-- `tests/Nvidea.Core.Tests/DurableResearchDispatchBindingPostDeleteCrashRecoveryTests.cs`
+- `tests/Nvidea.Core.Tests/DurableResearchDispatchBindingMultiArtifactCleanupRaceTests.cs`
 - `progress.md`
 
 Commits this run before ledger:
-- `ee249d66e1b6278591f53eb15c260b63a45900f5` — test post-delete cleanup marker restart recovery.
+- `bd1a1c8a683b745dba3e599f2760e8f62ff27978` — test multi-artifact cleanup recovery with published binding.
 
 Validation/evidence:
-- Static review verified `RemoteResearchResultIngestor.IngestCoreAsync` stages cleanup with the result CAS, flushes audit, then `DrainPendingCleanupAsync` calls required transport deletion before clearing the marker.
-- `DeleteProtectedPayloadsRequiredAsync` treats a thrown delete as unproven even if the external object was already removed; this intentionally preserves the marker for restart retry.
-- The regression asserts the object is absent after the first ambiguous delete, the cleanup marker remains, audit is exactly once, checkpoint/result state is not replayed, restart performs a second delete, and V2 publication remains exactly once.
+- Static review confirms `RemoteResearchResultIngestor` accepts the optional `IProtectedResearchWorkItemTransport`, allowing the regression to exercise production multi-artifact cleanup rather than a synthetic state mutation.
+- Existing `RemoteResearchMultiArtifactCleanupRecoveryTests` already establish that production cleanup retries both transports after a partial failure; this run composes that behavior with real result ingestion and the durable published-binding race.
+- The new regression asserts the intermediate crash state explicitly: result absent, work item present, one audit, result applied, cleanup pending, binding pending, and exactly one binding publication.
 - Executable validation remains unavailable: no usable `dotnet`, `csc` or `msbuild` is available here, so no compilation/xUnit/WPF/Worker PASS is claimed.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, Playwright, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
-- An ambiguous delete is handled conservatively: local durable state never claims cleanup complete unless the delete call returns successfully.
-- Retry safety therefore depends on protected-payload transports implementing delete as idempotent; the regression locks that contract for an already-absent result payload.
-- Audit durability remains a hard prerequisite for deletion; retry cannot duplicate the already-durable result audit or reapply the checkpoint.
-- Binding, audit and cleanup debts remain independently owned; cleanup recovery cannot erase or republish the binding obligation.
+- Multi-artifact cleanup remains conservative: a partial success never clears the shared cleanup obligation, so an undeleted encrypted work item cannot be forgotten locally.
+- Recovery deliberately repeats every required deletion; therefore both protected transports must preserve idempotent delete semantics. The result-already-absent path is regression-locked in this combined scenario.
+- Audit settlement remains prior to cleanup. Recovery cannot duplicate the durable result audit or reapply the result checkpoint.
+- Binding, audit and cleanup obligations remain independently owned; cleanup recovery neither clears nor republishes the V2 binding.
 - No production API was broadened and no plaintext credentials, tokens, private keys or user research content were committed.
 
 ## Known blockers / risks
 - No .NET 8 compiler/runtime in this environment; current changes are statically reviewed but unexecuted.
 - Live Nebius mounted-volume/Serverless behavior, worker auth, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
-- Result-transport pre-delete failure and ambiguous post-delete failure are covered, but the same ambiguous-delete contract is not yet regression-locked for the optional protected work-item transport.
-- Multi-transport cleanup can partially succeed (for example result delete succeeds while work-item delete fails); recovery depends on both transport deletes being independently idempotent and deserves a combined regression.
+- The combined partial-failure ordering now covers result-delete success followed by work-item-delete failure. Because production deletion order is result then work item, the inverse partial-success ordering cannot naturally occur without changing production order.
+- A work-item delete can itself have an ambiguous successful-side-effect/lost-acknowledgement outcome; that specific combined case is not yet regression-locked alongside the published binding.
 
 ## Single Best Next Task
-Add a combined result + work-item cleanup regression around the same published-binding race: make one transport delete successfully/ambiguously while the other fails, restart through each ordering, and prove both deletes converge idempotently, audit remains exactly once, result is never reapplied, cleanup clears only after both transports report success, and the outstanding V2 binding obligation still converges without republishing.
+Add the work-item analogue of ambiguous post-delete recovery in the combined published-binding scenario: result deletion succeeds, work-item deletion removes the object and then throws before acknowledgement, restart repeats both deletes idempotently, and prove audit/result remain exactly once while cleanup and V2 binding obligations converge independently without another publication.

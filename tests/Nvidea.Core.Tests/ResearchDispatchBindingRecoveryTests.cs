@@ -8,6 +8,8 @@ namespace Nvidea.Core.Tests;
 
 public sealed class ResearchDispatchBindingRecoveryTests
 {
+    private const string EnvelopeSha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
     [Fact]
     public async Task EnsureAsync_RePublishesExactDurableRemoteId_Idempotently()
     {
@@ -21,7 +23,8 @@ public sealed class ResearchDispatchBindingRecoveryTests
             var job = await CreateDispatchedJobAsync(store, audit, clientRsa, now);
             var bindings = new MemoryBindingTransport();
             var publisher = new ResearchDispatchBindingPublisher(bindings, clientRsa.ExportPkcs8PrivateKeyPem());
-            var recovery = new ResearchDispatchBindingRecovery(store, publisher);
+            var obligation = new DurableResearchDispatchBindingObligation(store, publisher);
+            var recovery = new ResearchDispatchBindingRecovery(store, publisher, obligation);
 
             var first = await recovery.EnsureAsync(job.JobId);
             var second = await recovery.EnsureAsync(job.JobId);
@@ -29,6 +32,7 @@ public sealed class ResearchDispatchBindingRecoveryTests
             Assert.Equal("remote-recovery-42", first.RemoteResearch!.RemoteJobId);
             Assert.Equal(first.RemoteResearch.RemoteJobId, second.RemoteResearch!.RemoteJobId);
             Assert.Equal(1, bindings.PutCalls);
+            Assert.Null(second.PendingResearchDispatchBinding);
 
             var binding = await bindings.GetAsync(first.RemoteResearch.OpaqueWorkItemId);
             Assert.NotNull(binding);
@@ -36,7 +40,9 @@ public sealed class ResearchDispatchBindingRecoveryTests
                 binding!,
                 first.RemoteResearch.OpaqueWorkItemId,
                 clientRsa.ExportSubjectPublicKeyInfoPem());
+            Assert.Equal(ResearchDispatchBindingProtector.EnvelopeBoundProtocolVersion, verified.ProtocolVersion);
             Assert.Equal("remote-recovery-42", verified.RemoteJobId);
+            Assert.Equal(EnvelopeSha256, verified.WorkItemEnvelopeSha256);
         }
         finally
         {
@@ -63,7 +69,8 @@ public sealed class ResearchDispatchBindingRecoveryTests
                 now.AddMinutes(30),
                 clientRsa.ExportPkcs8PrivateKeyPem()));
             var publisher = new ResearchDispatchBindingPublisher(bindings, clientRsa.ExportPkcs8PrivateKeyPem());
-            var recovery = new ResearchDispatchBindingRecovery(store, publisher);
+            var obligation = new DurableResearchDispatchBindingObligation(store, publisher);
+            var recovery = new ResearchDispatchBindingRecovery(store, publisher, obligation);
 
             await Assert.ThrowsAsync<CryptographicException>(() => recovery.EnsureAsync(job.JobId));
 
@@ -71,6 +78,8 @@ public sealed class ResearchDispatchBindingRecoveryTests
             Assert.NotNull(persisted);
             Assert.Equal(RemoteResearchProvenanceState.Dispatched, persisted!.RemoteResearch!.State);
             Assert.Equal("remote-recovery-42", persisted.RemoteResearch.RemoteJobId);
+            Assert.NotNull(persisted.PendingResearchDispatchBinding);
+            Assert.Equal(EnvelopeSha256, persisted.PendingResearchDispatchBinding!.EnvelopeSha256);
         }
         finally
         {
@@ -97,6 +106,8 @@ public sealed class ResearchDispatchBindingRecoveryTests
                 Assert.Equal("remote-recovery-42", remoteJobId);
                 var binding = await bindings.GetAsync(job.RemoteResearch!.OpaqueWorkItemId);
                 Assert.NotNull(binding);
+                Assert.Equal(ResearchDispatchBindingProtector.EnvelopeBoundProtocolVersion, binding!.ProtocolVersion);
+                Assert.Equal(EnvelopeSha256, binding.WorkItemEnvelopeSha256);
             };
             var runtime = NebiusResearchClientRuntime.Create(
                 store,
@@ -113,6 +124,7 @@ public sealed class ResearchDispatchBindingRecoveryTests
             Assert.Equal(RemoteResearchProvenanceState.CancelRequested, cancelled.RemoteResearch!.State);
             Assert.Equal(1, bindings.PutCalls);
             Assert.Equal(1, serverless.CancelCalls);
+            Assert.Null((await store.GetAsync(job.JobId))!.PendingResearchDispatchBinding);
         }
         finally
         {
@@ -121,7 +133,7 @@ public sealed class ResearchDispatchBindingRecoveryTests
     }
 
     [Fact]
-    public async Task RequestCancellationAsync_BindingFailureBlocksProviderAndLeavesDispatchActive()
+    public async Task RequestCancellationAsync_FirstBindingFailure_PersistsExactObligation_AndRestartClearsOnlyAfterSuccess()
     {
         var root = CreateTempDirectory();
         try
@@ -146,11 +158,39 @@ public sealed class ResearchDispatchBindingRecoveryTests
 
             await Assert.ThrowsAsync<InvalidOperationException>(() => runtime.RequestCancellationAsync(job.JobId));
 
-            var persisted = await store.GetAsync(job.JobId);
-            Assert.NotNull(persisted);
-            Assert.Equal(RemoteResearchProvenanceState.Dispatched, persisted!.RemoteResearch!.State);
-            Assert.Equal("remote-recovery-42", persisted.RemoteResearch.RemoteJobId);
+            var failed = await store.GetAsync(job.JobId);
+            Assert.NotNull(failed);
+            Assert.Equal(RemoteResearchProvenanceState.Dispatched, failed!.RemoteResearch!.State);
             Assert.Equal(0, serverless.CancelCalls);
+            var pending = Assert.IsType<PendingResearchDispatchBinding>(failed.PendingResearchDispatchBinding);
+            Assert.Equal(job.RemoteResearch.OpaqueWorkItemId, pending.OpaqueWorkItemId);
+            Assert.Equal("remote-recovery-42", pending.RemoteJobId);
+            Assert.Equal(EnvelopeSha256, pending.EnvelopeSha256);
+            Assert.Equal(job.RemoteResearch.WorkItemExpiresAt, pending.ExpiresAt);
+
+            bindings.FailPut = false;
+            var restartedRuntime = NebiusResearchClientRuntime.Create(
+                store,
+                serverless,
+                new MemoryWorkItemTransport(),
+                new EmptyResultTransport(),
+                bindings,
+                CreateOptions(workerRsa),
+                clientRsa.ExportPkcs8PrivateKeyPem(),
+                audit);
+
+            var cancelled = await restartedRuntime.RequestCancellationAsync(job.JobId);
+
+            Assert.Equal(RemoteResearchProvenanceState.CancelRequested, cancelled.RemoteResearch!.State);
+            Assert.Equal(1, bindings.PutCalls);
+            Assert.Equal(1, serverless.CancelCalls);
+            var completed = await store.GetAsync(job.JobId);
+            Assert.NotNull(completed);
+            Assert.Null(completed!.PendingResearchDispatchBinding);
+            var binding = await bindings.GetAsync(pending.OpaqueWorkItemId);
+            Assert.NotNull(binding);
+            Assert.Equal(pending.RemoteJobId, binding!.RemoteJobId);
+            Assert.Equal(pending.EnvelopeSha256, binding.WorkItemEnvelopeSha256);
         }
         finally
         {
@@ -179,13 +219,16 @@ public sealed class ResearchDispatchBindingRecoveryTests
                 opaqueId,
                 now,
                 now.AddHours(1)));
-        return await ingestor.AttachDispatchAsync(
+        var attached = await ingestor.AttachDispatchAsync(
             new NebiusResearchDispatchReceipt(
                 job.JobId,
                 job.Checkpoint.Step,
                 opaqueId,
                 "remote-recovery-42",
                 now));
+        var envelopeBound = attached with { RemoteWorkItemEnvelopeSha256 = EnvelopeSha256, UpdatedAt = DateTimeOffset.UtcNow };
+        Assert.True(await store.CompareExchangeAsync(attached, envelopeBound));
+        return envelopeBound;
     }
 
     private static AgentJobRecord CreatePendingJob(DateTimeOffset now)

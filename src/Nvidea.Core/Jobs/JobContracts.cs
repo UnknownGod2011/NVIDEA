@@ -24,12 +24,7 @@ public enum DurableExternalActionKind
     NebiusCancelRemoteResearch
 }
 
-/// <summary>
-/// Durable, non-secret intent for an external side effect whose delivery may become ambiguous across
-/// process failure. The intent is deliberately separate from success state: its presence means the
-/// action may still require reconciliation, never that the provider accepted or completed it.
-/// AuditEventId binds the intent to the exact durable audit authority prepared for this attempt.
-/// </summary>
+/// <summary>Durable non-secret intent for an external side effect whose delivery may be ambiguous.</summary>
 public sealed record PendingExternalAction(
     Guid ActionId,
     DurableExternalActionKind Kind,
@@ -37,12 +32,7 @@ public sealed record PendingExternalAction(
     Guid AuditEventId,
     DateTimeOffset CreatedAt);
 
-/// <summary>
-/// Durable, non-secret proof that protected remote-research transport artifacts still require
-/// idempotent deletion. Presence means cleanup is owed; absence means no cleanup obligation is
-/// currently recorded. It never claims that a remote result or lifecycle transition succeeded.
-/// The opaque work-item id is already part of protected remote provenance and contains no credential.
-/// </summary>
+/// <summary>Durable proof that protected remote-research transport artifacts still require deletion.</summary>
 public sealed record PendingProtectedPayloadCleanup(
     Guid CleanupId,
     string OpaqueWorkItemId,
@@ -78,7 +68,8 @@ public sealed record AgentJobRecord(
     AuditEvent? PendingAuditEvent = null,
     PendingExternalAction? PendingExternalAction = null,
     PendingProtectedPayloadCleanup? PendingProtectedPayloadCleanup = null,
-    string? RemoteWorkItemEnvelopeSha256 = null);
+    string? RemoteWorkItemEnvelopeSha256 = null,
+    PendingResearchDispatchBinding? PendingResearchDispatchBinding = null);
 
 public sealed record JobStepResult(
     bool Completed,
@@ -97,19 +88,8 @@ public interface IAgentJobStore
 public interface IAgentJobHandler
 {
     string JobType { get; }
-
     Task<JobStepResult> ExecuteStepAsync(AgentJobRecord job, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Context-aware execution hook. Existing handlers remain source-compatible via
-    /// the default implementation; consequential handlers should override this form
-    /// and take the exact ephemeral approval only at the immediate tool call.
-    /// </summary>
-    Task<JobStepResult> ExecuteStepAsync(
-        AgentJobRecord job,
-        JobExecutionContext executionContext,
-        CancellationToken cancellationToken = default) =>
-        ExecuteStepAsync(job, cancellationToken);
+    Task<JobStepResult> ExecuteStepAsync(AgentJobRecord job, JobExecutionContext executionContext, CancellationToken cancellationToken = default) => ExecuteStepAsync(job, cancellationToken);
 }
 
 public interface IJobExecutionPolicy
@@ -122,12 +102,7 @@ public sealed class ConservativeJobExecutionPolicy : IJobExecutionPolicy
     public JobExecutionLocation Choose(AgentJobDefinition definition)
     {
         ArgumentNullException.ThrowIfNull(definition);
-
-        if (definition.ContainsPrivateOsData)
-            return JobExecutionLocation.Local;
-
-        return definition.BenefitsFromBackgroundExecution
-            ? JobExecutionLocation.NebiusServerless
-            : JobExecutionLocation.Local;
+        if (definition.ContainsPrivateOsData) return JobExecutionLocation.Local;
+        return definition.BenefitsFromBackgroundExecution ? JobExecutionLocation.NebiusServerless : JobExecutionLocation.Local;
     }
 }

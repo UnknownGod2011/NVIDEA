@@ -14,6 +14,16 @@ public sealed record PendingResearchDispatchBinding(
     DateTimeOffset CreatedAt);
 
 /// <summary>
+/// Internal deterministic seam used only by tests to pause/fault the narrow interval after the
+/// binding is externally visible but before its protected durable obligation is completed.
+/// Production construction never supplies an observer.
+/// </summary>
+internal interface IResearchDispatchBindingCompletionObserver
+{
+    Task AfterPublishedAsync(Guid jobId, PendingResearchDispatchBinding obligation, CancellationToken cancellationToken);
+}
+
+/// <summary>
 /// Persists binding publication intent before touching shared binding transport and clears it only
 /// after successful idempotent publication. Restart recovery therefore replays an exact protected
 /// obligation rather than reconstructing authority from mutable shared storage.
@@ -23,11 +33,21 @@ public sealed class DurableResearchDispatchBindingObligation
     private const int CompletionAttempts = 4;
     private readonly JsonAgentJobStore _store;
     private readonly ResearchDispatchBindingPublisher _publisher;
+    private readonly IResearchDispatchBindingCompletionObserver? _completionObserver;
 
     public DurableResearchDispatchBindingObligation(JsonAgentJobStore store, ResearchDispatchBindingPublisher publisher)
+        : this(store, publisher, null)
+    {
+    }
+
+    internal DurableResearchDispatchBindingObligation(
+        JsonAgentJobStore store,
+        ResearchDispatchBindingPublisher publisher,
+        IResearchDispatchBindingCompletionObserver? completionObserver)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _publisher = publisher ?? throw new ArgumentNullException(nameof(publisher));
+        _completionObserver = completionObserver;
     }
 
     public async Task<AgentJobRecord> EnsurePublishedAsync(Guid jobId, CancellationToken cancellationToken = default)
@@ -53,6 +73,12 @@ public sealed class DurableResearchDispatchBindingObligation
         var pending = current.PendingResearchDispatchBinding!;
         ValidateObligation(current, pending, requireAuditSettled: true);
         await _publisher.PublishEnvelopeBoundAsync(pending.OpaqueWorkItemId, pending.RemoteJobId, pending.EnvelopeSha256, pending.ExpiresAt, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        // This observer is deliberately after the irreversible/shared side effect and before any
+        // completion read/CAS. It gives deterministic tests control of the exact crash/race window
+        // without exposing timing knobs in the public production API.
+        if (_completionObserver is not null)
+            await _completionObserver.AfterPublishedAsync(jobId, pending, cancellationToken).ConfigureAwait(false);
 
         // Publication is already externally visible. A concurrent, legitimate local transition (for
         // example cancellation intent/audit staging) must not turn a benign CAS loss into permanent

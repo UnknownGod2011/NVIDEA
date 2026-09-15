@@ -153,9 +153,18 @@ public sealed class TwoPhaseNebiusResearchDispatcher
         AgentJobRecord recovered,
         CancellationToken cancellationToken)
     {
-        var trust = ValidateProviderCreateAuthority(recovered);
+        if (_atomicReservation is null)
+            throw new InvalidOperationException("Recovered provider creation requires the production atomic reservation coordinator.");
+
+        // Re-read the protected durable trust root at the last practical point before the external
+        // side effect. Recovery settling is not a lease: if local state changed after recovery, the
+        // stale snapshot must not retain authority to launch Nebius work.
+        var current = await _atomicReservation
+            .RevalidateCreateAuthorityAsync(recovered, cancellationToken)
+            .ConfigureAwait(false);
+        var trust = ValidateProviderCreateAuthority(current);
         return await CreateRemoteReceiptAsync(
-            recovered.JobId,
+            current.JobId,
             trust.Provenance.InputCheckpointStep,
             trust.Provenance.OpaqueWorkItemId,
             cancellationToken).ConfigureAwait(false);

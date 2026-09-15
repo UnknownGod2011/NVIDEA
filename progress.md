@@ -17,59 +17,50 @@ Implemented Windows shell, Nebius/Nemotron inference, layered memory, Tavily res
 ### 2026-09-13 to 2026-09-15
 Hardened exact-once browser behavior and remote dispatch: durable external-action/cleanup/audit intents, exact remote provenance, crash-resumable cancellation, envelope commitment, V2 sender authenticity, pinned-envelope worker execution, bounded worker transport retry/SIGTERM, atomic reservation + audit + digest CAS, provider-delivery ambiguity reconciliation, shared reservation trust validation and final pre-Create durable authority revalidation.
 
-### 2026-09-15 — Durable V2 binding publication and race hardening
-Added `PendingResearchDispatchBinding` and `DurableResearchDispatchBindingObligation`: exact V2 publication intent is CAS-staged before shared transport I/O, publication is idempotent, and restart/reconciliation consumes the protected obligation. Fresh and resumed production dispatch use the same coordinator. Added bounded post-publication CAS completion, an internal-only deterministic race observer, authority-substitution coverage for remote id/opaque id/envelope digest/expiry, failed-first-publication restart recovery, and a real cancellation pipeline race through durable audit + provider cancellation.
+### 2026-09-15 — Durable V2 binding and terminal races
+Added `PendingResearchDispatchBinding` and `DurableResearchDispatchBindingObligation`: exact V2 publication intent is CAS-staged before shared transport I/O, publication is idempotent, and restart/reconciliation consumes protected obligation state. Hardened post-publication completion against authority substitution and legitimate ResultApplied/Cancelled/RemoteFailed/Expired lifecycle races. Added real cancellation and result-ingestion races through durable audit/provider paths.
 
-### 2026-09-15 — Terminal binding-completion semantics
-Split dispatch-binding validation into strict pre-publication authority and post-publication bookkeeping semantics. After exact signed publication, completion accepts only lifecycle-consistent state triples while exact obligation identity, remote id, opaque id, envelope digest and expiry remain unchanged. Legitimate `ResultApplied`, `Cancelled`, `RemoteFailed`, and `Expired` transitions can converge without weakening pre-publication authority; inconsistent state/provenance pairs fail closed.
+### 2026-09-15 — Interrupted audit and cleanup recovery
+Added crash/restart coverage for result CAS followed by pending audit, cleanup failure, successful-delete/lost-acknowledgement, combined result + work-item cleanup, and ambiguous work-item deletion. Recovery preserves exactly-once audit/result application while independently converging V2 binding publication without republishing.
 
-### 2026-09-15 — Real result-ingestion and interrupted recovery
-Added real `RemoteResearchResultIngestor.IngestAsync` races at the post-publication/pre-completion seam. Successful ingestion covers Pending/Completed ResultApplied convergence. Audit-failure injection proves result CAS, pending audit, cleanup debt and binding debt survive independently; restart flushes audit before cleanup and binding recovery does not republish or reapply the result.
+### 2026-09-15 — Cleanup completion CAS hardening
+Hardened `DurableProtectedPayloadCleanupIntent.ClearAsync` from one-shot completion to bounded four-attempt CAS convergence. Every retry reloads protected durable state and revalidates exact cleanup id, opaque target, remote provenance and audit-settled precondition. Direct deterministic tests cover legitimate concurrent terminal progress and perpetual contention fail-closed behavior.
 
-### 2026-09-15 — Cleanup failure and ambiguous post-delete recovery
-Added pre-delete cleanup failure and successful-delete/lost-acknowledgement recovery coverage. Cleanup remains durable until deletion returns successfully; restart retries an already-absent result idempotently, preserves exactly-once audit/result application, and independently converges the outstanding V2 binding without republishing.
-
-### 2026-09-15 — Published-binding multi-artifact cleanup recovery
-Added the real combined result + work-item cleanup race: result deletion succeeds, work-item deletion fails, restart repeats both deletes idempotently, cleanup clears only after both transports succeed, and binding recovery remains independently exactly-once. Extended this with the work-item successful-delete/lost-acknowledgement analogue so both encrypted transports are regression-specified as idempotent-delete dependencies.
-
-### 2026-09-15 — Cleanup completion CAS contention hardening (latest run)
+### 2026-09-15 — End-to-end ingestor cleanup CAS race (latest run)
 Completed:
-- Re-read this ledger completely and inspected the current multi-artifact cleanup regression, `RemoteResearchResultIngestor` cleanup ordering, `DurableProtectedPayloadCleanupIntent`, and `JsonAgentJobStore` CAS semantics before mutation.
-- Verified immediately before every GitHub mutation that the target repository was exactly `UnknownGod2011/NVIDEA`; no other repository was mutated.
-- Hardened `DurableProtectedPayloadCleanupIntent.ClearAsync` from one-shot CAS completion to bounded four-attempt convergence.
-- After a cleanup-completion CAS miss, the intent now reloads protected durable state and revalidates the exact cleanup id, opaque work-item target, remote provenance, and audit-settled precondition before retrying. It never reconstructs cleanup authority from mutable transport state.
-- Added an internal-only completion observer to deterministically exercise the narrow post-delete/pre-marker-clear race. Production construction supplies no observer.
-- Added `DurableProtectedPayloadCleanupContentionTests` with two contracts: a legitimate concurrent `Pending -> Completed` local research transition must survive cleanup completion while the exact independent V2 binding obligation remains untouched; perpetual contention must stop after four attempts and leave cleanup debt durable rather than spinning or falsely clearing it.
+- Re-read this ledger completely and inspected recent commits, `RemoteResearchResultIngestor`, cleanup ordering, `DurableProtectedPayloadCleanupIntent`, and the existing multi-artifact published-binding tests before mutation.
+- Verified immediately before each GitHub mutation that the target repository was exactly `UnknownGod2011/NVIDEA`; no other repository was mutated.
+- Added `RemoteResearchResultIngestorCleanupCasRaceTests` to exercise the production ingestor rather than calling the cleanup intent directly.
+- The fake dual transport now creates a deterministic real concurrency boundary in its work-item delete: result deletion succeeds, work-item deletion succeeds, then a legitimate local `Pending -> Completed` transition CAS commits before `DrainPendingCleanupAsync` calls cleanup-marker completion.
+- This makes the ingestor's original cleanup record stale naturally, so production `ClearAsync` must miss its first CAS, reload the newer Completed state, revalidate the same cleanup authority, and clear only the cleanup marker on retry.
+- The regression requires exactly one result delete, one work-item delete, one concurrent transition, one result audit, no pending audit/cleanup, preserved ResultApplied provenance/checkpoint, and no transport replay on a later recovery pass.
+- Chose the transport-side deterministic seam instead of broadening `RemoteResearchResultIngestor` production construction with a test-only observer; this gives stronger evidence because the race occurs between the real two-delete sequence and real cleanup completion with no new production API surface.
 
 Files changed:
-- `src/Nvidea.Core/Jobs/DurableProtectedPayloadCleanupIntent.cs`
-- `tests/Nvidea.Core.Tests/DurableProtectedPayloadCleanupContentionTests.cs`
+- `tests/Nvidea.Core.Tests/RemoteResearchResultIngestorCleanupCasRaceTests.cs`
 - `progress.md`
 
 Commits this run before ledger:
-- `4354ba2fc29cad56e48186ff8f3d9fda74031c45` — harden cleanup completion against CAS contention.
-- `189e715bae42c08970c28ca7962e7a729c1ceedf` — test bounded cleanup completion CAS convergence.
+- `2a1fe32df51d13e1e0c5a95f055bad44c57754c6` — test end-to-end cleanup CAS contention after both deletes.
 
 Validation/evidence:
-- Static review confirms a first-attempt concurrent terminal transition makes the original CAS stale; the retry reloads that newer state, validates the same cleanup authority, clears only `PendingProtectedPayloadCleanup`, and preserves the newer Completed checkpoint plus `PendingResearchDispatchBinding` byte-for-byte at record level.
-- The adversarial contention case mutates the protected record before every completion CAS. The implementation performs exactly four bounded attempts, then fails closed with the same cleanup id/opaque target still durable.
-- Existing production ordering still requires audit settlement before cleanup and remote deletions before `ClearAsync`; this change affects only local acknowledgement of already-successful cleanup.
-- No external API surface was broadened; the deterministic observer is internal and test-only through the existing test assembly internals access.
+- Static review confirms `DeleteProtectedPayloadsRequiredAsync` calls result delete then work-item delete; the injected transition therefore occurs only after both external deletes have returned/committed their side effects and immediately before `ClearAsync` receives the stale pre-transition record.
+- The concurrent transition preserves `PendingProtectedPayloadCleanup`, remote ResultApplied provenance, checkpoint and all unrelated state; only job state advances to Completed. This is the exact legitimate CAS contention `ClearAsync` is intended to tolerate.
+- A subsequent `RecoverPendingCleanupAsync` sees no cleanup debt and therefore cannot call either transport again, providing an explicit no-replay assertion after convergence.
+- No production code/API was changed this run; the deterministic fault is isolated to a test transport.
 - Executable validation remains unavailable: no usable `dotnet`, `csc` or `msbuild` is available here, so no compilation/xUnit/WPF/Worker PASS is claimed.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, Playwright, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
-- Cleanup completion now tolerates legitimate concurrent protected-state progress without overwriting it, while exact cleanup identity and provenance remain authority-locked on every retry.
-- Bounded retry prevents an attacker or pathological local writer from turning cleanup completion into an unbounded loop.
-- A changed cleanup id, changed opaque target, changed remote provenance, reintroduced pending audit, deleted job, or continued contention fails closed and retains/rejects cleanup debt rather than claiming success.
-- Independent durable obligations are not coupled: cleanup completion clears only its own marker and preserves V2 binding publication debt and all unrelated newer job state.
-- No production transport calls, credentials, tokens, private keys, plaintext research content, or paid services were introduced.
+- Cleanup completion now has both direct bounded-contention tests and a production-ingestor race proving stale local acknowledgement does not require replaying already-successful remote deletions.
+- Authority remains durable-state-derived: the test does not reconstruct cleanup identity from mutable transport state and does not weaken provenance validation.
+- Audit is durable before deletion; the injected transition is rejected unless audit is already settled and ResultApplied provenance/cleanup debt are present.
+- Independent obligations remain uncoupled; no credentials, plaintext research payloads, external side effects beyond in-memory test transports, or paid services were introduced.
 
 ## Known blockers / risks
 - No .NET 8 compiler/runtime in this environment; current changes are statically reviewed but unexecuted.
 - Live Nebius mounted-volume/Serverless behavior, worker auth, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
-- Local cleanup completion now has bounded CAS convergence, but the deterministic regression currently exercises the cleanup intent directly after the conceptual transport-success boundary rather than injecting contention through `RemoteResearchResultIngestor` after two real fake-transport deletes.
-- The next useful reliability step is to compose this contention seam with the existing multi-artifact ingestion race so transport deletion counts, audit exact-once, result exact-once, cleanup bounded convergence, and binding exact-once are proven in one end-to-end deterministic scenario.
+- The new end-to-end cleanup CAS regression does not yet compose the same contention with an already-published outstanding V2 binding obligation. Existing suites independently prove published-binding multi-artifact recovery and direct cleanup contention preserving V2 debt, but the final composition remains useful.
 
 ## Single Best Next Task
-Wire the internal cleanup-completion observer through a test-only `RemoteResearchResultIngestor` construction path and extend the multi-artifact published-binding regression so both protected deletions succeed, a legitimate concurrent state transition wins the first cleanup-marker CAS, and the production ingestor converges on retry without re-deleting/reapplying/auditing or altering the independently pending V2 binding obligation.
+Extend the published-binding multi-artifact race with the same transport-side post-delete concurrent transition so one deterministic scenario proves: signed V2 publication exactly once, real result CAS/audit exactly once, both encrypted deletions exactly once, first cleanup-marker CAS loses to legitimate terminal progress, bounded retry preserves that progress and the pending binding obligation, and final binding reconciliation clears only its own obligation without republishing.

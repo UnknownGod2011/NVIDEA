@@ -1,100 +1,69 @@
 # NVIDEA Hackathon Progress
 
-## Mission
-Build a competition-grade open-source Personal AI operating layer for Windows for the Nebius x NVIDIA Global AI Hackathon. Target **Personal AI**, **Best Use of Tavily**, and top-three / Grand Prize quality. NVIDEA must remain independently stronger than keyboard.wtf in NVIDIA/Nebius-first reasoning, memory, research, browser automation, long-running work, verification, privacy, and safety.
+## Mission and hard boundary
+Build a competition-grade open-source Personal AI operating layer for Windows for the Nebius x NVIDIA Global AI Hackathon, targeting Personal AI, Best Use of Tavily, and top-three/Grand Prize quality. WRITE ONLY `UnknownGod2011/NVIDEA`; `UnknownGod2011/keyboard.wtf` is READ-ONLY reference material; never mutate any other repository.
 
-## Hard Repository Boundary
-- WRITE ONLY to `UnknownGod2011/NVIDEA`.
-- `UnknownGod2011/keyboard.wtf` is READ-ONLY reference material; never mutate it.
-- Never write to any other repository.
-- Before every GitHub mutation, verify the target is exactly `UnknownGod2011/NVIDEA`.
-- Do not remove working functionality merely to simplify implementation.
+## Current architecture
+- .NET 8 Core + WPF Windows host + deployable remote worker.
+- NVIDIA Nemotron through Nebius Token Factory with structured tools, retries/timeouts/cancellation and model routing.
+- Layered privacy-aware personal memory with semantic/recency/importance retrieval and user controls.
+- Tavily Search + Extract research with planning, deduplication, source quality/freshness/diversity, citations, resumable checkpoints and untrusted-evidence handling.
+- Safe Playwright browser agent with persistent sessions, plan-act-observe-verify, injection defenses, approvals, quarantined downloads, emergency stop and ambiguous-side-effect recovery.
+- Protected local state, CAS jobs, hash-chained audit, durable audit outbox, durable external-action ambiguity and durable protected-payload cleanup.
+- Encrypted Nebius remote research with atomic dispatch trust root, lifecycle/cancellation reconciliation, exact-once result ingestion and Object Storage/Serverless worker transport.
+- Dispatch-binding V2 signs the authoritative remote id plus canonical SHA-256 of the exact encrypted work-item envelope; worker verifies and pins that envelope before execution.
+- Worker bootstrap/binding reads use bounded cancellation-aware retry, lifetime caps and fail-closed crypto/protocol validation; SIGTERM has bounded cooperative shutdown.
+- Judging/evaluation tooling covers demo, adversarial, package, evidence and model-catalog checks.
 
-## Current Product / Architecture State
-- .NET 8 core in `src/Nvidea.Core`, WPF Windows host in `src/Nvidea.Windows`, deployable remote worker in `src/Nvidea.Worker`.
-- NVIDIA Nemotron through Nebius Token Factory with structured tool calling, retries/timeouts/cancellation, response-schema support, and fast/deep model routing.
-- Layered personal memory with privacy-aware writes, provenance, semantic/recency/importance retrieval, local embeddings, migration/re-indexing, retention/edit/delete controls, and maintenance UX.
-- Tavily Search + Extract research with multi-query planning, canonical deduplication, source quality/freshness/diversity ranking, citations/provenance, resumable checkpoints, explicit untrusted-evidence handling, and provider-diagnostic quarantine.
-- Safe Playwright browser agent with persistent Chromium state, popup tracking, plan-act-observe-verify, prompt-injection detection, consequential-action approvals, quarantined downloads, emergency stop, crash recovery, and no automatic replay after ambiguous side effects.
-- Protected local state uses Windows CurrentUser DPAPI by default; jobs use durable compare-and-swap and audit uses protected hash-chained storage/tail sealing.
-- Remote research uses encrypted opaque work items, two-phase dispatch, lifecycle reconciliation, crash-resumable cancellation, exact-once protected-result ingestion, cancellation-vs-terminal race handling, Nebius Object Storage, and Serverless-mounted worker transport.
-- `DurableJobAuditOutbox` couples validated audit intents to the same job CAS as critical research state transitions.
-- `PendingExternalAction` / `DurableJobExternalActionIntent` persist ambiguous cancellation delivery; transport success is never provider-state proof.
-- `PendingProtectedPayloadCleanup` / `DurableProtectedPayloadCleanupIntent` persist cleanup obligations and retry partial deletes idempotently after restart.
-- Signed dispatch-binding V2 commits to the exact protected work-item envelope via canonical SHA-256. Restart recovery signs only protected durable digest state and never mutable shared transport bytes.
-- Hardened worker execution requires V2, verifies and pins the exact staged envelope, bounds bootstrap/binding retry by authenticated lifetime, retries only absence/transient I/O, and fails closed on malformed/substituted/cryptographic state.
-- Remote worker cancellation propagates through bootstrap, binding recovery, and execution; POSIX SIGTERM has a bounded cooperative grace window.
-- Deterministic judging/evaluation tooling covers demo, adversarial, package, evidence, and model-catalog checks.
+## Persistent history
+### 2026-09-06 to 2026-09-12
+Implemented Windows shell, Nebius/Nemotron inference, layered memory, Tavily research, permission/audit engine, durable jobs, Playwright browser execution, DPAPI state protection, encrypted remote execution, local voice, deployment preflight, judging/evaluator tooling and open-source/demo documentation.
 
-## Persistent Progress History
+### 2026-09-13 to 2026-09-14
+Hardened exact-once behavior and remote dispatch: executed-but-unverified browser actions are never replayed automatically; added audit/event trust, diagnostic quarantine, exact remote provenance, crash-resumable cancellation, durable external-action intent, durable protected-payload cleanup, audit-outbox dispatch transitions and restart-safe binding recovery.
 
-### 2026-09-06 to 2026-09-12 — Core product and judging infrastructure
-Implemented the Windows shell, Nebius/Nemotron inference, layered memory, Tavily research, permission/audit engine, durable jobs, Playwright browser execution, DPAPI state protection, persistent browser sessions/downloads, crash recovery, encrypted Nebius remote execution, two-phase dispatch, signed resource binding, exact-once ingestion, lifecycle/cancellation reconciliation, local voice, semantic-memory migration UX, judging/evaluator tooling, protocol trust, endpoint/redirect trust, deployment preflight, and open-source/demo documentation.
+### 2026-09-14 to 2026-09-15
+Hardened worker recovery and sender authenticity: bounded mounted-volume retry, cancellation/SIGTERM propagation, serializer-independent envelope commitment, durable `RemoteWorkItemEnvelopeSha256`, V2 envelope-bound binding, pinned-envelope execution and restart recovery that never re-hashes mutable shared transport.
 
-### 2026-09-13 to 2026-09-14 — Exact-once and remote-dispatch hardening
-- Browser executed-but-unverified actions remain durable and are never automatically replayed.
-- Added audit/event trust validation, provider diagnostic quarantine, exact remote provenance, crash-resumable cancellation, durable external-action intent, durable protected-payload cleanup, and restart-safe binding recovery.
-- Dispatch reservation and remote-id attachment audits use the durable audit-outbox pattern.
-- Representative commits: `e66381b7`, `8bed3481`, `6278afd9`, `338fe565`, `d9ad5246`, `ae1a2dbe`.
+### 2026-09-15 — Atomic dispatch and ambiguity recovery
+`AtomicRemoteResearchDispatchReservation` commits DispatchReserved provenance + exact envelope digest + reservation audit intent in one CAS before Nebius Create. Pending exact reservation audit is safe for first Create recovery because the original reservation call could not have returned; marker-cleared reservation is provider-delivery ambiguous and must never directly replay Create. Runtime falls back to deterministic provider list + verified GET, then attaches the exact remote id and reconstructs V2 binding from protected durable digest state. Fault/end-to-end regressions prove zero duplicate Create and zero mutable work-item reads for marker-cleared recovery.
 
-### 2026-09-14 to 2026-09-15 — Worker recovery and envelope-bound authority
-- Binding publication/mounted-volume reads use bounded retry capped by work-item lifetime; malformed/cryptographic failures never retry.
-- Work-item bootstrap has bounded retry and shutdown cancellation propagates through all worker stages.
-- Added serializer-independent protected-envelope commitment and durable `RemoteWorkItemEnvelopeSha256` participating in CAS identity.
-- Dispatch-binding V2 signs `{opaque id, authoritative remote id/name, envelope digest, lifetime}`. V1 is compatibility-only and cannot authorize hardened worker execution.
-- Worker verifies V2 against the staged encrypted envelope and executes from the pinned verified envelope, removing verify-then-re-read TOCTOU.
-- Restart binding recovery uses protected durable digest provenance only.
-- Representative commits: `3f766515`, `a2b63b02`, `bd7a22e9`, `4dbc5ab1`, `1b6c7bd3`, `c95962b4`.
-
-### 2026-09-15 — Atomic dispatch trust root and crash recovery
-- `AtomicRemoteResearchDispatchReservation` validates job/checkpoint/approval/protocol/lifetime/opaque identity and commits `DispatchReserved` provenance, exact envelope SHA-256, and `research.remote_dispatch_reserved` audit intent in one CAS before Nebius Create.
-- Audit append failure preserves ciphertext and the complete trust root; Create remains blocked.
-- `RemoteResearchDispatchReservationRecovery` reloads authority only from protected durable state and never shared mutable work-item bytes.
-- Pending exact reservation audit is safe for first Create replay because the original reservation call could not have returned; a marker-cleared reservation is provider-delivery ambiguous and must never directly replay Create.
-- `NebiusResearchClientRuntime.ReconcileReservedAsync` therefore attempts narrowly safe pending-audit recovery first and otherwise falls back to deterministic provider list + verified GET reconciliation.
-- Dispatcher/fault tests cover audit failure, restart recovery, no mutable transport re-hash, and zero direct Create for marker-cleared reservations.
-- Representative commits: `05bf4bb4`, `b36ce681`, `f8ef286b`, `809a7bd3`, `e94e7502`, `2ea5cb4b`, `a11d3d9c`, `fa605b66`, `44fcbc57`.
-
-### 2026-09-15 — Client-runtime marker-cleared ambiguity regression (latest run)
+### 2026-09-15 — Centralized reservation trust validation (latest run)
 Completed:
-- Re-read this ledger and inspected the current client runtime, lifecycle reconciler, reservation-recovery safety tests, binding recovery implementation, and provider reconciliation behavior before changing anything.
-- Added `NebiusResearchClientRuntimeReservationAmbiguityTests` to exercise the **production runtime**, not merely the lower-level dispatcher.
-- The regression creates an atomic, audit-settled `DispatchReserved` trust root with a durable envelope commitment, then simulates exactly one matching deterministic Nebius provider job plus an unrelated job.
-- It proves `NebiusResearchClientRuntime.ReconcileReservedAsync` performs **zero `CreateAsync` calls**, one bounded provider list read, one verified GET of the exact matched remote id, and attaches that exact authoritative remote id.
-- It uses a work-item transport whose `GetAsync`/`PutAsync` throw and asserts both counters remain zero, proving marker-cleared ambiguity recovery does not re-read, re-upload, or re-hash mutable shared work-item state.
-- It verifies the runtime subsequently publishes an envelope-bound **V2** dispatch binding, signed for the exact reconciled remote id and carrying the exact protected durable `RemoteWorkItemEnvelopeSha256` committed before provider creation.
-- It re-reads the durable job and asserts the attached remote id, cleared audit intent, and original envelope commitment remain intact.
+- Re-read this ledger and inspected the current reservation recovery, two-phase dispatcher, atomic reservation implementation, job contracts and ambiguity regressions before changing code.
+- Added pure `RemoteResearchReservationTrustValidator` as a shared fail-closed trust boundary for durable DispatchReserved state.
+- The validator checks research job type, Running/local/approval-free execution, DispatchReserved provenance, remote-id absence, current protocol, opaque-id presence, exact checkpoint step+timestamp, bounded work-item lifetime, optional expiry, and canonical protected-envelope SHA-256.
+- Audit semantics remain explicit and separate: `RequirePendingReservationAudit` recognizes only `research.remote_dispatch_reserved`; `RequireAuditSettled` rejects any pending audit. The validator deliberately does not infer that a marker-cleared reservation permits Create.
+- Refactored `RemoteResearchDispatchReservationRecovery` to consume the shared validator before and after audit settlement and additionally prove opaque id, checkpoint identity, expiry and envelope digest are unchanged across settlement.
+- Added adversarial validator tests for checkpoint timestamp substitution, premature/substituted remote id, protocol substitution, non-canonical digest, expiry/overlong lifetime, approval scope and wrong execution location.
 
 Files changed this run:
-- `tests/Nvidea.Core.Tests/NebiusResearchClientRuntimeReservationAmbiguityTests.cs` (new)
+- `src/Nvidea.Core/Jobs/RemoteResearchReservationTrustValidator.cs` (new)
+- `src/Nvidea.Core/Jobs/RemoteResearchDispatchReservationRecovery.cs`
+- `tests/Nvidea.Core.Tests/RemoteResearchReservationTrustValidatorTests.cs` (new)
 - `progress.md`
 
-Commits:
-- `ad01d8c197cc15108304b0e0165e722cccbc95fd` — lock down marker-cleared client-runtime recovery.
-- This ledger update commit follows it.
+Commits this run: `641633b2`, `dd20590e`, `81b7aac2`, `a20297ea`, plus this ledger commit.
 
-Validation / evidence:
-- Before each GitHub mutation, repository metadata reported exact `repository_full_name: UnknownGod2011/NVIDEA`; no other repository was mutated.
-- Starting head: `44fcbc57f4a55068cd82f16957a81542bb259ea6`.
-- Static review confirms the regression traverses the real runtime fallback: safe direct-resume rejection -> deterministic provider list/verified GET -> audited remote-id attachment -> protected-state V2 binding recovery.
-- Static review confirms the fake provider counts Create/List/Get independently and the work-item transport fails immediately if mutable shared state is touched.
-- **Executable validation remains unavailable:** this environment has no usable `dotnet`, `csc`, or `msbuild`; no compilation/xUnit/Worker/WPF PASS is claimed.
-- No GitHub Actions workflow and no live/paid Nebius, Object Storage, Serverless, Tavily, Playwright, Ollama, or inference operation was triggered.
+Validation/evidence:
+- Every mutation targeted exact repository `UnknownGod2011/NVIDEA`; no other repository was mutated.
+- Starting head was `8b2aed164d328d25403619126c3760265db9e751`.
+- Static review caught and corrected the checkpoint type in the new validator before finalization.
+- Executable validation remains unavailable: no usable `dotnet`, `csc` or `msbuild` is available here, so no compilation/xUnit/WPF/Worker PASS is claimed.
+- No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, Playwright, Ollama or inference operation was triggered.
 
-## Security / Privacy / Failure Review
-- Pending exact reservation audit and marker-cleared reservation remain deliberately different trust states; only the former can authorize a first Create replay.
-- Marker-cleared ambiguity resolution obtains authority from deterministic provider identity plus verified GET and never mutable work-item bytes.
-- The V2 binding produced after reconciliation is derived from the durable pre-provider envelope commitment, so provider recovery cannot bless a substituted shared envelope.
-- Exact remote id, checkpoint, lifetime, protocol, approval state, audit ordering, and envelope digest remain fail-closed trust boundaries.
-- Existing cancellation ambiguity, result exact-once, durable payload cleanup, endpoint/redirect trust, prompt-injection, permissions, and worker protections remain intact.
+## Security / privacy / failure review
+- Pending reservation audit and marker-cleared ambiguity remain deliberately distinct; only the former can authorize first Create recovery.
+- The shared validator is pure and performs no provider or mutable-transport I/O.
+- Exact checkpoint, protocol, opaque id, lifetime, approval/execution state and envelope commitment fail closed.
+- Recovery now checks the complete shared trust root both before and after audit settlement, reducing validation drift.
+- Existing cancellation ambiguity, exact-once result handling, cleanup, endpoint/redirect trust, prompt-injection defenses, permissions and worker protections remain intact.
 
-## Known Blockers / Risks
-- No .NET 8 compiler/runtime is available in this execution environment, so current Core/test changes are statically reviewed but unexecuted.
-- Direct container `git clone` cannot currently resolve GitHub, preventing local compilation bootstrap.
-- Live Nebius Serverless/Object Storage mounted-volume behavior, authenticated worker execution, SIGTERM delivery, provider catalog drift, Windows UX, authenticated Playwright sessions, Tavily live behavior, and semantic ranking remain environment-validation items.
-- Reservation eligibility/checkpoint/digest validation is repeated across atomic reservation, recovery, dispatcher create authority, lifecycle reconciliation, and binding recovery. Drift between those checks is now the highest-value local reliability/security debt.
-- Binding publication is idempotent but not itself modeled as a durable pending/completed obligation; lifecycle recovery reconstructs it from durable state before provider use.
-- Signed-binding cleanup after terminal settlement remains best-effort. The binding is signed/TTL-bounded and contains no research payload, but cleanup is not yet represented as a durable obligation.
+## Known blockers / risks
+- No .NET 8 compiler/runtime in this execution environment; current Core/test changes are statically reviewed but unexecuted.
+- Live Nebius mounted-volume/Serverless behavior, worker auth, SIGTERM delivery, model catalog drift, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
+- The new validator is currently consumed by reservation recovery; equivalent checks still exist in `TwoPhaseNebiusResearchDispatcher.ValidateProviderCreateAuthority`, atomic reservation target validation, lifecycle reconciliation and binding recovery. Those should be migrated carefully without weakening state-specific invariants.
+- Binding publication is idempotent but not modeled as a durable pending/completed obligation; signed-binding cleanup remains best-effort.
 
 ## Single Best Next Task
-Centralize the repeated **remote research reservation trust validation** into one small, pure, fail-closed validator used by atomic reservation/recovery, dispatcher provider-create authority, lifecycle reconciliation, and binding recovery where their invariants overlap. Add focused mutation/adversarial tests for checkpoint timestamp/step, opaque id, protocol, approval state, execution state/location, lifetime, remote-id absence/presence, and canonical envelope digest so one component cannot accidentally accept a state another rejects. Preserve the explicit ambiguity rule: a cleared reservation-audit marker must never become direct Create authority.
+Migrate `TwoPhaseNebiusResearchDispatcher.ValidateProviderCreateAuthority` onto `RemoteResearchReservationTrustValidator` and add a regression proving provider Create cannot occur when any shared trust-root dimension is mutated after recovery. Then extend the validator to lifecycle/binding paths only where invariants truly overlap, keeping state-specific checks local and preserving the absolute rule that a cleared reservation-audit marker is never direct Create authority.

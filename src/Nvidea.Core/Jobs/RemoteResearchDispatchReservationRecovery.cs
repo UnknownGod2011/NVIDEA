@@ -24,8 +24,6 @@ public sealed class RemoteResearchDispatchReservationRecoveryNotRequiredExceptio
 /// </summary>
 public sealed class RemoteResearchDispatchReservationRecovery
 {
-    private const string ReservationAuditEventType = "research.remote_dispatch_reserved";
-
     private readonly JsonAgentJobStore _store;
     private readonly DurableJobAuditOutbox _auditOutbox;
 
@@ -46,65 +44,25 @@ public sealed class RemoteResearchDispatchReservationRecovery
 
         var current = await _store.GetAsync(jobId, cancellationToken).ConfigureAwait(false)
             ?? throw new KeyNotFoundException($"Research job '{jobId}' was not found.");
-        var expectedCommitment = ValidateDurableReservation(current);
-
-        var pending = current.PendingAuditEvent;
-        if (pending is null)
-            throw new RemoteResearchDispatchReservationRecoveryNotRequiredException();
-        if (!string.Equals(pending.EventType, ReservationAuditEventType, StringComparison.Ordinal))
-        {
-            throw new InvalidDataException(
-                "Dispatch reservation recovery found a different pending audit event and will not settle it as provider-dispatch authority.");
-        }
+        var expected = RemoteResearchReservationTrustValidator.ValidateReserved(current);
+        RemoteResearchReservationTrustValidator.RequirePendingReservationAudit(current);
 
         var settled = await _auditOutbox.FlushAsync(current, cancellationToken).ConfigureAwait(false);
-        var settledCommitment = ValidateDurableReservation(settled);
-        if (!ResearchWorkItemEnvelopeCommitment.FixedTimeEquals(expectedCommitment, settledCommitment))
+        var actual = RemoteResearchReservationTrustValidator.ValidateReserved(settled);
+        if (!ResearchWorkItemEnvelopeCommitment.FixedTimeEquals(expected.EnvelopeSha256, actual.EnvelopeSha256))
         {
             throw new InvalidDataException(
                 "Protected work-item envelope commitment changed while dispatch reservation audit recovery was settling.");
         }
+        if (!string.Equals(expected.Provenance.OpaqueWorkItemId, actual.Provenance.OpaqueWorkItemId, StringComparison.Ordinal)
+            || expected.Checkpoint.SavedAt != actual.Checkpoint.SavedAt
+            || !string.Equals(expected.Checkpoint.Step, actual.Checkpoint.Step, StringComparison.Ordinal)
+            || expected.WorkItemExpiresAt != actual.WorkItemExpiresAt)
+        {
+            throw new InvalidDataException("Remote dispatch reservation trust root changed while its audit was settling.");
+        }
 
-        if (settled.PendingAuditEvent is not null)
-            throw new InvalidOperationException("Dispatch reservation audit recovery did not settle the pending audit marker.");
-
+        RemoteResearchReservationTrustValidator.RequireAuditSettled(settled);
         return settled;
-    }
-
-    private static string ValidateDurableReservation(AgentJobRecord record)
-    {
-        if (!string.Equals(record.Definition.JobType, ResearchJobHandler.Type, StringComparison.Ordinal)
-            || record.State != AgentJobState.Running
-            || record.ExecutionLocation != JobExecutionLocation.Local
-            || record.ApprovalScope is not null)
-        {
-            throw new InvalidOperationException(
-                "Only an approval-free, local Running research reservation can be recovered for remote dispatch.");
-        }
-
-        var provenance = record.RemoteResearch
-            ?? throw new InvalidOperationException("Research dispatch reservation provenance is missing.");
-        if (provenance.State != RemoteResearchProvenanceState.DispatchReserved
-            || !string.IsNullOrWhiteSpace(provenance.RemoteJobId)
-            || !string.Equals(provenance.ProtocolVersion, ResearchWorkItemProtector.ProtocolVersion, StringComparison.Ordinal)
-            || string.IsNullOrWhiteSpace(provenance.OpaqueWorkItemId)
-            || provenance.WorkItemExpiresAt is null)
-        {
-            throw new InvalidOperationException("Durable remote dispatch reservation provenance is incomplete or not recoverable.");
-        }
-
-        var checkpoint = record.Checkpoint
-            ?? throw new InvalidOperationException("Remote dispatch reservation is missing its durable input checkpoint.");
-        if (!string.Equals(checkpoint.Step, provenance.InputCheckpointStep, StringComparison.Ordinal)
-            || checkpoint.SavedAt != provenance.InputCheckpointSavedAt)
-        {
-            throw new InvalidDataException("Remote dispatch reservation no longer matches its exact durable input checkpoint.");
-        }
-
-        var commitment = record.RemoteWorkItemEnvelopeSha256
-            ?? throw new InvalidDataException("Atomic remote dispatch reservation is missing its protected envelope commitment.");
-        return ResearchWorkItemEnvelopeCommitment.ValidateCanonicalSha256(
-            commitment,
-            nameof(record.RemoteWorkItemEnvelopeSha256));
     }
 }

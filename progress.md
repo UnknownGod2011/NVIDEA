@@ -29,42 +29,47 @@ Hardened `DurableProtectedPayloadCleanupIntent.ClearAsync` from one-shot complet
 ### 2026-09-15 — End-to-end ingestor cleanup CAS race
 Added `RemoteResearchResultIngestorCleanupCasRaceTests`: both encrypted deletions succeed, then the work-item transport commits legitimate `Pending -> Completed` progress before cleanup-marker completion. Production cleanup reload/revalidation converges from the stale record without replaying transport deletion or result/audit work.
 
-### 2026-09-16 — Published-binding + cleanup-CAS composition (latest run)
+### 2026-09-16 — Published-binding + cleanup-CAS composition
+Added `DurableResearchDispatchBindingCleanupCasCompositionTests`, composing signed V2 publication, real result CAS/audit, both encrypted deletions, concurrent terminal progress, bounded cleanup convergence and final binding reconciliation. Fresh recovery actors must perform zero additional external work after convergence.
+
+### 2026-09-16 — Judge-visible runtime evidence (latest run)
 Completed:
-- Re-read this ledger completely and inspected recent commits plus the existing published-binding multi-artifact cleanup race and real ingestor cleanup-CAS race before mutation.
-- Verified immediately before each GitHub mutation that the target repository was exactly `UnknownGod2011/NVIDEA`; no other repository was mutated.
-- Added `DurableResearchDispatchBindingCleanupCasCompositionTests` to compose the previously independent durability guarantees in one deterministic production-path scenario.
-- The scenario publishes the signed V2 binding first, then its completion observer runs the real `RemoteResearchResultIngestor`: result CAS applies once, the result audit settles once, result deletion succeeds once, work-item deletion succeeds once, and the work-item transport commits a legitimate local `Pending -> Completed` transition before cleanup-marker completion.
-- The concurrent transition explicitly requires the independently staged `PendingResearchDispatchBinding` to still exist, proving the race occurs while binding completion bookkeeping remains outstanding rather than after the obligations have been serialized away.
-- Production cleanup completion must therefore lose its first CAS to the newer Completed record, reload/revalidate the exact cleanup authority, preserve terminal progress and pending binding debt, and clear only cleanup debt on bounded retry.
-- Binding completion then reloads the terminal ResultApplied state and clears only its own exact V2 obligation. Assertions require one binding transport publication, one result audit, one result delete, one work-item delete, one concurrent transition, preserved Evidence checkpoint, and zero pending audit/cleanup/binding obligations.
-- Freshly reconstructed cleanup and binding recovery actors are run afterward and must perform no additional external transport work, providing explicit no-replay evidence after full convergence.
+- Re-read this ledger completely and inspected the Windows shell, readiness projection, research lifecycle UI and existing safety/approval surfaces before mutation.
+- Verified immediately before every GitHub mutation that the target repository was exactly `UnknownGod2011/NVIDEA`; no other repository was mutated.
+- Added `JudgeEvidenceDialog.xaml` + code-behind as a focused demo/evaluator surface reachable from the existing Research readiness Details action.
+- The evidence view is deliberately not a fake demo dashboard: provider readiness is derived from the same `DesktopResearchReadiness` object already used by production readiness logic. Tavily local research, Nebius lifecycle and Nebius Serverless dispatch remain visibly NOT READY/NOT ENABLED when the actual runtime says so.
+- The dialog summarizes the implemented judge-relevant proof path: global Windows invocation/context capture, privacy-aware local memory controls, durable research with explicit execution location, safe browser execution and ambiguous-side-effect recovery, exact-scope approval gates, and restart-safe background research semantics.
+- Hardened the presentation boundary so no secret values, provider IDs, payloads, URLs or raw provider errors are surfaced. The dialog explicitly tells evaluators that unavailable capabilities are not promoted to a simulated green state.
+- Rewired the existing readiness Details action to open this runtime-derived evidence surface and updated its tooltip. No new provider call, credential access, browser action or side effect is triggered by opening it.
 
 Files changed:
-- `tests/Nvidea.Core.Tests/DurableResearchDispatchBindingCleanupCasCompositionTests.cs`
+- `src/Nvidea.Windows/JudgeEvidenceDialog.xaml`
+- `src/Nvidea.Windows/JudgeEvidenceDialog.xaml.cs`
+- `src/Nvidea.Windows/MainWindow.Readiness.cs`
 - `progress.md`
 
 Commits this run before ledger:
-- `2773eb80fd75a7539ef17869e34f2852d5654cef` — test published binding cleanup CAS composition.
+- `58b029bf2f802fd2fbb768fecac220a225d9916f` — add judge-visible architecture evidence dialog.
+- `8c3fb8dd7ebcbf4dfc19662962c6cf5210d0782d` — project live provider readiness into judge evidence.
+- `ee4755bcd367e846c9787974d38aba4f48928dac` — surface runtime-derived judge evidence from readiness.
 
 Validation/evidence:
-- Static composition follows existing production contracts and test seams: binding publication precedes the completion observer; the observer invokes real ingestion; real cleanup orders result delete before work-item delete; the transport-side transition therefore lands after both external deletions and before cleanup `ClearAsync`.
-- The injected transition is fail-closed unless durable state is Pending + ResultApplied, audit-settled, cleanup-pending, and binding-pending. This prevents the test from accidentally passing at a weaker or differently ordered race boundary.
-- Post-convergence recovery assertions ensure no result/work-item deletion replay and no second signed binding publication.
-- No production code/API was broadened this run; deterministic concurrency remains isolated to an in-memory test transport.
+- Static review confirms the dialog accepts only `DesktopResearchReadiness`; it does not read environment variables, credentials or provider payloads itself.
+- Existing `RefreshResearchReadiness()` remains the single runtime/environment projection point and still uses composed `ResearchProductRuntime` lifecycle/dispatch readiness.
+- WPF SDK projects automatically include Window XAML/code-behind under the existing project conventions; no extra package/framework was introduced.
 - Executable validation remains unavailable: no usable `dotnet`, `csc` or `msbuild` is available here, so no compilation/xUnit/WPF/Worker PASS is claimed.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, Playwright, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
-- The composed race preserves independent authority domains: result ingestion owns result/audit/cleanup obligations while binding reconciliation owns only the exact signed V2 publication obligation.
-- Cleanup completion cannot erase or reconstruct binding authority; the injected terminal transition preserves the exact pending binding object and production retry revalidates cleanup identity from protected durable state.
-- Audit remains durable before either encrypted artifact is deleted, and no cleanup is accepted while `PendingAuditEvent` exists.
-- The regression uses no credentials, plaintext external research data, paid services, browser sessions or external side effects beyond in-memory test transports.
+- Judge evidence is runtime-derived but payload-free: it exposes coarse capability state only and cannot leak API keys, remote IDs, questions, source URLs, memory content or provider diagnostics.
+- The surface does not bypass permissions or create a separate execution path; it only explains architecture already reachable through production controls.
+- Provider unavailability remains fail-closed and visibly unavailable rather than being masked for demo quality.
+- Existing durable result/audit/cleanup/binding authority boundaries remain unchanged.
 
 ## Known blockers / risks
 - No .NET 8 compiler/runtime in this environment; current changes are statically reviewed but unexecuted.
 - Live Nebius mounted-volume/Serverless behavior, worker auth, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
-- The durability matrix is now strong around result/audit/cleanup/binding races; further returns from adding narrowly adjacent synthetic race tests are diminishing compared with executable validation and end-user demo integration.
+- The new evidence dialog proves configured readiness and implemented architecture, but it does not yet accumulate per-demo-session evidence that a Nemotron response, Tavily cited report, memory retrieval and verified browser action actually occurred during the current recording.
 
 ## Single Best Next Task
-Shift from the now-composed durability matrix to judge-visible integration: inspect the Windows shell/demo path and wire a deterministic end-to-end Personal AI demo status/evidence flow that visibly proves Nemotron/Nebius reasoning, Tavily cited research, durable memory influence, browser plan-act-observe-verify, a consequential-action permission gate, and resumable background work without weakening the existing safety boundaries. Prioritize code that can be statically validated here and keep live-service claims explicitly unverified until credentials/runtime are available.
+Add a privacy-safe per-session demo evidence ledger sourced from real production events/results (not demo flags): record coarse proof that Nemotron/Nebius inference completed, durable memory influenced an invocation, a Tavily report completed with citations, a browser action reached verified post-state, and an approval gate was exercised. Show only payload-free timestamps/types in the judge evidence dialog, with tests ensuring provider/user content and identifiers cannot enter the evidence projection.

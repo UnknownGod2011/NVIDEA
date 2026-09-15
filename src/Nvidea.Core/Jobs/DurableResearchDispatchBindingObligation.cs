@@ -74,23 +74,20 @@ public sealed class DurableResearchDispatchBindingObligation
         ValidateObligation(current, pending, requireAuditSettled: true);
         await _publisher.PublishEnvelopeBoundAsync(pending.OpaqueWorkItemId, pending.RemoteJobId, pending.EnvelopeSha256, pending.ExpiresAt, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        // This observer is deliberately after the irreversible/shared side effect and before any
-        // completion read/CAS. It gives deterministic tests control of the exact crash/race window
-        // without exposing timing knobs in the public production API.
         if (_completionObserver is not null)
             await _completionObserver.AfterPublishedAsync(jobId, pending, cancellationToken).ConfigureAwait(false);
 
-        // Publication is already externally visible. A concurrent, legitimate local transition (for
-        // example cancellation intent/audit staging) must not turn a benign CAS loss into permanent
-        // publication debt. Re-read and retry only while the exact protected obligation and its
-        // authority-bearing provenance remain unchanged. Audit state may move concurrently here:
-        // clearing this already-published obligation is bookkeeping, not authority for a new side effect.
+        // Publication is already externally visible. Completion is bookkeeping, not authority for
+        // another external side effect. Legitimate lifecycle/result transitions may therefore finish
+        // while this method is paused, including transitions to local terminal/result-applied state.
+        // We clear only if the exact obligation and every authority-bearing provenance field remain
+        // unchanged and the resulting state/provenance pair is one produced by the research lifecycle.
         for (var attempt = 0; attempt < CompletionAttempts; attempt++)
         {
             var latest = await _store.GetAsync(jobId, cancellationToken).ConfigureAwait(false)
                 ?? throw new KeyNotFoundException($"Research job '{jobId}' disappeared while dispatch binding was being published.");
             if (latest.PendingResearchDispatchBinding is null)
-                return latest; // Another recovery actor completed the exact obligation.
+                return latest;
             if (latest.PendingResearchDispatchBinding.ObligationId != pending.ObligationId)
                 throw new InvalidOperationException("Dispatch-binding obligation changed during publication; refusing to clear it.");
 
@@ -125,12 +122,32 @@ public sealed class DurableResearchDispatchBindingObligation
     {
         var provenance = job.RemoteResearch ?? throw new InvalidOperationException("Research job has no remote dispatch provenance.");
         if (!string.Equals(job.Definition.JobType, ResearchJobHandler.Type, StringComparison.Ordinal)
-            || job.State != AgentJobState.Running
-            || job.ExecutionLocation != JobExecutionLocation.NebiusServerless
-            || provenance.State is not (RemoteResearchProvenanceState.Dispatched or RemoteResearchProvenanceState.CancelRequested)
             || string.IsNullOrWhiteSpace(provenance.RemoteJobId)
-            || string.IsNullOrWhiteSpace(job.RemoteWorkItemEnvelopeSha256)
-            || (requireAuditSettled && job.PendingAuditEvent is not null))
-            throw new InvalidOperationException("Only an active envelope-bound Nebius stage with matching protected provenance can publish or complete its dispatch binding.");
+            || string.IsNullOrWhiteSpace(job.RemoteWorkItemEnvelopeSha256))
+            throw new InvalidOperationException("Dispatch-binding completion requires envelope-bound research provenance.");
+
+        if (requireAuditSettled)
+        {
+            if (job.State != AgentJobState.Running
+                || job.ExecutionLocation != JobExecutionLocation.NebiusServerless
+                || provenance.State is not (RemoteResearchProvenanceState.Dispatched or RemoteResearchProvenanceState.CancelRequested)
+                || job.PendingAuditEvent is not null)
+                throw new InvalidOperationException("Only an active audit-settled Nebius stage can publish its dispatch binding.");
+            return;
+        }
+
+        var validPostPublicationState = (job.State, job.ExecutionLocation, provenance.State) switch
+        {
+            (AgentJobState.Running, JobExecutionLocation.NebiusServerless, RemoteResearchProvenanceState.Dispatched) => true,
+            (AgentJobState.Running, JobExecutionLocation.NebiusServerless, RemoteResearchProvenanceState.CancelRequested) => true,
+            (AgentJobState.Pending, JobExecutionLocation.Local, RemoteResearchProvenanceState.ResultApplied) => true,
+            (AgentJobState.Completed, JobExecutionLocation.Local, RemoteResearchProvenanceState.ResultApplied) => true,
+            (AgentJobState.Cancelled, JobExecutionLocation.Local, RemoteResearchProvenanceState.Cancelled) => true,
+            (AgentJobState.Failed, JobExecutionLocation.Local, RemoteResearchProvenanceState.RemoteFailed) => true,
+            (AgentJobState.Failed, JobExecutionLocation.Local, RemoteResearchProvenanceState.Expired) => true,
+            _ => false
+        };
+        if (!validPostPublicationState)
+            throw new InvalidOperationException("Dispatch-binding obligation encountered an inconsistent lifecycle state after publication; refusing to clear it.");
     }
 }

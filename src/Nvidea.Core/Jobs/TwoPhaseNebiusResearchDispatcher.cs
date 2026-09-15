@@ -15,6 +15,7 @@ public sealed class TwoPhaseNebiusResearchDispatcher
     private readonly ResearchDispatchBindingPublisher? _bindingPublisher;
     private readonly DurableResearchEnvelopeCommitment? _envelopeCommitment;
     private readonly AtomicRemoteResearchDispatchReservation? _atomicReservation;
+    private readonly DurableResearchDispatchBindingObligation? _bindingObligation;
 
     public TwoPhaseNebiusResearchDispatcher(
         INebiusServerlessJobClient serverless,
@@ -22,7 +23,8 @@ public sealed class TwoPhaseNebiusResearchDispatcher
         NebiusResearchDispatchOptions options,
         ResearchDispatchBindingPublisher? bindingPublisher = null,
         DurableResearchEnvelopeCommitment? envelopeCommitment = null,
-        AtomicRemoteResearchDispatchReservation? atomicReservation = null)
+        AtomicRemoteResearchDispatchReservation? atomicReservation = null,
+        DurableResearchDispatchBindingObligation? bindingObligation = null)
     {
         _serverless = serverless ?? throw new ArgumentNullException(nameof(serverless));
         _transport = transport ?? throw new ArgumentNullException(nameof(transport));
@@ -30,6 +32,7 @@ public sealed class TwoPhaseNebiusResearchDispatcher
         _bindingPublisher = bindingPublisher;
         _envelopeCommitment = envelopeCommitment;
         _atomicReservation = atomicReservation;
+        _bindingObligation = bindingObligation;
         ValidateOptions(options);
     }
 
@@ -59,8 +62,7 @@ public sealed class TwoPhaseNebiusResearchDispatcher
         var recovered = await _atomicReservation.RecoverAsync(localJobId, cancellationToken).ConfigureAwait(false);
         var receipt = await StartAtomicReservationAsync(recovered, cancellationToken).ConfigureAwait(false);
         var attached = await ingestor.AttachDispatchAsync(receipt, cancellationToken).ConfigureAwait(false);
-        await PublishBindingIfConfiguredAsync(attached, cancellationToken).ConfigureAwait(false);
-        return attached;
+        return await PublishBindingIfConfiguredAsync(attached, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<AgentJobRecord> DispatchWithReservationAsync(RemoteResearchWorkItem workItem, ResearchCloudAuthorization authorization, RemoteResearchResultIngestor ingestor, CancellationToken cancellationToken = default)
@@ -95,8 +97,7 @@ public sealed class TwoPhaseNebiusResearchDispatcher
             ? await StartAtomicReservationAsync(reserved, cancellationToken).ConfigureAwait(false)
             : await StartPreparedAsync(prepared, cancellationToken).ConfigureAwait(false);
         var attached = await ingestor.AttachDispatchAsync(receipt, cancellationToken).ConfigureAwait(false);
-        await PublishBindingIfConfiguredAsync(attached, cancellationToken).ConfigureAwait(false);
-        return attached;
+        return await PublishBindingIfConfiguredAsync(attached, cancellationToken).ConfigureAwait(false);
     }
 
     public string GetDeterministicRemoteJobName(string opaqueWorkItemId) => ResearchDispatchBindingProtector.GetDeterministicRemoteJobName(opaqueWorkItemId);
@@ -125,19 +126,27 @@ public sealed class TwoPhaseNebiusResearchDispatcher
         return RemoteResearchReservationTrustValidator.ValidateReserved(recovered, DateTimeOffset.UtcNow, requireUnexpired: true);
     }
 
-    private async Task PublishBindingIfConfiguredAsync(AgentJobRecord attached, CancellationToken cancellationToken)
+    private async Task<AgentJobRecord> PublishBindingIfConfiguredAsync(AgentJobRecord attached, CancellationToken cancellationToken)
     {
-        if (_bindingPublisher is null) return;
         var provenance = attached.RemoteResearch ?? throw new InvalidOperationException("Attached remote research job is missing provenance.");
         if (attached.ExecutionLocation != JobExecutionLocation.NebiusServerless || provenance.State != RemoteResearchProvenanceState.Dispatched || string.IsNullOrWhiteSpace(provenance.RemoteJobId))
             throw new InvalidOperationException("Authoritative dispatch binding can only be published after durable remote-id attachment.");
+
+        // Production envelope-bound dispatch must stage the exact publication obligation in protected
+        // CAS state before the first shared-transport write. A failed publish therefore remains a
+        // deterministic restart obligation instead of an attach->publish reconstruction window.
+        if (_bindingObligation is not null && attached.RemoteWorkItemEnvelopeSha256 is not null)
+            return await _bindingObligation.EnsurePublishedAsync(attached.JobId, cancellationToken).ConfigureAwait(false);
+
+        if (_bindingPublisher is null) return attached;
         var expiresAt = provenance.WorkItemExpiresAt ?? provenance.DispatchedAt + ResearchWorkItemProtector.MaxLifetime;
         if (attached.RemoteWorkItemEnvelopeSha256 is { } commitment)
         {
             await _bindingPublisher.PublishEnvelopeBoundAsync(provenance.OpaqueWorkItemId, provenance.RemoteJobId, commitment, expiresAt, cancellationToken: cancellationToken).ConfigureAwait(false);
-            return;
+            return attached;
         }
         await _bindingPublisher.PublishAsync(provenance.OpaqueWorkItemId, provenance.RemoteJobId, expiresAt, cancellationToken: cancellationToken).ConfigureAwait(false);
+        return attached;
     }
 
     private NebiusServerlessJobSpec BuildSpec(string opaqueWorkItemId)

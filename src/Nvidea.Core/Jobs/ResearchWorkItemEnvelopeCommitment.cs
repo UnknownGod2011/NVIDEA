@@ -234,6 +234,47 @@ public sealed class AtomicRemoteResearchDispatchReservation
         CancellationToken cancellationToken = default) =>
         _recovery.RecoverAuditAsync(jobId, cancellationToken);
 
+    /// <summary>
+    /// Re-reads the protected durable record immediately before the provider side effect and proves
+    /// that the recovered reservation trust root is still current. This closes the recovery-to-Create
+    /// TOCTOU window: a concurrent/tampered local state transition cannot leave an old recovered
+    /// snapshot with authority to launch provider work.
+    /// </summary>
+    public async Task<AgentJobRecord> RevalidateCreateAuthorityAsync(
+        AgentJobRecord recovered,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(recovered);
+        var expected = RemoteResearchReservationTrustValidator.ValidateReserved(
+            recovered,
+            DateTimeOffset.UtcNow,
+            requireUnexpired: true);
+        RemoteResearchReservationTrustValidator.RequireAuditSettled(recovered);
+
+        var current = await _store.GetAsync(recovered.JobId, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException($"Research job '{recovered.JobId}' was not found.");
+        var actual = RemoteResearchReservationTrustValidator.ValidateReserved(
+            current,
+            DateTimeOffset.UtcNow,
+            requireUnexpired: true);
+        RemoteResearchReservationTrustValidator.RequireAuditSettled(current);
+
+        if (!string.Equals(expected.Provenance.ProtocolVersion, actual.Provenance.ProtocolVersion, StringComparison.Ordinal)
+            || !string.Equals(expected.Provenance.OpaqueWorkItemId, actual.Provenance.OpaqueWorkItemId, StringComparison.Ordinal)
+            || !string.Equals(expected.Provenance.InputCheckpointStep, actual.Provenance.InputCheckpointStep, StringComparison.Ordinal)
+            || expected.Provenance.InputCheckpointSavedAt != actual.Provenance.InputCheckpointSavedAt
+            || expected.Provenance.DispatchedAt != actual.Provenance.DispatchedAt
+            || expected.WorkItemExpiresAt != actual.WorkItemExpiresAt
+            || !string.Equals(expected.Checkpoint.Step, actual.Checkpoint.Step, StringComparison.Ordinal)
+            || expected.Checkpoint.SavedAt != actual.Checkpoint.SavedAt
+            || !ResearchWorkItemEnvelopeCommitment.FixedTimeEquals(expected.EnvelopeSha256, actual.EnvelopeSha256))
+        {
+            throw new InvalidDataException("Remote dispatch reservation trust root changed after recovery and cannot authorize provider creation.");
+        }
+
+        return current;
+    }
+
     private static void ValidateTarget(AgentJobRecord current, string checkpointStep)
     {
         if (!string.Equals(current.Definition.JobType, ResearchJobHandler.Type, StringComparison.Ordinal))

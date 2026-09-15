@@ -5,71 +5,58 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 
 ## Current architecture
 - .NET 8 Core + WPF Windows host + deployable remote worker.
-- NVIDIA Nemotron through Nebius Token Factory with structured tools, retries/timeouts/cancellation and model routing.
-- Layered privacy-aware personal memory with semantic/recency/importance retrieval and user controls.
-- Tavily Search + Extract research with planning, deduplication, source quality/freshness/diversity, citations, resumable checkpoints and untrusted-evidence handling.
-- Safe Playwright browser agent with persistent sessions, plan-act-observe-verify, injection defenses, approvals, quarantined downloads, emergency stop and ambiguous-side-effect recovery.
-- Protected local state, CAS jobs, hash-chained audit, durable audit outbox, durable external-action ambiguity and durable protected-payload cleanup.
+- NVIDIA Nemotron through Nebius Token Factory; layered privacy-aware memory; Tavily research; safe Playwright browser automation; capability permissions/audit.
 - Encrypted Nebius remote research with atomic dispatch trust root, lifecycle/cancellation reconciliation, exact-once result ingestion and Object Storage/Serverless worker transport.
-- Dispatch-binding V2 signs the authoritative remote id plus canonical SHA-256 of the exact encrypted work-item envelope; worker verifies and pins that envelope before execution.
-- Worker bootstrap/binding reads use bounded cancellation-aware retry, lifetime caps and fail-closed crypto/protocol validation; SIGTERM has bounded cooperative shutdown.
-- Judging/evaluation tooling covers demo, adversarial, package, evidence and model-catalog checks.
+- Dispatch-binding V2 signs authoritative remote id + canonical SHA-256 of the exact encrypted work-item envelope; worker verifies and pins the envelope before execution.
+- Protected local CAS state now supports a durable V2 binding-publication obligation for restart recovery.
 
 ## Persistent history
 ### 2026-09-06 to 2026-09-12
-Implemented Windows shell, Nebius/Nemotron inference, layered memory, Tavily research, permission/audit engine, durable jobs, Playwright browser execution, DPAPI state protection, encrypted remote execution, local voice, deployment preflight, judging/evaluator tooling and open-source/demo documentation.
+Implemented Windows shell, Nebius/Nemotron inference, layered memory, Tavily research, permission/audit engine, durable jobs, Playwright browser execution, DPAPI state protection, encrypted remote execution, local voice, deployment preflight and judging/evaluator tooling.
 
-### 2026-09-13 to 2026-09-14
-Hardened exact-once behavior and remote dispatch: executed-but-unverified browser actions are never replayed automatically; added audit/event trust, diagnostic quarantine, exact remote provenance, crash-resumable cancellation, durable external-action intent, durable protected-payload cleanup, audit-outbox dispatch transitions and restart-safe binding recovery.
+### 2026-09-13 to 2026-09-15
+Hardened exact-once browser behavior and remote dispatch: durable external-action/cleanup/audit intents, exact remote provenance, crash-resumable cancellation, envelope commitment, V2 sender authenticity, pinned-envelope worker execution, bounded worker transport retry/SIGTERM, atomic reservation + audit + digest CAS, provider-delivery ambiguity reconciliation, shared reservation trust validation and final pre-Create durable authority revalidation.
 
-### 2026-09-14 to 2026-09-15
-Hardened worker recovery and sender authenticity: bounded mounted-volume retry, cancellation/SIGTERM propagation, serializer-independent envelope commitment, durable `RemoteWorkItemEnvelopeSha256`, V2 envelope-bound binding, pinned-envelope execution and restart recovery that never re-hashes mutable shared transport.
-
-### 2026-09-15 — Atomic dispatch, ambiguity recovery, and shared trust validation
-`AtomicRemoteResearchDispatchReservation` commits DispatchReserved provenance + exact envelope digest + reservation audit intent in one CAS before Nebius Create. Pending exact reservation audit is safe for first Create recovery because the original reservation call could not have returned; marker-cleared reservation is provider-delivery ambiguous and must never directly replay Create. Runtime falls back to deterministic provider list + verified GET, then attaches the exact remote id and reconstructs V2 binding from protected durable digest state. Added pure `RemoteResearchReservationTrustValidator`; recovery and provider-create authorization share its checkpoint/protocol/opaque-id/lifetime/approval/execution/envelope-commitment invariants while audit authority remains explicitly separate.
-
-### 2026-09-15 — Pre-Create durable authority revalidation (latest run)
+### 2026-09-15 — Durable V2 binding publication obligation (latest run)
 Completed:
-- Re-read this ledger completely and inspected the atomic reservation, recovery, dispatcher, job contracts and existing ambiguity tests before mutation.
-- Verified every mutation target as exact repository `UnknownGod2011/NVIDEA`; no other repository was mutated.
-- Identified a remaining recovery-to-provider TOCTOU: `ResumeReservedAsync` validated a recovered immutable snapshot, but did not re-read protected durable state immediately before Nebius Create. A concurrent/tampered local state transition could therefore leave stale in-memory authority.
-- Added `AtomicRemoteResearchDispatchReservation.RevalidateCreateAuthorityAsync`. It validates the recovered snapshot, re-reads protected durable state, validates the current snapshot with the same shared fail-closed validator, requires settled audit state on both, and compares protocol, opaque id, checkpoint identity, dispatch timestamp, expiry and envelope digest (fixed-time for the digest).
-- Routed restarted provider creation through that revalidation at the last practical point before `CreateAsync`.
-- Extended the same protection to the normal production atomic-dispatch path; fresh atomic reservations now re-read durable authority before Create instead of calling the lower-level prepared-dispatch path directly.
-- Added `RemoteResearchCreateAuthorityRevalidationTests` covering opaque-id, protocol, checkpoint step/time, expiry, envelope digest, execution-location and approval mutations plus the unchanged-authority success path.
+- Re-read this ledger completely and inspected current head, job contracts, binding recovery, client runtime, dispatcher and V2 binding protocol before mutation.
+- Verified every GitHub mutation target was exactly `UnknownGod2011/NVIDEA`; no other repository was mutated.
+- Added `PendingResearchDispatchBinding` to protected durable `AgentJobRecord` state. It commits obligation id, opaque work-item id, authoritative remote job id, canonical envelope SHA-256, expiry and creation time.
+- Added `DurableResearchDispatchBindingObligation`. It stages the exact V2 publication obligation with CAS before shared binding transport I/O, validates it against current protected provenance, publishes idempotently, re-reads state, revalidates the obligation, and clears it with CAS only after successful publication.
+- Recovery now consumes this durable obligation for envelope-bound production jobs. Publication failure leaves the obligation durable for restart; a changed remote id, opaque id, digest or expiry fails closed instead of clearing stale authority.
+- Wired the obligation coordinator into `NebiusResearchClientRuntime` recovery composition. Legacy V1/V2 recovery remains available only when the coordinator is not supplied, preserving lower-level compatibility.
+- During static review, restored the client runtime `IngestAsync` contract and original result-applied recovery semantics after an intermediate compact rewrite; no intentional runtime API was removed.
 
-Files changed this run:
-- `src/Nvidea.Core/Jobs/ResearchWorkItemEnvelopeCommitment.cs`
-- `src/Nvidea.Core/Jobs/TwoPhaseNebiusResearchDispatcher.cs`
-- `tests/Nvidea.Core.Tests/RemoteResearchCreateAuthorityRevalidationTests.cs`
+Files changed:
+- `src/Nvidea.Core/Jobs/DurableResearchDispatchBindingObligation.cs` (new)
+- `src/Nvidea.Core/Jobs/JobContracts.cs`
+- `src/Nvidea.Core/Jobs/ResearchDispatchBindingRecovery.cs`
+- `src/Nvidea.Core/Jobs/NebiusResearchClientRuntime.cs`
 - `progress.md`
 
-Commits this run:
-- `98bbdab3cf66f95ce48330d8f71f6c0351d2d9ad` — add durable pre-Create authority revalidation.
-- `768e53008f5daf52822aef1b42401c7e40fd1291` — require current durable authority for recovered Create.
-- `4a582209212363d0d1b1ee983453eb76874affe1` — apply the same protection to fresh atomic dispatch.
-- `5931bf6978ebb1ec61f0494653ffbd328a8a7acf` — add trust-root mutation regressions.
-- This ledger commit.
+Commits this run before ledger:
+- `dfbea3edbf7d86f827995dc59e54dc7eff62a073` — add durable V2 binding publication obligation.
+- `c4b5bbc2a22e1d3e5b238d1506f8c354db4fb5b2` — persist pending binding obligation in job state.
+- `6e58cf7bcf7b33c248fa397ed8877eea0dabc916` — recover V2 binding through durable obligation.
+- `bafe92b8f9fb3130593222adc3725f75420c9c34` / `65bffb4da5904a3268b03dd84146cbef0fededa6` — production recovery wiring and API-contract correction.
 
 Validation/evidence:
-- Starting head was `5e2165daf4c9d0e5fe3d47e9d9ee84b15822a271`.
-- Static call-path review shows production atomic Create now occurs only after `RevalidateCreateAuthorityAsync`; both fresh and recovered atomic paths use `StartAtomicReservationAsync`.
-- Mutation tests represent every shared trust-root dimension currently checked at the provider boundary and assert fail-closed revalidation.
+- Starting head was `1e499f02b477056fd9676884de8fe1860beadd2d`.
+- Static review confirms transport publication occurs only after the obligation CAS and obligation clearing occurs only after successful `PublishEnvelopeBoundAsync` plus a protected-state re-read/equality check.
 - Executable validation remains unavailable: no usable `dotnet`, `csc` or `msbuild` is available here, so no compilation/xUnit/WPF/Worker PASS is claimed.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, Playwright, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
-- Provider creation no longer treats a recovered snapshot as a lease; current protected durable state must still match immediately before the side effect.
-- Pending reservation audit and marker-cleared ambiguity remain distinct; a generic marker-cleared record cannot independently authorize replayed Create.
-- Revalidation uses no mutable shared work-item transport and never re-hashes/re-uploads the envelope; the trusted digest remains the original protected local commitment.
-- State/location/approval/protocol/checkpoint/lifetime/opaque-id/digest changes fail closed before provider I/O.
-- There is still an unavoidable micro-window between the final durable read and the network request without a durable lease/intent protocol. Existing deterministic-name reconciliation protects crash ambiguity, but concurrent local writers should eventually be constrained by an explicit provider-create intent/lease if multi-process dispatch becomes supported.
+- The obligation stores no research plaintext or credential; it contains protected control-plane provenance already required for V2 verification.
+- Digest equality is fixed-time; protocol identity remains enforced by the existing V2 signer/worker verifier.
+- Failed publication does not erase obligation state. A state mutation between publish and clear fails closed and leaves reconciliation work visible.
+- IMPORTANT remaining gap: the normal fresh dispatcher still calls its existing publisher immediately after remote-id attachment. The durable obligation is currently guaranteed on restart/reconciliation recovery, but is not yet staged on the first fresh publication attempt. Therefore a crash in the narrow fresh attach→publish window still requires reconstruction from protected provenance rather than replay of a pre-existing obligation.
 
 ## Known blockers / risks
-- No .NET 8 compiler/runtime in this execution environment; current Core/test changes are statically reviewed but unexecuted.
-- Live Nebius mounted-volume/Serverless behavior, worker auth, SIGTERM delivery, model catalog drift, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
-- The new mutation suite proves the revalidation primitive fails closed, while the dispatcher-level zero-`CreateAsync` assertion for a mutation injected specifically between recovery and the final durable read is not yet represented because the current concrete store/coordinator composition has no deterministic interposition hook.
-- Binding publication is idempotent but not modeled as a durable pending/completed obligation; signed-binding cleanup remains best-effort.
+- No .NET 8 compiler/runtime in this environment; current changes are statically reviewed but unexecuted.
+- Live Nebius mounted-volume/Serverless behavior, worker auth, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
+- No focused executable tests for the new obligation have run yet.
+- Fresh-dispatch publication must be routed through the same obligation coordinator to fully close the attach→publish crash window.
 
 ## Single Best Next Task
-Make V2 dispatch-binding publication a durable pending/completed obligation after remote-id attachment. A crash after authoritative Nebius attachment but before binding publication currently relies on reconciliation to reconstruct the binding; model that obligation explicitly in protected job state/audit so restart can deterministically publish or verify the exact envelope-bound binding, then clear the obligation only after successful transport persistence.
+Route `TwoPhaseNebiusResearchDispatcher` fresh and resumed post-attachment V2 publication through `DurableResearchDispatchBindingObligation`, so the exact obligation is committed before the first shared-transport publish attempt, then add fault-injection tests proving transport failure/crash leaves the obligation pending and restart publishes exactly that remote-id/digest/expiry before clearing it.

@@ -20,45 +20,44 @@ Hardened exact-once browser behavior and remote dispatch: durable external-actio
 ### 2026-09-15 — Durable V2 binding publication and race hardening
 Added `PendingResearchDispatchBinding` and `DurableResearchDispatchBindingObligation`: exact V2 publication intent is CAS-staged before shared transport I/O, publication is idempotent, and restart/reconciliation consumes the protected obligation. Fresh and resumed production dispatch use the same coordinator. Added bounded post-publication CAS completion, an internal-only deterministic race observer, authority-substitution coverage for remote id/opaque id/envelope digest/expiry, failed-first-publication restart recovery, and a real cancellation pipeline race through durable audit + provider cancellation.
 
-### 2026-09-15 — Terminal binding-completion semantics (latest run)
+### 2026-09-15 — Terminal binding-completion semantics
+Split dispatch-binding validation into strict pre-publication authority and post-publication bookkeeping semantics. After exact signed publication, completion accepts only lifecycle-consistent state triples while exact obligation identity, remote id, opaque id, envelope digest and expiry remain unchanged. Legitimate `ResultApplied`, `Cancelled`, `RemoteFailed`, and `Expired` transitions can therefore converge without weakening pre-publication authority; inconsistent state/provenance pairs fail closed.
+
+### 2026-09-15 — Real result-ingestion binding race (latest run)
 Completed:
-- Re-read this ledger completely and inspected current repository head, the durable binding coordinator, result-ingestion state transitions, lifecycle terminal finalization, and existing deterministic race tests before mutation.
-- Verified before every GitHub mutation that the target repository was exactly `UnknownGod2011/NVIDEA`; no other repository was mutated.
-- Split dispatch-binding validation into strict pre-publication authority and post-publication bookkeeping semantics. Before external publication, only an audit-settled active Nebius `Dispatched`/`CancelRequested` stage may publish.
-- After the exact signed V2 binding is already externally visible, completion now accepts only lifecycle-consistent state triples while exact remote id, opaque id, canonical envelope SHA-256, expiry and obligation identity remain unchanged.
-- Explicitly supports legitimate result/terminal transitions that can win the race before bookkeeping: local `Pending/Completed + ResultApplied`, `Cancelled + Cancelled`, and `Failed + RemoteFailed/Expired`, in addition to active Nebius `Dispatched/CancelRequested`.
-- Inconsistent state/provenance combinations fail closed and retain the exact durable obligation instead of silently clearing it.
-- Added data-driven deterministic race regressions for all supported local result/terminal pairs and representative inconsistent pairs. Each accepted case requires exactly one binding transport publication and no remaining obligation; rejected cases require the original obligation to remain pending.
-- Static review also corrected a pre-existing test helper audit identity reference from `AuditEvent.Id` to `AuditEvent.EventId` in the touched completion-race suite.
+- Re-read this ledger completely and inspected repository head, `RemoteResearchResultIngestor`, its durable audit/cleanup ordering, the binding completion race suite, and research checkpoint contracts before mutation.
+- Verified before each GitHub mutation that the target repository was exactly `UnknownGod2011/NVIDEA`; no other repository was mutated.
+- Added `DurableResearchDispatchBindingResultIngestionRaceTests`, which invokes the real `RemoteResearchResultIngestor.IngestAsync` from the deterministic post-publication/pre-completion seam rather than synthesizing terminal provenance.
+- Covers both non-terminal remote stage output (`Pending + ResultApplied`) and completed remote stage output (`Completed + ResultApplied`).
+- The regression requires real protected-result unprotection/provenance validation, CAS result application, durable result audit flushing, protected-result cleanup, and then binding-obligation completion to coexist correctly.
+- Assertions require exactly one V2 binding transport publication, exactly one result audit event, exactly one protected-result deletion, no pending result audit, no pending protected-payload cleanup, and no pending dispatch-binding obligation after convergence.
+- The result transport is in-memory and cryptographic result envelopes use an ephemeral test RSA key; no live Nebius/Tavily/network service is invoked.
 
 Files changed:
-- `src/Nvidea.Core/Jobs/DurableResearchDispatchBindingObligation.cs`
-- `tests/Nvidea.Core.Tests/DurableResearchDispatchBindingCompletionRaceTests.cs`
+- `tests/Nvidea.Core.Tests/DurableResearchDispatchBindingResultIngestionRaceTests.cs`
 - `progress.md`
 
 Commits this run before ledger:
-- `655bf4bf17a1d5ea8ab172895286916bf1fc66cc` — allow exact binding completion across terminal lifecycle transitions.
-- `1a6af10649487f9a9d0ae7334449f33194b0d4b6` — regression-lock legitimate and inconsistent post-publication lifecycle pairs.
+- `0ff58a54c8cc564b31534ab9c1e9d49a7154262d` — test real result ingestion during binding completion.
 
 Validation/evidence:
-- Production completion validation now encodes explicit state/location/provenance triples rather than broadly accepting any terminal mutation.
-- Exact obligation/provenance equality remains mandatory after publication, including fixed-time envelope commitment comparison and exact expiry equality.
-- New tests assert one and only one binding `PutAsync` in accepted and rejected races; rejected inconsistent pairs preserve the staged remote id and envelope commitment.
+- Static review confirmed `ResearchJobHandler.EvidenceStep` and `ResearchJobHandler.CompletedStep` are valid checkpoint constants and that `IngestAsync` carries unrelated durable record fields through its CAS replacement.
+- The new regression exercises the production result-ingestion implementation and production durable binding coordinator with only transport/audit/state-protection test doubles at external boundaries.
 - Executable validation remains unavailable: no usable `dotnet`, `csc` or `msbuild` is available here, so no compilation/xUnit/WPF/Worker PASS is claimed.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, Playwright, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
-- Pre-publication authority was not broadened. Terminal/local states are accepted only after the signed binding side effect has already succeeded, where clearing is bookkeeping and cannot authorize provider creation/publication.
-- Post-publication completion remains fail-closed on authority substitution and now also on inconsistent job-state/execution-location/provenance combinations.
-- Pending audit and cleanup markers may coexist with post-publication completion because they represent independent durable obligations; clearing the already-published binding marker neither clears nor authorizes those obligations.
-- The internal deterministic observer remains inaccessible through the public production constructor/runtime configuration.
-- No plaintext research content, credentials, tokens or private keys were added to durable repository content.
+- The test proves a legitimate result CAS cannot make an already-published exact V2 obligation disappear accidentally; the coordinator still independently validates the carried obligation before clearing it.
+- Result ingestion continues to require signed/encrypted result provenance to match local job id, checkpoint, opaque work-item id and authoritative remote id before any local result transition.
+- Binding completion does not clear result audit or cleanup debt; in the successful path those independent obligations are settled by `RemoteResearchResultIngestor` itself before control returns to binding completion.
+- Pre-publication authority was not broadened and no production constructor/API was changed.
+- No plaintext credentials, tokens, private keys or user research content were committed.
 
 ## Known blockers / risks
 - No .NET 8 compiler/runtime in this environment; current changes are statically reviewed but unexecuted.
 - Live Nebius mounted-volume/Serverless behavior, worker auth, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
-- The terminal-state matrix currently drives exact production-shaped protected state through the deterministic post-publication seam; a deeper follow-up should invoke real `RemoteResearchResultIngestor`/terminal lifecycle methods inside the seam to prove their audit and cleanup obligations coexist correctly with binding completion.
-- A crash/interruption while cancellation or terminal audit itself is still pending should be fault-injected so restart convergence is proven across intermediate durable outbox state.
+- The new real-ingestion race covers the fully successful audit+cleanup path. It does not yet interrupt result ingestion after its CAS while `PendingAuditEvent` remains durable, which is the most important remaining crash-consistency case at this boundary.
+- A cleanup transport failure after audit settlement should also be crossed with the already-published binding obligation to prove restart independently drains cleanup without republishing the binding or reapplying the result.
 
 ## Single Best Next Task
-Exercise real result ingestion and terminal lifecycle finalization from the post-publication binding seam, including a pending-audit interruption. Prove binding completion never clears audit/cleanup debt, restart recovery settles each independent obligation exactly once, and no duplicate binding/provider/result side effect occurs.
+Add deterministic fault injection for the real result-ingestion race after the result CAS but before audit settlement, then simulate restart. Prove the already-published V2 binding obligation, pending result audit, and pending protected-payload cleanup remain independent durable debts: recovery must append the exact audit once, delete protected payloads once, clear each marker only after its own success, and never republish the binding or reapply the result.

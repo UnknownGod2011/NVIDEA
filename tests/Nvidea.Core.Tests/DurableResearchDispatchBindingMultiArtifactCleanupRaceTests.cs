@@ -12,7 +12,14 @@ public sealed class DurableResearchDispatchBindingMultiArtifactCleanupRaceTests
     private const string RemoteJobId = "remote-multi-cleanup-binding-51";
 
     [Fact]
-    public async Task PublishedBinding_ResultDeleteSucceeds_WorkItemDeleteFails_RestartConvergesBothWithoutReplay()
+    public async Task PublishedBinding_ResultDeleteSucceeds_WorkItemDeleteFails_RestartConvergesBothWithoutReplay() =>
+        await RunRecoveryScenarioAsync(ambiguousWorkItemDelete: false);
+
+    [Fact]
+    public async Task PublishedBinding_WorkItemDeleteSucceedsButAckIsLost_RestartConvergesWithoutReplayOrRepublish() =>
+        await RunRecoveryScenarioAsync(ambiguousWorkItemDelete: true);
+
+    private static async Task RunRecoveryScenarioAsync(bool ambiguousWorkItemDelete)
     {
         var root = CreateTempDirectory();
         try
@@ -20,7 +27,11 @@ public sealed class DurableResearchDispatchBindingMultiArtifactCleanupRaceTests
             using var clientRsa = RSA.Create(2048);
             var now = DateTimeOffset.UtcNow;
             var store = new JsonAgentJobStore(Path.Combine(root, "jobs.json"), new PassThroughProtector());
-            var transport = new PartialFailureTransport { FailNextWorkItemDelete = true };
+            var transport = new PartialFailureTransport
+            {
+                FailNextWorkItemDelete = !ambiguousWorkItemDelete,
+                LoseNextWorkItemDeleteAcknowledgement = ambiguousWorkItemDelete
+            };
             var audit = new MemoryAuditTrail();
             var ingestor = new RemoteResearchResultIngestor(
                 store, transport, clientRsa.ExportPkcs8PrivateKeyPem(), audit, transport);
@@ -43,9 +54,6 @@ public sealed class DurableResearchDispatchBindingMultiArtifactCleanupRaceTests
             var coordinator = new DurableResearchDispatchBindingObligation(
                 store, publisher, new IngestingObserver(ingestor, now.AddMinutes(2)));
 
-            // Result cleanup succeeds, then work-item cleanup fails. Because cleanup is one durable
-            // obligation covering both artifacts, the marker must remain and the published binding
-            // must remain independently outstanding for restart reconciliation.
             await Assert.ThrowsAsync<InvalidOperationException>(() => coordinator.EnsurePublishedAsync(job.JobId));
 
             var interrupted = await store.GetAsync(job.JobId);
@@ -56,15 +64,15 @@ public sealed class DurableResearchDispatchBindingMultiArtifactCleanupRaceTests
             Assert.NotNull(interrupted.PendingProtectedPayloadCleanup);
             Assert.NotNull(interrupted.PendingResearchDispatchBinding);
             Assert.False(transport.ResultExists);
-            Assert.True(transport.WorkItemExists);
+            Assert.Equal(!ambiguousWorkItemDelete, transport.WorkItemExists);
             Assert.Equal(1, transport.ResultDeleteCalls);
             Assert.Equal(1, transport.WorkItemDeleteCalls);
             Assert.Equal(1, bindingTransport.PutCalls);
             Assert.Single(audit.Events.Where(e => e.EventType == "research.remote_result_applied"));
 
-            // A fresh ingestor repeats both deletes. Result deletion is intentionally idempotent;
-            // work-item deletion now succeeds. Only after both calls return may the shared cleanup
-            // marker clear. The already-applied checkpoint and durable audit must not be replayed.
+            // Recovery deliberately retries both deletions. In the ambiguous case the work item was
+            // already removed before the first call lost its acknowledgement; delete must therefore
+            // be idempotent and the durable cleanup marker is the only safe source of truth.
             var restartedIngestor = new RemoteResearchResultIngestor(
                 store, transport, clientRsa.ExportPkcs8PrivateKeyPem(), audit, transport);
             var recovered = await restartedIngestor.RecoverPendingCleanupAsync(job.JobId);
@@ -79,8 +87,6 @@ public sealed class DurableResearchDispatchBindingMultiArtifactCleanupRaceTests
             Assert.Equal(ResearchJobHandler.EvidenceStep, recovered.Checkpoint!.Step);
             Assert.Single(audit.Events.Where(e => e.EventType == "research.remote_result_applied"));
 
-            // Binding recovery owns a separate obligation. It observes the exact existing V2 binding
-            // and clears only its local bookkeeping; multi-artifact cleanup must never republish it.
             var restartedCoordinator = new DurableResearchDispatchBindingObligation(
                 store,
                 new ResearchDispatchBindingPublisher(bindingTransport, clientRsa.ExportPkcs8PrivateKeyPem()));
@@ -154,6 +160,7 @@ public sealed class DurableResearchDispatchBindingMultiArtifactCleanupRaceTests
         public bool ResultExists => _result is not null;
         public bool WorkItemExists { get; private set; }
         public bool FailNextWorkItemDelete { get; set; }
+        public bool LoseNextWorkItemDeleteAcknowledgement { get; set; }
         public int ResultDeleteCalls { get; private set; }
         public int WorkItemDeleteCalls { get; private set; }
 
@@ -195,9 +202,15 @@ public sealed class DurableResearchDispatchBindingMultiArtifactCleanupRaceTests
             if (FailNextWorkItemDelete)
             {
                 FailNextWorkItemDelete = false;
-                throw new IOException("Injected work-item cleanup failure after result cleanup succeeded.");
+                throw new IOException("Injected work-item cleanup failure before deletion.");
             }
+
             WorkItemExists = false;
+            if (LoseNextWorkItemDeleteAcknowledgement)
+            {
+                LoseNextWorkItemDeleteAcknowledgement = false;
+                throw new IOException("Injected lost acknowledgement after work-item deletion succeeded.");
+            }
             return Task.CompletedTask;
         }
     }

@@ -43,15 +43,18 @@ public sealed class DesktopInvocationService
     private readonly IAgentInferenceClient _inference;
     private readonly PersonalMemoryService _memory;
     private readonly ResearchEngine? _research;
+    private readonly SessionEvidenceLedger? _sessionEvidence;
 
     public DesktopInvocationService(
         IAgentInferenceClient inference,
         PersonalMemoryService memory,
-        ResearchEngine? research = null)
+        ResearchEngine? research = null,
+        SessionEvidenceLedger? sessionEvidence = null)
     {
         _inference = inference ?? throw new ArgumentNullException(nameof(inference));
         _memory = memory ?? throw new ArgumentNullException(nameof(memory));
         _research = research;
+        _sessionEvidence = sessionEvidence;
     }
 
     public async Task<DesktopInvocationResult> InvokeAsync(
@@ -84,6 +87,16 @@ public sealed class DesktopInvocationService
 
             var question = BuildResearchQuestion(input, request.Context);
             var report = await _research.ResearchAsync(question, cancellationToken).ConfigureAwait(false);
+
+            // Research planning always crosses a successful Nemotron completion before a report can
+            // be returned. Tavily proof is stricter: require at least one synthesis citation that
+            // survived source-id validation. Record only after the whole invocation succeeds.
+            _sessionEvidence?.Record(SessionEvidenceKind.NemotronInferenceCompleted);
+            if (report.UsedCitations.Count > 0)
+                _sessionEvidence?.Record(SessionEvidenceKind.TavilyResearchCompletedWithCitations);
+            if (memories.Count > 0)
+                _sessionEvidence?.Record(SessionEvidenceKind.MemoryInfluencedInvocation);
+
             return new DesktopInvocationResult(report.AnswerMarkdown, null, mode, memories, report);
         }
 
@@ -102,6 +115,10 @@ public sealed class DesktopInvocationService
         var answer = completion.Content?.Trim();
         if (string.IsNullOrWhiteSpace(answer))
             throw new InvalidOperationException("Nemotron returned an empty desktop response.");
+
+        _sessionEvidence?.Record(SessionEvidenceKind.NemotronInferenceCompleted);
+        if (memories.Count > 0)
+            _sessionEvidence?.Record(SessionEvidenceKind.MemoryInfluencedInvocation);
 
         return new DesktopInvocationResult(answer, completion.Model, mode, memories);
     }

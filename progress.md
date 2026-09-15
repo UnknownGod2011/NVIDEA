@@ -9,6 +9,7 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Encrypted Nebius remote research with atomic dispatch trust root, lifecycle/cancellation reconciliation, exact-once result ingestion and Object Storage/Serverless worker transport.
 - Dispatch-binding V2 signs authoritative remote id + canonical SHA-256 of the exact encrypted work-item envelope; worker verifies and pins the envelope before execution.
 - Protected local CAS state supports durable binding-publication, audit and protected-payload-cleanup obligations with independent restart recovery.
+- Judge evidence surface projects real provider readiness; session evidence now has a payload-free typed ledger foundation.
 
 ## Persistent history
 ### 2026-09-06 to 2026-09-12
@@ -17,59 +18,48 @@ Implemented Windows shell, Nebius/Nemotron inference, layered memory, Tavily res
 ### 2026-09-13 to 2026-09-15
 Hardened exact-once browser behavior and remote dispatch: durable external-action/cleanup/audit intents, exact remote provenance, crash-resumable cancellation, envelope commitment, V2 sender authenticity, pinned-envelope worker execution, bounded worker transport retry/SIGTERM, atomic reservation + audit + digest CAS, provider-delivery ambiguity reconciliation, shared reservation trust validation and final pre-Create durable authority revalidation.
 
-### 2026-09-15 — Durable V2 binding and terminal races
-Added `PendingResearchDispatchBinding` and `DurableResearchDispatchBindingObligation`: exact V2 publication intent is CAS-staged before shared transport I/O, publication is idempotent, and restart/reconciliation consumes protected obligation state. Hardened post-publication completion against authority substitution and legitimate ResultApplied/Cancelled/RemoteFailed/Expired lifecycle races. Added real cancellation and result-ingestion races through durable audit/provider paths.
+### 2026-09-15 to 2026-09-16 — durability composition
+Added durable V2 binding obligations, restart reconciliation, result/audit/cleanup crash recovery, ambiguous-delete handling, bounded cleanup CAS convergence, multi-artifact cleanup races, and a composed production-path regression covering V2 publication + result CAS/audit + encrypted deletion + concurrent terminal progress + final binding reconciliation without replay.
 
-### 2026-09-15 — Interrupted audit and cleanup recovery
-Added crash/restart coverage for result CAS followed by pending audit, cleanup failure, successful-delete/lost-acknowledgement, combined result + work-item cleanup, and ambiguous work-item deletion. Recovery preserves exactly-once audit/result application while independently converging V2 binding publication without republishing.
+### 2026-09-16 — judge-visible runtime evidence
+Added `JudgeEvidenceDialog` reachable from Research readiness. It derives Tavily/Nebius/Serverless readiness from production `DesktopResearchReadiness`, stays payload/secret-free, performs no provider/browser side effect, and never promotes unavailable capabilities to simulated success.
 
-### 2026-09-15 — Cleanup completion CAS hardening
-Hardened `DurableProtectedPayloadCleanupIntent.ClearAsync` from one-shot completion to bounded four-attempt CAS convergence. Every retry reloads protected durable state and revalidates exact cleanup id, opaque target, remote provenance and audit-settled precondition. Direct deterministic tests cover legitimate concurrent terminal progress and perpetual contention fail-closed behavior.
-
-### 2026-09-15 — End-to-end ingestor cleanup CAS race
-Added `RemoteResearchResultIngestorCleanupCasRaceTests`: both encrypted deletions succeed, then the work-item transport commits legitimate `Pending -> Completed` progress before cleanup-marker completion. Production cleanup reload/revalidation converges from the stale record without replaying transport deletion or result/audit work.
-
-### 2026-09-16 — Published-binding + cleanup-CAS composition
-Added `DurableResearchDispatchBindingCleanupCasCompositionTests`, composing signed V2 publication, real result CAS/audit, both encrypted deletions, concurrent terminal progress, bounded cleanup convergence and final binding reconciliation. Fresh recovery actors must perform zero additional external work after convergence.
-
-### 2026-09-16 — Judge-visible runtime evidence (latest run)
+### 2026-09-16 — privacy-safe session evidence foundation (latest run)
 Completed:
-- Re-read this ledger completely and inspected the Windows shell, readiness projection, research lifecycle UI and existing safety/approval surfaces before mutation.
-- Verified immediately before every GitHub mutation that the target repository was exactly `UnknownGod2011/NVIDEA`; no other repository was mutated.
-- Added `JudgeEvidenceDialog.xaml` + code-behind as a focused demo/evaluator surface reachable from the existing Research readiness Details action.
-- The evidence view is deliberately not a fake demo dashboard: provider readiness is derived from the same `DesktopResearchReadiness` object already used by production readiness logic. Tavily local research, Nebius lifecycle and Nebius Serverless dispatch remain visibly NOT READY/NOT ENABLED when the actual runtime says so.
-- The dialog summarizes the implemented judge-relevant proof path: global Windows invocation/context capture, privacy-aware local memory controls, durable research with explicit execution location, safe browser execution and ambiguous-side-effect recovery, exact-scope approval gates, and restart-safe background research semantics.
-- Hardened the presentation boundary so no secret values, provider IDs, payloads, URLs or raw provider errors are surfaced. The dialog explicitly tells evaluators that unavailable capabilities are not promoted to a simulated green state.
-- Rewired the existing readiness Details action to open this runtime-derived evidence surface and updated its tooltip. No new provider call, credential access, browser action or side effect is triggered by opening it.
+- Re-read this ledger and inspected the current judge evidence, audit surface, desktop architecture and Core test conventions before mutation.
+- Explicitly verified immediately before every GitHub mutation that the target repository was exactly `UnknownGod2011/NVIDEA`; no other repository was mutated.
+- Added `SessionEvidenceLedger` in Core as a deliberately narrow process-local proof boundary. Its public record API accepts only a closed `SessionEvidenceKind`; there is no string/payload/URL/provider-id/model-output field through which user or provider content can enter judge evidence.
+- Added typed milestones for completed Nemotron inference, memory-influenced invocation, Tavily research with citations, verified browser post-state, consequential approval-gate exercise, and observed Nebius background execution.
+- Evidence is first-observation/idempotent per kind, timestamped, thread-safe, snapshot-only, and explicitly clearable. It does not claim an event until production code calls `Record` after the relevant success condition.
+- Added unit coverage for first-observation idempotence, the closed kind+timestamp projection, clear semantics, and rejection of unknown enum values.
 
 Files changed:
-- `src/Nvidea.Windows/JudgeEvidenceDialog.xaml`
-- `src/Nvidea.Windows/JudgeEvidenceDialog.xaml.cs`
-- `src/Nvidea.Windows/MainWindow.Readiness.cs`
+- `src/Nvidea.Core/Desktop/SessionEvidenceLedger.cs`
+- `tests/Nvidea.Core.Tests/SessionEvidenceLedgerTests.cs`
 - `progress.md`
 
 Commits this run before ledger:
-- `58b029bf2f802fd2fbb768fecac220a225d9916f` — add judge-visible architecture evidence dialog.
-- `8c3fb8dd7ebcbf4dfc19662962c6cf5210d0782d` — project live provider readiness into judge evidence.
-- `ee4755bcd367e846c9787974d38aba4f48928dac` — surface runtime-derived judge evidence from readiness.
+- `97e655edd4d5282c1734ddc01df55120c519f2c5` — add payload-free session evidence ledger.
+- `664b4851b2011e3df48b59384de3fee88b1fdd06` — test session evidence privacy boundary.
 
 Validation/evidence:
-- Static review confirms the dialog accepts only `DesktopResearchReadiness`; it does not read environment variables, credentials or provider payloads itself.
-- Existing `RefreshResearchReadiness()` remains the single runtime/environment projection point and still uses composed `ResearchProductRuntime` lifecycle/dispatch readiness.
-- WPF SDK projects automatically include Window XAML/code-behind under the existing project conventions; no extra package/framework was introduced.
+- Static review confirms evidence records structurally cannot contain prompts, URLs, filenames, provider identifiers, remote IDs, tool arguments, source text, memory content, model output or raw errors: the record consists only of a closed enum and `DateTimeOffset`.
+- `Record` is synchronized and uses first-write semantics; snapshots copy/sort the current entries rather than exposing mutable backing state.
+- Tests follow the existing xUnit/Core project convention and require no new package or framework.
 - Executable validation remains unavailable: no usable `dotnet`, `csc` or `msbuild` is available here, so no compilation/xUnit/WPF/Worker PASS is claimed.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, Playwright, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
-- Judge evidence is runtime-derived but payload-free: it exposes coarse capability state only and cannot leak API keys, remote IDs, questions, source URLs, memory content or provider diagnostics.
-- The surface does not bypass permissions or create a separate execution path; it only explains architecture already reachable through production controls.
-- Provider unavailability remains fail-closed and visibly unavailable rather than being masked for demo quality.
+- Session proof is intentionally process-local and payload-free. It is not an audit replacement and does not persist sensitive evidence across restarts.
+- Closed evidence kinds prevent accidental display of untrusted provider/tool text and prompt-injection content in the judge surface.
+- Duplicate production notifications cannot inflate evidence because only the first timestamp per kind is retained.
+- The ledger currently proves nothing by itself: milestones remain absent until wired to verified production success boundaries. This is fail-closed and preferable to demo flags.
 - Existing durable result/audit/cleanup/binding authority boundaries remain unchanged.
 
 ## Known blockers / risks
 - No .NET 8 compiler/runtime in this environment; current changes are statically reviewed but unexecuted.
 - Live Nebius mounted-volume/Serverless behavior, worker auth, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
-- The new evidence dialog proves configured readiness and implemented architecture, but it does not yet accumulate per-demo-session evidence that a Nemotron response, Tavily cited report, memory retrieval and verified browser action actually occurred during the current recording.
+- The ledger is not yet composed into the application root, production success boundaries, or `JudgeEvidenceDialog`; therefore the UI cannot yet show these session proofs.
 
 ## Single Best Next Task
-Add a privacy-safe per-session demo evidence ledger sourced from real production events/results (not demo flags): record coarse proof that Nemotron/Nebius inference completed, durable memory influenced an invocation, a Tavily report completed with citations, a browser action reached verified post-state, and an approval gate was exercised. Show only payload-free timestamps/types in the judge evidence dialog, with tests ensuring provider/user content and identifiers cannot enter the evidence projection.
+Compose one `SessionEvidenceLedger` into the Windows application/runtime root and wire it only after real verified production success boundaries, starting with Nemotron inference completion and Tavily research completion-with-citations. Pass a snapshot into `JudgeEvidenceDialog` and render only evidence kind + timestamp. Add tests proving failed/cancelled/uncited operations never record proof and provider/user payloads cannot enter the projection; then extend the same pattern to memory influence, browser post-state verification, approval exercise and Nebius background execution.

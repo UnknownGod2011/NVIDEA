@@ -23,41 +23,45 @@ Added `PendingResearchDispatchBinding` and `DurableResearchDispatchBindingObliga
 ### 2026-09-15 — Terminal binding-completion semantics
 Split dispatch-binding validation into strict pre-publication authority and post-publication bookkeeping semantics. After exact signed publication, completion accepts only lifecycle-consistent state triples while exact obligation identity, remote id, opaque id, envelope digest and expiry remain unchanged. Legitimate `ResultApplied`, `Cancelled`, `RemoteFailed`, and `Expired` transitions can therefore converge without weakening pre-publication authority; inconsistent state/provenance pairs fail closed.
 
-### 2026-09-15 — Real result-ingestion binding race (latest run)
+### 2026-09-15 — Real result-ingestion binding race
+Added `DurableResearchDispatchBindingResultIngestionRaceTests`, invoking the real `RemoteResearchResultIngestor.IngestAsync` from the deterministic post-publication/pre-completion seam. Covers both `Pending + ResultApplied` and `Completed + ResultApplied`; requires exactly one V2 publication, one result audit, one protected-result deletion, and no residual binding/audit/cleanup obligations after successful convergence.
+
+### 2026-09-15 — Interrupted result-ingestion restart recovery (latest run)
 Completed:
-- Re-read this ledger completely and inspected repository head, `RemoteResearchResultIngestor`, its durable audit/cleanup ordering, the binding completion race suite, and research checkpoint contracts before mutation.
-- Verified before each GitHub mutation that the target repository was exactly `UnknownGod2011/NVIDEA`; no other repository was mutated.
-- Added `DurableResearchDispatchBindingResultIngestionRaceTests`, which invokes the real `RemoteResearchResultIngestor.IngestAsync` from the deterministic post-publication/pre-completion seam rather than synthesizing terminal provenance.
-- Covers both non-terminal remote stage output (`Pending + ResultApplied`) and completed remote stage output (`Completed + ResultApplied`).
-- The regression requires real protected-result unprotection/provenance validation, CAS result application, durable result audit flushing, protected-result cleanup, and then binding-obligation completion to coexist correctly.
-- Assertions require exactly one V2 binding transport publication, exactly one result audit event, exactly one protected-result deletion, no pending result audit, no pending protected-payload cleanup, and no pending dispatch-binding obligation after convergence.
-- The result transport is in-memory and cryptographic result envelopes use an ephemeral test RSA key; no live Nebius/Tavily/network service is invoked.
+- Re-read this ledger completely and inspected the existing real-ingestion race plus production `RemoteResearchResultIngestor` durable ordering before mutation.
+- Verified before every GitHub mutation that the target repository was exactly `UnknownGod2011/NVIDEA`; no other repository was mutated.
+- Added `DurableResearchDispatchBindingInterruptedResultRecoveryTests` with a deterministic audit sink that fails exactly once on `research.remote_result_applied` after the production result CAS has committed.
+- The first binding coordinator therefore reaches the real boundary `signed V2 binding published -> result CAS committed -> PendingAuditEvent + PendingProtectedPayloadCleanup durable -> audit append fails`, and the exception prevents binding-completion bookkeeping from clearing its independent obligation.
+- The interrupted-state assertions require `Pending + Local + ResultApplied`, plus all three durable debts simultaneously present: dispatch-binding publication completion, result audit, and protected-payload cleanup. Cleanup must not run before audit durability.
+- Simulated restart by constructing fresh result-ingestion recovery and binding-obligation actors over the same protected store and transports.
+- `RecoverPendingAuditAsync` must append the exact result audit once, then delete the protected result once and clear only audit/cleanup markers while leaving the binding obligation intact.
+- A fresh binding coordinator then idempotently observes/replays the already-published exact binding and clears only its own obligation. The transport call counter remains one, proving no second external V2 publication; the result is not re-applied.
 
 Files changed:
-- `tests/Nvidea.Core.Tests/DurableResearchDispatchBindingResultIngestionRaceTests.cs`
+- `tests/Nvidea.Core.Tests/DurableResearchDispatchBindingInterruptedResultRecoveryTests.cs`
 - `progress.md`
 
 Commits this run before ledger:
-- `0ff58a54c8cc564b31534ab9c1e9d49a7154262d` — test real result ingestion during binding completion.
+- `4e7871d050928158c5a537e02853aaeaa4aed5da` — test interrupted result recovery with published binding.
 
 Validation/evidence:
-- Static review confirmed `ResearchJobHandler.EvidenceStep` and `ResearchJobHandler.CompletedStep` are valid checkpoint constants and that `IngestAsync` carries unrelated durable record fields through its CAS replacement.
-- The new regression exercises the production result-ingestion implementation and production durable binding coordinator with only transport/audit/state-protection test doubles at external boundaries.
+- Static review verified `IngestCoreAsync` stages protected-payload cleanup and the result audit into the same replacement before its CAS, then flushes audit before calling cleanup. Thus an injected audit append failure occurs after all three independent durable obligations exist and before payload deletion.
+- The recovery path used is production `RecoverPendingAuditAsync`, which flushes audit first and only then drains cleanup; binding completion is recovered separately through the production durable binding coordinator.
 - Executable validation remains unavailable: no usable `dotnet`, `csc` or `msbuild` is available here, so no compilation/xUnit/WPF/Worker PASS is claimed.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, Playwright, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
-- The test proves a legitimate result CAS cannot make an already-published exact V2 obligation disappear accidentally; the coordinator still independently validates the carried obligation before clearing it.
-- Result ingestion continues to require signed/encrypted result provenance to match local job id, checkpoint, opaque work-item id and authoritative remote id before any local result transition.
-- Binding completion does not clear result audit or cleanup debt; in the successful path those independent obligations are settled by `RemoteResearchResultIngestor` itself before control returns to binding completion.
-- Pre-publication authority was not broadened and no production constructor/API was changed.
-- No plaintext credentials, tokens, private keys or user research content were committed.
+- Crash recovery now has regression evidence that binding, audit and cleanup debts are independently owned: settling one cannot silently erase either of the others.
+- Audit-before-delete ordering is explicitly asserted: protected result payload remains present when result audit durability fails, preserving forensic/recovery evidence.
+- Binding replay remains idempotent and authority-bound; restart cannot create a second publication merely because result audit recovery happened independently.
+- Result state is never re-applied during restart recovery; only durable outbox/cleanup/binding bookkeeping is drained.
+- No production constructor/API was broadened and no plaintext credentials, tokens, private keys or user research content were committed.
 
 ## Known blockers / risks
 - No .NET 8 compiler/runtime in this environment; current changes are statically reviewed but unexecuted.
 - Live Nebius mounted-volume/Serverless behavior, worker auth, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
-- The new real-ingestion race covers the fully successful audit+cleanup path. It does not yet interrupt result ingestion after its CAS while `PendingAuditEvent` remains durable, which is the most important remaining crash-consistency case at this boundary.
-- A cleanup transport failure after audit settlement should also be crossed with the already-published binding obligation to prove restart independently drains cleanup without republishing the binding or reapplying the result.
+- This run covers audit failure after result CAS. It does not yet inject a protected-payload delete failure after successful audit settlement while the already-published binding obligation remains outstanding.
+- Recovery ordering should also be tested with process interruption between successful result-payload deletion and cleanup-marker CAS clearing, where idempotent delete semantics become essential.
 
 ## Single Best Next Task
-Add deterministic fault injection for the real result-ingestion race after the result CAS but before audit settlement, then simulate restart. Prove the already-published V2 binding obligation, pending result audit, and pending protected-payload cleanup remain independent durable debts: recovery must append the exact audit once, delete protected payloads once, clear each marker only after its own success, and never republish the binding or reapply the result.
+Add the complementary cleanup-failure/restart race: let the real result audit settle, fail the first protected-result delete while the published V2 binding obligation remains durable, restart, and prove cleanup retry is idempotent, audit is never duplicated, result is never re-applied, and binding recovery still clears only its exact obligation without a second external publication.

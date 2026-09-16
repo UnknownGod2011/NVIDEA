@@ -1,10 +1,10 @@
 # NVIDEA <=3-minute judge demo runbook
 
-This is the operator-facing companion to `docs/demo-package.json`. The JSON manifest remains the machine-checkable timing/claim boundary; this runbook turns each beat into a concrete product action, visible proof, dependency check, and safe fallback.
+This is the operator-facing companion to `docs/demo-package.json`. The JSON manifest remains the machine-checkable timing/claim boundary; this runbook turns each beat into a concrete product action, visible proof, dependency check, and safe fallback. **Milestone names in this document are exact production `SessionEvidenceKind` values and must remain identical to the schema-v2 manifest.**
 
 ## Non-negotiable claim boundary
 
-Never describe synthetic evaluator output as live provider proof. Never claim a live Nebius Serverless execution unless the matching redacted provider PASS artifact was generated and verified for the demonstrated deployment. Never expose API keys, cookies, tokens, raw checkpoints, private browser/session data, or provider exceptions on screen.
+Never describe synthetic evaluator output as live provider proof. Never claim a live Nebius Serverless execution unless authenticated/audited remote-result evidence has been observed for the demonstrated run and any separate provider PASS artifact being shown matches that deployment. Never expose API keys, cookies, tokens, raw checkpoints, private browser/session data, or provider exceptions on screen.
 
 Before recording, use **New demo session** in the Judge Evidence dialog and confirm the reset. This clears only process-local judge milestones; it does not erase durable memory, jobs, browser state, authentication, downloads, or the audit trail.
 
@@ -50,9 +50,9 @@ If any live dependency fails preflight, do not improvise a stronger claim. Use t
 
 **Visible result:** Research shows source provenance/citations and explicit uncertainty where appropriate. Open at least one citation/source mapping so the judge sees that cited claims map to collected evidence.
 
-**Judge proof:** `TavilyResearchWithValidatedCitation` should be established only after a validated Tavily citation is actually used.
+**Judge proof:** `TavilyValidatedCitationUsed` should be established only after a validated Tavily citation is actually used.
 
-**Fallback:** If Tavily is unavailable, state that the live dependency is unavailable and show the previously generated synthetic evaluator evidence only as engineering evidence. Do not claim live Tavily execution.
+**Fallback:** If Tavily is unavailable, the live Tavily beat has failed. Synthetic evaluator output may be shown later only as synthetic engineering evidence; it does not satisfy this beat and must not be described as live Tavily execution.
 
 ### 1:10–1:38 — Complex browser act-observe-verify
 
@@ -60,9 +60,9 @@ If any live dependency fails preflight, do not improvise a stronger claim. Use t
 
 **Visible result:** The agent acts from DOM/accessibility observations, then visibly verifies post-action state rather than assuming a click succeeded. Keep the browser and NVIDEA status visible enough to make the act-observe-verify loop legible.
 
-**Judge proof:** `BrowserPostStateVerified` must require terminal completion with a trusted verified-step checkpoint; failed verification must halt/recover rather than manufacture success.
+**Judge proof:** `BrowserVerifiedGoalCompleted` requires terminal goal completion through the trusted verified browser path; failed verification must halt/recover rather than manufacture success.
 
-**Fallback:** If authenticated browser state has expired, stop the take and restore it manually. Never bypass login/CAPTCHA/MFA/site safeguards.
+**Fallback:** If authenticated browser state has expired or trusted post-action verification cannot complete, stop the take and restore the session manually outside the recording. Never bypass login/CAPTCHA/MFA/site safeguards or manually complete the action and claim agent success.
 
 ### 1:38–1:58 — Consequential approval gate
 
@@ -70,7 +70,7 @@ If any live dependency fails preflight, do not improvise a stronger claim. Use t
 
 **Visible result:** NVIDEA pauses before the consequential mutation and presents the exact scope for approval. Briefly show that the action is still pending, then approve it deliberately.
 
-**Judge proof:** `ConsequentialApprovalGateExercised` is recorded only after the trusted-host approval boundary returns for the exact scope; the browser action still needs its own verified post-state.
+**Judge proof:** `ConsequentialApprovalGranted` is recorded only after the trusted-host approval boundary grants the exact requested scope; approval alone does not prove that the browser mutation later succeeded.
 
 **Fallback:** If no approval dialog appears, stop the take. Never complete the consequential action manually and describe it as agent-gated.
 
@@ -82,7 +82,7 @@ If any live dependency fails preflight, do not improvise a stronger claim. Use t
 
 **Judge proof:** `NebiusBackgroundExecutionObserved` is valid only after authenticated remote-result ingestion reaches durable local `ResultApplied` with its pending audit obligation cleared. Dispatch, Running, cancellation, provider failure, or an unaudited crash window are not proof.
 
-**Fallback:** Without a verified live PASS, show the implemented Serverless contract/readiness and say exactly that live provider execution is not being claimed. Do not use synthetic evidence as a substitute for provider-live proof.
+**Fallback:** Without authenticated/audited remote-result evidence, the live background-execution beat has failed. The implemented Serverless contract/readiness may be shown later as documentation evidence, but it does not satisfy `NebiusBackgroundExecutionObserved` and must not be presented as completed provider execution.
 
 ### 2:26–2:48 — Architecture + evidence close
 
@@ -90,9 +90,9 @@ If any live dependency fails preflight, do not improvise a stronger claim. Use t
 
 **Visible result:** Point to Nemotron/Nebius as the reasoning/background stack, Tavily as research, local Windows/browser authority boundaries, and the session milestones accumulated during the take. Keep the explanation to one sentence per dependency.
 
-**Judge proof:** The evidence view is a payload-free projection of production-observed milestones, not a manual checklist. Provider readiness and provider-live claims remain distinct.
+**Judge proof:** The evidence view is a payload-free projection of production-observed milestones, not a manual checklist. Provider readiness and provider-live claims remain distinct. This architecture beat intentionally has no expected runtime session milestone.
 
-**Fallback:** If a milestone expected from the take is absent, do not narrate it as completed. Treat the missing milestone as a failed demo assertion and investigate before the final recording.
+**Fallback:** If a milestone expected from any preceding live beat is absent, do not narrate it as completed. Treat the missing milestone as a failed demo assertion and investigate before the final recording.
 
 ### 2:48–3:00 — Contingency
 
@@ -100,6 +100,10 @@ Reserve these 12 seconds for UI latency, source opening, approval reading, or a 
 
 ## Post-take acceptance gate
 
-Reject the recording and rerun if any of the following occurred: a required beat was skipped; a session milestone was claimed but absent; a citation was not visibly grounded; browser verification was not visible; a consequential mutation happened without approval; live Nebius/Tavily execution was claimed without corresponding live evidence; a secret/private payload appeared; a login/CAPTCHA/MFA safeguard was bypassed; or the take exceeded 180 seconds.
+Reject the recording and rerun if any of the following occurred: a required live beat was skipped; an expected session milestone was absent; a citation was not visibly grounded; browser verification was not visible; a consequential mutation happened without approval; live Nebius/Tavily execution was claimed without corresponding live evidence; a secret/private payload appeared; a login/CAPTCHA/MFA safeguard was bypassed; or the take exceeded 180 seconds.
+
+For the six live product beats, the expected exact milestone sequence is:
+
+`NemotronInferenceCompleted` → `MemoryInfluencedResponse` → `TavilyValidatedCitationUsed` → `BrowserVerifiedGoalCompleted` → `ConsequentialApprovalGranted` → `NebiusBackgroundExecutionObserved`.
 
 A valid take should make the product claim and the evidence boundary agree. The strongest close is not “everything passed”; it is that NVIDEA can show which capabilities were genuinely observed in this session and refuses to upgrade weaker evidence into a stronger claim.

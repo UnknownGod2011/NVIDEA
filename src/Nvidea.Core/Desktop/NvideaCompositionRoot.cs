@@ -63,19 +63,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     public DesktopSessionController Session { get; }
     public PersonalMemoryService Memory => _memory;
 
-    /// <summary>
-    /// Lifecycle-aware durable research surface intended for product/UI use. Local research is
-    /// available when Tavily is configured. Remote lifecycle recovery is independently available
-    /// when explicitly enabled and successfully preflighted, so an already-dispatched Nebius job
-    /// can still be reconciled/cancelled if the local Tavily credential is temporarily unavailable.
-    /// New remote dispatch remains a separate opt-in and requires local research availability.
-    /// </summary>
     public ResearchProductRuntime? Research { get; }
-
-    /// <summary>
-    /// Read-only protected local-state inspection that never initializes Playwright/Chromium or
-    /// exposes approval/browser mutation authority.
-    /// </summary>
     public LocalStateRuntime LocalState { get; }
 
     public static async Task<NvideaCompositionRoot> CreateFromEnvironmentAsync(
@@ -174,9 +162,6 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
 
         if (localResearch is not null || cloudResearch is not null)
         {
-            // A missing local Tavily key must never strand already-running Nebius work. In that
-            // lifecycle-only composition reads/reconciliation/cancellation stay available, while
-            // every local execution path and all new paid dispatch fail closed.
             research = new ResearchProductRuntime(
                 researchDirectory,
                 localResearch,
@@ -201,11 +186,6 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
             dataDirectory);
     }
 
-    /// <summary>
-    /// Returns the product-facing browser authority boundary. Raw <see cref="BrowserHostRuntime"/>
-    /// infrastructure is intentionally kept private so UI/plugin code cannot bypass the constrained
-    /// action, approval, download-quarantine and cancellation surface.
-    /// </summary>
     public async Task<BrowserProductRuntime> GetBrowserProductAsync(
         CancellationToken cancellationToken = default)
     {
@@ -244,24 +224,15 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         }
     }
 
-    /// <summary>
-    /// Creates the trusted Nemotron-driven browser goal loop over the same local browser host.
-    /// Multi-step session state is persisted separately from authorization. Restarting the app
-    /// can recover the goal and paused job description, but never recreates an approval grant.
-    /// </summary>
     public async Task<BrowserGoalAgent> CreateBrowserGoalAgentAsync(CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         var browser = await GetBrowserHostAsync(cancellationToken).ConfigureAwait(false);
         var goalStore = CreateBrowserGoalStore();
-        return new BrowserGoalAgent(browser, new NemotronBrowserPlanner(_inference), goalStore);
+        var observedHost = new EvidenceObservingBrowserGoalHost(browser);
+        return new BrowserGoalAgent(observedHost, new NemotronBrowserPlanner(_inference), goalStore);
     }
 
-    /// <summary>
-    /// Returns the durable, descriptive browser-goal sessions that the local desktop may surface
-    /// for restart/recovery UX. The records contain no approval grants, credentials or typed
-    /// browser values and reading them does not initialize Playwright or confer execution authority.
-    /// </summary>
     public async Task<IReadOnlyList<BrowserGoalSession>> ListBrowserGoalSessionsAsync(
         CancellationToken cancellationToken = default)
     {
@@ -269,12 +240,6 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         return await CreateBrowserGoalStore().ListAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>
-    /// Creates the explicit crash-recovery service for side-effect-ambiguous browser children.
-    /// The service shares the same durable parent store and trusted local browser host as the goal
-    /// agent. It can only inspect fresh evidence and mark an already-achieved state complete; it
-    /// never replays the interrupted action or manufactures approval.
-    /// </summary>
     public async Task<BrowserAmbiguousRecoveryService> CreateBrowserAmbiguousRecoveryServiceAsync(
         CancellationToken cancellationToken = default)
     {

@@ -35,25 +35,28 @@ Added `JudgeEvidenceDialog` backed by real `DesktopResearchReadiness`, plus `Ses
 ### 2026-09-16 — trusted Nebius background evidence
 - Added `EvidenceObservingRemoteResearchClientRuntime`, an observation-only decorator over `IRemoteResearchClientRuntime`, composed immediately after the real Nebius runtime and before `ResearchCloudExecutionCoordinator`.
 - Dispatch and cancellation requests remain evidence-free; reconciliation/recovery can record `NebiusBackgroundExecutionObserved` only after authenticated result ingestion returns durable `ResultApplied` provenance locally.
+- Hardened the boundary so `ResultApplied + Local` is insufficient while a durable `PendingAuditEvent` remains; judge proof is downstream of both authenticated result CAS and its accountability append.
 - Added an internal composition seam for isolated testing without provider/network activity.
 
-### 2026-09-16 — audited Nebius evidence boundary (latest run)
+### 2026-09-16 — remote evidence adversarial contract suite (latest run)
 Completed:
-- Re-read `progress.md` completely and inspected the remote evidence observer plus `ResearchCloudExecutionCoordinator` reconciliation/audit-recovery semantics before mutation.
+- Re-read `progress.md` completely and inspected the remote evidence decorator, `IRemoteResearchClientRuntime`, provenance states, lifecycle reconciler, result-ingestion model and session ledger before mutation.
 - Explicitly verified immediately before every GitHub mutation that repository metadata reported `repository_full_name` exactly `UnknownGod2011/NVIDEA`; no other repository was mutated.
-- Hardened `EvidenceObservingRemoteResearchClientRuntime.Observe` so `ResultApplied + Local` is no longer sufficient when a durable `PendingAuditEvent` remains.
-- `NebiusBackgroundExecutionObserved` now requires all three facts: local execution location, trusted `ResultApplied` remote provenance, and a cleared durable audit outbox.
-- This closes the crash window where authenticated result CAS succeeded but its accountability/audit append had not yet completed. `RecoverPendingAuditAsync` can establish evidence only after the underlying runtime actually clears that obligation and returns the recovered record.
-- Deliberately did not require the whole research job to be terminal `Completed`: remote execution is per-stage, and an authenticated Nebius-produced stage can legitimately return the durable job to local `Pending` for later stages. Requiring terminal completion would under-report genuine background execution.
+- Added `EvidenceObservingRemoteResearchClientRuntimeTests` with an isolated `SessionEvidenceLedger` and passive fake runtime; tests do not require provider/network/Playwright activity.
+- Locked down that `DispatchAsync` and `RequestCancellationAsync` remain evidence-free even if a malformed/fake inner runtime returns an otherwise evidence-eligible record. This prevents accidental future widening of the observation boundary.
+- Covered `DispatchReserved`, `Dispatched`, `CancelRequested`, `Cancelled`, `RemoteFailed`, and `Expired` reconciliation outcomes as non-evidence.
+- Covered the exact crash window introduced by durable audit recovery: `ResultApplied + Local + PendingAuditEvent` remains non-evidence; only a subsequent successful `RecoverPendingAuditAsync` result with the outbox cleared can establish `NebiusBackgroundExecutionObserved`.
+- Added an idempotence regression exercising all four observation-capable methods against the same audited `ResultApplied` record and requiring exactly one milestone with the first timestamp retained.
+- Added a thrown-reconciliation regression proving exceptions propagate without recording background proof.
 
 Files changed this run:
-- `src/Nvidea.Core/Desktop/EvidenceObservingRemoteResearchClientRuntime.cs`
+- `tests/Nvidea.Core.Tests/EvidenceObservingRemoteResearchClientRuntimeTests.cs`
 - `progress.md`
 
 Validation/evidence:
-- Static inspection of `ResearchCloudExecutionCoordinator.ReconcileAsync` confirms a pending audit marker is recovered before normal remote-state reconciliation and that a locally applied result with no unresolved marker is a valid return boundary.
-- Static inspection confirms `DispatchAsync` and `RequestCancellationAsync` remain pure delegation and cannot record evidence.
-- Static inspection confirms an authenticated result stranded before audit append can no longer become judge-visible proof through the observer.
+- Static contract review confirms the fake implements the exact current `IRemoteResearchClientRuntime` surface and the tests exercise the production decorator directly.
+- The suite is deliberately adversarial around malformed inner-runtime returns so evidence safety is enforced independently of upstream lifecycle correctness.
+- Existing `SessionEvidenceLedger.Record` uses `TryAdd`, matching the new exact-once/first-observation assertion.
 - Executable validation remains unavailable: no usable `dotnet`, `csc` or `msbuild` is available here, so no compilation/xUnit/WPF/Worker PASS is claimed.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, Playwright, Ollama or inference operation was triggered.
 
@@ -62,17 +65,18 @@ Validation/evidence:
 - First-observation ledger semantics prevent retries, repeated approvals, repeated reconciliation or repeated recovery from inflating proof.
 - The shared ledger contains only a closed enum + timestamp projection; no prompts, URLs, browser text, memory content, approval scope, filenames, provider ids, remote job ids, checkpoint payloads or raw errors are retained.
 - Browser proof cannot be inferred from driver-reported success alone: terminal completion plus a trusted verified-step checkpoint is required.
-- Nebius background proof cannot be inferred from dispatch, a remote-looking Running state, cancellation request, provider error, ambiguous delivery, or a result CAS whose durable audit obligation is still unresolved.
+- Nebius background proof cannot be inferred from dispatch, a remote-looking Running state, cancellation request, provider error, ambiguous delivery, terminal remote failure/cancellation, or a result CAS whose durable audit obligation is still unresolved.
 - The remote decorator is observation-only and cannot dispatch, approve, retry, reconcile, cancel, decrypt, mutate provider state, clear audit obligations, or alter durable provenance beyond delegating to the existing trusted runtime.
+- New tests intentionally feed malformed/evidence-looking records through non-observation methods to guard against future refactors accidentally treating method return shape alone as authority.
 - Existing browser authorization, durable job, audit, quarantine, emergency-stop and ambiguous-side-effect recovery authority is unchanged.
 - Existing remote result/audit/cleanup/binding authority boundaries are unchanged.
 
 ## Known blockers / risks
 - No .NET 8 compiler/runtime in this environment; current changes are statically reviewed but unexecuted.
-- The remote evidence decorator still needs isolated contract regressions proving dispatch/running/failure/cancellation/exception/pending-audit paths remain non-evidence and audited `ResultApplied` records exactly once.
 - Product-level and ambiguous-recovery browser evidence observation remain separate; ledger idempotence prevents proof inflation, but redundant observation should be removed only after equivalent host-level coverage is proven.
 - The process ledger intentionally spans one desktop-process lifetime; a future in-app "new demo session" UX must explicitly clear it.
 - Live Nebius mounted-volume/Serverless behavior, worker auth, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
+- The new remote evidence tests should be executed on a .NET 8-capable environment before submission; any compile-time model drift must be fixed rather than weakening assertions.
 
 ## Single Best Next Task
-Add isolated contract regressions for `EvidenceObservingRemoteResearchClientRuntime` using a passive fake remote runtime and isolated ledger. Explicitly cover the newly hardened pending-audit crash window: `ResultApplied + Local + PendingAuditEvent` must remain non-evidence, while the same record after successful audit recovery must record `NebiusBackgroundExecutionObserved` idempotently. Also prove dispatch, dispatched/running, failure, cancellation and thrown reconciliation remain non-evidence.
+Add an explicit in-app "New demo session" control that clears only `SessionEvidenceLedger.ProcessLocal` after a user confirmation and never touches durable audit/job/memory state. This closes the remaining judge-demo UX gap caused by process-lifetime evidence accumulation while preserving the strict distinction between ephemeral proof and durable accountability. Add tests proving reset clears only session milestones and cannot delete or mutate durable research/browser/audit state.

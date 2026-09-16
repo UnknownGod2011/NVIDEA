@@ -62,20 +62,37 @@ public sealed class BrowserProductRuntime
         CancellationToken cancellationToken = default) =>
         _host.PrepareDownloadHandoffAsync(downloadId, destinationDirectory, cancellationToken);
 
-    public Task<BrowserDownloadExportReceipt> ApproveAndExportDownloadAsync(
+    public async Task<BrowserDownloadExportReceipt> ApproveAndExportDownloadAsync(
         BrowserDownloadHandoffPlan approvedPlan,
         string exactScope,
-        CancellationToken cancellationToken = default) =>
-        _host.ApproveAndExportDownloadAsync(approvedPlan, exactScope, cancellationToken);
+        CancellationToken cancellationToken = default)
+    {
+        var receipt = await _host
+            .ApproveAndExportDownloadAsync(approvedPlan, exactScope, cancellationToken)
+            .ConfigureAwait(false);
+        // Export is a consequential filesystem write. Count it only after the trusted host has
+        // validated the exact scope and the verified quarantine handoff has actually completed.
+        // Rejected scope, cancellation, validation failure, and failed export all throw before here.
+        _sessionEvidence.ObserveAcceptedConsequentialApproval();
+        return receipt;
+    }
 
     public Task<BrowserDownloadDiscardPlan> PrepareDownloadDiscardAsync(
         Guid downloadId,
         CancellationToken cancellationToken = default) =>
         _host.PrepareDownloadDiscardAsync(downloadId, cancellationToken);
 
-    public Task<BrowserDownloadDiscardReceipt> ApproveAndDiscardDownloadAsync(
+    public async Task<BrowserDownloadDiscardReceipt> ApproveAndDiscardDownloadAsync(
         BrowserDownloadDiscardPlan approvedPlan,
         string exactScope,
-        CancellationToken cancellationToken = default) =>
-        _host.ApproveAndDiscardDownloadAsync(approvedPlan, exactScope, cancellationToken);
+        CancellationToken cancellationToken = default)
+    {
+        var receipt = await _host
+            .ApproveAndDiscardDownloadAsync(approvedPlan, exactScope, cancellationToken)
+            .ConfigureAwait(false);
+        // Discard is an irreversible filesystem delete. Evidence is downstream of successful
+        // exact-scope authorization and deletion, never merely downstream of showing a prompt.
+        _sessionEvidence.ObserveAcceptedConsequentialApproval();
+        return receipt;
+    }
 }

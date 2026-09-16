@@ -20,40 +20,39 @@ Added `JudgeEvidenceDialog` plus `SessionEvidenceLedger`, with production observ
 Added a 168-second operator runbook aligned to the machine-readable demo package, with strict preflight/post-take rejection gates and explicit separation of synthetic, local-live, provider-live and documentation evidence.
 
 ### 2026-09-16 — executable per-beat demo contracts
-Upgraded `docs/demo-package.json` and `Nvidea.DemoPackageValidator` to schema v2. Every judging beat declares expected production session milestones, preflight dependencies and a fail-closed fallback policy; the validator enforces closed milestone mappings, duration/path/evidence/provider-live/command constraints and strict JSON shape.
+Upgraded `docs/demo-package.json` and `Nvidea.DemoPackageValidator` to schema v2. Every judging beat declares expected production session milestones, preflight dependencies and a fail-closed fallback policy; the validator enforces closed milestone mappings, duration/path/evidence/provider-live/command constraints and strict JSON shape. Restored the explicit required-repository-asset allowlist and heuristic secret scan, including all schema-v2 free-text fields.
 
-### 2026-09-16 — restored validator security defenses (latest run)
+### 2026-09-16 — schema-v2 validator regression harness (latest run)
 Completed:
-- Re-read this ledger completely and inspected the current schema-v2 validator before mutation.
-- Retrieved the last hardened v1 validator from repository history and restored its two accidentally dropped submission defenses without weakening v2 per-beat contracts.
-- Restored the explicit required-repository-asset allowlist/check for README, LICENSE, evaluator documentation and the three evaluator/verifier project files.
-- Restored the heuristic manifest secret scan for private-key headers, bearer authorization material, API-key assignments and common `sk-` secret prefixes.
-- Extended the secret scan to schema-v2 strings, including `fallbackPolicy`, `preflightDependencies`, and `expectedSessionMilestones`, in addition to title, claims, paths, evidence and commands.
+- Re-read this ledger completely and inspected the current validator plus its existing test project before mutation.
+- Found that `DemoPackageValidatorTests.cs` still generated schema-v1 fixtures, meaning its nominal positive test could no longer exercise the current schema-v2 validator successfully.
+- Migrated the fixture to schema v2 with the exact seven closed beat IDs and production milestone mappings.
+- Added network-free fail-closed regressions for missing preflights, blank fallback policies, wrong/missing milestones, architecture-proof milestone pollution, duration overflow, missing required assets, duplicate JSON properties, path traversal, provider-live claim mismatch, and secret material placed in schema-v2 fallback/preflight/milestone fields.
+- Kept tests isolated in a temporary repository-shaped fixture; they require no network, provider credentials, browser session, or cloud account.
 - Explicitly verified repository metadata as exactly `UnknownGod2011/NVIDEA` immediately before every successful GitHub mutation; no other repository was mutated.
 
 Files changed this run:
-- `tools/Nvidea.DemoPackageValidator/Program.cs`
+- `tests/Nvidea.DemoPackageValidator.Tests/DemoPackageValidatorTests.cs`
 - `progress.md`
 
 Validation/evidence:
-- Repository history commit `52c30d65...` supplied the exact prior required-asset list and secret-detection rules, avoiding reconstruction from memory.
-- Static inspection confirms both restored checks coexist with schema-v2 milestone/preflight/fallback validation.
-- Secret enumeration now includes all newly introduced free-text v2 fields so moving a credential into a fallback or preflight description does not evade the heuristic scan.
-- Executable validation remains unavailable: no usable `dotnet`, `csc` or `msbuild` is available here, so no compilation or validator PASS is claimed.
+- Static comparison against `tools/Nvidea.DemoPackageValidator/Program.cs` confirms fixture schema version, beat IDs, expected milestone vocabulary, required assets and tested failure surfaces match the current validator contract.
+- The duplicate-property test writes raw JSON rather than reserializing a dictionary, so it actually exercises the validator's duplicate JSON detection.
+- The v2 secret tests place credential markers specifically in newly introduced execution-contract fields.
+- Executable validation remains unavailable: no usable `dotnet`, `csc` or `msbuild` is available here, so no compilation or xUnit PASS is claimed.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, Playwright, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
 - Demo fallbacks remain fail-closed rather than bypassing login/CAPTCHA/MFA, exact-scope approval, browser verification, or evidence provenance.
-- Required repository assets can no longer silently disappear while referenced demo paths still happen to validate.
-- Manifest free text is again screened for obvious committed credentials, including the new v2 execution-contract fields.
-- The secret scan is intentionally heuristic defense-in-depth, not a substitute for repository-wide secret scanning or provider-side secret management.
+- Submission integrity defenses now have explicit negative contracts rather than relying only on static review.
+- Test fixtures contain synthetic marker strings only and never use real credentials or provider endpoints.
 - Milestone vocabulary remains closed and session proof remains payload-free/process-local.
 
 ## Known blockers / risks
 - No .NET 8 compiler/runtime in this environment; current changes are statically reviewed but unexecuted.
-- Add executable fail-closed fixtures/regressions for missing/wrong milestone, missing preflight, empty fallback, duplicate properties, duration overflow, missing required assets and secret-bearing v2 fields once a .NET environment is available.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
 - Final recording still requires a real Windows demo-machine preflight.
+- The validator test project should be executed on a .NET 8 machine before submission to catch compile/runtime drift that static review cannot prove.
 
 ## Single Best Next Task
-Add a network-free negative-fixture regression harness for `Nvidea.DemoPackageValidator` covering the schema-v2 execution contracts plus the restored required-asset and secret-scan defenses, so submission integrity is executable rather than static-only.
+Perform a submission-readiness audit of the actual `docs/demo-package.json` against the now-hardened schema-v2 validator and operator runbook, then fix any drift in claims, evidence paths, provider-live classification, preflights, fallbacks, or command paths before final Windows live preflight.

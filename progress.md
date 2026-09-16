@@ -30,42 +30,48 @@ Added `JudgeEvidenceDialog` backed by real `DesktopResearchReadiness`, plus `Ses
 - Hardened regressions so pending/running/waiting/retry/failed/cancelled/unverified browser outcomes never become proof.
 - Routed `NvideaCompositionRoot.CreateBrowserGoalAgentAsync` through the evidence decorator.
 - Reused one `JsonBrowserGoalSessionStore` per composition-root lifetime across goal agent, listing, and ambiguous recovery.
+- Added a composition regression proving the internal factory returns the evidence decorator rather than raw browser authority without starting Playwright.
 
-### 2026-09-16 — composition contract regression (latest run)
+### 2026-09-16 — trusted Nebius background evidence (latest run)
 Completed:
-- Re-read `progress.md` completely and inspected current composition root, evidence decorator, core test project, and repository tree before mutation.
-- Explicitly verified immediately before each GitHub mutation that repository metadata reported `repository_full_name` exactly `UnknownGod2011/NVIDEA`; no other repository was mutated.
-- Added `tests/Nvidea.Core.Tests/NvideaCompositionRootEvidenceCompositionTests.cs`.
-- The regression calls the internal `NvideaCompositionRoot.CreateObservedBrowserGoalHost` seam with a passive `ICrashConsistentBrowserGoalHost` and asserts the returned object is the evidence decorator rather than the raw authority, without starting Playwright.
-- The passive host throws for every browser operation, proving the factory test exercises composition only and cannot accidentally execute browser actions.
+- Re-read `progress.md` completely and inspected the current repository tree, composition root, remote-research coordinator/runtime, job status projection, and result protocol before mutation.
+- Explicitly verified immediately before every GitHub mutation that repository metadata reported `repository_full_name` exactly `UnknownGod2011/NVIDEA`; no other repository was mutated.
+- Added `EvidenceObservingRemoteResearchClientRuntime`, an observation-only decorator over `IRemoteResearchClientRuntime`.
+- Dispatch and cancellation-request calls deliberately remain evidence-free: a successful Create/dispatch receipt or cancellation request does not prove a Nebius worker executed.
+- Reconciliation and audit-recovery returns record `NebiusBackgroundExecutionObserved` only when durable trusted provenance is `ResultApplied` and execution has returned to `Local`.
+- This boundary intentionally relies on the existing remote result-ingestion trust path: `ResultApplied` is produced only after the protected result envelope is authenticated/decrypted, bound to the exact local job/checkpoint/remote id, and durably applied.
+- Wired the decorator in `NvideaCompositionRoot` immediately after `NebiusResearchLiveRuntimeFactory.Create` and before `ResearchCloudExecutionCoordinator`, using `SessionEvidenceLedger.ProcessLocal` by default.
+- Added the narrow internal `CreateObservedRemoteResearchRuntime` composition seam so isolated tests can inject a ledger later without provider/network activity.
 
 Files changed this run:
-- `tests/Nvidea.Core.Tests/NvideaCompositionRootEvidenceCompositionTests.cs`
+- `src/Nvidea.Core/Desktop/EvidenceObservingRemoteResearchClientRuntime.cs`
+- `src/Nvidea.Core/Desktop/NvideaCompositionRoot.cs`
 - `progress.md`
 
 Validation/evidence:
-- Static inspection confirms `Nvidea.Core.csproj` grants `InternalsVisibleTo` to `Nvidea.Core.Tests`, so the new regression can access the narrow internal factory seam.
-- Static inspection confirms the production root still passes the evidence-decorated host into `BrowserGoalAgent`, while `BrowserHostRuntime` remains private to the root.
-- The test is intentionally browser-free and payload-free.
+- Static inspection confirms optimistic dispatch cannot record the background milestone because `DispatchAsync` is pure delegation.
+- Static inspection confirms `RequestCancellationAsync` is also pure delegation.
+- Static inspection confirms only `ReconcileReservedAsync`, `ReconcileDispatchedAsync`, `ReconcileCancellationAsync`, and `RecoverPendingAuditAsync` can reach the observer, and even those require `ExecutionLocation.Local + RemoteResearch.State.ResultApplied`.
+- Existing `NebiusResearchClientRuntime` shows result recovery/ingestion is upstream of this observer; the observer neither decrypts payloads nor creates authority.
 - Executable validation remains unavailable: no usable `dotnet`, `csc` or `msbuild` is available here, so no compilation/xUnit/WPF/Worker PASS is claimed.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, Playwright, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
 - Session proof remains process-local and intentionally non-durable; it is judge evidence, not an audit replacement.
-- First-observation ledger semantics prevent retries, repeated approvals or repeated recovery from inflating proof.
-- The shared ledger contains only a closed enum + timestamp projection; no prompts, URLs, browser text, memory content, approval scope, filenames, provider ids or raw errors are retained.
+- First-observation ledger semantics prevent retries, repeated approvals, repeated reconciliation or repeated recovery from inflating proof.
+- The shared ledger contains only a closed enum + timestamp projection; no prompts, URLs, browser text, memory content, approval scope, filenames, provider ids, remote job ids, checkpoint payloads or raw errors are retained.
 - Browser proof cannot be inferred from driver-reported success alone: terminal completion plus a trusted verified-step checkpoint is required.
-- The goal-host decorator observes only after trusted-host calls return and cannot grant approval or alter durable job state.
-- The composition regression does not weaken authority: it checks only the wrapper type and uses a passive host that cannot perform browser work.
+- Nebius background proof cannot be inferred from dispatch, a remote-looking Running state, cancellation request, provider error, or ambiguous delivery. It requires the stronger authenticated result-applied trust boundary.
+- The new remote decorator is observation-only and cannot dispatch, approve, retry, reconcile, cancel, decrypt, mutate provider state, or alter durable provenance beyond delegating to the existing trusted runtime.
 - Existing browser authorization, durable job, audit, quarantine, emergency-stop and ambiguous-side-effect recovery authority is unchanged.
 - Existing remote result/audit/cleanup/binding authority boundaries are unchanged.
 
 ## Known blockers / risks
 - No .NET 8 compiler/runtime in this environment; current changes are statically reviewed but unexecuted.
-- Product-level and ambiguous-recovery evidence observation remain separate; ledger idempotence prevents proof inflation, but redundant observation should be removed only after equivalent host-level coverage is proven.
+- The new remote evidence decorator needs isolated contract regressions proving dispatch/running/failure/cancellation/exception paths remain non-evidence and authenticated `ResultApplied` records exactly once.
+- Product-level and ambiguous-recovery browser evidence observation remain separate; ledger idempotence prevents proof inflation, but redundant observation should be removed only after equivalent host-level coverage is proven.
 - The process ledger intentionally spans one desktop-process lifetime; a future in-app "new demo session" UX must explicitly clear it.
 - Live Nebius mounted-volume/Serverless behavior, worker auth, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
-- `NebiusBackgroundExecutionObserved` is defined but not yet wired.
 
 ## Single Best Next Task
-Remove redundant product/recovery evidence observation only where centralized host-level equivalence is proven, then wire `NebiusBackgroundExecutionObserved` from authenticated and reconciled remote lifecycle evidence. Keep that milestone fail-closed and payload-free: no optimistic dispatch, ambiguous delivery, unauthenticated callback, or unreconciled terminal state may count.
+Add isolated contract regressions for `EvidenceObservingRemoteResearchClientRuntime` using a passive fake remote runtime and isolated ledger. Prove dispatch, dispatched/running, remote failure, cancellation, thrown reconciliation, and malformed/untrusted states cannot record `NebiusBackgroundExecutionObserved`, while a trusted `ResultApplied` return records it idempotently. Then audit whether `ResultApplied` should additionally require a completed-stage checkpoint invariant before considering the milestone contract final.

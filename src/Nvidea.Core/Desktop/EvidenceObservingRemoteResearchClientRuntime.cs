@@ -7,7 +7,8 @@ namespace Nvidea.Core.Desktop;
 /// Dispatch alone never counts as background-execution proof: delivery may be ambiguous and
 /// successful Create does not prove that a worker actually ran. Evidence is recorded only after
 /// a reconciliation/recovery call returns durable provenance showing that a remotely produced,
-/// cryptographically verified result has been applied locally.
+/// cryptographically verified result has been applied locally and its durable audit transition
+/// has no unresolved outbox obligation.
 /// </summary>
 internal sealed class EvidenceObservingRemoteResearchClientRuntime : IRemoteResearchClientRuntime
 {
@@ -60,10 +61,13 @@ internal sealed class EvidenceObservingRemoteResearchClientRuntime : IRemoteRese
 
         // ResultApplied is set only by the trusted result-ingestion path after the signed result
         // envelope is verified and durably CAS-applied to the local job. The job has moved back to
-        // Local by then, so require both facts rather than treating a remote-looking Running state,
-        // dispatch receipt, cancellation request, or provider error as proof of worker execution.
+        // Local by then. Also require the durable audit outbox to be clear: a crash after result CAS
+        // but before its audit append must not become judge-visible proof until audit recovery has
+        // completed. This keeps the evidence boundary downstream of both authenticated ingestion and
+        // its durable accountability record.
         if (record.ExecutionLocation == JobExecutionLocation.Local
-            && record.RemoteResearch is { State: RemoteResearchProvenanceState.ResultApplied })
+            && record.RemoteResearch is { State: RemoteResearchProvenanceState.ResultApplied }
+            && record.PendingAuditEvent is null)
         {
             _evidence.Record(SessionEvidenceKind.NebiusBackgroundExecutionObserved);
         }

@@ -47,39 +47,45 @@ Added `JudgeEvidenceDialog` backed by real `DesktopResearchReadiness`, plus `Ses
 - Added a `New demo session` control to `JudgeEvidenceDialog`, with explicit Yes/No confirmation defaulting to No and precise disclosure that durable memory/jobs/browser/audit state is preserved.
 - Changed dialog composition from a frozen snapshot to narrow snapshot/reset delegates so the UI refreshes immediately without receiving durable-store authority.
 
-### 2026-09-16 — desktop evidence reset contract (latest run)
+### 2026-09-16 — desktop evidence reset contract
+- Added a regression that establishes genuine Nemotron completion evidence through `DesktopInvocationService.InvokeAsync`, clears the exact injected ledger through `ResetSessionEvidence`, and proves a later genuine invocation can establish fresh evidence.
+- The test checks inference counts so reset itself cannot invoke the model or manufacture proof.
+
+### 2026-09-16 — deterministic judge demo runbook (latest run)
 Completed:
-- Re-read this ledger completely and inspected `DesktopInvocationService`, `SessionEvidenceLedgerTests`, and the existing `DesktopInvocationTests` before mutation.
+- Re-read this ledger completely and inspected the existing machine-checkable `docs/demo-package.json` plus `docs/demo-package.md` before mutation.
 - Explicitly verified repository metadata as exactly `UnknownGod2011/NVIDEA` immediately before every GitHub mutation; no other repository was mutated.
-- Added `Reset_session_evidence_clears_only_injected_projection_and_genuine_success_can_reestablish_proof` to `DesktopInvocationTests`.
-- The regression injects a private ledger with deterministic timestamps, establishes genuine Nemotron completion evidence through the normal successful invocation path, resets through `DesktopInvocationService.ResetSessionEvidence`, and proves both the service snapshot and injected ledger are empty.
-- It then performs a second genuine invocation and requires a fresh `NemotronInferenceCompleted` entry with the later timestamp, proving reset does not poison future production evidence and that proof cannot reappear without another successful invocation.
-- The test also checks inference request count before and after reset: reset itself cannot invoke the model or manufacture execution evidence.
+- Added `docs/judge-demo-runbook.md`, an operator-facing <=3-minute recording plan aligned to the existing 168-second manifest.
+- Mapped every required judging beat to a concrete UI/product action, expected visible result, production session-evidence milestone where applicable, preflight dependency, and fail-closed fallback.
+- Added a strict preflight gate covering Windows builds/evals, global invocation/emergency stop, Nemotron readiness, live Tavily, authenticated browser state, consequential approval, optional live Nebius PASS evidence, and a clean New demo session evidence projection.
+- Added a post-take rejection gate for missing milestones, ungrounded citations, invisible browser verification, ungated consequential actions, overclaimed provider-live evidence, exposed secrets/private payloads, bypassed login/CAPTCHA/MFA safeguards, or >180-second recordings.
+- Preserved the evidence-class boundary: synthetic evaluator evidence is supporting engineering evidence and cannot be narrated as live Tavily/Nebius provider proof.
 
 Files changed this run:
-- `tests/Nvidea.Core.Tests/DesktopInvocationTests.cs`
+- `docs/judge-demo-runbook.md`
 - `progress.md`
 
 Validation/evidence:
-- Static inspection confirms the test uses the real `DesktopInvocationService.InvokeAsync` success path and the existing deterministic `SessionEvidenceLedger(Func<DateTimeOffset>)` clock seam rather than mutating the ledger to simulate post-reset success.
-- The reset boundary remains a single `_sessionEvidence.Clear()` call and owns no durable memory/job/browser/audit authority.
-- The regression checks the same injected ledger directly after reset, preventing an accidental implementation that merely swaps/hides the service snapshot while leaving evidence resident.
+- Static audit confirms the runbook timing exactly follows the existing manifest: 20 + 22 + 28 + 28 + 20 + 28 + 22 = 168 seconds, leaving 12 seconds contingency under 180 seconds.
+- Each required product beat now names the relevant production proof boundary: Nemotron completion, memory influence, validated Tavily citation, trusted browser post-state verification, exact-scope consequential approval, and audited authenticated Nebius result application.
+- The runbook explicitly fails closed instead of suggesting terminal-only substitution for Windows UX, manual completion for browser approval, or synthetic evidence substitution for live providers.
 - Executable validation remains unavailable: no usable `dotnet`, `csc` or `msbuild` is available here, so no compilation/xUnit/WPF PASS is claimed.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, Playwright, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
 - Session proof remains process-local, payload-free and intentionally non-durable; reset is a demo-evidence operation, not an audit or privacy deletion feature.
-- Reset cannot reach durable memory, research jobs, browser state, downloads or audit stores through its composition surface.
-- Confirmation defaults to No, reducing accidental evidence loss during a demo.
-- Resetting evidence does not revoke permissions, cancel jobs, clear authentication, modify browser sessions, delete downloads or erase accountability history.
-- The new contract proves reset itself performs no inference and that fresh evidence requires a subsequent genuine successful invocation.
-- Browser and Nebius evidence trust boundaries remain unchanged.
+- The demo runbook prohibits displaying secrets, cookies, tokens, raw checkpoints, private browser/session data, or provider exceptions.
+- Browser fallback explicitly forbids bypassing login, CAPTCHA, MFA or site safeguards.
+- Consequential actions must remain behind the trusted exact-scope approval boundary; a missing approval dialog invalidates the take.
+- Provider evidence remains typed: synthetic/local-live/provider-live/documentation are not interchangeable claims.
+- A missing expected session milestone invalidates the corresponding demo claim instead of being papered over in narration.
 
 ## Known blockers / risks
 - No .NET 8 compiler/runtime in this environment; current changes are statically reviewed but unexecuted.
 - Product-level and ambiguous-recovery browser evidence observation remain separate; ledger idempotence prevents proof inflation, but redundant observation should be removed only after equivalent host-level coverage is proven.
 - Live Nebius mounted-volume/Serverless behavior, worker auth, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
 - The WPF reset flow and new regression should be executed on Windows/.NET 8 before submission; any compile/XAML/test issue must be fixed rather than bypassing confirmation.
+- The final recording still requires a real Windows demo-machine preflight. In particular, live Tavily and any claimed provider-live Nebius background execution cannot be validated from this environment.
 
 ## Single Best Next Task
-Perform the deterministic <=3 minute demo/rubric audit against the actual current implementation and turn the result into an executable demo checklist that maps each required judging beat to a real UI action, production evidence milestone, expected visible state, fallback/recovery behavior, and preflight dependency. Prioritize any discovered functional blocker over cosmetic documentation.
+Turn the new runbook into a stronger machine-checkable contract by extending the demo-package schema/validator with explicit per-beat expected session milestone, preflight dependency and fallback-policy fields, then add fail-closed validator regressions so documentation and the executable judging manifest cannot silently drift apart.

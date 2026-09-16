@@ -7,6 +7,13 @@ public sealed class SessionEvidenceLedger
     private readonly Dictionary<SessionEvidenceKind, DateTimeOffset> _firstObserved = new();
     private readonly Func<DateTimeOffset> _clock;
 
+    /// <summary>
+    /// One payload-free ledger for the production desktop process. Composition boundaries that do
+    /// not receive an explicit ledger use this instance so independently-created product runtimes
+    /// contribute to the same judge-visible session proof. Tests can still inject isolated ledgers.
+    /// </summary>
+    public static SessionEvidenceLedger ProcessLocal { get; } = new();
+
     public SessionEvidenceLedger(Func<DateTimeOffset>? clock = null) =>
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
 

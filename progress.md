@@ -42,25 +42,28 @@ Added isolated contract regressions for `EvidenceObservingBrowserGoalHost`: veri
 ### 2026-09-16 — production host adapter for centralized evidence
 Added a direct `BrowserHostRuntime` adapter overload to `EvidenceObservingBrowserGoalHost`, preserving `BrowserHostRuntime` as the sole execution/authorization authority while removing the composition obstacle for production routing.
 
-### 2026-09-16 — centralized production goal evidence (latest run)
+### 2026-09-16 — centralized production goal evidence
+Updated `NvideaCompositionRoot.CreateBrowserGoalAgentAsync` to construct `new EvidenceObservingBrowserGoalHost(browser)` and pass that decorator into `BrowserGoalAgent`. Normal multi-step crash-consistent goal execution now feeds `SessionEvidenceLedger.ProcessLocal` through the same fail-closed proof authority as product-level browser actions.
+
+### 2026-09-16 — shared browser goal-store composition (latest run)
 Completed:
-- Re-read this ledger completely and inspected the current composition root and evidence decorator before mutation.
+- Re-read this ledger completely and inspected the current composition root and goal-host evidence wiring before mutation.
 - Explicitly verified immediately before each GitHub mutation that repository metadata reported `repository_full_name` exactly `UnknownGod2011/NVIDEA`; no other repository was mutated.
-- Updated `NvideaCompositionRoot.CreateBrowserGoalAgentAsync` to construct `new EvidenceObservingBrowserGoalHost(browser)` and pass that decorator into `BrowserGoalAgent`.
-- Normal multi-step crash-consistent goal execution now feeds `SessionEvidenceLedger.ProcessLocal` through the same fail-closed proof authority as product-level browser actions.
-- No raw `BrowserHostRuntime` is returned to callers; the existing trusted host remains private to the composition root.
+- Changed `NvideaCompositionRoot` to construct one `JsonBrowserGoalSessionStore` per composition-root lifetime and reuse it for `CreateBrowserGoalAgentAsync`, `ListBrowserGoalSessionsAsync`, and `CreateBrowserAmbiguousRecoveryServiceAsync`.
+- Removed repeated store construction from each API call, so the goal agent, session listing, and ambiguous-recovery service now share the same store instance and path within a process.
+- Preserved the existing production evidence decorator and kept the raw `BrowserHostRuntime` private to the composition root.
 
 Files changed:
 - `src/Nvidea.Core/Desktop/NvideaCompositionRoot.cs`
 - `progress.md`
 
 Commits this run before ledger:
-- `7d269719097f4646501bd87faf48bfc7c01958c5` — route browser goal agent through shared evidence host.
+- `7e7e76e8ccc1c8f38ef96ee402e866375722259b` — reuse one browser goal store per composition root.
 
 Validation/evidence:
-- Static review confirms production construction is now `BrowserGoalAgent(observedHost, new NemotronBrowserPlanner(_inference), goalStore)`.
-- The observed host delegates to the existing `BrowserHostRuntime` through its narrow adapter and preserves approval, recovery, persistence, and cancellation semantics.
-- Composition remains lazy; creating a goal agent still initializes only the browser host required for that operation.
+- Static review confirms the composition root now owns `_browserGoalStore` and all three goal-session/recovery APIs reuse it.
+- The browser host remains lazy; creating the root still does not initialize Playwright until a browser operation is requested.
+- The evidence decorator remains the only observer added to normal multi-step goal execution.
 - Executable validation remains unavailable: no usable `dotnet`, `csc` or `msbuild` is available here, so no compilation/xUnit/WPF/Worker PASS is claimed.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, Playwright, Ollama or inference operation was triggered.
 
@@ -71,6 +74,7 @@ Validation/evidence:
 - Browser proof cannot be inferred from driver-reported success alone: terminal completion plus a trusted verified-step checkpoint is required.
 - The goal-host decorator observes only after trusted-host calls return and cannot grant approval or alter durable job state.
 - The production adapter is pure delegation and does not inspect or retain browser payloads.
+- Reusing one goal store avoids multiple in-process store instances reading/writing the same JSON file through separate objects, reducing stale-read and coordination risk without changing the durable file format.
 - Existing browser authorization, durable job, audit, quarantine, emergency-stop and ambiguous-side-effect recovery authority is unchanged.
 - Existing remote result/audit/cleanup/binding authority boundaries are unchanged.
 
@@ -82,4 +86,4 @@ Validation/evidence:
 - `NebiusBackgroundExecutionObserved` is defined but not yet wired.
 
 ## Single Best Next Task
-Add a composition/API regression around `NvideaCompositionRoot.CreateBrowserGoalAgentAsync` or a focused seam around its constructor path proving the returned `BrowserGoalAgent` is backed by the evidence decorator without exposing raw browser authority. Then remove redundant product/recovery observation only where centralized equivalence is demonstrated, and wire `NebiusBackgroundExecutionObserved` only from authenticated/reconciled remote lifecycle evidence.
+Add a focused composition/API regression around `NvideaCompositionRoot.CreateBrowserGoalAgentAsync` or a narrow factory seam proving the returned `BrowserGoalAgent` uses the evidence decorator while raw browser authority remains private. Then remove redundant product/recovery observation only where centralized equivalence is demonstrated, and wire `NebiusBackgroundExecutionObserved` only from authenticated/reconciled remote lifecycle evidence.

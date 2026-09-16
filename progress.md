@@ -28,38 +28,40 @@ Migrated validator fixtures to schema v2 and added network-free fail-closed regr
 ### 2026-09-16 — submission-readiness manifest/runbook drift audit
 Aligned the operator runbook to the exact production milestone vocabulary and made Tavily/Nebius/browser/approval fallback semantics explicitly fail-closed. Canonical live sequence: `NemotronInferenceCompleted`, `MemoryInfluencedResponse`, `TavilyValidatedCitationUsed`, `BrowserVerifiedGoalCompleted`, `ConsequentialApprovalGranted`, `NebiusBackgroundExecutionObserved`; architecture has no expected runtime milestone.
 
-### 2026-09-17 — manifest-driven operator checklist generator (latest run)
+### 2026-09-17 — manifest-driven operator checklist generator
+Added `tools/Nvidea.DemoChecklistGenerator`, a dependency-free .NET 8 CLI that derives the recording checklist directly from schema-v2 beat order, durations, judge claims, preflight dependencies, exact expected session milestones and fail-closed fallback policies. Parsing is strict and bounded; output is atomic.
+
+### 2026-09-17 — zero-cost submission preflight orchestrator (latest run)
 Completed:
-- Re-read this ledger completely and selected the recorded highest-value task: eliminate future manifest/runbook drift by deriving the recording checklist from schema v2 rather than maintaining another hand-written copy.
-- Added `tools/Nvidea.DemoChecklistGenerator`, a dependency-free .NET 8 CLI that reads `docs/demo-package.json` and emits a concise Markdown recording checklist directly from beat order, duration, judge claim, preflight dependencies, exact expected session milestones and fail-closed fallback policies.
-- The generated checklist includes the total 168-second plan, 180-second maximum, computed contingency, per-beat checkboxes, explicit no-runtime-milestone handling for the architecture close, and a final take-acceptance gate forbidding synthetic/documentation evidence from being relabeled as live proof.
-- Generator parsing is fail-closed: schema v2 only, strict unmapped-member rejection, duplicate-property rejection, bounded manifest size/depth/beat count, unique beat IDs, non-empty execution contracts, bounded milestone lists, checked duration accumulation and atomic output writes.
-- During review, caught an initial strict-deserialization incompatibility because the first record shape omitted existing manifest fields. Corrected it before ending the run by modeling the complete schema-v2 top-level/beat/evidence/command shape; the final committed generator no longer rejects valid fields as unmapped.
+- Re-read this ledger completely and selected the recorded highest-value task: create one fail-closed local preflight command that cannot refresh the recording checklist before the canonical manifest passes validation.
+- Added `scripts/submission-preflight.ps1` for the Windows recording machine. It verifies the repository/manifest and .NET SDK locally, confines generated artifacts to the repository, runs `Nvidea.DemoPackageValidator` first, generates the checklist only after validator PASS, then runs the positive and adversarial Personal AI evaluators.
+- Provider-live work is deliberately excluded from the default command. The script explicitly states that it does not invoke Nebius catalog/live PASS, Tavily, browser, inference, or the unified judging verifier because those require fresh provider/live evidence and must not be silently represented by a zero-cost preflight.
+- The orchestrator fails immediately on every non-zero child exit and uses the validator/checklist/evaluator programs' existing atomic outputs; no stale checklist is regenerated after validation failure.
+- During final review, caught and corrected the checklist generator invocation to its actual `--output <path>` CLI contract before ending the run; removed an unused provider-live switch rather than exposing a flag that implied live verification it did not perform.
 - Explicitly verified repository metadata as exactly `UnknownGod2011/NVIDEA` immediately before every GitHub mutation. No other repository was mutated.
 
 Files changed this run:
-- `tools/Nvidea.DemoChecklistGenerator/Nvidea.DemoChecklistGenerator.csproj`
-- `tools/Nvidea.DemoChecklistGenerator/Program.cs`
+- `scripts/submission-preflight.ps1`
 - `progress.md`
 
 Validation/evidence:
-- Static review against the actual `docs/demo-package.json` confirms the generator record shape covers all current schema-v2 properties and renders the exact manifest milestone/preflight/fallback values rather than maintaining a second milestone mapping.
-- The generator performs no network/provider/browser operations and requires no credentials.
-- Executable validation remains unavailable: no usable `dotnet`, `csc` or `msbuild` is available here, so no compilation or runtime PASS is claimed.
+- Static contract review against `Nvidea.DemoPackageValidator`, `Nvidea.DemoChecklistGenerator`, `docs/demo-package.json`, and the evaluator project paths confirms the orchestrator uses the current CLI/project contracts and preserves validator-before-generator ordering.
+- The script itself contains no provider credentials and performs no network/provider/browser operation by design; child positive/adversarial evaluators are the existing deterministic local checks.
+- Executable validation remains unavailable in this environment: no usable `dotnet`, `csc` or `msbuild` is available here, so no PowerShell/.NET execution PASS is claimed.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, Playwright, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
-- The generator is read-only with respect to the manifest and writes only the explicitly requested checklist output through an atomic temp-file replacement.
-- It copies operator-facing manifest text into Markdown, so it intentionally does not claim to sanitize an already-compromised manifest; the hardened `Nvidea.DemoPackageValidator` remains the security/contract gate and should run before checklist generation in the final workflow.
-- Duplicate JSON properties, unknown schema fields, malformed execution contracts and duration overflow fail generation rather than producing a misleading partial checklist.
-- No product authority, durable memory, browser session, provider account, secret or audit store is touched.
+- Artifacts must resolve beneath the selected repository root; an outside absolute/relative artifact directory is rejected.
+- Manifest validation is the first product command and gates checklist generation; malformed/unsafe schema-v2 content cannot refresh the operator checklist through this workflow.
+- Any validator/generator/evaluator non-zero exit aborts the preflight; there is no best-effort continuation that could print a misleading PASS.
+- Provider-live verification is intentionally not automated by this zero-cost command, preventing accidental paid calls or stale/captured evidence from being treated as current live proof.
+- The orchestrator does not touch durable memory, browser profiles, provider accounts, secrets, or the audit store.
 
 ## Known blockers / risks
-- No .NET 8 compiler/runtime in this environment; current generator is statically reviewed but unexecuted.
-- The generator is not yet wired into a checked-in one-command submission/preflight workflow, so an operator could still accidentally use an old generated checklist.
+- No .NET 8 compiler/runtime in this environment; the orchestrator and current generator are statically reviewed but unexecuted.
+- The final Windows machine still needs an actual execution of `scripts/submission-preflight.ps1` before recording.
+- The unified `Nvidea.JudgingEvidenceVerifier` necessarily consumes fresh Nebius deployment PASS/model-catalog evidence and is therefore not part of zero-cost default preflight; a separate deliberate live-evidence step remains required when making provider-live claims.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
-- Final recording still requires a real Windows demo-machine preflight.
-- The schema-v2 validator and generator should both be executed on a .NET 8 machine before submission.
 
 ## Single Best Next Task
-Add a small submission-preflight orchestrator that first runs `Nvidea.DemoPackageValidator` and only on PASS generates the operator checklist, then runs the existing positive/adversarial/judging evidence checks without triggering paid/live provider operations by default. This creates one fail-closed, zero-cost command for the final Windows recording preflight and prevents a stale checklist from bypassing manifest validation.
+Add a small network-free contract test around `scripts/submission-preflight.ps1` (or factor its sequencing into a testable .NET orchestrator) that proves validator failure prevents checklist/evaluator execution, verifies artifact-path confinement, and proves provider-live commands cannot be reached by the default path. Then run the complete zero-cost preflight on the first available .NET 8 Windows environment before recording.

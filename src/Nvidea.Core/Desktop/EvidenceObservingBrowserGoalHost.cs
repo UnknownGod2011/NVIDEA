@@ -1,3 +1,5 @@
+using Nvidea.Core.Browser;
+
 namespace Nvidea.Core.Desktop;
 
 /// <summary>

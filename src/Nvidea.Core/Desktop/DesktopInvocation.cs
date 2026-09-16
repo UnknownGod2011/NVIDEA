@@ -26,7 +26,7 @@ public sealed class DesktopInvocationService
         _inference = inference ?? throw new ArgumentNullException(nameof(inference));
         _memory = memory ?? throw new ArgumentNullException(nameof(memory));
         _research = research;
-        _sessionEvidence = sessionEvidence ?? new SessionEvidenceLedger();
+        _sessionEvidence = sessionEvidence ?? SessionEvidenceLedger.ProcessLocal;
     }
 
     /// <summary>Returns only closed evidence kinds and first-observed timestamps; never provider/user payloads.</summary>

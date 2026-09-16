@@ -37,6 +37,10 @@
                 </Border>
             </StackPanel>
         </ScrollViewer>
-        <Button Grid.Row="4" Content="Close" Width="90" Padding="12,5" Margin="0,12,0,0" HorizontalAlignment="Right" IsCancel="True"/>
+        <Grid Grid.Row="4" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <Button x:Name="NewDemoSessionButton" Content="New demo session" Padding="12,5" HorizontalAlignment="Left" Click="NewDemoSessionButton_Click" ToolTip="Clear only ephemeral session milestones after confirmation. Durable memory, jobs, browser state and audit history are preserved."/>
+            <Button Grid.Column="1" Content="Close" Width="90" Padding="12,5" HorizontalAlignment="Right" IsCancel="True"/>
+        </Grid>
     </Grid>
 </Window>

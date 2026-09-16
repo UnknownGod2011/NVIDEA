@@ -12,12 +12,12 @@ namespace Nvidea.Core.Desktop;
 public sealed class BrowserProductRuntime
 {
     private readonly BrowserHostRuntime _host;
-    private readonly BrowserSessionEvidenceRecorder? _sessionEvidence;
+    private readonly BrowserSessionEvidenceRecorder _sessionEvidence;
 
     internal BrowserProductRuntime(BrowserHostRuntime host, SessionEvidenceLedger? sessionEvidence = null)
     {
         _host = host ?? throw new ArgumentNullException(nameof(host));
-        _sessionEvidence = sessionEvidence is null ? null : new BrowserSessionEvidenceRecorder(sessionEvidence);
+        _sessionEvidence = new BrowserSessionEvidenceRecorder(sessionEvidence ?? SessionEvidenceLedger.ProcessLocal);
     }
 
     public async Task<BrowserJobOutcome> StartActionAsync(
@@ -26,7 +26,7 @@ public sealed class BrowserProductRuntime
     {
         var outcome = await _host.StartActionAsync(action, cancellationToken).ConfigureAwait(false);
         var projected = BrowserProductOutcomeTrust.Project(outcome);
-        _sessionEvidence?.ObserveOutcome(projected);
+        _sessionEvidence.ObserveOutcome(projected);
         return projected;
     }
 
@@ -38,9 +38,9 @@ public sealed class BrowserProductRuntime
         var outcome = await _host.ApproveAndResumeAsync(jobId, exactScope, cancellationToken).ConfigureAwait(false);
         // Reaching this point proves the trusted host accepted the exact scope and completed its
         // approval-resume boundary. Rejected/mismatched scopes and cancellation throw before here.
-        _sessionEvidence?.ObserveAcceptedConsequentialApproval();
+        _sessionEvidence.ObserveAcceptedConsequentialApproval();
         var projected = BrowserProductOutcomeTrust.Project(outcome);
-        _sessionEvidence?.ObserveOutcome(projected);
+        _sessionEvidence.ObserveOutcome(projected);
         return projected;
     }
 

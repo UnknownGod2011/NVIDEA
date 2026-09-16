@@ -37,38 +37,43 @@ Added `scripts/submission-preflight.ps1`: repository/manifest/.NET checks, repos
 ### 2026-09-17 — network-free preflight sequencing contract
 Added `scripts/tests/submission-preflight.contract.ps1`, a source-contract regression enforcing validator → checklist → positive → adversarial ordering, non-zero fail-closed handling, repository-confined artifacts, and absence of provider-live executable commands.
 
-### 2026-09-17 — process-level preflight fault injection (latest run)
+### 2026-09-17 — process-level preflight fault injection
+Added `scripts/tests/submission-preflight.behavior.ps1`, a Windows fake-`dotnet` process regression proving validator non-zero failure blocks downstream children, the successful child sequence is exactly validator → checklist → positive → adversarial, provider-live commands remain absent, and artifact-directory escape is rejected before child execution.
+
+### 2026-09-17 — fresh artifact materialization hardening (latest run)
 Completed:
-- Re-read this ledger completely and implemented the recorded highest-value task rather than adding another documentation-only check.
-- Added `scripts/tests/submission-preflight.behavior.ps1`, a Windows PowerShell process-level regression that temporarily shadows `dotnet` with a local `dotnet.cmd` shim. The shim records child invocations and performs no network, inference, browser, provider, credential or GitHub operation.
-- Validator-failure scenario injects exit code 41 for `Nvidea.DemoPackageValidator.csproj` and requires the production preflight to throw immediately with exactly one recorded child call; checklist generation and both evaluators therefore cannot execute.
-- Success scenario requires exactly four child invocations in canonical order: validator, checklist generator, positive evaluator, adversarial evaluator. It also rejects any observed judging-verifier/NebiusLive/TavilyLive/PlaywrightLive command fragment.
-- Repository-confinement scenario supplies an absolute artifact directory outside NVIDEA and requires rejection before any child process executes.
-- The harness restores PATH/test environment variables and removes all temporary/failure/success test artifacts in `finally`, including when an assertion fails.
+- Re-read this ledger completely and implemented the recorded highest-value reliability task.
+- Hardened `scripts/submission-preflight.ps1`: every zero-cost child now has an explicit expected output path; that path is independently normalized and required to remain beneath the canonical repository root.
+- Before each child launch, any prior output at that path is deleted so stale evidence cannot satisfy a new run.
+- A zero child exit is no longer sufficient. Preflight now requires the expected output to exist as a file and have non-zero length before the next stage can execute; missing or empty output fails closed.
+- Extended `scripts/tests/submission-preflight.behavior.ps1` fake-dotnet shim to parse `--output` and materialize deterministic non-empty placeholders during successful scenarios.
+- Added a false-success fault mode: the validator returns exit 0 while deliberately withholding its artifact. The behavior contract requires preflight failure after exactly one child invocation, proving checklist/evaluator execution cannot proceed on a lying/broken child.
+- Success behavior additionally asserts all four expected fresh artifacts exist and are non-empty.
 - Explicitly verified repository metadata as exactly `UnknownGod2011/NVIDEA` immediately before every GitHub mutation. No other repository was mutated.
 
 Files changed this run:
+- `scripts/submission-preflight.ps1`
 - `scripts/tests/submission-preflight.behavior.ps1`
 - `progress.md`
 
 Validation/evidence:
-- Static review confirms the harness targets the current production labels/projects/error messages and exercises the actual `scripts/submission-preflight.ps1`, rather than a copied orchestration implementation.
-- The fake-dotnet path is intentionally Windows-specific because the submission preflight and final recording target Windows; it is provider/network free by construction.
-- Executable PowerShell validation is not claimed in this connector environment. The harness must still be run on the Windows recording machine; no fabricated PASS is recorded.
+- Static review confirms all four production child calls pass their exact `--output` path into the new materialization gate and that stale outputs are removed before execution.
+- Behavior harness exercises the actual production preflight and now distinguishes non-zero child failure from zero-exit/missing-artifact false success.
+- Executable PowerShell/.NET validation is not claimed in this connector environment. The behavior/contract scripts still need execution on the Windows recording machine; no fabricated PASS is recorded.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, Playwright, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
-- Fault injection proves the intended behavioral boundary: validator non-zero exit is upstream of all manifest-derived or evaluator work.
-- Artifact escape rejection is tested before child execution, reducing the chance that preflight writes evidence outside the repository.
-- Provider-live commands are absent from the observed success sequence and remain deliberately separate from zero-cost preflight.
-- The shim receives no secrets and records only command-line arguments; the production zero-cost commands are not expected to contain credentials.
-- Temporary PATH/environment mutation is process-scoped and restored in `finally`; temporary files and test artifact directories are cleaned on both success and failure.
+- A child process can no longer advance the judging pipeline solely by returning exit 0; it must create fresh non-empty repository-confined output.
+- Deleting the expected file before launch prevents a stale artifact from a previous successful run from masking a current child failure.
+- Repository-prefix checking is repeated at the expected-output boundary, preserving defense in depth if future callers construct output paths differently.
+- Provider-live commands remain outside the zero-cost workflow; no credential or network behavior was added.
+- The fake shim receives no secrets and writes only deterministic placeholders to repository-confined test artifact directories, which the harness cleans in `finally`.
 
 ## Known blockers / risks
-- No executable .NET/Windows validation has been performed in this connector environment; production preflight plus both PowerShell regressions still need execution on the actual Windows recording machine.
-- The fake shim returns success without producing the output files named by `--output`. Today the production preflight trusts a zero child exit and does not independently require each expected artifact to exist/non-empty. A broken or malicious child could therefore return zero without creating evidence.
+- No executable .NET/Windows validation has been performed in this connector environment; production preflight plus PowerShell regressions still need execution on the actual Windows recording machine.
+- Non-empty output is stronger than exit-code-only validation but does not prove semantic validity of each generated JSON/Markdown artifact. The validator/evaluators own their content contracts; preflight currently does not independently parse their output documents after generation.
 - The unified `Nvidea.JudgingEvidenceVerifier` necessarily consumes fresh Nebius deployment PASS/model-catalog evidence and remains outside zero-cost default preflight.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
 
 ## Single Best Next Task
-Harden `scripts/submission-preflight.ps1` so every zero-cost child must both exit zero and materialize its expected repository-confined output file (preferably non-empty) before the next stage runs. Update the fake-dotnet behavior harness to create deterministic placeholder outputs on success and add a fault mode that exits zero while withholding an artifact, proving the preflight fails closed against false-success child processes.
+Add a zero-cost semantic artifact verification layer after each child: parse validator/positive/adversarial JSON with strict bounded JSON handling and require an explicit successful result/schema marker, plus structurally sanity-check the generated checklist against the canonical manifest beat count/order. Extend the fake-dotnet harness with malformed/non-PASS artifacts that are non-empty, proving preflight cannot be fooled by syntactically present but semantically invalid evidence.

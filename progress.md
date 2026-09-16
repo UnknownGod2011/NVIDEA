@@ -23,41 +23,43 @@ Added a 168-second operator runbook aligned to the machine-readable demo package
 Upgraded `docs/demo-package.json` and `Nvidea.DemoPackageValidator` to schema v2. Every judging beat declares expected production session milestones, preflight dependencies and a fail-closed fallback policy; the validator enforces closed milestone mappings, duration/path/evidence/provider-live/command constraints and strict JSON shape. Restored the explicit required-repository-asset allowlist and heuristic secret scan, including all schema-v2 free-text fields.
 
 ### 2026-09-16 — schema-v2 validator regression harness
-Migrated `DemoPackageValidatorTests.cs` fixtures to schema v2 and added network-free fail-closed regressions for missing preflights/fallbacks, wrong or missing milestones, architecture milestone pollution, duration overflow, missing mandatory assets, duplicate JSON properties, path traversal, provider-live mismatch and secrets in schema-v2 fields.
+Migrated validator fixtures to schema v2 and added network-free fail-closed regressions for missing preflights/fallbacks, wrong or missing milestones, architecture milestone pollution, duration overflow, missing mandatory assets, duplicate JSON properties, path traversal, provider-live mismatch and secrets in schema-v2 fields.
 
-### 2026-09-16 — submission-readiness manifest/runbook drift audit (latest run)
+### 2026-09-16 — submission-readiness manifest/runbook drift audit
+Aligned the operator runbook to the exact production milestone vocabulary and made Tavily/Nebius/browser/approval fallback semantics explicitly fail-closed. Canonical live sequence: `NemotronInferenceCompleted`, `MemoryInfluencedResponse`, `TavilyValidatedCitationUsed`, `BrowserVerifiedGoalCompleted`, `ConsequentialApprovalGranted`, `NebiusBackgroundExecutionObserved`; architecture has no expected runtime milestone.
+
+### 2026-09-17 — manifest-driven operator checklist generator (latest run)
 Completed:
-- Re-read this ledger completely, then audited the actual `docs/demo-package.json` against `docs/judge-demo-runbook.md` rather than relying on the validator fixture alone.
-- Found three operator-runbook milestone names that had drifted from the schema-v2 manifest/production closed vocabulary: `TavilyResearchWithValidatedCitation`, `BrowserPostStateVerified`, and `ConsequentialApprovalGateExercised`.
-- Replaced them with the exact production/schema-v2 values `TavilyValidatedCitationUsed`, `BrowserVerifiedGoalCompleted`, and `ConsequentialApprovalGranted`.
-- Tightened the Tavily and Nebius fallbacks so missing live evidence explicitly fails the corresponding live beat. Synthetic/documentation evidence may still be shown as its weaker evidence class but can no longer be read as satisfying an expected live session milestone.
-- Added the exact six-milestone expected live sequence to the post-take gate and clarified that the architecture beat intentionally has no runtime milestone.
-- Clarified browser proof semantics: the goal-completion milestone requires trusted verified completion, while approval evidence proves exact-scope approval only and does not itself prove the subsequent mutation succeeded.
-- Explicitly verified repository metadata as exactly `UnknownGod2011/NVIDEA` immediately before each GitHub mutation; no other repository was mutated.
+- Re-read this ledger completely and selected the recorded highest-value task: eliminate future manifest/runbook drift by deriving the recording checklist from schema v2 rather than maintaining another hand-written copy.
+- Added `tools/Nvidea.DemoChecklistGenerator`, a dependency-free .NET 8 CLI that reads `docs/demo-package.json` and emits a concise Markdown recording checklist directly from beat order, duration, judge claim, preflight dependencies, exact expected session milestones and fail-closed fallback policies.
+- The generated checklist includes the total 168-second plan, 180-second maximum, computed contingency, per-beat checkboxes, explicit no-runtime-milestone handling for the architecture close, and a final take-acceptance gate forbidding synthetic/documentation evidence from being relabeled as live proof.
+- Generator parsing is fail-closed: schema v2 only, strict unmapped-member rejection, duplicate-property rejection, bounded manifest size/depth/beat count, unique beat IDs, non-empty execution contracts, bounded milestone lists, checked duration accumulation and atomic output writes.
+- During review, caught an initial strict-deserialization incompatibility because the first record shape omitted existing manifest fields. Corrected it before ending the run by modeling the complete schema-v2 top-level/beat/evidence/command shape; the final committed generator no longer rejects valid fields as unmapped.
+- Explicitly verified repository metadata as exactly `UnknownGod2011/NVIDEA` immediately before every GitHub mutation. No other repository was mutated.
 
 Files changed this run:
-- `docs/judge-demo-runbook.md`
+- `tools/Nvidea.DemoChecklistGenerator/Nvidea.DemoChecklistGenerator.csproj`
+- `tools/Nvidea.DemoChecklistGenerator/Program.cs`
 - `progress.md`
 
 Validation/evidence:
-- Static cross-check against the actual schema-v2 manifest confirms the runbook now uses the exact milestone sequence: `NemotronInferenceCompleted`, `MemoryInfluencedResponse`, `TavilyValidatedCitationUsed`, `BrowserVerifiedGoalCompleted`, `ConsequentialApprovalGranted`, `NebiusBackgroundExecutionObserved`; architecture has no expected milestone.
-- The timing remains unchanged at 168 seconds plus the existing 12-second contingency within the 180-second cap.
-- No manifest/provider/API assumptions changed this run, so no external SDK documentation was needed.
-- Executable validation remains unavailable: no usable `dotnet`, `csc` or `msbuild` is available here, so no compilation, validator execution or xUnit PASS is claimed.
+- Static review against the actual `docs/demo-package.json` confirms the generator record shape covers all current schema-v2 properties and renders the exact manifest milestone/preflight/fallback values rather than maintaining a second milestone mapping.
+- The generator performs no network/provider/browser operations and requires no credentials.
+- Executable validation remains unavailable: no usable `dotnet`, `csc` or `msbuild` is available here, so no compilation or runtime PASS is claimed.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, Playwright, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
-- Demo fallbacks are now uniformly fail-closed: missing live Tavily, browser verification, exact-scope approval or authenticated/audited Nebius evidence cannot be upgraded into a successful live beat by narration.
-- The runbook continues to prohibit login/CAPTCHA/MFA bypass, manual completion presented as agent success, credential display, and synthetic evidence presented as provider-live proof.
-- Session evidence remains payload-free/process-local and the architecture close carries no fabricated runtime milestone.
-- No product authority, durable store, browser session, provider account or secret was mutated by this documentation-only alignment.
+- The generator is read-only with respect to the manifest and writes only the explicitly requested checklist output through an atomic temp-file replacement.
+- It copies operator-facing manifest text into Markdown, so it intentionally does not claim to sanitize an already-compromised manifest; the hardened `Nvidea.DemoPackageValidator` remains the security/contract gate and should run before checklist generation in the final workflow.
+- Duplicate JSON properties, unknown schema fields, malformed execution contracts and duration overflow fail generation rather than producing a misleading partial checklist.
+- No product authority, durable memory, browser session, provider account, secret or audit store is touched.
 
 ## Known blockers / risks
-- No .NET 8 compiler/runtime in this environment; current changes are statically reviewed but unexecuted.
+- No .NET 8 compiler/runtime in this environment; current generator is statically reviewed but unexecuted.
+- The generator is not yet wired into a checked-in one-command submission/preflight workflow, so an operator could still accidentally use an old generated checklist.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
 - Final recording still requires a real Windows demo-machine preflight.
-- The schema-v2 validator and regression project should be executed on a .NET 8 machine before submission to catch compile/runtime drift that static review cannot prove.
-- The actual manifest and runbook are now aligned on milestone names, but this equivalence is not yet mechanically enforced; future documentation edits could drift again.
+- The schema-v2 validator and generator should both be executed on a .NET 8 machine before submission.
 
 ## Single Best Next Task
-Make manifest/runbook drift mechanically detectable without parsing prose heuristically: generate a concise operator checklist from `docs/demo-package.json` (or add a validator-produced checklist artifact) containing beat order, duration, exact expected milestones, preflights and fail-closed fallbacks, then use that generated artifact as the recording checklist so schema-v2 remains the single source of truth.
+Add a small submission-preflight orchestrator that first runs `Nvidea.DemoPackageValidator` and only on PASS generates the operator checklist, then runs the existing positive/adversarial/judging evidence checks without triggering paid/live provider operations by default. This creates one fail-closed, zero-cost command for the final Windows recording preflight and prevents a stale checklist from bypassing manifest validation.

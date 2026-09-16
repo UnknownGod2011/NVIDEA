@@ -59,6 +59,39 @@ public sealed class DesktopInvocationTests : IDisposable
     }
 
     [Fact]
+    public async Task Reset_session_evidence_clears_only_injected_projection_and_genuine_success_can_reestablish_proof()
+    {
+        var observedAt = new Queue<DateTimeOffset>(new[]
+        {
+            new DateTimeOffset(2026, 9, 16, 12, 0, 0, TimeSpan.Zero),
+            new DateTimeOffset(2026, 9, 16, 12, 5, 0, TimeSpan.Zero)
+        });
+        var ledger = new SessionEvidenceLedger(() => observedAt.Dequeue());
+        var inference = new RecordingInferenceClient();
+        using var memoryStore = new JsonFileMemoryStore(Path.Combine(_tempDirectory, "reset-memory.json"));
+        using var memory = new PersonalMemoryService(memoryStore);
+        var service = new DesktopInvocationService(inference, memory, sessionEvidence: ledger);
+
+        await service.InvokeAsync(new DesktopInvocationRequest("hello", new DesktopContext()));
+        var first = Assert.Single(service.SessionEvidenceSnapshot().Entries);
+        Assert.Equal(SessionEvidenceKind.NemotronInferenceCompleted, first.Kind);
+        Assert.Equal(new DateTimeOffset(2026, 9, 16, 12, 0, 0, TimeSpan.Zero), first.FirstObservedAt);
+
+        service.ResetSessionEvidence();
+
+        Assert.Empty(service.SessionEvidenceSnapshot().Entries);
+        Assert.Empty(ledger.Snapshot().Entries);
+        Assert.Single(inference.Requests);
+
+        await service.InvokeAsync(new DesktopInvocationRequest("hello again", new DesktopContext()));
+
+        var fresh = Assert.Single(service.SessionEvidenceSnapshot().Entries);
+        Assert.Equal(SessionEvidenceKind.NemotronInferenceCompleted, fresh.Kind);
+        Assert.Equal(new DateTimeOffset(2026, 9, 16, 12, 5, 0, TimeSpan.Zero), fresh.FirstObservedAt);
+        Assert.Equal(2, inference.Requests.Count);
+    }
+
+    [Fact]
     public async Task Failed_inference_records_no_session_proof()
     {
         using var memoryStore = new JsonFileMemoryStore(Path.Combine(_tempDirectory, "failed-memory.json"));

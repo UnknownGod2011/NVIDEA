@@ -1,8 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$RepositoryRoot = (Split-Path -Parent $PSScriptRoot),
-    [string]$ArtifactsDirectory = "artifacts/preflight",
-    [switch]$IncludeProviderLive
+    [string]$ArtifactsDirectory = "artifacts/preflight"
 )
 
 Set-StrictMode -Version Latest
@@ -39,7 +38,7 @@ try {
     $checklist = Join-Path $artifacts "recording-checklist.md"
     Invoke-CheckedDotnet -Label "Generate validated recording checklist" -Arguments @(
         "run", "--project", "tools/Nvidea.DemoChecklistGenerator/Nvidea.DemoChecklistGenerator.csproj", "--",
-        "docs/demo-package.json", $checklist
+        "docs/demo-package.json", "--output", $checklist
     )
 
     $positive = Join-Path $artifacts "personal-ai-positive.json"
@@ -52,12 +51,9 @@ try {
         "run", "--project", "tools/Nvidea.PersonalAiAdversarialEval/Nvidea.PersonalAiAdversarialEval.csproj", "--", "--output", $adversarial
     )
 
-    if ($IncludeProviderLive) {
-        Write-Warning "Provider-live verification is opt-in and may require credentials/network or incur provider usage. This script does not invoke it automatically. Run the documented Nebius live evidence commands deliberately, then Nvidea.JudgingEvidenceVerifier against those fresh artifacts."
-    } else {
-        Write-Host "==> Provider-live checks skipped by default (zero-cost/fail-closed mode)."
-        Write-Host "    No Nebius catalog/live PASS, Tavily, browser, inference, or judging-verifier live-evidence command was invoked."
-    }
+    Write-Host "==> Provider-live checks skipped (zero-cost/fail-closed mode)."
+    Write-Host "    No Nebius catalog/live PASS, Tavily, browser, inference, or judging-verifier live-evidence command was invoked."
+    Write-Host "    Run the documented provider-live evidence workflow deliberately when fresh credentials and a recording environment are available."
 
     Write-Host "Submission preflight PASS (local zero-cost scope)."
     Write-Host "Validated checklist: $checklist"

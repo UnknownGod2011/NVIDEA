@@ -83,15 +83,18 @@ public sealed class BrowserAmbiguousRecoveryService
     private readonly IBrowserAmbiguousRecoveryHost _host;
     private readonly IBrowserGoalSessionStore _store;
     private readonly TimeProvider _timeProvider;
+    private readonly BrowserSessionEvidenceRecorder _sessionEvidence;
 
     public BrowserAmbiguousRecoveryService(
         IBrowserAmbiguousRecoveryHost host,
         IBrowserGoalSessionStore store,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        SessionEvidenceLedger? sessionEvidence = null)
     {
         _host = host ?? throw new ArgumentNullException(nameof(host));
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _sessionEvidence = new BrowserSessionEvidenceRecorder(sessionEvidence ?? SessionEvidenceLedger.ProcessLocal);
     }
 
     public async Task<(BrowserGoalSession Session, BrowserAmbiguousRecoveryResult Recovery)> RecoverAsync(
@@ -149,6 +152,11 @@ public sealed class BrowserAmbiguousRecoveryService
             UpdatedAt = _timeProvider.GetUtcNow()
         };
         await _store.SaveAsync(reconciled, cancellationToken).ConfigureAwait(false);
+
+        // Evidence is deliberately downstream of both trusted-host reconciliation and durable goal
+        // session persistence. Ambiguous, unverified, failed, or persistence-failed recovery cannot
+        // become judge proof merely because a browser observation looked plausible.
+        _sessionEvidence.ObserveOutcome(recovery.ChildOutcome);
         return (reconciled, recovery);
     }
 }

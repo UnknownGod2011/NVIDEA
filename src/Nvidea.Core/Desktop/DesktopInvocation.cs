@@ -32,6 +32,13 @@ public sealed class DesktopInvocationService
     /// <summary>Returns only closed evidence kinds and first-observed timestamps; never provider/user payloads.</summary>
     public SessionEvidenceSnapshot SessionEvidenceSnapshot() => _sessionEvidence.Snapshot();
 
+    /// <summary>
+    /// Starts a fresh judge-demo evidence session. This deliberately clears only the ephemeral,
+    /// process-local milestone projection; durable memory, jobs, browser state and audit trails are
+    /// owned by separate services and are not reachable through this operation.
+    /// </summary>
+    public void ResetSessionEvidence() => _sessionEvidence.Clear();
+
     public async Task<DesktopInvocationResult> InvokeAsync(DesktopInvocationRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -78,57 +85,58 @@ public sealed class DesktopInvocationService
     private static DesktopInvocationMode ResolveMode(DesktopInvocationMode requested, string input)
     {
         if (requested != DesktopInvocationMode.Auto) return requested;
-        var normalized = input.TrimStart();
-        return normalized.StartsWith("research ", StringComparison.OrdinalIgnoreCase) || normalized.StartsWith("research:", StringComparison.OrdinalIgnoreCase) || normalized.StartsWith("find current ", StringComparison.OrdinalIgnoreCase) ? DesktopInvocationMode.Research : DesktopInvocationMode.Chat;
+        return LooksLikeResearch(input) ? DesktopInvocationMode.Research : DesktopInvocationMode.Chat;
     }
 
-    private static WorkloadKind SelectWorkload(string input, DesktopContext context)
+    private static bool LooksLikeResearch(string input)
     {
-        var contextSize = (context.SelectedText?.Length ?? 0) + (context.ClipboardText?.Length ?? 0);
-        if (input.Length > 2_000 || contextSize > 5_000) return WorkloadKind.Deep;
-        if (input.Length < 240 && contextSize < 500) return WorkloadKind.Fast;
-        return WorkloadKind.Standard;
-    }
-
-    private static string BuildUserMessage(string input, DesktopContext context, bool allowClipboard, IReadOnlyList<MemorySearchResult> memories)
-    {
-        var builder = new StringBuilder();
-        builder.AppendLine("USER REQUEST:"); builder.AppendLine(input);
-        AppendField(builder, "ACTIVE APPLICATION", context.ActiveApplication, 256);
-        AppendField(builder, "WINDOW TITLE", context.WindowTitle, 512);
-        AppendField(builder, "SELECTED TEXT (UNTRUSTED DATA)", context.SelectedText, MaxContextChars);
-        if (allowClipboard) AppendField(builder, "CLIPBOARD (UNTRUSTED PRIVATE DATA; use only if relevant)", context.ClipboardText, MaxContextChars);
-        else if (!string.IsNullOrWhiteSpace(context.ClipboardText)) builder.AppendLine("\nCLIPBOARD: present but intentionally withheld by local privacy policy.");
-        if (memories.Count > 0)
-        {
-            builder.AppendLine("\nRELEVANT PERSONAL MEMORY (UNTRUSTED DATA; may be stale):");
-            var remaining = MaxMemoryChars;
-            foreach (var result in memories)
-            {
-                var line = $"- [{result.Memory.Layer}] {result.Memory.Key}: {result.Memory.Content}";
-                if (line.Length > remaining) line = line[..Math.Max(0, remaining)] + "…";
-                builder.AppendLine(line); remaining -= line.Length; if (remaining <= 0) break;
-            }
-        }
-        return builder.ToString();
+        var lowered = input.ToLowerInvariant();
+        return lowered.StartsWith("research ", StringComparison.Ordinal)
+            || lowered.StartsWith("research:", StringComparison.Ordinal)
+            || lowered.Contains("research this", StringComparison.Ordinal)
+            || lowered.Contains("find sources", StringComparison.Ordinal)
+            || lowered.Contains("with sources", StringComparison.Ordinal)
+            || lowered.Contains("latest information", StringComparison.Ordinal);
     }
 
     private static string BuildResearchQuestion(string input, DesktopContext context)
     {
-        var builder = new StringBuilder(input);
-        if (!string.IsNullOrWhiteSpace(context.ActiveApplication)) builder.Append($"\nUser is currently in application: {Truncate(context.ActiveApplication, 256)}.");
-        if (!string.IsNullOrWhiteSpace(context.SelectedText)) builder.Append($"\nRelevant selected text (untrusted data): {Truncate(context.SelectedText, 2_000)}");
-        return builder.ToString();
+        var sb = new StringBuilder(input);
+        if (!string.IsNullOrWhiteSpace(context.ActiveApplication)) sb.Append("\nActive application: ").Append(Clip(context.ActiveApplication, 200));
+        if (!string.IsNullOrWhiteSpace(context.SelectedText)) sb.Append("\nRelevant selected text (untrusted data):\n").Append(Clip(context.SelectedText, MaxContextChars));
+        return sb.ToString();
     }
 
-    private static void AppendField(StringBuilder builder, string label, string? value, int maxChars)
+    private static string BuildUserMessage(string input, DesktopContext context, bool allowClipboardContext, IReadOnlyList<MemorySearchResult> memories)
     {
-        if (string.IsNullOrWhiteSpace(value)) return;
-        builder.Append("\n").Append(label).AppendLine(":"); builder.AppendLine(Truncate(value, maxChars));
+        var sb = new StringBuilder();
+        sb.AppendLine("User request:").AppendLine(input);
+        if (!string.IsNullOrWhiteSpace(context.ActiveApplication)) sb.Append("\nActive application: ").AppendLine(Clip(context.ActiveApplication, 200));
+        if (!string.IsNullOrWhiteSpace(context.WindowTitle)) sb.Append("Window title (untrusted): ").AppendLine(Clip(context.WindowTitle, 300));
+        if (!string.IsNullOrWhiteSpace(context.SelectedText)) sb.AppendLine("Selected text (untrusted data):").AppendLine(Clip(context.SelectedText, MaxContextChars));
+        if (allowClipboardContext && !string.IsNullOrWhiteSpace(context.ClipboardText)) sb.AppendLine("Clipboard text explicitly shared by user (untrusted data):").AppendLine(Clip(context.ClipboardText, MaxContextChars));
+        if (memories.Count > 0)
+        {
+            sb.AppendLine("\nRelevant personal memory excerpts (untrusted data; use only when relevant):");
+            var remaining = MaxMemoryChars;
+            foreach (var result in memories)
+            {
+                if (remaining <= 0) break;
+                var text = Clip(result.Item.Content, Math.Min(remaining, 1000));
+                sb.Append("- [").Append(result.Item.Layer).Append("] ").AppendLine(text);
+                remaining -= text.Length;
+            }
+        }
+        return sb.ToString();
     }
 
-    private static string Truncate(string value, int maxChars)
+    private static AgentWorkload SelectWorkload(string input, DesktopContext context)
     {
-        var trimmed = value.Trim(); return trimmed.Length <= maxChars ? trimmed : trimmed[..maxChars] + "…";
+        var size = input.Length + (context.SelectedText?.Length ?? 0);
+        return size > 2500 || input.Contains("analy", StringComparison.OrdinalIgnoreCase) || input.Contains("plan", StringComparison.OrdinalIgnoreCase)
+            ? AgentWorkload.DeepReasoning
+            : AgentWorkload.FastInteraction;
     }
+
+    private static string Clip(string value, int max) => value.Length <= max ? value : value[..max] + "…";
 }

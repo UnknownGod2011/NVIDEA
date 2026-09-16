@@ -5,14 +5,37 @@ namespace Nvidea.Windows;
 
 public partial class JudgeEvidenceDialog : Window
 {
-    public JudgeEvidenceDialog(DesktopResearchReadiness readiness, SessionEvidenceSnapshot sessionEvidence)
+    private readonly Func<SessionEvidenceSnapshot> _snapshot;
+    private readonly Action _resetSessionEvidence;
+
+    public JudgeEvidenceDialog(DesktopResearchReadiness readiness, Func<SessionEvidenceSnapshot> snapshot, Action resetSessionEvidence)
     {
         ArgumentNullException.ThrowIfNull(readiness);
-        ArgumentNullException.ThrowIfNull(sessionEvidence);
+        _snapshot = snapshot ?? throw new ArgumentNullException(nameof(snapshot));
+        _resetSessionEvidence = resetSessionEvidence ?? throw new ArgumentNullException(nameof(resetSessionEvidence));
         InitializeComponent();
         ProviderReadinessText.Text = BuildReadinessSummary(readiness);
-        SessionEvidenceText.Text = BuildSessionEvidenceSummary(sessionEvidence);
+        RefreshSessionEvidence();
     }
+
+    private void NewDemoSessionButton_Click(object sender, RoutedEventArgs e)
+    {
+        var confirmation = MessageBox.Show(
+            this,
+            "Start a new demo evidence session?\n\nThis clears only the ephemeral 'Verified this session' milestones. Durable memory, research jobs, browser state, downloads and the audit trail are preserved.",
+            "New demo session",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question,
+            MessageBoxResult.No);
+
+        if (confirmation != MessageBoxResult.Yes)
+            return;
+
+        _resetSessionEvidence();
+        RefreshSessionEvidence();
+    }
+
+    private void RefreshSessionEvidence() => SessionEvidenceText.Text = BuildSessionEvidenceSummary(_snapshot());
 
     private static string BuildReadinessSummary(DesktopResearchReadiness readiness)
     {

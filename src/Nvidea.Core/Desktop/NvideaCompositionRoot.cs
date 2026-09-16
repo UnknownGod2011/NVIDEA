@@ -141,7 +141,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
                 researchServerlessHttp = providers.ServerlessHttp;
                 var store = new JsonAgentJobStore(Path.Combine(researchDirectory, "research-jobs.json"));
                 IAuditTrail audit = new JsonLinesAuditTrail(Path.Combine(researchDirectory, "research-cloud-audit.jsonl"));
-                var remote = NebiusResearchLiveRuntimeFactory.Create(
+                IRemoteResearchClientRuntime remote = NebiusResearchLiveRuntimeFactory.Create(
                     store,
                     providers.Serverless,
                     providers.Transport,
@@ -150,6 +150,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
                     configuration.DispatchOptions,
                     configuration.ClientPrivateKeyPem,
                     audit);
+                remote = CreateObservedRemoteResearchRuntime(remote);
                 cloudResearch = new ResearchCloudExecutionCoordinator(researchDirectory, remote);
             }
             catch
@@ -187,6 +188,11 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
             research,
             dataDirectory);
     }
+
+    internal static IRemoteResearchClientRuntime CreateObservedRemoteResearchRuntime(
+        IRemoteResearchClientRuntime runtime,
+        SessionEvidenceLedger? evidence = null) =>
+        new EvidenceObservingRemoteResearchClientRuntime(runtime, evidence);
 
     public async Task<BrowserProductRuntime> GetBrowserProductAsync(
         CancellationToken cancellationToken = default)

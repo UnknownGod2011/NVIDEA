@@ -22,50 +22,51 @@ Hardened exact-once browser behavior and remote dispatch: durable external-actio
 Added durable V2 binding obligations, restart reconciliation, result/audit/cleanup crash recovery, ambiguous-delete handling, bounded cleanup CAS convergence, multi-artifact cleanup races, and a composed production-path regression covering V2 publication + result CAS/audit + encrypted deletion + concurrent terminal progress + final binding reconciliation without replay.
 
 ### 2026-09-16 — judge-visible runtime evidence
-Added `JudgeEvidenceDialog` backed by real `DesktopResearchReadiness`, plus `SessionEvidenceLedger`, a closed process-local kind+timestamp proof boundary. Desktop chat/research now record successful Nemotron inference, actual memory influence, and Tavily research only when a validated citation was used. Failed/unavailable paths do not record proof.
+Added `JudgeEvidenceDialog` backed by real `DesktopResearchReadiness`, plus `SessionEvidenceLedger`, a closed process-local kind+timestamp proof boundary. Desktop chat/research record successful Nemotron inference, actual memory influence, and Tavily research only when a validated citation was used. Added fail-closed `BrowserSessionEvidenceRecorder` so only completed browser jobs with a trusted verified-step checkpoint qualify, and accepted consequential approvals are recorded only after the exact-scope host boundary returns.
 
-### 2026-09-16 — browser evidence hardening (latest run)
+### 2026-09-16 — shared production session evidence (latest run)
 Completed:
-- Re-read this ledger completely and inspected recent commits, `BrowserCapabilityExecutionService`, `BrowserHostRuntime`, product projection, goal orchestration, composition root, session evidence, and Windows browser flow before mutation.
+- Re-read this ledger completely and inspected the current composition root, desktop invocation evidence, browser product runtime, browser host execution/reconciliation boundaries, and recent commits before mutation.
 - Explicitly verified before every GitHub mutation that the target repository was exactly `UnknownGod2011/NVIDEA`; no other repository was mutated.
-- Added `BrowserSessionEvidenceRecorder`, a fail-closed adapter from trusted browser outcomes into the payload-free session ledger.
-- Browser post-state proof requires BOTH `AgentJobState.Completed` and a non-null trusted `VerifiedStep`; failed, cancelled, waiting, retryable, pending, ambiguous-running, and completed-without-proof outcomes cannot qualify even if malformed callers attach unrelated data.
-- Consequential-approval proof has a separate explicit method intended to be called only after the trusted exact-scope approval/resume boundary returns. Merely displaying a prompt cannot record approval.
-- `BrowserProductRuntime` now accepts an optional session ledger. `StartActionAsync` records only a qualifying verified projected outcome. `ApproveAndResumeAsync` records approval only after the trusted host returns, then independently evaluates the returned outcome for verified post-state proof. Scope mismatch/denial/cancellation exceptions occur before either record point.
-- Added unit regressions for fail-closed browser-state qualification, prompt-not-approval behavior, and idempotent accepted-approval evidence.
+- Added `SessionEvidenceLedger.ProcessLocal`, one payload-free process-lifetime production ledger. Explicitly injected ledgers remain supported for isolated tests.
+- `DesktopInvocationService` now defaults to that process ledger rather than silently allocating its own private ledger.
+- `BrowserProductRuntime` now defaults to the same process ledger and always constructs its fail-closed `BrowserSessionEvidenceRecorder`.
+- This closes the previous default-composition gap: browser actions reached through the product-facing runtime now feed the same snapshot returned by `DesktopInvocationService.SessionEvidenceSnapshot()`, which is what the Windows judge-evidence dialog displays.
+- No provider payload, URL, approval scope, site text, memory content, prompt, tool argument, credential, provider id, or raw error was added to the ledger.
 
 Files changed:
-- `src/Nvidea.Core/Desktop/BrowserSessionEvidenceRecorder.cs`
+- `src/Nvidea.Core/Desktop/SessionEvidenceLedger.cs`
+- `src/Nvidea.Core/Desktop/DesktopInvocation.cs`
 - `src/Nvidea.Core/Desktop/BrowserProductRuntime.cs`
-- `tests/Nvidea.Core.Tests/BrowserSessionEvidenceRecorderTests.cs`
 - `progress.md`
 
 Commits this run before ledger:
-- `d643350ec7e9a6a4e36818980a8b1f078f36b9b7` — add fail-closed browser session evidence recorder.
-- `cdd57012507ec015675d7aff8c996e26c1853e73` — wire product browser outcomes to the recorder seam.
-- `d9107e51c02754ec0f7083e03ca966e9216b4a11` — add browser evidence boundary regressions.
+- `c576827f950eacc1ca8bcadbf05a7a9b09b03031` — add the shared process-local evidence ledger.
+- `38f348466f8992e791964a307b3baa770391947c` — make desktop invocation use the shared production ledger by default.
+- `7794f55b9d321d3791ec30aa1dde0ed42f01e747` — feed browser product proof into the same shared ledger.
 
 Validation/evidence:
-- Static control-flow review confirms browser verification evidence is derived only from the existing trusted completed `browser.action.verified` projection represented by `BrowserGoalVerifiedStep`.
-- Approval evidence in `BrowserProductRuntime` is placed after `BrowserHostRuntime.ApproveAndResumeAsync` returns; exact-scope mismatch and rejected/cancelled paths therefore cannot reach it.
-- The recorder consumes no prompt, URL, site text, approval scope, tool arguments, provider ids, credentials, or raw errors; only trusted outcome state/checkpoint presence affects its closed ledger writes.
+- Static composition review: `NvideaCompositionRoot` constructs `DesktopInvocationService` without an explicit ledger and constructs `BrowserProductRuntime` without an explicit ledger; both now resolve to `SessionEvidenceLedger.ProcessLocal`, so the existing judge dialog snapshot and product browser evidence share identity without widening the composition root's public API.
+- Browser qualification remains fail-closed in `BrowserSessionEvidenceRecorder`: completed + trusted `VerifiedStep` is required for browser proof; accepted approval remains downstream of the exact-scope trusted host boundary.
+- Explicit ledger injection remains available, preserving deterministic isolated unit-test construction rather than forcing tests onto global state.
 - Executable validation remains unavailable: no usable `dotnet`, `csc` or `msbuild` is available here, so no compilation/xUnit/WPF/Worker PASS is claimed.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, Playwright, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
 - Session proof remains process-local and intentionally non-durable; it is judge evidence, not an audit replacement.
 - First-observation ledger semantics prevent retries from inflating proof.
+- The shared singleton contains only the closed enum + timestamp projection. Sharing it does not create a cross-component payload channel.
 - Browser proof cannot be inferred from driver-reported success alone: the durable completed verified-step checkpoint is required.
 - Waiting-for-approval is descriptive only and cannot become approval proof. A mismatched exact scope fails before the product evidence record point.
-- Existing browser authorization, durable job, audit, quarantine, emergency-stop and ambiguous-side-effect recovery authority is unchanged; the recorder is observation-only.
+- Existing browser authorization, durable job, audit, quarantine, emergency-stop and ambiguous-side-effect recovery authority is unchanged; evidence remains observation-only.
 - Existing remote result/audit/cleanup/binding authority boundaries are unchanged.
 
 ## Known blockers / risks
 - No .NET 8 compiler/runtime in this environment; current changes are statically reviewed but unexecuted.
-- The new `BrowserProductRuntime` evidence seam is deliberately optional and is NOT YET supplied the same `SessionEvidenceLedger` owned by `DesktopInvocationService` in `NvideaCompositionRoot`; therefore browser milestones do not yet appear in the judge dialog in the default production composition. Do not claim otherwise.
-- Multi-step `BrowserGoalAgent` and ambiguous-recovery paths use the trusted host directly rather than `BrowserProductRuntime`; their verified outcomes also need the shared observer at a central trusted boundary to avoid missing judge proof.
+- Multi-step `BrowserGoalAgent` and `BrowserAmbiguousRecoveryService` still call the trusted `BrowserHostRuntime` directly rather than the product wrapper. Their verified outcomes therefore do not yet feed session proof. Central host-level observation is still required to cover every browser path without duplicating authority.
+- The process ledger intentionally spans the lifetime of one desktop process. A future in-app "new demo session" UX must explicitly clear it rather than accidentally carrying proof between logical sessions.
 - Live Nebius mounted-volume/Serverless behavior, worker auth, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
 - `NebiusBackgroundExecutionObserved` is defined but not yet wired.
 
 ## Single Best Next Task
-Compose exactly one `SessionEvidenceLedger` in `NvideaCompositionRoot` and inject it into both `DesktopInvocationService` and the browser trusted runtime/evidence observer. Prefer central host-level observation so direct product actions, multi-step `BrowserGoalAgent`, and crash reconciliation all share the same verified-post-state proof without duplicating authority. Then prove that rejected/mismatched approvals, failed/cancelled/ambiguous actions and unverified completions never reach the judge snapshot. After that, wire `NebiusBackgroundExecutionObserved` only from authenticated/reconciled remote lifecycle evidence.
+Move browser evidence observation to the trusted `BrowserHostRuntime` success/reconciliation boundaries using the same `SessionEvidenceLedger.ProcessLocal`, then remove duplicate product-level observation once covered. Prove direct product actions, multi-step `BrowserGoalAgent`, and ambiguous crash reconciliation all record verified browser proof, while rejected/mismatched approvals, failed/cancelled/ambiguous actions and unverified completions never do. After that, wire `NebiusBackgroundExecutionObserved` only from authenticated/reconciled remote lifecycle evidence.

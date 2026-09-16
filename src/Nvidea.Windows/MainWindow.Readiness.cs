@@ -20,9 +20,13 @@ public partial class MainWindow
         var readiness = _researchReadiness;
         if (readiness is null) return;
 
-        // Readiness and observed milestones both come from production runtime state. The snapshot
-        // contains only closed evidence kinds + timestamps and performs no provider/browser action.
-        var dialog = new JudgeEvidenceDialog(readiness, _root.Desktop.SessionEvidenceSnapshot()) { Owner = this };
+        // The dialog receives only the narrow ephemeral-evidence read/reset capabilities. It has
+        // no reference to durable memory, job, browser, download or audit stores, so "new demo
+        // session" cannot become a destructive product-state reset.
+        var dialog = new JudgeEvidenceDialog(
+            readiness,
+            _root.Desktop.SessionEvidenceSnapshot,
+            _root.Desktop.ResetSessionEvidence) { Owner = this };
         dialog.ShowDialog();
     }
 

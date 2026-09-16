@@ -38,45 +38,48 @@ Added `JudgeEvidenceDialog` backed by real `DesktopResearchReadiness`, plus `Ses
 - Hardened the boundary so `ResultApplied + Local` is insufficient while a durable `PendingAuditEvent` remains; judge proof is downstream of both authenticated result CAS and its accountability append.
 - Added an internal composition seam for isolated testing without provider/network activity.
 
-### 2026-09-16 — remote evidence adversarial contract suite (latest run)
+### 2026-09-16 — remote evidence adversarial contract suite
+- Added isolated adversarial coverage proving dispatch/cancel, non-result lifecycle states, pending-audit crash windows and thrown reconciliation remain non-evidence.
+- Successful audited `ResultApplied` recovery establishes `NebiusBackgroundExecutionObserved` exactly once with first-observation semantics.
+
+### 2026-09-16 — safe new demo session UX (latest run)
 Completed:
-- Re-read `progress.md` completely and inspected the remote evidence decorator, `IRemoteResearchClientRuntime`, provenance states, lifecycle reconciler, result-ingestion model and session ledger before mutation.
-- Explicitly verified immediately before every GitHub mutation that repository metadata reported `repository_full_name` exactly `UnknownGod2011/NVIDEA`; no other repository was mutated.
-- Added `EvidenceObservingRemoteResearchClientRuntimeTests` with an isolated `SessionEvidenceLedger` and passive fake runtime; tests do not require provider/network/Playwright activity.
-- Locked down that `DispatchAsync` and `RequestCancellationAsync` remain evidence-free even if a malformed/fake inner runtime returns an otherwise evidence-eligible record. This prevents accidental future widening of the observation boundary.
-- Covered `DispatchReserved`, `Dispatched`, `CancelRequested`, `Cancelled`, `RemoteFailed`, and `Expired` reconciliation outcomes as non-evidence.
-- Covered the exact crash window introduced by durable audit recovery: `ResultApplied + Local + PendingAuditEvent` remains non-evidence; only a subsequent successful `RecoverPendingAuditAsync` result with the outbox cleared can establish `NebiusBackgroundExecutionObserved`.
-- Added an idempotence regression exercising all four observation-capable methods against the same audited `ResultApplied` record and requiring exactly one milestone with the first timestamp retained.
-- Added a thrown-reconciliation regression proving exceptions propagate without recording background proof.
+- Re-read this ledger completely and inspected `SessionEvidenceLedger`, `DesktopInvocationService`, the evidence dialog, its composition site and existing ledger tests before mutation.
+- Explicitly verified repository metadata as exactly `UnknownGod2011/NVIDEA` immediately before every GitHub mutation; no other repository was mutated.
+- Added `DesktopInvocationService.ResetSessionEvidence()` as a deliberately narrow boundary that can reach only the injected ephemeral session ledger.
+- Added a `New demo session` control to `JudgeEvidenceDialog`. It requires an explicit Yes/No confirmation whose copy states exactly what is and is not cleared.
+- Changed the dialog composition from a frozen snapshot to narrow snapshot/reset delegates, so the UI can refresh immediately after reset without receiving the desktop root, memory service, job stores, browser runtime, downloads or audit trail.
+- The reset confirmation defaults to No. Cancellation is side-effect free.
+- After confirmation, the dialog clears only session milestones and immediately refreshes `Verified this session` to the empty state.
+- Preserved the existing desktop invocation behavior exactly; a compare against the pre-run head shows `DesktopInvocation.cs` has only seven additive lines for the reset boundary after correcting an intermediate edit before completing the run.
 
 Files changed this run:
-- `tests/Nvidea.Core.Tests/EvidenceObservingRemoteResearchClientRuntimeTests.cs`
+- `src/Nvidea.Core/Desktop/DesktopInvocation.cs`
+- `src/Nvidea.Windows/JudgeEvidenceDialog.xaml`
+- `src/Nvidea.Windows/JudgeEvidenceDialog.xaml.cs`
+- `src/Nvidea.Windows/MainWindow.Readiness.cs`
 - `progress.md`
 
 Validation/evidence:
-- Static contract review confirms the fake implements the exact current `IRemoteResearchClientRuntime` surface and the tests exercise the production decorator directly.
-- The suite is deliberately adversarial around malformed inner-runtime returns so evidence safety is enforced independently of upstream lifecycle correctness.
-- Existing `SessionEvidenceLedger.Record` uses `TryAdd`, matching the new exact-once/first-observation assertion.
-- Executable validation remains unavailable: no usable `dotnet`, `csc` or `msbuild` is available here, so no compilation/xUnit/WPF/Worker PASS is claimed.
+- GitHub compare from pre-run head `02cd4dce8ad0ac9328524f9812564b075176fcc2` to implementation head `a601a83b96e925863405eeaa49ff7b2fe8f0a9ad` reports only the four intended source files, with `DesktopInvocation.cs` +7/-0.
+- Existing `SessionEvidenceLedgerTests.Clear_DropsSessionProofWithoutExternalSideEffects` covers the underlying clear primitive; the new desktop reset boundary contains exactly one call to that primitive and owns no durable stores.
+- The WPF dialog receives only `Func<SessionEvidenceSnapshot>` and `Action`, structurally preventing this UI from directly deleting durable memory/jobs/browser/audit state.
+- Executable validation remains unavailable: no usable `dotnet`, `csc` or `msbuild` is available here, so no compilation/xUnit/WPF PASS is claimed.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, Playwright, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
-- Session proof remains process-local and intentionally non-durable; it is judge evidence, not an audit replacement.
-- First-observation ledger semantics prevent retries, repeated approvals, repeated reconciliation or repeated recovery from inflating proof.
-- The shared ledger contains only a closed enum + timestamp projection; no prompts, URLs, browser text, memory content, approval scope, filenames, provider ids, remote job ids, checkpoint payloads or raw errors are retained.
-- Browser proof cannot be inferred from driver-reported success alone: terminal completion plus a trusted verified-step checkpoint is required.
-- Nebius background proof cannot be inferred from dispatch, a remote-looking Running state, cancellation request, provider error, ambiguous delivery, terminal remote failure/cancellation, or a result CAS whose durable audit obligation is still unresolved.
-- The remote decorator is observation-only and cannot dispatch, approve, retry, reconcile, cancel, decrypt, mutate provider state, clear audit obligations, or alter durable provenance beyond delegating to the existing trusted runtime.
-- New tests intentionally feed malformed/evidence-looking records through non-observation methods to guard against future refactors accidentally treating method return shape alone as authority.
-- Existing browser authorization, durable job, audit, quarantine, emergency-stop and ambiguous-side-effect recovery authority is unchanged.
-- Existing remote result/audit/cleanup/binding authority boundaries are unchanged.
+- Session proof remains process-local, payload-free and intentionally non-durable; reset is a demo-evidence operation, not an audit or privacy deletion feature.
+- Reset cannot reach durable memory, research jobs, browser state, downloads or audit stores through its composition surface.
+- Confirmation defaults to No, reducing accidental evidence loss during a demo.
+- Resetting evidence does not revoke permissions, cancel jobs, clear authentication, modify browser sessions, delete downloads or erase accountability history.
+- First-observation ledger semantics continue to prevent retries/reconciliation from inflating proof after a reset; subsequent genuine production successes can establish fresh timestamps.
+- Browser and Nebius evidence trust boundaries remain unchanged.
 
 ## Known blockers / risks
 - No .NET 8 compiler/runtime in this environment; current changes are statically reviewed but unexecuted.
 - Product-level and ambiguous-recovery browser evidence observation remain separate; ledger idempotence prevents proof inflation, but redundant observation should be removed only after equivalent host-level coverage is proven.
-- The process ledger intentionally spans one desktop-process lifetime; a future in-app "new demo session" UX must explicitly clear it.
 - Live Nebius mounted-volume/Serverless behavior, worker auth, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
-- The new remote evidence tests should be executed on a .NET 8-capable environment before submission; any compile-time model drift must be fixed rather than weakening assertions.
+- The new WPF reset flow should be executed on Windows/.NET 8 before submission; any compile/XAML binding issue must be fixed rather than bypassing confirmation.
 
 ## Single Best Next Task
-Add an explicit in-app "New demo session" control that clears only `SessionEvidenceLedger.ProcessLocal` after a user confirmation and never touches durable audit/job/memory state. This closes the remaining judge-demo UX gap caused by process-lifetime evidence accumulation while preserving the strict distinction between ephemeral proof and durable accountability. Add tests proving reset clears only session milestones and cannot delete or mutate durable research/browser/audit state.
+Add an isolated desktop evidence-reset contract test around `DesktopInvocationService.ResetSessionEvidence` using the existing test fixtures, proving it clears the injected ledger and that a subsequent genuine invocation can establish fresh evidence again. Then continue the rubric audit toward deterministic <=3 minute demo execution, prioritizing any remaining live-environment blockers over cosmetic work.

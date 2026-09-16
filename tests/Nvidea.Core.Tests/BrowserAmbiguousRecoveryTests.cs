@@ -85,7 +85,8 @@ public sealed class BrowserAmbiguousRecoveryTests
                     "Expected state is present.",
                     new BrowserJobOutcome(childId, AgentJobState.Completed, "reconciled", VerifiedStep: verified),
                     Observation("https://example.com/form", visibleText: "Saved successfully")));
-            var service = new BrowserAmbiguousRecoveryService(host, store);
+            var evidence = new SessionEvidenceLedger();
+            var service = new BrowserAmbiguousRecoveryService(host, store, sessionEvidence: evidence);
 
             var (recovered, result) = await service.RecoverAsync(session.SessionId);
 
@@ -94,6 +95,7 @@ public sealed class BrowserAmbiguousRecoveryTests
             Assert.Null(recovered.PendingJobId);
             Assert.Null(recovered.PendingAction);
             Assert.Contains(recovered.VerifiedSteps!, step => step.JobId == childId);
+            Assert.True(evidence.Snapshot().Contains(SessionEvidenceKind.BrowserPostStateVerified));
             Assert.Equal(1, host.ReconcileCount);
             Assert.Equal(0, host.ExecuteCount);
         }
@@ -131,7 +133,8 @@ public sealed class BrowserAmbiguousRecoveryTests
                     "No deterministic expected-state assertion is available.",
                     running,
                     Observation("https://example.com/form")));
-            var service = new BrowserAmbiguousRecoveryService(host, store);
+            var evidence = new SessionEvidenceLedger();
+            var service = new BrowserAmbiguousRecoveryService(host, store, sessionEvidence: evidence);
 
             var (recovered, result) = await service.RecoverAsync(session.SessionId);
 
@@ -140,6 +143,7 @@ public sealed class BrowserAmbiguousRecoveryTests
             Assert.Equal(childId, recovered.PendingJobId);
             Assert.Equal(pendingAction, recovered.PendingAction);
             Assert.Contains("human resolution", recovered.Detail!, StringComparison.OrdinalIgnoreCase);
+            Assert.False(evidence.Snapshot().Contains(SessionEvidenceKind.BrowserPostStateVerified));
             Assert.Equal(1, host.ReconcileCount);
             Assert.Equal(0, host.ExecuteCount);
         }

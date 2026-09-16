@@ -36,27 +36,28 @@ Crash-ambiguous reconciliation records `BrowserPostStateVerified` only after tru
 ### 2026-09-16 — multi-step goal-host evidence seam
 Added `EvidenceObservingBrowserGoalHost`, an internal decorator over `ICrashConsistentBrowserGoalHost` that centralizes payload-free evidence observation for normal multi-step goal execution without changing browser authority or execution semantics. Successful start/advance outcomes pass through the existing fail-closed recorder; approval proof is downstream of successful trusted-host approval and independently separated from post-state proof.
 
-### 2026-09-16 — goal-host evidence contract hardening (latest run)
+### 2026-09-16 — goal-host evidence contract hardening
+Added isolated contract regressions for `EvidenceObservingBrowserGoalHost`: verified completion records browser proof; Pending/Running/WaitingForApproval/RetryScheduled/Failed/Cancelled remain non-evidence even with malformed verified-step data; completed-without-verification remains non-evidence; accepted approval records approval proof downstream of the trusted host; rejected approval leaves the ledger empty; create/get/rearm/cancel remain evidence-free.
+
+### 2026-09-16 — production host adapter for centralized evidence (latest run)
 Completed:
-- Re-read this ledger completely and inspected the current `BrowserGoalAgent`, `EvidenceObservingBrowserGoalHost`, `BrowserSessionEvidenceRecorder`, `BrowserHostRuntime`, session ledger, and default composition before mutation.
-- Explicitly verified immediately before every GitHub mutation that repository metadata reported `full_name` exactly `UnknownGod2011/NVIDEA`; no other repository was mutated.
-- Added `EvidenceObservingBrowserGoalHostTests` as isolated contract coverage for the centralized goal-host evidence seam.
-- Verified-completion test requires `AdvanceActionAsync` to record browser post-state proof while leaving consequential-approval proof absent.
-- Added fail-closed matrix for Pending, Running, WaitingForApproval, RetryScheduled, Failed and Cancelled outcomes even when malformed callers attach a verified-step object; none may become browser proof.
-- Added a completed-without-verified-step regression so driver/terminal success alone remains insufficient.
-- Added accepted-approval regression requiring both approval-gate proof and independently verified browser post-state proof only after the underlying host returns.
-- Added rejected-approval exception regression requiring an empty ledger, plus delegation coverage proving create/get/rearm/cancel remain evidence-free.
+- Re-read this ledger completely and inspected `BrowserGoalAgent`, `EvidenceObservingBrowserGoalHost`, the default `NvideaCompositionRoot`, and the trusted `BrowserHostRuntime` composition before mutation.
+- Explicitly verified immediately before every GitHub mutation that repository metadata reported `repository_full_name` exactly `UnknownGod2011/NVIDEA`; no other repository was mutated.
+- Added a `BrowserHostRuntime` constructor overload to `EvidenceObservingBrowserGoalHost` so the production trusted host can be wrapped directly without exposing or duplicating `BrowserGoalAgent`'s private adapter.
+- Added a narrow private `BrowserHostAdapter` inside the evidence decorator. Every method is direct delegation to `BrowserHostRuntime`; it introduces no approval, retry, recovery, browser-state, or persistence semantics.
+- The existing injectable `ICrashConsistentBrowserGoalHost` constructor remains unchanged for isolated contract tests.
+- This removes the last type/composition obstacle to routing `NvideaCompositionRoot.CreateBrowserGoalAgentAsync` through the centralized evidence decorator while preserving `BrowserHostRuntime` as the sole execution/authorization authority.
 
 Files changed:
-- `tests/Nvidea.Core.Tests/EvidenceObservingBrowserGoalHostTests.cs`
+- `src/Nvidea.Core/Desktop/EvidenceObservingBrowserGoalHost.cs`
 - `progress.md`
 
 Commits this run before ledger:
-- `fbc70b25de84bbdb5c18ac85a41824e9ae0e174f` — add centralized browser goal evidence host contract tests.
+- `808be8f61dd7b456aec259ea1d3bc37ef086b72f` — add production BrowserHostRuntime adapter to centralized goal evidence host.
 
 Validation/evidence:
-- Static contract review confirms tests exercise the closed enum+timestamp ledger through the actual decorator rather than bypassing it.
-- The production decorator still delegates all authority to its inner trusted host and observes only returned outcomes; it cannot grant approval, retry an action, interpret page content or mutate durable job state.
+- Static review confirms the new adapter implements the full crash-consistent goal-host contract and delegates Observe, Start, Create, Advance, Get, RearmApproval, ApproveAndResume and Cancel directly to the trusted host.
+- Evidence observation remains outside the adapter and downstream of trusted-host results in the decorator; authority and evidence remain separated.
 - Executable validation remains unavailable: no usable `dotnet`, `csc` or `msbuild` is available here, so no compilation/xUnit/WPF/Worker PASS is claimed.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, Playwright, Ollama or inference operation was triggered.
 
@@ -66,17 +67,17 @@ Validation/evidence:
 - The shared ledger contains only a closed enum + timestamp projection; no prompts, URLs, browser text, memory content, approval scope, filenames, provider ids or raw errors are retained.
 - Browser proof cannot be inferred from driver-reported success alone: terminal completion plus a trusted verified-step checkpoint is required.
 - The goal-host decorator observes only after trusted-host calls return and cannot grant approval or alter durable job state.
-- The new malformed-outcome matrix explicitly protects against nonterminal/failed states carrying an unrelated verified-step object.
+- The production adapter is pure delegation and does not inspect or retain browser payloads.
 - Existing browser authorization, durable job, audit, quarantine, emergency-stop and ambiguous-side-effect recovery authority is unchanged.
 - Existing remote result/audit/cleanup/binding authority boundaries are unchanged.
 
 ## Known blockers / risks
 - No .NET 8 compiler/runtime in this environment; current changes are statically reviewed but unexecuted.
-- `EvidenceObservingBrowserGoalHost` now has direct contract tests but is not yet composed into the default `BrowserGoalAgent` constructor path. Until that wiring lands, normal goal steps still do not automatically use it.
-- Product-level and ambiguous-recovery evidence observation remain separate until central composition is completed; ledger idempotence prevents proof inflation but duplicate instrumentation should still be removed only after equivalent host-level coverage is proven.
+- The centralized decorator can now wrap `BrowserHostRuntime` directly, but `NvideaCompositionRoot.CreateBrowserGoalAgentAsync` still needs the final one-line production routing change before normal multi-step goal actions automatically feed the shared evidence ledger.
+- Product-level and ambiguous-recovery evidence observation remain separate until central composition is completed; ledger idempotence prevents proof inflation but duplicate instrumentation should be removed only after equivalent host-level coverage is proven.
 - The process ledger intentionally spans one desktop-process lifetime; a future in-app "new demo session" UX must explicitly clear it.
 - Live Nebius mounted-volume/Serverless behavior, worker auth, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
 - `NebiusBackgroundExecutionObserved` is defined but not yet wired.
 
 ## Single Best Next Task
-Compose `EvidenceObservingBrowserGoalHost` into the trusted `BrowserGoalAgent` production path using the process-local ledger by default and an isolated ledger injection seam for tests. Then add composition-level regression evidence that a normal crash-consistent goal step reaches the shared ledger, and remove redundant product/recovery observation only where centralized coverage is demonstrably equivalent. After that, wire `NebiusBackgroundExecutionObserved` only from authenticated/reconciled remote lifecycle evidence.
+Change `NvideaCompositionRoot.CreateBrowserGoalAgentAsync` to construct `BrowserGoalAgent` with `new EvidenceObservingBrowserGoalHost(browser)` so normal crash-consistent multi-step actions use `SessionEvidenceLedger.ProcessLocal`. Add a composition/API regression that proves the production path is wrapped without exposing raw browser authority. Then remove redundant product/recovery observation only where centralized equivalence is demonstrated, and wire `NebiusBackgroundExecutionObserved` only from authenticated/reconciled remote lifecycle evidence.

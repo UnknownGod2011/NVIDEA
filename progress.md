@@ -42,28 +42,28 @@ Added `JudgeEvidenceDialog` backed by real `DesktopResearchReadiness`, plus `Ses
 - Added isolated adversarial coverage proving dispatch/cancel, non-result lifecycle states, pending-audit crash windows and thrown reconciliation remain non-evidence.
 - Successful audited `ResultApplied` recovery establishes `NebiusBackgroundExecutionObserved` exactly once with first-observation semantics.
 
-### 2026-09-16 — safe new demo session UX (latest run)
-Completed:
-- Re-read this ledger completely and inspected `SessionEvidenceLedger`, `DesktopInvocationService`, the evidence dialog, its composition site and existing ledger tests before mutation.
-- Explicitly verified repository metadata as exactly `UnknownGod2011/NVIDEA` immediately before every GitHub mutation; no other repository was mutated.
+### 2026-09-16 — safe new demo session UX
 - Added `DesktopInvocationService.ResetSessionEvidence()` as a deliberately narrow boundary that can reach only the injected ephemeral session ledger.
-- Added a `New demo session` control to `JudgeEvidenceDialog`. It requires an explicit Yes/No confirmation whose copy states exactly what is and is not cleared.
-- Changed the dialog composition from a frozen snapshot to narrow snapshot/reset delegates, so the UI can refresh immediately after reset without receiving the desktop root, memory service, job stores, browser runtime, downloads or audit trail.
-- The reset confirmation defaults to No. Cancellation is side-effect free.
-- After confirmation, the dialog clears only session milestones and immediately refreshes `Verified this session` to the empty state.
-- Preserved the existing desktop invocation behavior exactly; a compare against the pre-run head shows `DesktopInvocation.cs` has only seven additive lines for the reset boundary after correcting an intermediate edit before completing the run.
+- Added a `New demo session` control to `JudgeEvidenceDialog`, with explicit Yes/No confirmation defaulting to No and precise disclosure that durable memory/jobs/browser/audit state is preserved.
+- Changed dialog composition from a frozen snapshot to narrow snapshot/reset delegates so the UI refreshes immediately without receiving durable-store authority.
+
+### 2026-09-16 — desktop evidence reset contract (latest run)
+Completed:
+- Re-read this ledger completely and inspected `DesktopInvocationService`, `SessionEvidenceLedgerTests`, and the existing `DesktopInvocationTests` before mutation.
+- Explicitly verified repository metadata as exactly `UnknownGod2011/NVIDEA` immediately before every GitHub mutation; no other repository was mutated.
+- Added `Reset_session_evidence_clears_only_injected_projection_and_genuine_success_can_reestablish_proof` to `DesktopInvocationTests`.
+- The regression injects a private ledger with deterministic timestamps, establishes genuine Nemotron completion evidence through the normal successful invocation path, resets through `DesktopInvocationService.ResetSessionEvidence`, and proves both the service snapshot and injected ledger are empty.
+- It then performs a second genuine invocation and requires a fresh `NemotronInferenceCompleted` entry with the later timestamp, proving reset does not poison future production evidence and that proof cannot reappear without another successful invocation.
+- The test also checks inference request count before and after reset: reset itself cannot invoke the model or manufacture execution evidence.
 
 Files changed this run:
-- `src/Nvidea.Core/Desktop/DesktopInvocation.cs`
-- `src/Nvidea.Windows/JudgeEvidenceDialog.xaml`
-- `src/Nvidea.Windows/JudgeEvidenceDialog.xaml.cs`
-- `src/Nvidea.Windows/MainWindow.Readiness.cs`
+- `tests/Nvidea.Core.Tests/DesktopInvocationTests.cs`
 - `progress.md`
 
 Validation/evidence:
-- GitHub compare from pre-run head `02cd4dce8ad0ac9328524f9812564b075176fcc2` to implementation head `a601a83b96e925863405eeaa49ff7b2fe8f0a9ad` reports only the four intended source files, with `DesktopInvocation.cs` +7/-0.
-- Existing `SessionEvidenceLedgerTests.Clear_DropsSessionProofWithoutExternalSideEffects` covers the underlying clear primitive; the new desktop reset boundary contains exactly one call to that primitive and owns no durable stores.
-- The WPF dialog receives only `Func<SessionEvidenceSnapshot>` and `Action`, structurally preventing this UI from directly deleting durable memory/jobs/browser/audit state.
+- Static inspection confirms the test uses the real `DesktopInvocationService.InvokeAsync` success path and the existing deterministic `SessionEvidenceLedger(Func<DateTimeOffset>)` clock seam rather than mutating the ledger to simulate post-reset success.
+- The reset boundary remains a single `_sessionEvidence.Clear()` call and owns no durable memory/job/browser/audit authority.
+- The regression checks the same injected ledger directly after reset, preventing an accidental implementation that merely swaps/hides the service snapshot while leaving evidence resident.
 - Executable validation remains unavailable: no usable `dotnet`, `csc` or `msbuild` is available here, so no compilation/xUnit/WPF PASS is claimed.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, Playwright, Ollama or inference operation was triggered.
 
@@ -72,14 +72,14 @@ Validation/evidence:
 - Reset cannot reach durable memory, research jobs, browser state, downloads or audit stores through its composition surface.
 - Confirmation defaults to No, reducing accidental evidence loss during a demo.
 - Resetting evidence does not revoke permissions, cancel jobs, clear authentication, modify browser sessions, delete downloads or erase accountability history.
-- First-observation ledger semantics continue to prevent retries/reconciliation from inflating proof after a reset; subsequent genuine production successes can establish fresh timestamps.
+- The new contract proves reset itself performs no inference and that fresh evidence requires a subsequent genuine successful invocation.
 - Browser and Nebius evidence trust boundaries remain unchanged.
 
 ## Known blockers / risks
 - No .NET 8 compiler/runtime in this environment; current changes are statically reviewed but unexecuted.
 - Product-level and ambiguous-recovery browser evidence observation remain separate; ledger idempotence prevents proof inflation, but redundant observation should be removed only after equivalent host-level coverage is proven.
 - Live Nebius mounted-volume/Serverless behavior, worker auth, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
-- The new WPF reset flow should be executed on Windows/.NET 8 before submission; any compile/XAML binding issue must be fixed rather than bypassing confirmation.
+- The WPF reset flow and new regression should be executed on Windows/.NET 8 before submission; any compile/XAML/test issue must be fixed rather than bypassing confirmation.
 
 ## Single Best Next Task
-Add an isolated desktop evidence-reset contract test around `DesktopInvocationService.ResetSessionEvidence` using the existing test fixtures, proving it clears the injected ledger and that a subsequent genuine invocation can establish fresh evidence again. Then continue the rubric audit toward deterministic <=3 minute demo execution, prioritizing any remaining live-environment blockers over cosmetic work.
+Perform the deterministic <=3 minute demo/rubric audit against the actual current implementation and turn the result into an executable demo checklist that maps each required judging beat to a real UI action, production evidence milestone, expected visible state, fallback/recovery behavior, and preflight dependency. Prioritize any discovered functional blocker over cosmetic documentation.

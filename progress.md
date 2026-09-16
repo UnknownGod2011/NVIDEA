@@ -31,37 +31,39 @@ Aligned the operator runbook to the exact production milestone vocabulary and ma
 ### 2026-09-17 — manifest-driven operator checklist generator
 Added `tools/Nvidea.DemoChecklistGenerator`, a dependency-free .NET 8 CLI that derives the recording checklist directly from schema-v2 beat order, durations, judge claims, preflight dependencies, exact expected session milestones and fail-closed fallback policies. Parsing is strict and bounded; output is atomic.
 
-### 2026-09-17 — zero-cost submission preflight orchestrator (latest run)
+### 2026-09-17 — zero-cost submission preflight orchestrator
+Added `scripts/submission-preflight.ps1`: repository/manifest/.NET checks, repository-confined artifacts, validator first, checklist generation only after validation, then deterministic positive and adversarial evaluators. Provider-live work is deliberately excluded and disclosed.
+
+### 2026-09-17 — network-free preflight sequencing contract (latest run)
 Completed:
-- Re-read this ledger completely and selected the recorded highest-value task: create one fail-closed local preflight command that cannot refresh the recording checklist before the canonical manifest passes validation.
-- Added `scripts/submission-preflight.ps1` for the Windows recording machine. It verifies the repository/manifest and .NET SDK locally, confines generated artifacts to the repository, runs `Nvidea.DemoPackageValidator` first, generates the checklist only after validator PASS, then runs the positive and adversarial Personal AI evaluators.
-- Provider-live work is deliberately excluded from the default command. The script explicitly states that it does not invoke Nebius catalog/live PASS, Tavily, browser, inference, or the unified judging verifier because those require fresh provider/live evidence and must not be silently represented by a zero-cost preflight.
-- The orchestrator fails immediately on every non-zero child exit and uses the validator/checklist/evaluator programs' existing atomic outputs; no stale checklist is regenerated after validation failure.
-- During final review, caught and corrected the checklist generator invocation to its actual `--output <path>` CLI contract before ending the run; removed an unused provider-live switch rather than exposing a flag that implied live verification it did not perform.
-- Explicitly verified repository metadata as exactly `UnknownGod2011/NVIDEA` immediately before every GitHub mutation. No other repository was mutated.
+- Re-read this ledger completely and selected the recorded highest-value task: protect the zero-cost preflight's ordering, path confinement and provider-live exclusion from silent regression.
+- Added `scripts/tests/submission-preflight.contract.ps1`, a dependency-free PowerShell source-contract regression. It does not invoke dotnet, network, providers, browser sessions or credentials.
+- The contract requires validator < checklist generator < positive evaluator < adversarial evaluator ordering; requires the non-zero child-exit fail-closed guard; requires canonical repository-prefix artifact confinement; and requires the explicit provider-live skip disclosure.
+- Added a narrow executable-command denylist for the unified judging verifier and accidental `NebiusLive`/`TavilyLive`/`PlaywrightLive` command fragments so the default zero-cost path cannot silently acquire provider-live execution while still allowing explanatory safety text.
+- Explicitly verified repository metadata as exactly `UnknownGod2011/NVIDEA` immediately before each GitHub mutation. No other repository was mutated.
 
 Files changed this run:
-- `scripts/submission-preflight.ps1`
+- `scripts/tests/submission-preflight.contract.ps1`
 - `progress.md`
 
 Validation/evidence:
-- Static contract review against `Nvidea.DemoPackageValidator`, `Nvidea.DemoChecklistGenerator`, `docs/demo-package.json`, and the evaluator project paths confirms the orchestrator uses the current CLI/project contracts and preserves validator-before-generator ordering.
-- The script itself contains no provider credentials and performs no network/provider/browser operation by design; child positive/adversarial evaluators are the existing deterministic local checks.
-- Executable validation remains unavailable in this environment: no usable `dotnet`, `csc` or `msbuild` is available here, so no PowerShell/.NET execution PASS is claimed.
+- Static review against the current `scripts/submission-preflight.ps1` confirms every asserted fragment and ordering relationship exists in the production script.
+- The regression itself is network-free and provider-free; it only reads the local preflight source when executed.
+- Executable PowerShell validation is not claimed in this connector environment; the contract still requires execution on the Windows recording machine before submission.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, Playwright, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
-- Artifacts must resolve beneath the selected repository root; an outside absolute/relative artifact directory is rejected.
-- Manifest validation is the first product command and gates checklist generation; malformed/unsafe schema-v2 content cannot refresh the operator checklist through this workflow.
-- Any validator/generator/evaluator non-zero exit aborts the preflight; there is no best-effort continuation that could print a misleading PASS.
-- Provider-live verification is intentionally not automated by this zero-cost command, preventing accidental paid calls or stale/captured evidence from being treated as current live proof.
-- The orchestrator does not touch durable memory, browser profiles, provider accounts, secrets, or the audit store.
+- The preflight continues to canonicalize artifacts and reject paths outside the repository.
+- Validator failure remains upstream of checklist/evaluator execution, with child non-zero exits throwing immediately.
+- The new contract makes those sequencing and confinement assumptions explicit and regression-detectable instead of relying only on review.
+- Provider-live verification remains intentionally absent from the zero-cost command; fresh provider evidence must be obtained deliberately through the documented live workflow.
+- The contract reads source only and cannot touch durable memory, browser profiles, provider accounts, secrets or the audit store.
 
 ## Known blockers / risks
-- No .NET 8 compiler/runtime in this environment; the orchestrator and current generator are statically reviewed but unexecuted.
-- The final Windows machine still needs an actual execution of `scripts/submission-preflight.ps1` before recording.
-- The unified `Nvidea.JudgingEvidenceVerifier` necessarily consumes fresh Nebius deployment PASS/model-catalog evidence and is therefore not part of zero-cost default preflight; a separate deliberate live-evidence step remains required when making provider-live claims.
+- No executable .NET/Windows validation has been performed in this environment; the production preflight still needs an actual run on the recording machine.
+- The new contract is a static source-contract test, not a process-level fault-injection test. A future stronger harness should inject a fake dotnet executable and prove at runtime that a validator exit code prevents downstream invocations.
+- The unified `Nvidea.JudgingEvidenceVerifier` necessarily consumes fresh Nebius deployment PASS/model-catalog evidence and remains outside zero-cost default preflight.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
 
 ## Single Best Next Task
-Add a small network-free contract test around `scripts/submission-preflight.ps1` (or factor its sequencing into a testable .NET orchestrator) that proves validator failure prevents checklist/evaluator execution, verifies artifact-path confinement, and proves provider-live commands cannot be reached by the default path. Then run the complete zero-cost preflight on the first available .NET 8 Windows environment before recording.
+Upgrade the preflight regression from source-contract assertions to a network-free process-level fault-injection harness using a temporary fake `dotnet` shim: record child invocations, force validator failure, prove generator/evaluators never execute, then exercise a success path and artifact-path escape rejection. This gives behavioral evidence for the orchestration without provider calls or GitHub Actions.

@@ -230,9 +230,22 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         var browser = await GetBrowserHostAsync(cancellationToken).ConfigureAwait(false);
-        var observedHost = new EvidenceObservingBrowserGoalHost(browser);
+        var observedHost = CreateObservedBrowserGoalHost(browser);
         return new BrowserGoalAgent(observedHost, new NemotronBrowserPlanner(_inference), _browserGoalStore);
     }
+
+    /// <summary>
+    /// Centralizes the production evidence boundary while keeping the raw browser authority
+    /// private to the composition root. The interface overload keeps this seam testable without
+    /// starting Playwright or constructing a live browser host.
+    /// </summary>
+    internal static ICrashConsistentBrowserGoalHost CreateObservedBrowserGoalHost(
+        ICrashConsistentBrowserGoalHost host) =>
+        new EvidenceObservingBrowserGoalHost(host);
+
+    private static ICrashConsistentBrowserGoalHost CreateObservedBrowserGoalHost(
+        BrowserHostRuntime host) =>
+        CreateObservedBrowserGoalHost((ICrashConsistentBrowserGoalHost)new BrowserHostGoalHostAdapter(host));
 
     public async Task<IReadOnlyList<BrowserGoalSession>> ListBrowserGoalSessionsAsync(
         CancellationToken cancellationToken = default)
@@ -314,5 +327,37 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
             throw new InvalidOperationException("Local application data directory is unavailable.");
 
         return Path.Combine(localAppData, "NVIDEA");
+    }
+
+    private sealed class BrowserHostGoalHostAdapter : ICrashConsistentBrowserGoalHost
+    {
+        private readonly BrowserHostRuntime _host;
+
+        public BrowserHostGoalHostAdapter(BrowserHostRuntime host) =>
+            _host = host ?? throw new ArgumentNullException(nameof(host));
+
+        public Task<BrowserObservation> ObserveAsync(CancellationToken cancellationToken = default) =>
+            _host.ObserveAsync(cancellationToken);
+
+        public Task<BrowserJobOutcome> StartActionAsync(BrowserAction action, CancellationToken cancellationToken = default) =>
+            _host.StartActionAsync(action, cancellationToken);
+
+        public Task<BrowserJobOutcome> CreateActionAsync(Guid jobId, BrowserAction action, CancellationToken cancellationToken = default) =>
+            _host.CreateActionAsync(jobId, action, cancellationToken);
+
+        public Task<BrowserJobOutcome> AdvanceActionAsync(Guid jobId, CancellationToken cancellationToken = default) =>
+            _host.AdvanceActionAsync(jobId, cancellationToken);
+
+        public Task<BrowserJobOutcome?> GetAsync(Guid jobId, CancellationToken cancellationToken = default) =>
+            _host.GetAsync(jobId, cancellationToken);
+
+        public Task<BrowserJobOutcome> RearmApprovalAsync(Guid jobId, string exactScope, CancellationToken cancellationToken = default) =>
+            _host.RearmApprovalAsync(jobId, exactScope, cancellationToken);
+
+        public Task<BrowserJobOutcome> ApproveAndResumeAsync(Guid jobId, string exactScope, CancellationToken cancellationToken = default) =>
+            _host.ApproveAndResumeAsync(jobId, exactScope, cancellationToken);
+
+        public Task<BrowserJobOutcome> CancelAsync(Guid jobId, CancellationToken cancellationToken = default) =>
+            _host.CancelAsync(jobId, cancellationToken);
     }
 }

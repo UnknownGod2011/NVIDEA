@@ -25,6 +25,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     private readonly PersonalMemoryService _memory;
     private readonly LocalOllamaMemoryEmbeddingProvider? _memoryEmbeddingProvider;
     private readonly string _stateDirectory;
+    private readonly JsonBrowserGoalSessionStore _browserGoalStore;
     private readonly SemaphoreSlim _browserGate = new(1, 1);
     private BrowserHostRuntime? _browser;
     private BrowserProductRuntime? _browserProduct;
@@ -53,6 +54,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         _memory = memory;
         _memoryEmbeddingProvider = memoryEmbeddingProvider;
         _stateDirectory = stateDirectory;
+        _browserGoalStore = new(Path.Combine(stateDirectory, "browser", "goal-sessions.json"));
         Desktop = desktop;
         Session = session;
         Research = research;
@@ -228,16 +230,15 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         var browser = await GetBrowserHostAsync(cancellationToken).ConfigureAwait(false);
-        var goalStore = CreateBrowserGoalStore();
         var observedHost = new EvidenceObservingBrowserGoalHost(browser);
-        return new BrowserGoalAgent(observedHost, new NemotronBrowserPlanner(_inference), goalStore);
+        return new BrowserGoalAgent(observedHost, new NemotronBrowserPlanner(_inference), _browserGoalStore);
     }
 
     public async Task<IReadOnlyList<BrowserGoalSession>> ListBrowserGoalSessionsAsync(
         CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        return await CreateBrowserGoalStore().ListAsync(cancellationToken).ConfigureAwait(false);
+        return await _browserGoalStore.ListAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<BrowserAmbiguousRecoveryService> CreateBrowserAmbiguousRecoveryServiceAsync(
@@ -245,7 +246,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         var browser = await GetBrowserHostAsync(cancellationToken).ConfigureAwait(false);
-        return new BrowserAmbiguousRecoveryService(browser, CreateBrowserGoalStore());
+        return new BrowserAmbiguousRecoveryService(browser, _browserGoalStore);
     }
 
     public async ValueTask DisposeAsync()
@@ -277,9 +278,6 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         _nebiusHttp.Dispose();
         _browserGate.Dispose();
     }
-
-    private JsonBrowserGoalSessionStore CreateBrowserGoalStore() =>
-        new(Path.Combine(_stateDirectory, "browser", "goal-sessions.json"));
 
     private static BrowserHostOptions BrowserOptionsFromEnvironment()
     {

@@ -16,6 +16,13 @@ internal sealed class EvidenceObservingBrowserGoalHost : ICrashConsistentBrowser
     private readonly BrowserSessionEvidenceRecorder _evidence;
 
     public EvidenceObservingBrowserGoalHost(
+        BrowserHostRuntime host,
+        SessionEvidenceLedger? ledger = null)
+        : this(new BrowserHostAdapter(host), ledger)
+    {
+    }
+
+    public EvidenceObservingBrowserGoalHost(
         ICrashConsistentBrowserGoalHost inner,
         SessionEvidenceLedger? ledger = null)
     {
@@ -74,4 +81,41 @@ internal sealed class EvidenceObservingBrowserGoalHost : ICrashConsistentBrowser
         string exactScope,
         CancellationToken cancellationToken = default) =>
         _inner.RearmApprovalAsync(jobId, exactScope, cancellationToken);
+
+    /// <summary>
+    /// Narrow authority-preserving adapter used only to compose the production BrowserHostRuntime
+    /// behind this evidence decorator. Every call is a direct delegation; no approval, retry,
+    /// recovery or browser-state semantics are introduced here.
+    /// </summary>
+    private sealed class BrowserHostAdapter : ICrashConsistentBrowserGoalHost
+    {
+        private readonly BrowserHostRuntime _host;
+
+        public BrowserHostAdapter(BrowserHostRuntime host) =>
+            _host = host ?? throw new ArgumentNullException(nameof(host));
+
+        public Task<BrowserObservation> ObserveAsync(CancellationToken cancellationToken = default) =>
+            _host.ObserveAsync(cancellationToken);
+
+        public Task<BrowserJobOutcome> StartActionAsync(BrowserAction action, CancellationToken cancellationToken = default) =>
+            _host.StartActionAsync(action, cancellationToken);
+
+        public Task<BrowserJobOutcome> CreateActionAsync(Guid jobId, BrowserAction action, CancellationToken cancellationToken = default) =>
+            _host.CreateActionAsync(jobId, action, cancellationToken);
+
+        public Task<BrowserJobOutcome> AdvanceActionAsync(Guid jobId, CancellationToken cancellationToken = default) =>
+            _host.AdvanceActionAsync(jobId, cancellationToken);
+
+        public Task<BrowserJobOutcome?> GetAsync(Guid jobId, CancellationToken cancellationToken = default) =>
+            _host.GetAsync(jobId, cancellationToken);
+
+        public Task<BrowserJobOutcome> RearmApprovalAsync(Guid jobId, string exactScope, CancellationToken cancellationToken = default) =>
+            _host.RearmApprovalAsync(jobId, exactScope, cancellationToken);
+
+        public Task<BrowserJobOutcome> ApproveAndResumeAsync(Guid jobId, string exactScope, CancellationToken cancellationToken = default) =>
+            _host.ApproveAndResumeAsync(jobId, exactScope, cancellationToken);
+
+        public Task<BrowserJobOutcome> CancelAsync(Guid jobId, CancellationToken cancellationToken = default) =>
+            _host.CancelAsync(jobId, cancellationToken);
+    }
 }

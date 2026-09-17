@@ -63,6 +63,14 @@ public sealed class BrowserSafetyPolicy
         };
     }
 
+    public BrowserActionDecision EvaluateObservedLocation(Uri uri)
+    {
+        ArgumentNullException.ThrowIfNull(uri);
+        return IsSafeWebUri(uri)
+            ? Low("Observed browser location uses an allowed transport.")
+            : Block("Browser reached an unsafe location after an action. Further autonomous interaction is blocked.");
+    }
+
     private static BrowserActionDecision Low(string reason) =>
         new(BrowserRiskLevel.Low, RequiresApproval: false, Allowed: true, reason);
 

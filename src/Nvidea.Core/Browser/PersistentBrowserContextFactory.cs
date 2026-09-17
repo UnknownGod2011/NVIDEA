@@ -21,22 +21,9 @@ internal static class PersistentBrowserContextFactory
         PlaywrightBrowserDriverOptions driverOptions,
         bool headless,
         CancellationToken cancellationToken = default) =>
-        LaunchAsync(
-            playwright,
-            stateDirectory,
-            startUri,
-            driverOptions,
-            headless,
-            new BrowserDownloadQuarantineOptions(),
-            stagingOptions: null,
-            cancellationToken: cancellationToken);
+        LaunchAsync(playwright, stateDirectory, startUri, driverOptions, headless,
+            new BrowserDownloadQuarantineOptions(), stagingOptions: null, cancellationToken: cancellationToken);
 
-    /// <summary>
-    /// Internal configuration seam used by deterministic integration coverage and composition tests.
-    /// Production callers continue through the public overload and therefore retain conservative
-    /// default quotas. Keeping this overload internal prevents UI/model code from casually widening
-    /// transient or retained download limits at runtime.
-    /// </summary>
     internal static async Task<PersistentBrowserContextSession> LaunchAsync(
         IPlaywright playwright,
         string stateDirectory,
@@ -54,16 +41,8 @@ internal static class PersistentBrowserContextFactory
         var stateLease = StateDirectoryLease.Acquire(fullStateDirectory);
         try
         {
-            return await LaunchOwnedAsync(
-                playwright,
-                fullStateDirectory,
-                startUri,
-                driverOptions,
-                headless,
-                quarantineOptions,
-                stagingOptions,
-                stateLease,
-                cancellationToken).ConfigureAwait(false);
+            return await LaunchOwnedAsync(playwright, fullStateDirectory, startUri, driverOptions, headless,
+                quarantineOptions, stagingOptions, stateLease, cancellationToken).ConfigureAwait(false);
         }
         catch
         {
@@ -72,12 +51,6 @@ internal static class PersistentBrowserContextFactory
         }
     }
 
-    /// <summary>
-    /// Takes ownership of an already-acquired state-directory lease. This seam lets higher-level
-    /// composition acquire single-owner state before starting the Playwright transport while keeping
-    /// exactly one lease for the persistent-context lifetime. The lease is always released on failed
-    /// initialization and otherwise remains attached to the Chromium context until Close.
-    /// </summary>
     internal static async Task<PersistentBrowserContextSession> LaunchOwnedAsync(
         IPlaywright playwright,
         string stateDirectory,
@@ -90,7 +63,6 @@ internal static class PersistentBrowserContextFactory
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(stateLease);
-
         IBrowserContext? context = null;
         try
         {
@@ -99,7 +71,6 @@ internal static class PersistentBrowserContextFactory
             ArgumentNullException.ThrowIfNull(driverOptions);
             ArgumentNullException.ThrowIfNull(quarantineOptions);
             quarantineOptions.Validate();
-
             if (string.IsNullOrWhiteSpace(stateDirectory))
                 throw new ArgumentException("State directory is required.", nameof(stateDirectory));
 
@@ -111,13 +82,9 @@ internal static class PersistentBrowserContextFactory
             var normalizedRequested = Path.TrimEndingDirectorySeparator(fullStateDirectory);
             var normalizedOwned = Path.TrimEndingDirectorySeparator(Path.GetFullPath(stateLease.StateDirectory));
             if (!string.Equals(normalizedRequested, normalizedOwned, StringComparison.OrdinalIgnoreCase))
-            {
-                throw new InvalidOperationException(
-                    "Transferred browser state lease does not own the requested NVIDEA state directory.");
-            }
+                throw new InvalidOperationException("Transferred browser state lease does not own the requested NVIDEA state directory.");
 
             cancellationToken.ThrowIfCancellationRequested();
-
             var profileDirectory = BrowserProfileOwnership.PrepareOwnedProfile(fullStateDirectory);
             BrowserProfileOwnership.ValidateOwnedProfile(fullStateDirectory, profileDirectory);
 
@@ -129,25 +96,18 @@ internal static class PersistentBrowserContextFactory
             var staging = new BrowserDownloadStagingGuard(fullStateDirectory, effectiveStagingOptions);
             staging.ReclaimStartupLeftovers();
 
-            context = await playwright.Chromium.LaunchPersistentContextAsync(
-                profileDirectory,
+            context = await playwright.Chromium.LaunchPersistentContextAsync(profileDirectory,
                 new BrowserTypeLaunchPersistentContextOptions
                 {
                     Headless = headless,
                     AcceptDownloads = true,
                     DownloadsPath = staging.StagingDirectory,
-                    // Playwright documents that request routing does not intercept Service Worker
-                    // traffic. Blocking workers is therefore part of the transport boundary rather
-                    // than an optimization: authenticated state must not bypass the HTTPS policy.
                     ServiceWorkers = ServiceWorkerPolicy.Block
                 }).WaitAsync(cancellationToken).ConfigureAwait(false);
 
             context.Close += (_, _) => stateLease.Dispose();
 
-            // Enforce transport before network dispatch for every page/popup in this context. Context
-            // routing covers redirects as separate requests; unsafe requests are aborted before cookies,
-            // form data, or authenticated state can cross a remote plaintext channel. The executor's
-            // post-action observed-location check remains as independent defense in depth.
+            // HTTP(S) requests, including redirects and popup traffic, are checked before dispatch.
             await context.RouteAsync("**/*", async route =>
             {
                 if (Uri.TryCreate(route.Request.Url, UriKind.Absolute, out var requestUri)
@@ -156,8 +116,28 @@ internal static class PersistentBrowserContextFactory
                     await route.ContinueAsync().ConfigureAwait(false);
                     return;
                 }
-
                 await route.AbortAsync("blockedbyclient").ConfigureAwait(false);
+            }).WaitAsync(cancellationToken).ConfigureAwait(false);
+
+            // RouteAsync does not govern WebSocket handshakes. Playwright's WebSocket routing is
+            // therefore a separate mandatory transport boundary. Secure WSS and loopback WS connect
+            // normally; remote plaintext WS and malformed/other schemes are closed without ever
+            // calling ConnectToServer(), which Playwright documents as the operation that opens the
+            // real server-side connection. Register before creating the fresh agent page.
+            await context.RouteWebSocketAsync("**/*", async socket =>
+            {
+                if (Uri.TryCreate(socket.Url, UriKind.Absolute, out var socketUri)
+                    && transportPolicy.EvaluateWebSocketTransport(socketUri).Allowed)
+                {
+                    socket.ConnectToServer();
+                    return;
+                }
+
+                await socket.CloseAsync(new WebSocketRouteCloseOptions
+                {
+                    Code = 1008,
+                    Reason = "Blocked by NVIDEA transport policy"
+                }).ConfigureAwait(false);
             }).WaitAsync(cancellationToken).ConfigureAwait(false);
 
             foreach (var existing in context.Pages.ToArray())

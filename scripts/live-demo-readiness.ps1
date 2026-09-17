@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [switch]$RequireCloudResearch
+    [switch]$RequireCloudResearch,
+    [switch]$ValidateBuild
 )
 
 Set-StrictMode -Version Latest
@@ -14,7 +15,6 @@ function Test-SecretPresence([string]$Name) {
     $value = [Environment]::GetEnvironmentVariable($Name)
     if ([string]::IsNullOrWhiteSpace($value)) {
         $script:failures.Add("Missing required environment variable: $Name")
-        return
     }
     # Deliberately never print, persist, hash, measure, or otherwise expose secret material.
 }
@@ -25,22 +25,43 @@ function Test-ConfigPresence([string]$Name) {
     }
 }
 
+function Test-ConfiguredFile([string]$Name) {
+    $configuredPath = [Environment]::GetEnvironmentVariable($Name)
+    if ([string]::IsNullOrWhiteSpace($configuredPath)) {
+        $script:failures.Add("Missing required file configuration variable: $Name")
+        return
+    }
+
+    # Validate only filesystem metadata. Never read, hash, size, or print private-key material.
+    try {
+        $resolved = Resolve-Path -LiteralPath $configuredPath -ErrorAction Stop
+        if (-not (Test-Path -LiteralPath $resolved.Path -PathType Leaf)) {
+            $script:failures.Add("Configured file for $Name is not a regular file.")
+        }
+    }
+    catch {
+        $script:failures.Add("Configured file for $Name does not exist or is inaccessible.")
+    }
+}
+
 if ($PSVersionTable.PSVersion.Major -lt 7) {
     $failures.Add('PowerShell 7+ is required for recording-day tooling.')
 }
 if (-not $IsWindows) {
     $failures.Add('The judge/demo desktop flow must be validated on Windows.')
 }
-if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
+
+$dotnetAvailable = $null -ne (Get-Command dotnet -ErrorAction SilentlyContinue)
+if (-not $dotnetAvailable) {
     $failures.Add('dotnet is not available on PATH.')
 }
 else {
-    $sdkText = (& dotnet --version 2>$null | Select-Object -First 1)
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($sdkText)) {
-        $failures.Add('dotnet --version failed.')
+    $sdkLines = @(& dotnet --list-sdks 2>$null)
+    if ($LASTEXITCODE -ne 0) {
+        $failures.Add('dotnet --list-sdks failed.')
     }
-    elseif ($sdkText -notmatch '^8\.') {
-        $warnings.Add("Expected .NET 8 SDK for the current solution; found $sdkText.")
+    elseif (-not ($sdkLines | Where-Object { $_ -match '^8\.' })) {
+        $failures.Add('.NET 8 SDK is required but was not found by dotnet --list-sdks.')
     }
 }
 
@@ -73,13 +94,16 @@ if ($RequireCloudResearch) {
         'NVIDEA_LIVE_SECRET_TAVILY_API_KEY_ID',
         'NVIDEA_LIVE_SECRET_TAVILY_API_KEY_VERSION_ID',
         'NVIDEA_LIVE_SECRET_WORKER_PRIVATE_KEY_ID',
-        'NVIDEA_LIVE_SECRET_WORKER_PRIVATE_KEY_VERSION_ID',
+        'NVIDEA_LIVE_SECRET_WORKER_PRIVATE_KEY_VERSION_ID'
+    ) | ForEach-Object { Test-ConfigPresence $_ }
+
+    @(
         'NVIDEA_LIVE_WORKER_PUBLIC_KEY_PEM_FILE',
         'NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE',
         'NVIDEA_LIVE_CLIENT_RESULT_PRIVATE_KEY_PEM_FILE'
-    ) | ForEach-Object { Test-ConfigPresence $_ }
+    ) | ForEach-Object { Test-ConfiguredFile $_ }
 
-    # Provider credentials are presence-checked only after topology names.
+    # Provider credentials are presence-checked only after topology and key-file checks.
     @(
         'NVIDEA_LIVE_SERVERLESS_ACCESS_TOKEN',
         'NVIDEA_LIVE_OBJECT_STORAGE_ACCESS_KEY_ID',
@@ -87,10 +111,20 @@ if ($RequireCloudResearch) {
     ) | ForEach-Object { Test-SecretPresence $_ }
 }
 
+# Optional compilation gate deliberately uses --no-restore so readiness cannot silently
+# download packages or turn a local preflight into an unexpected network operation.
+if ($ValidateBuild -and $dotnetAvailable -and (Test-Path -LiteralPath $solution -PathType Leaf)) {
+    Write-Host 'Validating existing restored solution with dotnet build --no-restore...'
+    & dotnet build $solution --no-restore --nologo --verbosity minimal
+    if ($LASTEXITCODE -ne 0) {
+        $failures.Add('dotnet build --no-restore failed. Restore dependencies explicitly before recording, then rerun readiness.')
+    }
+}
+
 Write-Host "NVIDEA live demo readiness: $($failures.Count) blocker(s), $($warnings.Count) warning(s)."
 foreach ($warning in $warnings) { Write-Warning $warning }
 foreach ($failure in $failures) { Write-Error $failure -ErrorAction Continue }
 
 if ($failures.Count -gt 0) { exit 1 }
-Write-Host 'NVIDEA live demo readiness PASS (configuration presence only; no provider/network calls were made).'
+Write-Host 'NVIDEA live demo readiness PASS (local configuration/build checks only; no provider/network calls were made by this script).'
 exit 0

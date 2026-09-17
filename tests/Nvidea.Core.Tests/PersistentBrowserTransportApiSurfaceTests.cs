@@ -32,4 +32,16 @@ public sealed class PersistentBrowserTransportApiSurfaceTests
         Assert.All(launchMethods, method =>
             Assert.Equal(typeof(PersistentBrowserContextSession), method.ReturnType.GetGenericArguments().Single()));
     }
+
+    [Fact]
+    public void TransportPolicy_AllowsHttpsAndLoopbackButRejectsRemotePlaintext()
+    {
+        var policy = new BrowserSafetyPolicy();
+
+        Assert.True(policy.EvaluateObservedLocation(new Uri("https://example.com/path")).Allowed);
+        Assert.True(policy.EvaluateObservedLocation(new Uri("http://localhost:8080/path")).Allowed);
+        Assert.True(policy.EvaluateObservedLocation(new Uri("http://127.0.0.1:8080/path")).Allowed);
+        Assert.False(policy.EvaluateObservedLocation(new Uri("http://example.com/path")).Allowed);
+        Assert.False(policy.EvaluateObservedLocation(new Uri("file:///C:/sensitive.txt")).Allowed);
+    }
 }

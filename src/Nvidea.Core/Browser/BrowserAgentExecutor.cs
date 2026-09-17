@@ -4,6 +4,8 @@ public sealed class BrowserAgentExecutor
 {
     private const string DriverFailureDiagnostic =
         "Browser driver action failed before verification completed. Raw driver/site diagnostics are quarantined.";
+    private const string UnsafeLocationDiagnostic =
+        "Browser reached an unsafe location after the action. Verification and further autonomous interaction are blocked.";
 
     private readonly IBrowserDriver _driver;
     private readonly BrowserSafetyPolicy _safety;
@@ -90,6 +92,16 @@ public sealed class BrowserAgentExecutor
             await _driver.ExecuteAsync(action, cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             var after = await _driver.ObserveAsync(cancellationToken).ConfigureAwait(false);
+            var observedLocationDecision = _safety.EvaluateObservedLocation(after.Url);
+            if (!observedLocationDecision.Allowed)
+            {
+                return new BrowserActionReceipt(
+                    actionId, action, observedLocationDecision, started, DateTimeOffset.UtcNow,
+                    DriverReportedSuccess: true, Verified: false,
+                    VerificationDetail: UnsafeLocationDiagnostic,
+                    before.Url, after.Url, UnsafeLocationDiagnostic);
+            }
+
             var verification = await _verifier.VerifyAsync(action, before, after, cancellationToken).ConfigureAwait(false);
 
             return new BrowserActionReceipt(

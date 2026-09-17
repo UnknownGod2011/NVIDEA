@@ -14,12 +14,32 @@ function Assert-RepositoryFilePath {
     return $fullPath
 }
 function Get-Sha256Hex { param([Parameter(Mandatory)][string]$Path) return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
+function Assert-NoDuplicateJsonProperties {
+    param([Parameter(Mandatory)][System.Text.Json.JsonElement]$Element, [Parameter(Mandatory)][string]$Label, [string]$JsonPath = '$')
+    if ($Element.ValueKind -eq [System.Text.Json.JsonValueKind]::Object) {
+        $names = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach ($property in $Element.EnumerateObject()) {
+            if (-not $names.Add($property.Name)) { throw "$Label contains duplicate JSON property '$($property.Name)' at $JsonPath." }
+            Assert-NoDuplicateJsonProperties -Element $property.Value -Label $Label -JsonPath "$JsonPath.$($property.Name)"
+        }
+    }
+    elseif ($Element.ValueKind -eq [System.Text.Json.JsonValueKind]::Array) {
+        $index = 0
+        foreach ($item in $Element.EnumerateArray()) { Assert-NoDuplicateJsonProperties -Element $item -Label $Label -JsonPath "$JsonPath[$index]"; $index++ }
+    }
+}
 function Read-StrictEvidenceJson {
     param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Label)
     $item = Get-Item -LiteralPath $Path
     if ($item.Length -gt 1MB) { throw "$Label output exceeds the 1 MiB semantic-verification limit." }
-    try { return (Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop) }
-    catch { throw "$Label produced invalid JSON evidence: $($_.Exception.Message)" }
+    $raw = Get-Content -LiteralPath $Path -Raw -Encoding UTF8
+    try {
+        $options = [System.Text.Json.JsonDocumentOptions]::new(); $options.AllowTrailingCommas = $false; $options.CommentHandling = [System.Text.Json.JsonCommentHandling]::Disallow; $options.MaxDepth = 64
+        $document = [System.Text.Json.JsonDocument]::Parse($raw, $options)
+        try { Assert-NoDuplicateJsonProperties -Element $document.RootElement -Label $Label } finally { $document.Dispose() }
+        return ($raw | ConvertFrom-Json -ErrorAction Stop)
+    }
+    catch { throw "$Label produced invalid or ambiguous JSON evidence: $($_.Exception.Message)" }
 }
 function Assert-PassedEvidence {
     param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Label, [Parameter(Mandatory)][int]$ExpectedSchemaVersion)

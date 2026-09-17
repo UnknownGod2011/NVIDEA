@@ -16,36 +16,41 @@ Implemented the Windows shell, Nebius/Nemotron inference, layered memory, Tavily
 ### 2026-09-17 — local submission evidence hardening
 Added manifest-driven checklist generation and a zero-cost validator → checklist → positive evaluator → adversarial evaluator preflight. Hardened it with fresh artifact enforcement, semantic PASS checks, canonical manifest SHA-256 binding, run receipts, duplicate-property rejection, strict evidence allowlists, System.Text.Json prerequisite checks, process-level fault injection, and an independent receipt verifier. The independent verifier is mandatory before production PASS. Added static and behavioral receipt-tamper regressions without adding a production bypass/test hook. Added `scripts/test-submission-tooling.ps1` as the deterministic single entry point for all six zero-cost submission regressions, with optional repository-confined machine-readable evidence capture.
 
-### 2026-09-17 — recording-day readiness hardening (latest run)
+### 2026-09-17 — recording-day readiness hardening
+Added `scripts/live-demo-readiness.ps1` and strengthened it to require Windows, PowerShell 7+, an installed .NET 8 SDK, solution presence, Nebius/Tavily configuration, optional cloud-research topology/credential presence, accessible configured PEM files without reading their contents, and opt-in `dotnet build --no-restore` validation.
+
+### 2026-09-17 — demo contract drift gate (latest run)
 Completed:
-- Re-read this ledger completely and inspected current readiness tooling and recent commits before changing anything.
-- Strengthened `scripts/live-demo-readiness.ps1`: it now requires an installed .NET 8 SDK via `dotnet --list-sdks` rather than merely warning when the selected SDK is not 8.x.
-- Cloud-research PEM configuration is no longer presence-only: all three configured key-file paths must resolve to accessible regular files. The script intentionally never reads, hashes, sizes, or prints key material.
-- Added opt-in `-ValidateBuild`, which runs `dotnet build Nvidea.sln --no-restore --nologo --verbosity minimal`. `--no-restore` is deliberate so this local readiness gate cannot silently download NuGet packages or become an unexpected network operation.
-- Re-verified repository metadata as exactly `UnknownGod2011/NVIDEA` immediately before each GitHub mutation. No other repository was mutated.
+- Re-read this ledger completely, inspected recent commits, the readiness script, `docs/demo-package.json`, and the judge runbook before changing code.
+- Extended `scripts/live-demo-readiness.ps1` with an always-on, zero-network demo-package validation gate.
+- The gate parses the schema-v2 manifest and blocks recording readiness when the manifest is invalid JSON, missing, uses the wrong schema, exceeds 180 seconds, has empty/duplicate beat IDs, non-positive beat durations, missing/out-of-repository feature paths, or a beat-duration total beyond the declared/hackathon limit.
+- Pinned the exact six production-observed runtime milestones and their required order: Nemotron inference → memory influence → Tavily validated citation → browser verified goal → consequential approval → Nebius background execution. Manifest drift can therefore no longer silently produce a readiness PASS.
+- Re-verified repository metadata as exactly `UnknownGod2011/NVIDEA` immediately before every GitHub mutation. No other repository was mutated.
 
 Files changed this run:
 - `scripts/live-demo-readiness.ps1`
 - `progress.md`
 
 Validation/evidence:
-- Source-level inspection confirms the strengthened gate preserves secret-value non-disclosure and only inspects key-file filesystem metadata.
-- The build gate is explicit/opt-in and no-restore; a missing restore therefore fails with a remediation rather than initiating package download.
-- Fresh official Nebius/Tavily search returned no usable results this run, so no provider/API behavior was changed based on stale assumptions.
+- Current `docs/demo-package.json` declares schemaVersion 2, a 180-second maximum, seven beats totaling 168 seconds, and the exact six expected runtime milestones in the required order.
+- Current manifest feature paths inspected are repository-relative architecture paths; the new gate resolves and confines every path under the NVIDEA repository before accepting it.
+- Fresh official Nebius/Tavily web searches returned no usable official results this run, so provider/API behavior was not changed based on guesses.
 - No executable Windows PASS is claimed in this connector environment.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, Playwright, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
 - Secret environment values remain presence-only and are never printed, persisted, hashed, or measured.
 - Private/public PEM files are checked for existence/accessibility without reading content or exposing configured paths in errors.
+- Demo feature paths are canonicalized and must remain inside the repository, preventing the manifest from turning readiness into an arbitrary filesystem existence oracle.
 - Build validation cannot implicitly restore dependencies because it is pinned to `--no-restore`.
 - A readiness PASS remains explicitly local evidence, not provider-live evidence.
 - No production runtime/provider adapter was weakened or replaced.
 
 ## Known blockers / risks
 - The complete unified submission suite still needs executable confirmation on Windows/PowerShell 7.
-- The strengthened live readiness preflight, including the no-restore build gate, needs execution on the actual Windows recording machine.
+- The strengthened live readiness preflight, including the no-restore build and demo-contract gates, needs execution on the actual Windows recording machine.
 - Unified judging verification and live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
+- Provider docs could not be freshly verified from official search results in this run; no API assumptions were changed.
 
 ## Single Best Next Task
 On the actual Windows recording machine run `pwsh -File scripts/live-demo-readiness.ps1 -RequireCloudResearch -ValidateBuild`; resolve every named blocker without copying secret values into logs. Then run the unified submission suite and, once both local gates pass, execute the existing live Nebius/Tavily/authenticated-browser judge path and capture production-observed evidence for the <=3 minute demo. Do not add more local harness layers unless those executions reveal a concrete defect.

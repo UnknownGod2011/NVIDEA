@@ -53,7 +53,9 @@ if([string]$r.scope-ne'local-zero-cost'-or$r.providerLiveEvidence-isnot[bool]-or
 if([string]$r.manifest.path-ne'docs/demo-package.json'){throw 'Receipt manifest path is not canonical.'}
 $manifest=Resolve-RepositoryRelativeFile $r.manifest.path $root $prefix
 if([string]$r.manifest.sha256-notmatch'^[0-9a-f]{64}$'-or-not[string]::Equals([string]$r.manifest.sha256,(Get-Sha256Hex $manifest),[StringComparison]::Ordinal)){throw 'Receipt manifest SHA-256 mismatch.'}
-$expected=@('artifacts/preflight/demo-package-validation.json','artifacts/preflight/recording-checklist.md','artifacts/preflight/personal-ai-positive.json','artifacts/preflight/personal-ai-adversarial.json')
+$receiptDir=[IO.Path]::GetDirectoryName($receiptFull);$relativeDir=[IO.Path]::GetRelativePath($root,$receiptDir).Replace('\','/').TrimEnd('/')
+$expectedNames=@('demo-package-validation.json','recording-checklist.md','personal-ai-positive.json','personal-ai-adversarial.json')
+$expected=@($expectedNames|ForEach-Object { if($relativeDir-eq'.'){$_}else{"$relativeDir/$_"} })
 $artifacts=@($r.artifacts);if($artifacts.Count-ne$expected.Count){throw "Receipt must bind exactly $($expected.Count) artifacts."}
 $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 for($i=0;$i-lt$artifacts.Count;$i++){

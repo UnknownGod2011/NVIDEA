@@ -14,39 +14,38 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 Implemented the Windows shell, Nebius/Nemotron inference, layered memory, Tavily research, permission/audit engine, durable jobs, Playwright browser execution, DPAPI state protection, encrypted remote execution, local voice, deployment/evaluator tooling, extensive crash-consistency hardening, judge-visible runtime evidence, a 168-second deterministic demo, schema-v2 per-beat execution contracts, hardened validator/regressions, and manifest/runbook alignment.
 
 ### 2026-09-17 — local submission evidence hardening
-Added manifest-driven checklist generation and a zero-cost validator → checklist → positive evaluator → adversarial evaluator preflight. Hardened it with fresh artifact enforcement, semantic PASS checks, canonical manifest SHA-256 binding, run receipts, duplicate-property rejection, strict evidence allowlists, System.Text.Json prerequisite checks, process-level fault injection, and an independent receipt verifier. The independent verifier is mandatory before production PASS.
+Added manifest-driven checklist generation and a zero-cost validator → checklist → positive evaluator → adversarial evaluator preflight. Hardened it with fresh artifact enforcement, semantic PASS checks, canonical manifest SHA-256 binding, run receipts, duplicate-property rejection, strict evidence allowlists, System.Text.Json prerequisite checks, process-level fault injection, and an independent receipt verifier. The independent verifier is mandatory before production PASS. Added static and behavioral receipt-tamper regressions without adding a production bypass/test hook.
 
-### 2026-09-17 — behavioral receipt tamper regression (latest run)
+### 2026-09-17 — unified zero-cost regression entry point (latest run)
 Completed:
-- Re-read this ledger completely and inspected the production preflight and existing fake-dotnet behavioral harness before changing anything.
-- Added `scripts/tests/preflight-receipt-tamper.behavior.ps1`.
-- The harness creates an isolated copy of the real production preflight, an unmodified copy of the real receipt verifier, canonical demo manifest, deterministic fake-dotnet producer fixtures, and a test-only verifier wrapper. No production bypass/test hook was added.
-- The wrapper tampers immediately after the real preflight creates its receipt and immediately before delegating to the untouched verifier.
-- Behavioral cases cover receipt artifact SHA mutation, receipt artifact length mutation, invalid scope, forged provider-live flag, traversal/path substitution, and post-receipt artifact-content mutation. Every case requires a terminating failure and explicitly asserts the production PASS marker is absent.
-- Added an untampered custom-artifact-directory control case requiring the real production PASS marker and receipt materialization, preserving the custom directory contract.
-- Explicitly verified repository metadata as exactly `UnknownGod2011/NVIDEA` immediately before every GitHub mutation. No other repository was mutated.
+- Re-read this ledger completely and enumerated the current submission regression inventory before changing anything.
+- Added `scripts/test-submission-tooling.ps1` as the single lean entry point for all six local submission contracts/behavior regressions.
+- Runner requires PowerShell 7+, verifies every expected test exists before execution, confines resolved test paths beneath the repository root, executes tests in deterministic order, records duration/failure summaries, fails fast by default, and supports `-ContinueOnFailure` for diagnostic recording-machine runs.
+- The runner performs no provider/network/GitHub Actions operation itself; child regressions remain the existing fake/local test suite.
+- It refuses to report aggregate PASS unless every expected regression executed and passed.
+- Explicitly re-verified repository metadata as exactly `UnknownGod2011/NVIDEA` immediately before each GitHub mutation. No other repository was mutated.
 
 Files changed this run:
-- `scripts/tests/preflight-receipt-tamper.behavior.ps1` (new)
+- `scripts/test-submission-tooling.ps1` (new)
 - `progress.md`
 
 Validation/evidence:
-- Source-level review confirms the harness delegates tampered evidence to an unmodified copy of `verify-preflight-receipt.ps1` and executes an isolated copy of `submission-preflight.ps1`.
-- The harness is network/provider free and uses only local fake producer fixtures.
-- No executable PowerShell/.NET PASS is claimed in this connector environment; the new behavioral harness must still be executed on the Windows/PowerShell 7 recording machine.
+- GitHub inventory confirms the runner covers the complete current six-file `scripts/tests` submission regression set: production contract, process behavior, duplicate JSON, schema shape, receipt tamper contract, and receipt tamper behavior.
+- Source-level review confirms no network/provider commands are introduced by the runner.
+- No executable PowerShell/.NET PASS is claimed in this connector environment; the unified entry point and its child regressions still require execution on the Windows/PowerShell 7 recording machine.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, Playwright, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
-- The test architecture avoids weakening production merely for fault injection: all tampering capability exists only in an isolated test copy/wrapper.
-- Receipt verification is now behaviorally specified to fail closed for both metadata tampering and artifact mutation after receipt creation.
-- Path substitution is tested alongside hash/length changes, and local receipts remain forbidden from claiming provider-live evidence.
-- This remains a local consistency mechanism, not authenticity against a fully compromised machine; the receipt is intentionally unsigned.
-- Provider-live evidence remains explicitly outside this zero-cost preflight and must not be inferred from its PASS.
+- The unified runner is intentionally orchestration-only and does not weaken production verification or introduce test hooks.
+- Test discovery is explicit rather than wildcard-based, preventing an unexpected newly dropped script from silently joining the trusted suite.
+- Resolved test paths must remain beneath the repository root before invocation.
+- Fail-fast is the safe default; diagnostic continuation is explicit and aggregate PASS remains impossible if any test fails.
+- Receipt verification remains a local consistency mechanism, not authenticity against a fully compromised machine; provider-live evidence remains outside this zero-cost suite.
 
 ## Known blockers / risks
-- The new behavioral harness needs executable confirmation on Windows/PowerShell 7; connector-only source inspection is not execution evidence.
-- Existing process harnesses likewise need a recording-machine run against the mandatory verifier gate.
+- The complete unified suite needs executable confirmation on Windows/PowerShell 7; connector-only source inspection is not execution evidence.
+- Any portability/runtime defect discovered there must be fixed before relying on the suite for recording-day confidence.
 - Unified judging verification and live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
 
 ## Single Best Next Task
-Run and harden the complete zero-cost PowerShell regression suite on the actual Windows/PowerShell 7 recording environment (including the new receipt-tamper behavioral harness), fix any portability/runtime defects found, and produce a single lean `scripts/test-submission-tooling.ps1` entry point that executes all local submission contracts/behavior tests without invoking providers or GitHub Actions.
+Execute `scripts/test-submission-tooling.ps1 -ContinueOnFailure` on the actual Windows/PowerShell 7 recording environment, fix every portability/runtime failure found, then run it again fail-fast and preserve the real PASS output as local recording-day evidence. After that, return focus to live end-to-end judge/demo validation rather than adding more zero-cost harness layers unless a concrete defect is discovered.

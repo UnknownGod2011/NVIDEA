@@ -71,6 +71,19 @@ public sealed class BrowserSafetyPolicy
             : Block("Browser reached an unsafe location after an action. Further autonomous interaction is blocked.");
     }
 
+    /// <summary>
+    /// Applies the browser transport invariant to WebSocket handshakes. Secure WSS is permitted;
+    /// plaintext WS is limited to loopback development endpoints. This is separate from page-location
+    /// evaluation because WebSocket URLs use ws/wss schemes and do not become the page URL.
+    /// </summary>
+    public BrowserActionDecision EvaluateWebSocketTransport(Uri uri)
+    {
+        ArgumentNullException.ThrowIfNull(uri);
+        return IsSafeWebSocketUri(uri)
+            ? Low("WebSocket uses an allowed transport.")
+            : Block("Remote plaintext or otherwise unsafe WebSocket transport is blocked.");
+    }
+
     private static BrowserActionDecision Low(string reason) =>
         new(BrowserRiskLevel.Low, RequiresApproval: false, Allowed: true, reason);
 
@@ -94,6 +107,17 @@ public sealed class BrowserSafetyPolicy
         // Preserve local development/test flows without permitting credentials, cookies,
         // form data, or authenticated browser state to cross a remote plaintext channel.
         return uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback;
+    }
+
+    private static bool IsSafeWebSocketUri(Uri uri)
+    {
+        if (!uri.IsAbsoluteUri)
+            return false;
+
+        if (string.Equals(uri.Scheme, "wss", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return string.Equals(uri.Scheme, "ws", StringComparison.OrdinalIgnoreCase) && uri.IsLoopback;
     }
 
     private static string BuildTargetText(BrowserAction action, BrowserObservation observation)

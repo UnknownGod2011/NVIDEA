@@ -23,7 +23,7 @@ public sealed class BrowserSafetyPolicy
         if (action.Kind == BrowserActionKind.Navigate && action.Destination is not null)
         {
             if (!IsSafeWebUri(action.Destination))
-                return Block("Navigation requires HTTPS. Plain HTTP is allowed only for loopback development endpoints; script/data/file and remote plaintext URLs are blocked.");
+                return Block("Navigation requires HTTPS without embedded URL credentials. Plain HTTP is allowed only for loopback development endpoints; script/data/file, credential-bearing, and remote plaintext URLs are blocked.");
         }
 
         if (action.Kind == BrowserActionKind.Upload)
@@ -73,15 +73,16 @@ public sealed class BrowserSafetyPolicy
 
     /// <summary>
     /// Applies the browser transport invariant to WebSocket handshakes. Secure WSS is permitted;
-    /// plaintext WS is limited to loopback development endpoints. This is separate from page-location
-    /// evaluation because WebSocket URLs use ws/wss schemes and do not become the page URL.
+    /// plaintext WS is limited to loopback development endpoints. URL user-info is never permitted:
+    /// credentials belong in explicit browser/session mechanisms, not transport destinations where
+    /// they can leak through plans, logs, redirects, history, referrers, or audit evidence.
     /// </summary>
     public BrowserActionDecision EvaluateWebSocketTransport(Uri uri)
     {
         ArgumentNullException.ThrowIfNull(uri);
         return IsSafeWebSocketUri(uri)
             ? Low("WebSocket uses an allowed transport.")
-            : Block("Remote plaintext or otherwise unsafe WebSocket transport is blocked.");
+            : Block("Credential-bearing, remote plaintext, or otherwise unsafe WebSocket transport is blocked.");
     }
 
     private static BrowserActionDecision Low(string reason) =>
@@ -98,7 +99,7 @@ public sealed class BrowserSafetyPolicy
 
     private static bool IsSafeWebUri(Uri uri)
     {
-        if (!uri.IsAbsoluteUri)
+        if (!uri.IsAbsoluteUri || HasEmbeddedCredentials(uri))
             return false;
 
         if (uri.Scheme == Uri.UriSchemeHttps)
@@ -111,7 +112,7 @@ public sealed class BrowserSafetyPolicy
 
     private static bool IsSafeWebSocketUri(Uri uri)
     {
-        if (!uri.IsAbsoluteUri)
+        if (!uri.IsAbsoluteUri || HasEmbeddedCredentials(uri))
             return false;
 
         if (string.Equals(uri.Scheme, "wss", StringComparison.OrdinalIgnoreCase))
@@ -119,6 +120,8 @@ public sealed class BrowserSafetyPolicy
 
         return string.Equals(uri.Scheme, "ws", StringComparison.OrdinalIgnoreCase) && uri.IsLoopback;
     }
+
+    private static bool HasEmbeddedCredentials(Uri uri) => !string.IsNullOrEmpty(uri.UserInfo);
 
     private static string BuildTargetText(BrowserAction action, BrowserObservation observation)
     {

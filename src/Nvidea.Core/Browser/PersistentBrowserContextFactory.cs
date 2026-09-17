@@ -67,8 +67,6 @@ internal static class PersistentBrowserContextFactory
         }
         catch
         {
-            // LaunchOwnedAsync normally owns failure cleanup. Keep this idempotent outer guard so even
-            // pre-body argument/runtime validation can never strand a lease acquired by this wrapper.
             stateLease.Dispose();
             throw;
         }
@@ -104,8 +102,10 @@ internal static class PersistentBrowserContextFactory
 
             if (string.IsNullOrWhiteSpace(stateDirectory))
                 throw new ArgumentException("State directory is required.", nameof(stateDirectory));
-            if (!startUri.IsAbsoluteUri || startUri.Scheme is not ("http" or "https"))
-                throw new ArgumentException("Browser start URI must be absolute HTTP(S).", nameof(startUri));
+
+            var transportPolicy = new BrowserSafetyPolicy();
+            if (!transportPolicy.EvaluateObservedLocation(startUri).Allowed)
+                throw new ArgumentException("Browser start URI must use HTTPS or HTTP loopback.", nameof(startUri));
 
             var fullStateDirectory = Path.GetFullPath(stateDirectory);
             var normalizedRequested = Path.TrimEndingDirectorySeparator(fullStateDirectory);
@@ -127,11 +127,6 @@ internal static class PersistentBrowserContextFactory
                 MaxPartialBytes: quarantineOptions.MaxSingleDownloadBytes);
             effectiveStagingOptions.Validate();
             var staging = new BrowserDownloadStagingGuard(fullStateDirectory, effectiveStagingOptions);
-
-            // No browser context exists yet, so every file in NVIDEA's dedicated Playwright staging
-            // directory is necessarily a crash/abnormal-shutdown leftover. Reclaim it before launch so
-            // stale bytes cannot consume the next transfer's transient quota. Reclamation itself is
-            // fail-closed and refuses recursive/reparse-point deletion.
             staging.ReclaimStartupLeftovers();
 
             context = await playwright.Chromium.LaunchPersistentContextAsync(
@@ -140,18 +135,31 @@ internal static class PersistentBrowserContextFactory
                 {
                     Headless = headless,
                     AcceptDownloads = true,
-                    DownloadsPath = staging.StagingDirectory
+                    DownloadsPath = staging.StagingDirectory,
+                    // Playwright documents that request routing does not intercept Service Worker
+                    // traffic. Blocking workers is therefore part of the transport boundary rather
+                    // than an optimization: authenticated state must not bypass the HTTPS policy.
+                    ServiceWorkers = ServiceWorkerPolicy.Block
                 }).WaitAsync(cancellationToken).ConfigureAwait(false);
 
-            // Tie state ownership to the actual Chromium context lifetime. Close is emitted for normal
-            // shutdown, browser closure, and browser crashes; StateDirectoryLease.Dispose is idempotent.
-            // Keep the local reference as well so a later initialization failure releases ownership even
-            // if context shutdown itself fails before emitting Close.
             context.Close += (_, _) => stateLease.Dispose();
 
-            // Chromium may restore pages from a previous persistent-context run. Keep the useful
-            // authenticated/profile state, but never trust restored tabs as current agent context.
-            // Closing these pages is not a site action and does not clear profile credentials.
+            // Enforce transport before network dispatch for every page/popup in this context. Context
+            // routing covers redirects as separate requests; unsafe requests are aborted before cookies,
+            // form data, or authenticated state can cross a remote plaintext channel. The executor's
+            // post-action observed-location check remains as independent defense in depth.
+            await context.RouteAsync("**/*", async route =>
+            {
+                if (Uri.TryCreate(route.Request.Url, UriKind.Absolute, out var requestUri)
+                    && transportPolicy.EvaluateObservedLocation(requestUri).Allowed)
+                {
+                    await route.ContinueAsync().ConfigureAwait(false);
+                    return;
+                }
+
+                await route.AbortAsync("blockedbyclient").ConfigureAwait(false);
+            }).WaitAsync(cancellationToken).ConfigureAwait(false);
+
             foreach (var existing in context.Pages.ToArray())
                 await SafeCloseAsync(existing).ConfigureAwait(false);
 

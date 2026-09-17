@@ -39,6 +39,9 @@ public sealed class PersistentBrowserRedirectIntegrationTests
                 redirectUri.AbsoluteUri,
                 new PageGotoOptions { WaitUntil = WaitUntilState.DOMContentLoaded, Timeout = 5_000 }));
 
+            await server.WaitForCountAsync("/redirect-to-credential-url", 1, TimeSpan.FromSeconds(2));
+            await Task.Delay(250); // Give any incorrectly dispatched redirect enough time to reach the server.
+
             Assert.Equal(1, server.Count("/redirect-to-credential-url"));
             Assert.Equal(destinationBefore, server.Count("/forbidden-destination"));
         }
@@ -73,6 +76,7 @@ public sealed class PersistentBrowserRedirectIntegrationTests
             await page.GotoAsync(server.UriFor("/allowed-destination").AbsoluteUri,
                 new PageGotoOptions { WaitUntil = WaitUntilState.DOMContentLoaded, Timeout = 5_000 });
 
+            await server.WaitForCountAsync("/allowed-destination", 1, TimeSpan.FromSeconds(2));
             Assert.Equal(1, server.Count("/allowed-destination"));
         }
         finally
@@ -132,6 +136,22 @@ public sealed class PersistentBrowserRedirectIntegrationTests
         {
             lock (_gate)
                 return _counts.TryGetValue(path, out var count) ? count : 0;
+        }
+
+        public async Task WaitForCountAsync(string path, int minimumCount, TimeSpan timeout)
+        {
+            using var timeoutCts = new CancellationTokenSource(timeout);
+            while (Count(path) < minimumCount)
+            {
+                try
+                {
+                    await Task.Delay(20, timeoutCts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
+                {
+                    throw new TimeoutException($"Timed out waiting for {path} to receive {minimumCount} request(s); observed {Count(path)}.");
+                }
+            }
         }
 
         private void Increment(string path)

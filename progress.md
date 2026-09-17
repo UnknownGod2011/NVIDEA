@@ -14,42 +14,42 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 Implemented the Windows shell, Nebius/Nemotron inference, layered memory, Tavily research, permission/audit engine, durable jobs, Playwright browser execution, DPAPI state protection, encrypted remote execution, local voice, deployment/evaluator tooling, extensive crash-consistency hardening, judge-visible runtime evidence, a 168-second deterministic demo, schema-v2 per-beat execution contracts, hardened validator/regressions, and manifest/runbook alignment.
 
 ### 2026-09-17 — manifest-driven judging and zero-cost preflight
-Added `Nvidea.DemoChecklistGenerator`, `scripts/submission-preflight.ps1`, source/process regressions, fresh artifact materialization, semantic evidence verification, canonical-manifest SHA-256 binding, and a per-invocation receipt binding the accepted local artifacts. The local preflight is validator → checklist → positive evaluator → adversarial evaluator and explicitly excludes provider-live operations. Hardened raw JSON handling against duplicate-property ambiguity before PowerShell conversion.
+Added `Nvidea.DemoChecklistGenerator`, `scripts/submission-preflight.ps1`, source/process regressions, fresh artifact materialization, semantic evidence verification, canonical-manifest SHA-256 binding, and a per-invocation receipt binding the accepted local artifacts. The local preflight is validator → checklist → positive evaluator → adversarial evaluator and explicitly excludes provider-live operations. Hardened raw JSON handling against duplicate-property ambiguity before PowerShell conversion, added strict evidence allowlists, and added a recording-machine `System.Text.Json` prerequisite probe.
 
-### 2026-09-17 — strict evidence schema and runtime prerequisites (latest run)
+### 2026-09-17 — unexpected-field fault injection (latest run)
 Completed:
 - Re-read this ledger completely and implemented the recorded highest-value task.
-- Added an explicit `System.Text.Json` startup prerequisite probe before any child process is launched. Unsupported PowerShell/.NET environments now receive a clear PowerShell 7/current-runtime remediation message instead of failing later through type resolution.
-- Added fail-closed evidence allowlists. Validator evidence accepts only its production schema-v2 fields; evaluator evidence accepts only its production schema-v1 fields; every `checks[]` object is independently allowlisted (`id/passed/requirement` for validator, `id/passed/detail` for evaluators).
-- Unknown top-level or check-level properties now fail before semantic PASS acceptance, closing the unreviewed-field/schema-smuggling boundary left after duplicate detection.
-- Preserved evaluator `metrics` as an intentionally extensible producer-owned map while requiring the field, when present, to be a JSON object. Metrics are diagnostic and are never used to establish PASS.
-- Confirmed the allowlists against the actual `Nvidea.DemoPackageValidator` and `Nvidea.PersonalAiDemoEval` producer record shapes before changing the preflight.
+- Added `scripts/tests/submission-preflight.schema-shape.ps1`, a dedicated network/provider-free fake-`dotnet` process regression for the production preflight.
+- Added otherwise-valid exit-0 validator fixtures containing an unexpected top-level trust-like property and an unexpected nested `checks[]` property. Each case must fail after exactly one child invocation, proving checklist/evaluator execution is blocked.
+- Added otherwise-valid exit-0 positive-evaluator fixtures containing unexpected top-level and nested `checks[]` properties. Each case must fail after exactly three child invocations, proving the adversarial evaluator is never reached.
+- Fixtures retain canonical manifest SHA, beat count, duration and explicit PASS values so the regression isolates schema-shape rejection rather than succeeding because of an unrelated semantic/hash failure.
+- The harness uses a temporary PATH-local `dotnet.cmd`, restores all environment variables in `finally`, removes temporary/repository test artifacts, and performs no provider, credential, browser, inference or network operation.
 - Explicitly verified repository metadata as exactly `UnknownGod2011/NVIDEA` immediately before each GitHub mutation. No other repository was mutated.
 
 Files changed this run:
-- `scripts/submission-preflight.ps1`
+- `scripts/tests/submission-preflight.schema-shape.ps1` (new)
 - `progress.md`
 
 Validation/evidence:
-- Static producer/consumer contract inspection confirms validator output fields are `schemaVersion`, `overallPassed`, `manifestSha256`, `declaredMaximumDurationSeconds`, `plannedDurationSeconds`, `beatCount`, `checks`; validator checks are `id`, `passed`, `requirement`.
-- Static positive evaluator inspection confirms output fields are `schemaVersion`, `generatedAt`, `overallPassed`, `checks`, `metrics`; evaluator checks are `id`, `passed`, `detail`.
-- Strict duplicate detection still runs on the raw `System.Text.Json` parse tree before allowlist/schema checks and before `ConvertFrom-Json` semantic access.
-- Executable PowerShell/.NET validation is not claimed in this connector environment; production preflight and regressions still need execution on the Windows recording machine.
+- Static inspection confirms the regression invokes the real `scripts/submission-preflight.ps1` and shadows only its `dotnet` children.
+- Validator unexpected-field scenarios assert exactly 1 child call; positive-evaluator unexpected-field scenarios assert exactly 3 child calls.
+- Expected failures are tied to the production error path `unexpected JSON property 'unexpectedTrustSignal'` at either `$` or `$.checks[0]`.
+- Executable PowerShell/.NET validation is not claimed in this connector environment; this new regression and the existing preflight suite still need execution on the Windows recording machine.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, Playwright, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
-- Evidence acceptance is now closed against both duplicate-property ambiguity and unexpected-field smuggling at the security-relevant top/check levels.
+- Evidence acceptance is covered against duplicate-property ambiguity and unexpected-field smuggling at both security-relevant top-level and per-check objects, with process-level tests now targeting the latter.
 - `metrics` remains deliberately open because evaluator implementations own evolving diagnostics; it cannot influence PASS and therefore is outside the trusted acceptance surface.
 - Parser depth, 1 MiB evidence bound, canonical manifest SHA binding, fresh output deletion/materialization, semantic PASS checks, repository confinement, run receipt hashing, and provider-live exclusion remain intact.
-- Startup prerequisite failure occurs before `dotnet` child execution, reducing partial-artifact ambiguity on unsupported recording environments.
+- Fault fixtures are intentionally valid on all preceding trusted fields, reducing false confidence from tests that fail for the wrong reason.
 - No secret, provider payload, prompt content, or personal data is added by this change.
 
 ## Known blockers / risks
-- No executable .NET/Windows validation has been performed in this connector environment; run the production preflight plus PowerShell regressions on the actual Windows recording machine before relying on the gate.
-- The adversarial evaluator producer shape should be independently re-checked against the evaluator allowlist during the next executable validation pass; it is expected to share the schema-v1 evaluator contract.
+- No executable .NET/Windows validation has been performed in this connector environment; run the production preflight plus all PowerShell regressions on the actual Windows recording machine before relying on the gate.
+- The adversarial evaluator producer shape should still be independently re-checked against the evaluator allowlist during the next executable validation pass.
 - The run receipt is locally generated and unsigned; it proves internal consistency/fresh grouping, not authenticity against a fully compromised local machine.
 - Checklist validation checks ordered beat headings and milestones but not every preflight/fallback sentence.
 - Unified judging verification and live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
 
 ## Single Best Next Task
-Add a dedicated network-free schema-shape fault-injection regression that returns exit 0 with otherwise-valid validator/evaluator evidence containing unexpected top-level and nested check fields, proving the production preflight rejects each case before downstream execution. Then execute the complete preflight regression suite on a real PowerShell 7 + .NET 8 Windows environment when available.
+Harden the receipt itself as a strict, independently verifiable evidence artifact: add a network-free receipt verifier that rejects duplicate/unknown fields, path traversal, missing/hash-mismatched artifacts, wrong canonical manifest hash, provider-live claims, malformed timestamps/run IDs, and artifacts outside the repository. Then integrate that verifier as the final local preflight self-check so a malformed receipt can never be reported as PASS.

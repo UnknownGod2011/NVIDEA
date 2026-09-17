@@ -16,37 +16,37 @@ Implemented the Windows shell, Nebius/Nemotron inference, layered memory, Tavily
 ### 2026-09-17 — local submission evidence hardening
 Added manifest-driven checklist generation and a zero-cost validator → checklist → positive evaluator → adversarial evaluator preflight. Hardened it with fresh artifact enforcement, semantic PASS checks, canonical manifest SHA-256 binding, run receipts, duplicate-property rejection, strict evidence allowlists, System.Text.Json prerequisite checks, process-level fault injection, and an independent receipt verifier. The independent verifier is mandatory before production PASS.
 
-### 2026-09-17 — receipt tamper contract regression (latest run)
+### 2026-09-17 — behavioral receipt tamper regression (latest run)
 Completed:
-- Re-read this ledger completely and inspected the current production preflight plus existing process-level fake-dotnet harness before changing anything.
-- Added `scripts/tests/preflight-receipt-tamper.contract.ps1`, a network/provider-free regression protecting the production verifier-to-PASS control-flow boundary.
-- The contract requires the independent receipt verifier invocation to remain strictly before the PASS marker and rejects a catch-and-continue region that could suppress verifier failure.
-- It protects terminating-error semantics and rejects production preflight parameters that would expose obvious receipt-verification bypasses (`SkipReceipt`, `SkipVerification`, `DisableVerification`, `TrustReceipt`, `ForcePass`).
-- It also pins the verifier's critical tamper-defense primitives: independent file hashing/metadata reads, path canonicalization, artifact/manifest SHA and length bindings, local-zero-cost scope and explicit provider-live denial.
+- Re-read this ledger completely and inspected the production preflight and existing fake-dotnet behavioral harness before changing anything.
+- Added `scripts/tests/preflight-receipt-tamper.behavior.ps1`.
+- The harness creates an isolated copy of the real production preflight, an unmodified copy of the real receipt verifier, canonical demo manifest, deterministic fake-dotnet producer fixtures, and a test-only verifier wrapper. No production bypass/test hook was added.
+- The wrapper tampers immediately after the real preflight creates its receipt and immediately before delegating to the untouched verifier.
+- Behavioral cases cover receipt artifact SHA mutation, receipt artifact length mutation, invalid scope, forged provider-live flag, traversal/path substitution, and post-receipt artifact-content mutation. Every case requires a terminating failure and explicitly asserts the production PASS marker is absent.
+- Added an untampered custom-artifact-directory control case requiring the real production PASS marker and receipt materialization, preserving the custom directory contract.
 - Explicitly verified repository metadata as exactly `UnknownGod2011/NVIDEA` immediately before every GitHub mutation. No other repository was mutated.
 
 Files changed this run:
-- `scripts/tests/preflight-receipt-tamper.contract.ps1` (new)
+- `scripts/tests/preflight-receipt-tamper.behavior.ps1` (new)
 - `progress.md`
 
 Validation/evidence:
-- Source inspection confirms production verification currently precedes PASS and uses `$ErrorActionPreference = Stop`.
-- The new regression is intentionally static/network-free and does NOT yet claim the stronger process-level tamper injection requested below.
-- No executable PowerShell/.NET PASS is claimed in this connector environment; run all PowerShell regressions on the Windows recording machine.
+- Source-level review confirms the harness delegates tampered evidence to an unmodified copy of `verify-preflight-receipt.ps1` and executes an isolated copy of `submission-preflight.ps1`.
+- The harness is network/provider free and uses only local fake producer fixtures.
+- No executable PowerShell/.NET PASS is claimed in this connector environment; the new behavioral harness must still be executed on the Windows/PowerShell 7 recording machine.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, Playwright, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
-- Local PASS requires producer/evidence semantic checks followed by independent receipt/artifact consistency verification.
-- Receipt verification re-resolves and rehashes bound artifacts and rejects provider-live claims, path substitution/traversal, malformed metadata and manifest mismatch.
-- The new contract reduces regression risk that a future refactor silently moves, bypasses or suppresses this verifier gate.
+- The test architecture avoids weakening production merely for fault injection: all tampering capability exists only in an isolated test copy/wrapper.
+- Receipt verification is now behaviorally specified to fail closed for both metadata tampering and artifact mutation after receipt creation.
+- Path substitution is tested alongside hash/length changes, and local receipts remain forbidden from claiming provider-live evidence.
 - This remains a local consistency mechanism, not authenticity against a fully compromised machine; the receipt is intentionally unsigned.
 - Provider-live evidence remains explicitly outside this zero-cost preflight and must not be inferred from its PASS.
 
 ## Known blockers / risks
-- The stronger production-path behavioral fault-injection regression still needs to tamper a freshly generated receipt/artifact immediately before independent verification and prove the PASS marker is unreachable for hash, length, path/scope/provider flag and content tampering.
-- Existing process harnesses need executable confirmation against the newly mandatory verifier invocation on Windows/PowerShell 7.
-- No executable .NET/Windows validation has been performed in this connector environment.
+- The new behavioral harness needs executable confirmation on Windows/PowerShell 7; connector-only source inspection is not execution evidence.
+- Existing process harnesses likewise need a recording-machine run against the mandatory verifier gate.
 - Unified judging verification and live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
 
 ## Single Best Next Task
-Implement the process-level receipt tamper harness without adding a production bypass hook: execute an isolated copy of the real preflight with fake-dotnet fixtures and a test-only verifier wrapper that tampers the just-created receipt/bound artifact before delegating to an unmodified copy of `verify-preflight-receipt.ps1`; assert no PASS marker for SHA, length, path, scope/provider-live and artifact-content tampering, plus one successful custom-artifact-directory control case.
+Run and harden the complete zero-cost PowerShell regression suite on the actual Windows/PowerShell 7 recording environment (including the new receipt-tamper behavioral harness), fix any portability/runtime defects found, and produce a single lean `scripts/test-submission-tooling.ps1` entry point that executes all local submission contracts/behavior tests without invoking providers or GitHub Actions.

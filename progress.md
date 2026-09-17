@@ -14,40 +14,38 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 Implemented the Windows shell, Nebius/Nemotron inference, layered memory, Tavily research, permission/audit engine, durable jobs, Playwright browser execution, DPAPI state protection, encrypted remote execution, local voice, deployment/evaluator tooling, extensive crash-consistency hardening, judge-visible runtime evidence, a 168-second deterministic demo, schema-v2 per-beat execution contracts, hardened validator/regressions, and manifest/runbook alignment.
 
 ### 2026-09-17 — local submission evidence hardening
-Added manifest-driven checklist generation and a zero-cost validator → checklist → positive evaluator → adversarial evaluator preflight. Hardened it with fresh artifact enforcement, semantic PASS checks, canonical manifest SHA-256 binding, run receipts, duplicate-property rejection, strict evidence allowlists, System.Text.Json prerequisite checks, and process-level fault injection for sequencing, missing outputs, wrong hashes, semantic failures, duplicate fields, and unexpected-field smuggling.
+Added manifest-driven checklist generation and a zero-cost validator → checklist → positive evaluator → adversarial evaluator preflight. Hardened it with fresh artifact enforcement, semantic PASS checks, canonical manifest SHA-256 binding, run receipts, duplicate-property rejection, strict evidence allowlists, System.Text.Json prerequisite checks, process-level fault injection, and an independent receipt verifier.
 
-### 2026-09-17 — independent receipt verifier (latest run)
+### 2026-09-17 — mandatory independent receipt gate (latest run)
 Completed:
-- Re-read this ledger completely and implemented the recorded highest-value receipt-hardening task.
-- Added `scripts/verify-preflight-receipt.ps1`, a network/provider-free independent verifier for `preflight-receipt.json`.
-- The verifier rejects duplicate and unknown receipt/manifest/artifact fields, invalid schema/run IDs/timestamps, completion-before-start, provider-live claims, noncanonical manifest paths, manifest hash mismatch, path traversal/rooted/backslash paths, missing artifacts, duplicate/wrong artifact order, malformed/nonpositive lengths, length mismatches, and SHA-256 mismatches.
-- Artifact expectations are derived from the confined receipt directory, preserving the production preflight's supported custom `ArtifactsDirectory` behavior instead of hardcoding `artifacts/preflight`.
-- Receipt JSON is bounded to 256 KiB and depth 32, disallows comments/trailing commas, and is checked for duplicate properties before PowerShell conversion.
-- Explicitly verified repository metadata as exactly `UnknownGod2011/NVIDEA` immediately before every GitHub mutation. No other repository was mutated.
+- Re-read this ledger completely and implemented the recorded highest-value task.
+- Wired `scripts/verify-preflight-receipt.ps1` into `scripts/submission-preflight.ps1` after receipt materialization and before every production PASS message.
+- Production PASS therefore now depends on independent receipt verification; verifier exceptions fail the parent preflight under `$ErrorActionPreference = Stop`.
+- Added an explicit startup requirement that the independent verifier itself exists before any child evaluator work begins.
+- Preserved custom confined `ArtifactsDirectory`, zero-cost/provider-live exclusion, manifest binding, semantic PASS checks and artifact hashing.
+- Explicitly verified repository metadata as exactly `UnknownGod2011/NVIDEA` immediately before each GitHub mutation. No other repository was mutated.
 
 Files changed this run:
-- `scripts/verify-preflight-receipt.ps1` (new, then corrected for custom artifact directories)
+- `scripts/submission-preflight.ps1`
 - `progress.md`
 
 Validation/evidence:
-- Static review confirms the verifier is local-only and has no provider/network/browser/inference path.
-- Static review confirms all receipt-bound files are independently resolved beneath the canonical repository prefix and rehashed from disk.
-- The verifier is not yet wired into `submission-preflight.ps1`, so the current production PASS message does not yet depend on this new independent check.
-- Executable PowerShell/.NET validation is not claimed in this connector environment; run on the Windows recording machine before relying on the gate.
+- Static control-flow review confirms the independent verifier executes after receipt creation and before the two PASS/status lines.
+- A verifier throw terminates the preflight because terminating errors are enabled; therefore a rejected/tampered receipt cannot proceed to PASS through the normal production path.
+- No executable PowerShell/.NET validation is claimed in this connector environment; run the preflight and regression suite on the Windows recording machine before relying on the gate.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, Playwright, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
-- Receipt verification no longer needs to trust the receipt's own paths/hashes/lengths: every accepted artifact is confined, materialized, length-checked and SHA-256 reverified independently.
-- `scope` must be exactly `local-zero-cost` and `providerLiveEvidence` must be boolean false, preventing this receipt class from claiming fresh provider evidence.
-- Strict ordered artifact names prevent a receipt from substituting an arbitrary same-directory file while still supporting a custom confined artifact directory.
-- The receipt remains unsigned; it establishes local consistency, not authenticity against a fully compromised local machine.
-- Existing preflight evidence protections remain intact.
+- Local PASS now requires two layers: producer/evidence semantic checks followed by independent receipt/artifact consistency verification.
+- Receipt verification re-resolves and rehashes bound artifacts and rejects provider-live claims, path substitution/traversal, malformed metadata and manifest mismatch.
+- This remains a local consistency mechanism, not authenticity against a fully compromised machine; the receipt is intentionally unsigned.
+- Provider-live evidence remains explicitly outside this zero-cost preflight and must not be inferred from its PASS.
 
 ## Known blockers / risks
-- The independent receipt verifier still needs integration as the final mandatory step before `submission-preflight.ps1` prints PASS.
-- A dedicated fault-injection suite should mutate duplicate/unknown fields, traversal, timestamps, scope/provider-live flags, hashes, lengths and files and prove the verifier fails closed.
+- A dedicated production-path fault-injection regression still needs to tamper the receipt/artifacts immediately before independent verification and prove the PASS marker is unreachable.
+- The existing process harnesses should be checked for compatibility with the newly mandatory verifier invocation.
 - No executable .NET/Windows validation has been performed in this connector environment.
 - Unified judging verification and live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
 
 ## Single Best Next Task
-Wire `scripts/verify-preflight-receipt.ps1` into `submission-preflight.ps1` immediately after receipt materialization and before any PASS output, then add a network-free receipt fault-injection regression proving malformed/tampered receipts and artifacts cannot reach the production PASS path.
+Add a network-free production-path receipt fault-injection regression that runs the actual preflight, intercepts/tampers the freshly generated receipt or bound artifact immediately before verification, and asserts the process cannot emit `Submission preflight PASS`; cover hash, length, path/scope/provider flag and artifact-content tampering while preserving cleanup and custom-artifact-directory behavior.

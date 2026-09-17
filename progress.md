@@ -13,43 +13,41 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 ### 2026-09-06 to 2026-09-16
 Implemented the Windows shell, Nebius/Nemotron inference, layered memory, Tavily research, permission/audit engine, durable jobs, Playwright browser execution, DPAPI state protection, encrypted remote execution, local voice, deployment/evaluator tooling, extensive crash-consistency hardening, judge-visible runtime evidence, a 168-second deterministic demo, schema-v2 per-beat execution contracts, hardened validator/regressions, and manifest/runbook alignment.
 
-### 2026-09-17 — manifest-driven judging and zero-cost preflight
-Added `Nvidea.DemoChecklistGenerator`, `scripts/submission-preflight.ps1`, source/process regressions, fresh artifact materialization, semantic evidence verification, canonical-manifest SHA-256 binding, and a per-invocation receipt binding the accepted local artifacts. The local preflight is validator → checklist → positive evaluator → adversarial evaluator and explicitly excludes provider-live operations. Hardened raw JSON handling against duplicate-property ambiguity before PowerShell conversion, added strict evidence allowlists, and added a recording-machine `System.Text.Json` prerequisite probe.
+### 2026-09-17 — local submission evidence hardening
+Added manifest-driven checklist generation and a zero-cost validator → checklist → positive evaluator → adversarial evaluator preflight. Hardened it with fresh artifact enforcement, semantic PASS checks, canonical manifest SHA-256 binding, run receipts, duplicate-property rejection, strict evidence allowlists, System.Text.Json prerequisite checks, and process-level fault injection for sequencing, missing outputs, wrong hashes, semantic failures, duplicate fields, and unexpected-field smuggling.
 
-### 2026-09-17 — unexpected-field fault injection (latest run)
+### 2026-09-17 — independent receipt verifier (latest run)
 Completed:
-- Re-read this ledger completely and implemented the recorded highest-value task.
-- Added `scripts/tests/submission-preflight.schema-shape.ps1`, a dedicated network/provider-free fake-`dotnet` process regression for the production preflight.
-- Added otherwise-valid exit-0 validator fixtures containing an unexpected top-level trust-like property and an unexpected nested `checks[]` property. Each case must fail after exactly one child invocation, proving checklist/evaluator execution is blocked.
-- Added otherwise-valid exit-0 positive-evaluator fixtures containing unexpected top-level and nested `checks[]` properties. Each case must fail after exactly three child invocations, proving the adversarial evaluator is never reached.
-- Fixtures retain canonical manifest SHA, beat count, duration and explicit PASS values so the regression isolates schema-shape rejection rather than succeeding because of an unrelated semantic/hash failure.
-- The harness uses a temporary PATH-local `dotnet.cmd`, restores all environment variables in `finally`, removes temporary/repository test artifacts, and performs no provider, credential, browser, inference or network operation.
-- Explicitly verified repository metadata as exactly `UnknownGod2011/NVIDEA` immediately before each GitHub mutation. No other repository was mutated.
+- Re-read this ledger completely and implemented the recorded highest-value receipt-hardening task.
+- Added `scripts/verify-preflight-receipt.ps1`, a network/provider-free independent verifier for `preflight-receipt.json`.
+- The verifier rejects duplicate and unknown receipt/manifest/artifact fields, invalid schema/run IDs/timestamps, completion-before-start, provider-live claims, noncanonical manifest paths, manifest hash mismatch, path traversal/rooted/backslash paths, missing artifacts, duplicate/wrong artifact order, malformed/nonpositive lengths, length mismatches, and SHA-256 mismatches.
+- Artifact expectations are derived from the confined receipt directory, preserving the production preflight's supported custom `ArtifactsDirectory` behavior instead of hardcoding `artifacts/preflight`.
+- Receipt JSON is bounded to 256 KiB and depth 32, disallows comments/trailing commas, and is checked for duplicate properties before PowerShell conversion.
+- Explicitly verified repository metadata as exactly `UnknownGod2011/NVIDEA` immediately before every GitHub mutation. No other repository was mutated.
 
 Files changed this run:
-- `scripts/tests/submission-preflight.schema-shape.ps1` (new)
+- `scripts/verify-preflight-receipt.ps1` (new, then corrected for custom artifact directories)
 - `progress.md`
 
 Validation/evidence:
-- Static inspection confirms the regression invokes the real `scripts/submission-preflight.ps1` and shadows only its `dotnet` children.
-- Validator unexpected-field scenarios assert exactly 1 child call; positive-evaluator unexpected-field scenarios assert exactly 3 child calls.
-- Expected failures are tied to the production error path `unexpected JSON property 'unexpectedTrustSignal'` at either `$` or `$.checks[0]`.
-- Executable PowerShell/.NET validation is not claimed in this connector environment; this new regression and the existing preflight suite still need execution on the Windows recording machine.
+- Static review confirms the verifier is local-only and has no provider/network/browser/inference path.
+- Static review confirms all receipt-bound files are independently resolved beneath the canonical repository prefix and rehashed from disk.
+- The verifier is not yet wired into `submission-preflight.ps1`, so the current production PASS message does not yet depend on this new independent check.
+- Executable PowerShell/.NET validation is not claimed in this connector environment; run on the Windows recording machine before relying on the gate.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, Playwright, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
-- Evidence acceptance is covered against duplicate-property ambiguity and unexpected-field smuggling at both security-relevant top-level and per-check objects, with process-level tests now targeting the latter.
-- `metrics` remains deliberately open because evaluator implementations own evolving diagnostics; it cannot influence PASS and therefore is outside the trusted acceptance surface.
-- Parser depth, 1 MiB evidence bound, canonical manifest SHA binding, fresh output deletion/materialization, semantic PASS checks, repository confinement, run receipt hashing, and provider-live exclusion remain intact.
-- Fault fixtures are intentionally valid on all preceding trusted fields, reducing false confidence from tests that fail for the wrong reason.
-- No secret, provider payload, prompt content, or personal data is added by this change.
+- Receipt verification no longer needs to trust the receipt's own paths/hashes/lengths: every accepted artifact is confined, materialized, length-checked and SHA-256 reverified independently.
+- `scope` must be exactly `local-zero-cost` and `providerLiveEvidence` must be boolean false, preventing this receipt class from claiming fresh provider evidence.
+- Strict ordered artifact names prevent a receipt from substituting an arbitrary same-directory file while still supporting a custom confined artifact directory.
+- The receipt remains unsigned; it establishes local consistency, not authenticity against a fully compromised local machine.
+- Existing preflight evidence protections remain intact.
 
 ## Known blockers / risks
-- No executable .NET/Windows validation has been performed in this connector environment; run the production preflight plus all PowerShell regressions on the actual Windows recording machine before relying on the gate.
-- The adversarial evaluator producer shape should still be independently re-checked against the evaluator allowlist during the next executable validation pass.
-- The run receipt is locally generated and unsigned; it proves internal consistency/fresh grouping, not authenticity against a fully compromised local machine.
-- Checklist validation checks ordered beat headings and milestones but not every preflight/fallback sentence.
+- The independent receipt verifier still needs integration as the final mandatory step before `submission-preflight.ps1` prints PASS.
+- A dedicated fault-injection suite should mutate duplicate/unknown fields, traversal, timestamps, scope/provider-live flags, hashes, lengths and files and prove the verifier fails closed.
+- No executable .NET/Windows validation has been performed in this connector environment.
 - Unified judging verification and live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
 
 ## Single Best Next Task
-Harden the receipt itself as a strict, independently verifiable evidence artifact: add a network-free receipt verifier that rejects duplicate/unknown fields, path traversal, missing/hash-mismatched artifacts, wrong canonical manifest hash, provider-live claims, malformed timestamps/run IDs, and artifacts outside the repository. Then integrate that verifier as the final local preflight self-check so a malformed receipt can never be reported as PASS.
+Wire `scripts/verify-preflight-receipt.ps1` into `submission-preflight.ps1` immediately after receipt materialization and before any PASS output, then add a network-free receipt fault-injection regression proving malformed/tampered receipts and artifacts cannot reach the production PASS path.

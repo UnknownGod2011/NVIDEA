@@ -21,10 +21,11 @@ public sealed class PersistentBrowserRedirectIntegrationTests
 
         await using var server = await LoopbackHttpServer.StartAsync();
         var stateDirectory = CreateStateDirectory();
+        PersistentBrowserContextSession? session = null;
         try
         {
             using var playwright = await Playwright.CreateAsync();
-            await using var session = await PersistentBrowserContextFactory.LaunchAsync(
+            session = await PersistentBrowserContextFactory.LaunchAsync(
                 playwright,
                 stateDirectory,
                 server.UriFor("/safe"),
@@ -43,6 +44,8 @@ public sealed class PersistentBrowserRedirectIntegrationTests
         }
         finally
         {
+            if (session is not null)
+                await session.Context.CloseAsync();
             TryDeleteDirectory(stateDirectory);
         }
     }
@@ -55,10 +58,11 @@ public sealed class PersistentBrowserRedirectIntegrationTests
 
         await using var server = await LoopbackHttpServer.StartAsync();
         var stateDirectory = CreateStateDirectory();
+        PersistentBrowserContextSession? session = null;
         try
         {
             using var playwright = await Playwright.CreateAsync();
-            await using var session = await PersistentBrowserContextFactory.LaunchAsync(
+            session = await PersistentBrowserContextFactory.LaunchAsync(
                 playwright,
                 stateDirectory,
                 server.UriFor("/safe"),
@@ -73,6 +77,8 @@ public sealed class PersistentBrowserRedirectIntegrationTests
         }
         finally
         {
+            if (session is not null)
+                await session.Context.CloseAsync();
             TryDeleteDirectory(stateDirectory);
         }
     }
@@ -128,6 +134,15 @@ public sealed class PersistentBrowserRedirectIntegrationTests
                 return _counts.TryGetValue(path, out var count) ? count : 0;
         }
 
+        private void Increment(string path)
+        {
+            lock (_gate)
+            {
+                _counts.TryGetValue(path, out var count);
+                _counts[path] = count + 1;
+            }
+        }
+
         private async Task AcceptLoopAsync()
         {
             while (!_shutdown.IsCancellationRequested)
@@ -174,8 +189,7 @@ public sealed class PersistentBrowserRedirectIntegrationTests
                     if (queryIndex >= 0)
                         path = path[..queryIndex];
 
-                    lock (_gate)
-                        _counts[path] = Count(path) + 1;
+                    Increment(path);
 
                     if (path == "/redirect-to-credential-url")
                     {

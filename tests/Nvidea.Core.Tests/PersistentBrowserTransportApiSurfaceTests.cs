@@ -44,4 +44,18 @@ public sealed class PersistentBrowserTransportApiSurfaceTests
         Assert.False(policy.EvaluateObservedLocation(new Uri("http://example.com/path")).Allowed);
         Assert.False(policy.EvaluateObservedLocation(new Uri("file:///C:/sensitive.txt")).Allowed);
     }
+
+    [Fact]
+    public void WebSocketTransportPolicy_AllowsWssAndLoopbackWsButRejectsRemotePlaintext()
+    {
+        var policy = new BrowserSafetyPolicy();
+
+        Assert.True(policy.EvaluateWebSocketTransport(new Uri("wss://example.com/socket")).Allowed);
+        Assert.True(policy.EvaluateWebSocketTransport(new Uri("ws://localhost:8080/socket")).Allowed);
+        Assert.True(policy.EvaluateWebSocketTransport(new Uri("ws://127.0.0.1:8080/socket")).Allowed);
+        Assert.True(policy.EvaluateWebSocketTransport(new Uri("ws://[::1]:8080/socket")).Allowed);
+        Assert.False(policy.EvaluateWebSocketTransport(new Uri("ws://example.com/socket")).Allowed);
+        Assert.False(policy.EvaluateWebSocketTransport(new Uri("https://example.com/not-a-websocket")).Allowed);
+        Assert.False(policy.EvaluateWebSocketTransport(new Uri("file:///C:/sensitive.txt")).Allowed);
+    }
 }

@@ -8,7 +8,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$repoPrefix = $repoRoot.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+$resolvedRepoRoot = (Resolve-Path -LiteralPath $repoRoot -ErrorAction Stop).Path.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+$repoPrefix = $resolvedRepoRoot + [IO.Path]::DirectorySeparatorChar
 $failures = [System.Collections.Generic.List[string]]::new()
 $warnings = [System.Collections.Generic.List[string]]::new()
 
@@ -39,17 +40,33 @@ function Test-RepositoryPath([string]$RelativePath, [string]$Description, [switc
         $script:failures.Add("$Description must be a non-empty repository-relative path.")
         return $false
     }
+
+    # First enforce lexical confinement, then resolve the existing target and enforce
+    # confinement again. The second check is required because Windows junctions and
+    # symlinks can make an apparently in-repository path resolve outside the checkout.
     try { $candidate = [IO.Path]::GetFullPath((Join-Path $repoRoot $RelativePath)) }
     catch {
         $script:failures.Add("$Description is not a valid repository-relative path.")
         return $false
     }
-    if (-not $candidate.StartsWith($repoPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+    $lexicalPrefix = $repoRoot.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    if (-not $candidate.StartsWith($lexicalPrefix, [StringComparison]::OrdinalIgnoreCase)) {
         $script:failures.Add("$Description escapes the repository boundary.")
         return $false
     }
+
+    try { $resolvedCandidate = (Resolve-Path -LiteralPath $candidate -ErrorAction Stop).Path }
+    catch {
+        $script:failures.Add("$Description does not exist in the repository.")
+        return $false
+    }
+    if (-not $resolvedCandidate.StartsWith($repoPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        $script:failures.Add("$Description resolves outside the repository boundary.")
+        return $false
+    }
+
     $pathType = if ($Leaf) { 'Leaf' } else { 'Any' }
-    if (-not (Test-Path -LiteralPath $candidate -PathType $pathType)) {
+    if (-not (Test-Path -LiteralPath $resolvedCandidate -PathType $pathType)) {
         $script:failures.Add("$Description does not exist in the repository.")
         return $false
     }

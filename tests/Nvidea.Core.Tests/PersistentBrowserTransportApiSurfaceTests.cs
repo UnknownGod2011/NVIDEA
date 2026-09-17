@@ -45,6 +45,17 @@ public sealed class PersistentBrowserTransportApiSurfaceTests
         Assert.False(policy.EvaluateObservedLocation(new Uri("file:///C:/sensitive.txt")).Allowed);
     }
 
+    [Theory]
+    [InlineData("https://user:password@example.com/path")]
+    [InlineData("https://token@example.com/path")]
+    [InlineData("http://user:password@localhost:8080/path")]
+    public void TransportPolicy_RejectsEmbeddedUrlCredentials(string destination)
+    {
+        var policy = new BrowserSafetyPolicy();
+
+        Assert.False(policy.EvaluateObservedLocation(new Uri(destination)).Allowed);
+    }
+
     [Fact]
     public void WebSocketTransportPolicy_AllowsWssAndLoopbackWsButRejectsRemotePlaintext()
     {
@@ -57,5 +68,16 @@ public sealed class PersistentBrowserTransportApiSurfaceTests
         Assert.False(policy.EvaluateWebSocketTransport(new Uri("ws://example.com/socket")).Allowed);
         Assert.False(policy.EvaluateWebSocketTransport(new Uri("https://example.com/not-a-websocket")).Allowed);
         Assert.False(policy.EvaluateWebSocketTransport(new Uri("file:///C:/sensitive.txt")).Allowed);
+    }
+
+    [Theory]
+    [InlineData("wss://user:password@example.com/socket")]
+    [InlineData("wss://token@example.com/socket")]
+    [InlineData("ws://user:password@localhost:8080/socket")]
+    public void WebSocketTransportPolicy_RejectsEmbeddedUrlCredentials(string destination)
+    {
+        var policy = new BrowserSafetyPolicy();
+
+        Assert.False(policy.EvaluateWebSocketTransport(new Uri(destination)).Allowed);
     }
 }

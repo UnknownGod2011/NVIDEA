@@ -23,7 +23,7 @@ public sealed class BrowserSafetyPolicy
         if (action.Kind == BrowserActionKind.Navigate && action.Destination is not null)
         {
             if (!IsSafeWebUri(action.Destination))
-                return Block("Navigation is limited to HTTPS/HTTP web URLs; script/data/file schemes are blocked.");
+                return Block("Navigation requires HTTPS. Plain HTTP is allowed only for loopback development endpoints; script/data/file and remote plaintext URLs are blocked.");
         }
 
         if (action.Kind == BrowserActionKind.Upload)
@@ -75,8 +75,18 @@ public sealed class BrowserSafetyPolicy
     private static BrowserActionDecision Block(string reason) =>
         new(BrowserRiskLevel.Blocked, RequiresApproval: false, Allowed: false, reason);
 
-    private static bool IsSafeWebUri(Uri uri) =>
-        uri.IsAbsoluteUri && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp);
+    private static bool IsSafeWebUri(Uri uri)
+    {
+        if (!uri.IsAbsoluteUri)
+            return false;
+
+        if (uri.Scheme == Uri.UriSchemeHttps)
+            return true;
+
+        // Preserve local development/test flows without permitting credentials, cookies,
+        // form data, or authenticated browser state to cross a remote plaintext channel.
+        return uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback;
+    }
 
     private static string BuildTargetText(BrowserAction action, BrowserObservation observation)
     {

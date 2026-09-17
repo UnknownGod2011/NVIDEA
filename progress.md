@@ -14,43 +14,42 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 Implemented the Windows shell, Nebius/Nemotron inference, layered memory, Tavily research, permission/audit engine, durable jobs, Playwright browser execution, DPAPI state protection, encrypted remote execution, local voice, deployment/evaluator tooling, extensive crash-consistency hardening, judge-visible runtime evidence, a 168-second deterministic demo, schema-v2 per-beat execution contracts, hardened validator/regressions, and manifest/runbook alignment.
 
 ### 2026-09-17 — manifest-driven judging and zero-cost preflight
-Added `Nvidea.DemoChecklistGenerator`, `scripts/submission-preflight.ps1`, source/process regressions, fresh artifact materialization, and semantic evidence verification. The local preflight is validator → checklist → positive evaluator → adversarial evaluator and explicitly excludes provider-live operations.
+Added `Nvidea.DemoChecklistGenerator`, `scripts/submission-preflight.ps1`, source/process regressions, fresh artifact materialization, semantic evidence verification, canonical-manifest SHA-256 binding, and a per-invocation receipt binding the accepted local artifacts. The local preflight is validator → checklist → positive evaluator → adversarial evaluator and explicitly excludes provider-live operations.
 
-### 2026-09-17 — cryptographic preflight binding (latest run)
+### 2026-09-17 — strict JSON ambiguity defense (latest run)
 Completed:
 - Re-read this ledger completely and implemented the recorded highest-value task.
-- `scripts/submission-preflight.ps1` now independently computes SHA-256 over the canonical `docs/demo-package.json` bytes and requires exact agreement with validator `manifestSha256`; a valid-looking validator report for any other manifest fails before checklist/evaluator execution.
-- Added a per-invocation cryptographically bound `preflight-receipt.json` containing a fresh random run ID, UTC start/completion timestamps, canonical manifest SHA-256, and SHA-256 + byte length + repository-relative path for all four freshly generated local artifacts.
-- Receipt explicitly records `scope=local-zero-cost` and `providerLiveEvidence=false`; it cannot be mistaken for fresh Nebius/Tavily/browser evidence.
-- Extended `scripts/tests/submission-preflight.behavior.ps1`: positive validator fixture now derives the real canonical manifest SHA-256; added wrong-hash fault injection proving only the validator child runs; successful path verifies receipt identity, manifest binding, four artifact bindings, provider-live falsehood prevention, and recomputes every receipt artifact hash from disk.
-- Existing non-zero failure, withheld artifact, semantic failure, ordered-success, provider-live exclusion, and repository escape tests remain represented.
+- Hardened `scripts/submission-preflight.ps1` so every JSON document entering semantic verification is first parsed with `System.Text.Json.JsonDocument` using comments disallowed, trailing commas disallowed, and max depth 64.
+- Added recursive per-object duplicate-property detection with ordinal property-name comparison before `ConvertFrom-Json` is allowed to materialize an object. This prevents parser normalization / last-property-wins behavior from turning ambiguous evidence into an apparent PASS.
+- Duplicate detection applies not only to validator/evaluator evidence but also the canonical demo manifest because all pass through `Read-StrictEvidenceJson`.
+- Added `scripts/tests/submission-preflight.duplicate-json.ps1`, a network/provider-free fake-`dotnet` fault-injection regression covering duplicate top-level `schemaVersion`, `overallPassed`, `manifestSha256`, and nested `checks[].passed` properties. Every case requires rejection after exactly the validator invocation, proving no checklist/evaluator execution leaks downstream.
 - Explicitly verified repository metadata as exactly `UnknownGod2011/NVIDEA` immediately before every GitHub mutation. No other repository was mutated.
 
 Files changed this run:
 - `scripts/submission-preflight.ps1`
-- `scripts/tests/submission-preflight.behavior.ps1`
+- `scripts/tests/submission-preflight.duplicate-json.ps1`
 - `progress.md`
 
 Validation/evidence:
-- Static inspection confirms manifest hash verification executes immediately after validator semantic validation and before checklist generation.
-- Static inspection confirms the receipt is created only after all four children have produced fresh semantically accepted artifacts.
-- Behavior fixture derives SHA-256 using PowerShell `Get-FileHash`, matching production's byte-level SHA-256 mechanism rather than a reserialized JSON representation.
-- Executable PowerShell/.NET validation is not claimed in this connector environment; the behavior/contract scripts still need execution on the Windows recording machine.
+- Static inspection confirms duplicate traversal occurs on the raw JSON parse tree before PowerShell object conversion.
+- The regression fixtures are intentionally authored as raw JSON strings because PowerShell serializers cannot faithfully generate duplicate object properties.
+- The regression asserts one and only one fake-dotnet child invocation for each ambiguity case.
+- Executable PowerShell/.NET validation is not claimed in this connector environment; these scripts still need execution on the Windows recording machine.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, Playwright, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
-- Validator evidence is now cryptographically tied to the exact canonical manifest bytes, closing wrong-manifest replay despite otherwise matching schema/count/duration.
-- Fresh child outputs were already deleted before execution; the final receipt now binds those accepted outputs into one current-run evidence set with a unique invocation identity.
-- Receipt hashes detect later mutation/substitution of local artifacts. The receipt is an integrity/binding record, not a signature or external attestation; a local attacker able to rewrite both artifacts and receipt remains outside this threat boundary.
-- No secret, provider payload, prompt content, or personal data is added to the receipt.
-- Provider-live commands remain outside zero-cost preflight and receipt explicitly denies provider-live evidence.
+- Evidence is now fail-closed against duplicate-property schema smuggling at both top-level and nested object depth, closing the previously recorded ambiguity boundary.
+- Parser depth and existing 1 MiB evidence-size bounds reduce pathological JSON resource consumption.
+- Duplicate comparison is ordinal/case-sensitive, matching JSON property-name semantics; differently-cased names are not treated as duplicates but existing semantic access still requires the expected canonical property names.
+- Canonical manifest SHA binding, fresh output deletion/materialization, semantic PASS checks, repository confinement, run receipt hashing, and provider-live exclusion remain intact.
+- No secret, provider payload, prompt content, or personal data is added by this change.
 
 ## Known blockers / risks
 - No executable .NET/Windows validation has been performed in this connector environment; production preflight plus PowerShell regressions need execution on the actual Windows recording machine.
-- PowerShell `ConvertFrom-Json` does not independently reject duplicate properties in generated evidence. A strict reusable evidence parser would improve defense in depth.
+- `System.Text.Json` availability now becomes an explicit preflight runtime requirement in addition to .NET 8; this is expected on the intended modern PowerShell/.NET recording environment but should be surfaced with a clearer prerequisite error rather than a type-resolution failure.
 - The run receipt is locally generated and unsigned; it proves internal consistency/fresh grouping, not authenticity against a fully compromised local machine.
 - Checklist validation checks ordered beat headings and milestones but not every preflight/fallback sentence.
 - Unified judging verification and live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
 
 ## Single Best Next Task
-Harden the local evidence parser against duplicate JSON properties and schema smuggling. Implement a small network-free strict JSON verification utility (or PowerShell parser using `System.Text.Json` with explicit duplicate-property traversal) shared by validator/evaluator evidence checks, then fault-inject duplicate `overallPassed`, `schemaVersion`, `manifestSha256`, and check fields to prove ambiguous evidence fails closed before downstream execution.
+Make strict parsing operationally robust on the actual Windows recording path: add an explicit startup prerequisite check for `System.Text.Json`/PowerShell compatibility with a clear remediation message, then add strict schema-shape validation that rejects unexpected top-level and nested evidence properties (not just duplicates) so evaluator/validator artifacts cannot smuggle unreviewed fields while still satisfying the minimal PASS contract.

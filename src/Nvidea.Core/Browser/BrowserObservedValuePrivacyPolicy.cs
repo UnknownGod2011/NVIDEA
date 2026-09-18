@@ -7,7 +7,7 @@ namespace Nvidea.Core.Browser;
 /// </summary>
 public static class BrowserObservedValuePrivacyPolicy
 {
-    private static readonly HashSet<string> SensitiveAutocompleteTokens = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly string[] SensitiveAutocompleteTokenArray =
     {
         "current-password",
         "new-password",
@@ -18,6 +18,16 @@ public static class BrowserObservedValuePrivacyPolicy
         "cc-exp-month",
         "cc-exp-year"
     };
+
+    private static readonly HashSet<string> SensitiveAutocompleteTokenSet =
+        new(SensitiveAutocompleteTokenArray, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Canonical non-secret autocomplete field tokens that require value suppression.
+    /// Browser-side observers consume this list so classification cannot drift from this policy.
+    /// </summary>
+    public static IReadOnlyList<string> SensitiveAutocompleteTokens { get; } =
+        Array.AsReadOnly(SensitiveAutocompleteTokenArray);
 
     public static bool ShouldSuppressValue(string? inputType, string? autoComplete)
     {
@@ -35,7 +45,7 @@ public static class BrowserObservedValuePrivacyPolicy
         // field token. Token matching avoids both false negatives and substring false positives.
         foreach (var token in autoComplete.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
-            if (SensitiveAutocompleteTokens.Contains(token))
+            if (SensitiveAutocompleteTokenSet.Contains(token))
             {
                 return true;
             }

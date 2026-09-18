@@ -14,36 +14,37 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 Implemented the Windows shell, Nebius/Nemotron inference, layered memory, Tavily research, permission/audit engine, durable jobs, Playwright browser execution, DPAPI state protection, encrypted remote execution, local voice, deployment/evaluator tooling, crash-consistency hardening, judge-visible runtime evidence, deterministic demo/runbook, submission validation, independent receipts and live-demo readiness tooling.
 
 ### 2026-09-17 to 2026-09-18 — browser safety and validation
-Hardened browser transport to HTTPS or HTTP loopback and WSS or WS loopback, rejecting embedded URI credentials. Added context request/WebSocket routing, Service Worker blocking, post-action observed-location enforcement, download quarantine, credential typing/prompt-injection/consequential-action gates, persistent authenticated-state restart coverage, redirect/WebSocket server-side no-dispatch fixtures, and deterministic emergency-stop coverage. Production in-flight cancellation closes the agent-owned page before returning cancellation. Canonical page admission covers initial pages, popup adoption, fallback selection, snapshots and download sources. Credential-popup evidence uses server-side counters and a positive control to distinguish pre-dispatch blocking from merely closing an unsafe popup. Risk keyword matching uses lexical term/phrase boundaries to reduce approval fatigue. Expanded credential classification covers OTP/verification codes, PINs, recovery material, access/refresh tokens, identity-number labels and standard HTML autocomplete security/payment tokens. Real Playwright observations now carry bounded input-type/autocomplete semantics without adding a new secret metadata channel; password values remain suppressed.
+Hardened browser transport to HTTPS or HTTP loopback and WSS or WS loopback, rejecting embedded URI credentials. Added context request/WebSocket routing, Service Worker blocking, post-action observed-location enforcement, download quarantine, credential typing/prompt-injection/consequential-action gates, persistent authenticated-state restart coverage, redirect/WebSocket server-side no-dispatch fixtures, and deterministic emergency-stop coverage. Production in-flight cancellation closes the agent-owned page before returning cancellation. Canonical page admission covers initial pages, popup adoption, fallback selection, snapshots and download sources. Credential-popup evidence uses server-side counters and a positive control to distinguish pre-dispatch blocking from merely closing an unsafe popup. Risk keyword matching uses lexical term/phrase boundaries to reduce approval fatigue. Expanded credential classification covers OTP/verification codes, PINs, recovery material, access/refresh tokens, identity-number labels and standard HTML autocomplete security/payment tokens. Real Playwright observations carry bounded input-type/autocomplete semantics without adding a secret metadata channel.
 
-### 2026-09-18 — observed-value privacy hardening (latest run)
+### 2026-09-18 — observed-value privacy hardening
 Completed:
-- Re-read this ledger, production Playwright observation code, the observed-value privacy classifier and its tests before mutation.
-- Refactored `BrowserObservedValuePrivacyPolicy` so its sensitive HTML autocomplete tokens are published as a read-only canonical list while classification uses a case-insensitive set built from the same source. This gives the browser-side snapshot implementation one authoritative token contract instead of requiring a second hand-maintained list.
-- Added contract coverage proving every published token is normalized, unique, suppresses values directly, and still suppresses when preceded by legal HTML autocomplete qualifiers such as `section-checkout billing`.
+- Refactored `BrowserObservedValuePrivacyPolicy` so sensitive HTML autocomplete tokens are a read-only canonical contract and the C# classifier derives from the same source.
+- Added contract coverage proving every published token is normalized, unique, directly suppression-triggering and suppression-triggering with legal HTML autocomplete qualifiers.
+- Wired the canonical token contract into the production Playwright DOM snapshot. Snapshot JavaScript now decides suppression from bounded `input type` / `autocomplete` metadata before accessing `el.value`.
+- Password, current/new-password, OTP and supported payment credential/expiry fields therefore serialize `value: null`; benign fields continue to expose bounded ordinary form values as before.
+- Kept classification token-bounded in the browser observer, matching the C# policy's whitespace-token semantics and avoiding substring false positives.
 - Verified repository metadata immediately before every mutation; target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 
-Files changed this run:
-- `src/Nvidea.Core/Browser/BrowserObservedValuePrivacyPolicy.cs`
-- `tests/Nvidea.Core.Tests/BrowserObservedValuePrivacyPolicyTests.cs`
+Files changed in latest run:
+- `src/Nvidea.Core/Browser/PlaywrightBrowserDriver.cs`
 - `progress.md`
 
 Validation/evidence:
-- Static inspection confirms the public contract contains only non-secret HTML field-type tokens and remains read-only to callers.
-- Deterministic xUnit coverage was added, but no executable .NET PASS is claimed in this connector-only environment.
+- Static inspection confirms the Playwright observer receives `BrowserObservedValuePrivacyPolicy.SensitiveAutocompleteTokens` as evaluation input instead of maintaining an independent sensitive-token list.
+- Static data-flow inspection confirms `suppressValue` is computed before the conditional expression that reads `el.value`; suppressed controls take the `null` branch.
+- Existing deterministic policy/contract tests cover the canonical token vocabulary, but no executable .NET or Chromium PASS is claimed in this connector-only environment.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, authenticated browser, Ollama, or inference operation was triggered.
 
 ## Security / privacy / failure review
 - Request transport permits HTTPS or HTTP loopback only; WebSockets permit WSS or WS loopback only; credential-bearing authority fields fail closed.
 - Agent-visible page admission is defense-in-depth with request routing.
 - Consequential actions require approval; sensitive autonomous typing is blocked across passwords, OTP/verification codes, payment credentials, private/recovery keys, API/access/refresh tokens and identity-number labels.
-- Observed-value privacy classification is metadata-only and token-bounded; the canonical token list now prevents policy/browser-observer drift once browser-side suppression consumes it.
+- Browser observations now suppress password/OTP/payment values from metadata before reading the DOM value while retaining non-secret type/autocomplete semantics needed for safety decisions.
 - Prompt-injection gates, quarantine, audit boundaries, Service Worker blocking, and emergency cancellation remain intact.
 - Emergency cancellation cannot retroactively undo an external side effect committed before cancellation.
 
 ## Known blockers / risks
-- `BrowserObservedValuePrivacyPolicy` is not yet invoked before the Playwright DOM snapshot reads a field value. Until that wiring lands, non-password OTP/payment fields may still expose their current value through generic `BrowserElement.Value`; do not claim that privacy gap closed yet.
-- The production metadata path still needs a hermetic real-Chromium observation fixture proving innocuously labelled password/OTP/payment fields are observed with expected metadata, sensitive values are absent, and actions are blocked through generated accessibility references.
+- The new production suppression path still needs a hermetic real-Chromium observation fixture proving innocuously labelled password/OTP/payment fields are observed with expected non-secret metadata, sensitive values are absent, benign values remain observable, and actions are blocked through generated accessibility references.
 - Real-Chromium redirect, WebSocket, profile-persistence, popup pre-dispatch and in-flight cancellation fixtures still need execution on Windows with .NET 8, restored packages and Playwright Chromium.
 - Risk matching deliberately avoids stemming/broad substring matching to prevent approval fatigue.
 - Closing a page on emergency cancellation requires explicit fresh-page recovery before a later task.
@@ -51,4 +52,4 @@ Validation/evidence:
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and `scripts/live-demo-readiness.ps1 -RequireCloudResearch -ValidateBuild` remain environment-validation items.
 
 ## Single Best Next Task
-Pass `BrowserObservedValuePrivacyPolicy.SensitiveAutocompleteTokens` into the Playwright `EvaluateAsync` snapshot and decide suppression from input type/autocomplete before reading `el.value`, then add a hermetic real-Chromium fixture proving innocuously labelled password/OTP/payment controls retain non-secret metadata while their values are absent and accessibility-reference typing is fail-closed.
+Add a hermetic opt-in real-Chromium observation fixture with innocuously labelled password, OTP, card-number/CVV/expiry and benign fields. Assert sensitive `BrowserElement.Value` values are null while `InputType`/`AutoComplete` survive, benign values remain visible, and accessibility-reference typing into sensitive controls is rejected by the production safety policy.

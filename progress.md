@@ -30,9 +30,10 @@ Completed:
 ### 2026-09-19 — fail-closed executable validation evidence
 Completed:
 - Hardened `scripts/run-browser-integration.ps1` against false-positive green runs when a VSTest filter discovers zero tests or a curated fixture silently stops executing.
-- Every browser integration run now emits an isolated TRX result, requires at least one executed result, and fails if the evidence file is missing or empty.
-- `-SecuritySuite` additionally proves every explicitly required security fixture appears in executed test results; a renamed, undiscovered, or accidentally filtered-out class now fails validation instead of allowing a misleading PASS.
-- TRX evidence is kept in a unique temporary directory and removed after validation; the caller's integration opt-in environment is still restored in `finally`.
+- Every browser integration run emits an isolated TRX result and rejects missing/empty evidence.
+- Strengthened the gate again so skipped/not-executed TRX entries cannot masquerade as executable Chromium validation: every returned result must now have `outcome=Passed`; any non-passed result fails the runner even if `dotnet test` exits zero.
+- `-SecuritySuite` now proves each explicitly required security fixture has at least one *passed* test result, not merely a named TRX entry. Renamed, undiscovered, skipped or accidentally filtered-out fixtures therefore fail closed.
+- TRX evidence remains in a unique temporary directory and is removed after validation; the caller's integration opt-in environment is restored in `finally`.
 - Verified repository metadata immediately before every mutation; target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 
 Files changed in latest run:
@@ -41,8 +42,8 @@ Files changed in latest run:
 
 Validation/evidence:
 - Static inspection confirms the runner still targets `tests/Nvidea.Core.Tests/Nvidea.Core.Tests.csproj`, uses the project-generated Playwright installer, and scopes `NVIDEA_RUN_BROWSER_INTEGRATION=1` to test execution.
-- The runner now requests both normal console output and `browser-integration.trx`, parses `TestRun.Results.UnitTestResult`, rejects zero executed tests, and for `-SecuritySuite` checks execution evidence for each of the five curated fixture classes.
-- Repository history immediately before this run showed the previous progress commit at `5e3489d8cf408400871cc6fb3500ff90702dff45`; no unrelated intervening repository mutation was observed.
+- TRX parsing now distinguishes result existence from successful execution: zero results fail, zero passed results fail, any non-passed result fails, and curated fixture membership is checked against passed test names only.
+- Repository history at run start showed `08e8dbe1df963ee32f2ee56bf9eb1b64ff53b2cf` as the latest progress commit; no unrelated intervening mutation was observed before implementation.
 - No executable .NET or Chromium PASS is claimed in this connector-only environment.
 - No live/paid Nebius, Object Storage, Serverless, Tavily, authenticated browser, Ollama, or inference operation was triggered.
 
@@ -52,17 +53,18 @@ Validation/evidence:
 - Consequential actions require approval; sensitive autonomous typing is blocked across passwords, OTP/verification codes, payment credentials, private/recovery keys, API/access/refresh tokens and identity-number labels.
 - Browser observations suppress password/OTP/payment values from metadata before reading the DOM value while retaining non-secret type/autocomplete semantics needed for safety decisions; the integration fixture covers in-place semantic changes common in SPAs.
 - The local integration runner does not persist secrets or enable browser tests globally; its opt-in environment mutation is process-scoped and restored even on failure.
-- Browser validation now fails closed not only on test failures but also on missing/empty execution evidence and incomplete curated-suite execution, reducing the risk of a misleading green security gate after test renames or discovery regressions.
+- Browser validation now fails closed on test-process failure, missing/empty evidence, skipped/not-executed evidence, any non-passed result, and incomplete curated-suite PASS evidence. This prevents a green gate from being inferred from discovery or adapter artifacts alone.
 - Prompt-injection gates, quarantine, audit boundaries, Service Worker blocking, and emergency cancellation remain intact.
 - Emergency cancellation cannot retroactively undo an external side effect committed before cancellation.
 
 ## Known blockers / risks
-- The real-Chromium fixtures still need execution on Windows with .NET 8 and matching Playwright Chromium. The runner now rejects missing execution evidence, but static tooling changes do not substitute for an executable PASS.
-- TRX class-presence validation currently keys off test names containing the fixture class name; if the test adapter changes its naming format, the runner will intentionally fail closed and must be adapted using observed TRX evidence.
+- The real-Chromium fixtures still need execution on Windows with .NET 8 and matching Playwright Chromium. Static tooling changes do not substitute for an executable PASS.
+- TRX fixture-presence validation currently keys off passed test names containing the fixture class name; if the test adapter changes its naming format, the runner will intentionally fail closed and must be adapted using observed TRX evidence.
+- The runner intentionally rejects skipped results. If a future fixture has a legitimate platform-dependent skip, it must be separated from this security gate rather than weakening the gate globally.
 - Risk matching deliberately avoids stemming/broad substring matching to prevent approval fatigue.
 - Closing a page on emergency cancellation requires explicit fresh-page recovery before a later task.
 - Blocking Service Workers can affect sites whose auth/product flows depend on workers; judge-path compatibility needs validation without weakening transport policy.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and `scripts/live-demo-readiness.ps1 -RequireCloudResearch -ValidateBuild` remain environment-validation items.
 
 ## Single Best Next Task
-On Windows/.NET 8, run `./scripts/run-browser-integration.ps1 -InstallChromium -SecuritySuite`. The runner will now refuse zero-test and partial-suite false positives. Fix any real-browser or TRX-adapter failure without weakening transport, secret-suppression, download, persistence, or cancellation boundaries; record exact executable evidence, then move to judge-path authenticated-site compatibility validation.
+On Windows/.NET 8, run `./scripts/run-browser-integration.ps1 -InstallChromium -SecuritySuite`. The runner now requires actual PASS evidence for every curated fixture and refuses skipped/partial evidence. Fix any real-browser or TRX-adapter failure without weakening transport, secret-suppression, download, persistence or cancellation boundaries; record exact executable evidence, then move to judge-path authenticated-site compatibility validation.

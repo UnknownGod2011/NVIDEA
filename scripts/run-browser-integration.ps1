@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [switch]$InstallChromium,
+    [switch]$SecuritySuite,
     [string]$Configuration = "Release",
     [string]$Filter = "BrowserObservedValueChromiumIntegrationTests"
 )
@@ -13,6 +14,27 @@ $testProject = Join-Path $repoRoot "tests/Nvidea.Core.Tests/Nvidea.Core.Tests.cs
 
 if (-not (Test-Path $testProject -PathType Leaf)) {
     throw "NVIDEA test project not found at expected path: $testProject"
+}
+
+if ($SecuritySuite -and $PSBoundParameters.ContainsKey("Filter")) {
+    throw "Use either -SecuritySuite or -Filter, not both."
+}
+
+# Keep this list explicit: these fixtures cross the real Chromium boundary and cover
+# the highest-risk transport/privacy/persistence/download/cancellation behavior.
+$securitySuiteClasses = @(
+    "BrowserObservedValueChromiumIntegrationTests",
+    "BrowserDownloadChromiumIntegrationTests",
+    "PersistentBrowserRedirectIntegrationTests",
+    "PersistentBrowserSessionIntegrationTests",
+    "PlaywrightInFlightCancellationIntegrationTests"
+)
+
+$effectiveFilter = if ($SecuritySuite) {
+    ($securitySuiteClasses | ForEach-Object { "FullyQualifiedName~$_" }) -join "|"
+}
+else {
+    "FullyQualifiedName~$Filter"
 }
 
 $dotnet = Get-Command dotnet -ErrorAction Stop
@@ -45,8 +67,14 @@ try {
     $previousOptIn = $env:NVIDEA_RUN_BROWSER_INTEGRATION
     try {
         $env:NVIDEA_RUN_BROWSER_INTEGRATION = "1"
-        Write-Host "Running opt-in browser integration tests with filter '$Filter'..."
-        & $dotnet.Source test $testProject --configuration $Configuration --no-build --filter "FullyQualifiedName~$Filter" --logger "console;verbosity=normal"
+        if ($SecuritySuite) {
+            Write-Host "Running curated Chromium security suite: $($securitySuiteClasses -join ', ')"
+        }
+        else {
+            Write-Host "Running opt-in browser integration tests with filter '$Filter'..."
+        }
+
+        & $dotnet.Source test $testProject --configuration $Configuration --no-build --filter $effectiveFilter --logger "console;verbosity=normal"
         if ($LASTEXITCODE -ne 0) { throw "Browser integration tests failed with exit code $LASTEXITCODE." }
     }
     finally {

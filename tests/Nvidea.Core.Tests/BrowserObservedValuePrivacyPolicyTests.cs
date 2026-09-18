@@ -36,4 +36,19 @@ public sealed class BrowserObservedValuePrivacyPolicyTests
     {
         Assert.False(BrowserObservedValuePrivacyPolicy.ShouldSuppressValue(inputType, autoComplete));
     }
+
+    [Fact]
+    public void PublishedAutocompleteTokens_AreCanonicalAndAllSuppressValues()
+    {
+        var tokens = BrowserObservedValuePrivacyPolicy.SensitiveAutocompleteTokens;
+
+        Assert.NotEmpty(tokens);
+        Assert.Equal(tokens.Count, tokens.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.All(tokens, token =>
+        {
+            Assert.Equal(token, token.Trim().ToLowerInvariant());
+            Assert.True(BrowserObservedValuePrivacyPolicy.ShouldSuppressValue("text", token));
+            Assert.True(BrowserObservedValuePrivacyPolicy.ShouldSuppressValue("text", $"section-checkout billing {token}"));
+        });
+    }
 }

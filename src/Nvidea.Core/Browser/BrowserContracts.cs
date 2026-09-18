@@ -44,6 +44,11 @@ public sealed record BrowserLocator(
         new(BrowserLocatorKind.RoleAndName, name, name, role);
 }
 
+/// <summary>
+/// Bounded browser observation. InputType and AutoComplete contain normalized DOM metadata only;
+/// they never contain the field value. Keeping form semantics separate from Value lets safety
+/// policy classify password/OTP/payment controls without exposing the secret being entered.
+/// </summary>
 public sealed record BrowserElement(
     string Reference,
     string Role,
@@ -52,7 +57,9 @@ public sealed record BrowserElement(
     bool IsVisible,
     bool IsEnabled,
     bool IsEditable,
-    bool IsChecked = false);
+    bool IsChecked = false,
+    string? InputType = null,
+    string? AutoComplete = null);
 
 public sealed record BrowserObservation(
     Uri Url,

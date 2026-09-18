@@ -33,8 +33,8 @@ public sealed class PlaywrightInFlightCancellationIntegrationTests
 
             var action = new BrowserAction(
                 BrowserActionKind.Navigate,
-                "Open deliberately slow local page",
-                Destination: server.UriFor("/slow"));
+                Destination: server.UriFor("/slow"),
+                Rationale: "Open deliberately slow local page");
 
             var running = driver.ExecuteAsync(action, cancellation.Token);
             await server.WaitUntilSlowRequestArrivesAsync(TimeSpan.FromSeconds(3));

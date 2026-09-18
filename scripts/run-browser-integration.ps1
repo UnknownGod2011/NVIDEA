@@ -79,29 +79,42 @@ try {
         & $dotnet.Source test $testProject --configuration $Configuration --no-build --filter $effectiveFilter --results-directory $resultsDirectory --logger "trx;LogFileName=browser-integration.trx" --logger "console;verbosity=normal"
         if ($LASTEXITCODE -ne 0) { throw "Browser integration tests failed with exit code $LASTEXITCODE." }
 
-        # dotnet test can exit successfully when a filter discovers zero tests. Treat that as a
-        # validation failure, and for the curated gate prove that every required fixture executed.
+        # dotnet test can exit successfully when a filter discovers zero tests, and adapters can
+        # report skipped/not-executed results without proving the browser boundary. Treat both as
+        # validation failures. For the curated gate, prove every required fixture actually passed.
         $trxPath = Join-Path $resultsDirectory "browser-integration.trx"
         if (-not (Test-Path $trxPath -PathType Leaf)) {
             throw "Browser integration test run produced no TRX evidence at '$trxPath'."
         }
 
         [xml]$trx = Get-Content -LiteralPath $trxPath -Raw
-        $executed = @($trx.TestRun.Results.UnitTestResult)
-        if ($executed.Count -eq 0) {
-            throw "Browser integration filter '$effectiveFilter' executed zero tests. Refusing a false-positive validation pass."
+        $results = @($trx.TestRun.Results.UnitTestResult)
+        if ($results.Count -eq 0) {
+            throw "Browser integration filter '$effectiveFilter' produced zero test results. Refusing a false-positive validation pass."
+        }
+
+        $passed = @($results | Where-Object { [string]$_.outcome -eq "Passed" })
+        if ($passed.Count -eq 0) {
+            $outcomes = @($results | ForEach-Object { [string]$_.outcome } | Sort-Object -Unique) -join ", "
+            throw "Browser integration produced no passed tests (outcomes: $outcomes). Skipped/not-executed evidence does not validate the Chromium boundary."
+        }
+
+        $nonPassed = @($results | Where-Object { [string]$_.outcome -ne "Passed" })
+        if ($nonPassed.Count -gt 0) {
+            $summary = @($nonPassed | ForEach-Object { "'$([string]$_.testName)'=$([string]$_.outcome)" }) -join "; "
+            throw "Browser integration contains non-passed results: $summary. Refusing partial validation evidence."
         }
 
         if ($SecuritySuite) {
-            $executedNames = @($executed | ForEach-Object { [string]$_.testName })
+            $passedNames = @($passed | ForEach-Object { [string]$_.testName })
             foreach ($requiredClass in $securitySuiteClasses) {
-                if (-not ($executedNames | Where-Object { $_ -like "*$requiredClass*" })) {
-                    throw "Curated Chromium security fixture '$requiredClass' did not execute. Refusing an incomplete validation pass."
+                if (-not ($passedNames | Where-Object { $_ -like "*$requiredClass*" })) {
+                    throw "Curated Chromium security fixture '$requiredClass' has no passed test evidence. Refusing an incomplete validation pass."
                 }
             }
         }
 
-        Write-Host "Verified executable TRX evidence for $($executed.Count) browser integration test result(s)."
+        Write-Host "Verified executable PASS evidence for all $($passed.Count) browser integration test result(s)."
     }
     finally {
         $env:NVIDEA_RUN_BROWSER_INTEGRATION = $previousOptIn

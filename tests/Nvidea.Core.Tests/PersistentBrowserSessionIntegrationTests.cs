@@ -51,7 +51,7 @@ public sealed class PersistentBrowserSessionIntegrationTests
     }
 
     [BrowserIntegrationFact]
-    public async Task AllowedPopup_BecomesActive_AndCrossBoundaryPopup_IsNeverAdopted()
+    public async Task AllowedPopup_BecomesActive_AndCredentialBearingPopup_IsNeverAdopted()
     {
         await using var site = await LocalSessionSite.StartAsync();
         var stateDirectory = Path.Combine(Path.GetTempPath(), "nvidea-popup-browser-it", Guid.NewGuid().ToString("N"));
@@ -91,8 +91,8 @@ public sealed class PersistentBrowserSessionIntegrationTests
 
             var blocked = new BrowserAction(
                 BrowserActionKind.Click,
-                BrowserLocator.ByRole("button", "Open blocked popup"),
-                Rationale: "Attempt the controlled cross-boundary popup.",
+                BrowserLocator.ByRole("button", "Open credential popup"),
+                Rationale: "Attempt a credential-bearing popup on an otherwise allowlisted loopback host.",
                 Postconditions: new[]
                 {
                     new BrowserPostcondition(BrowserPostconditionKind.VisibleTextContains, Expected: "popup-harness")
@@ -105,12 +105,13 @@ public sealed class PersistentBrowserSessionIntegrationTests
             Assert.All(blockedSnapshot.Pages, page =>
             {
                 Assert.True(page.IsPermitted);
+                Assert.True(string.IsNullOrEmpty(page.Url?.UserInfo));
                 if (page.Url is not null)
                     Assert.Equal(site.StartUri.IdnHost, page.Url.IdnHost, ignoreCase: true);
             });
             Assert.DoesNotContain(
                 blockedSnapshot.Pages,
-                page => string.Equals(page.Url?.IdnHost, "example.invalid", StringComparison.OrdinalIgnoreCase));
+                page => string.Equals(page.Url?.AbsolutePath, "/credential-popup", StringComparison.Ordinal));
         }
         finally
         {
@@ -212,7 +213,7 @@ public sealed class PersistentBrowserSessionIntegrationTests
             }
         }
 
-        private static async Task HandleAsync(TcpClient client, CancellationToken cancellationToken)
+        private async Task HandleAsync(TcpClient client, CancellationToken cancellationToken)
         {
             using (client)
             using (var stream = client.GetStream())
@@ -230,6 +231,13 @@ public sealed class PersistentBrowserSessionIntegrationTests
                         cookie = line["Cookie:".Length..].Trim();
                 }
 
+                var credentialPopup = new UriBuilder(StartUri)
+                {
+                    UserName = "synthetic-user",
+                    Password = "synthetic-password",
+                    Path = "/credential-popup"
+                }.Uri.AbsoluteUri;
+
                 var (body, extraHeader) = path switch
                 {
                     "/seed" => ("<html><body>session-seeded</body></html>", "Set-Cookie: nvidea_session=proof; Path=/; SameSite=Lax\r\n"),
@@ -237,13 +245,14 @@ public sealed class PersistentBrowserSessionIntegrationTests
                         ? "<html><body>session-restored</body></html>"
                         : "<html><body>session-missing</body></html>", string.Empty),
                     "/allowed-popup" => ("<html><body>allowed-popup</body></html>", string.Empty),
-                    "/popups" => ("""
+                    "/popups" => ($"""
                         <html><body>
                         <div>popup-harness</div>
                         <button onclick="window.open('/allowed-popup','_blank')">Open allowed popup</button>
-                        <button onclick="window.open('http://example.invalid/blocked','_blank')">Open blocked popup</button>
+                        <button onclick="window.open('{credentialPopup}','_blank')">Open credential popup</button>
                         </body></html>
                         """, string.Empty),
+                    "/credential-popup" => ("<html><body>credential-popup-must-never-be-adopted</body></html>", string.Empty),
                     _ => ("<html><body>not-found</body></html>", string.Empty)
                 };
 

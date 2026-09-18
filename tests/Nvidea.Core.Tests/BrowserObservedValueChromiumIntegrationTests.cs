@@ -54,6 +54,18 @@ public sealed class BrowserObservedValueChromiumIntegrationTests
             Assert.True(benignDecision.Allowed);
             Assert.False(benignDecision.RequiresApproval);
             Assert.NotEqual(BrowserRiskLevel.Blocked, benignDecision.Risk);
+
+            // SPA-style forms can repurpose an existing control without navigation. Re-observation must
+            // classify the current DOM semantics, not reuse a previously benign observation/value.
+            await session.Page.GetByLabel("Dynamic field").EvaluateAsync("""
+                el => {
+                    el.setAttribute('autocomplete', 'one-time-code');
+                    el.value = '654321';
+                }
+                """);
+
+            var mutatedObservation = await session.Driver.ObserveAsync();
+            AssertSensitive(mutatedObservation, policy, "Dynamic field", "text", "one-time-code");
         }
         finally
         {
@@ -168,6 +180,7 @@ public sealed class BrowserObservedValueChromiumIntegrationTests
                         <label>Payment security<input type='text' autocomplete='cc-csc' value='123'></label>
                         <label>Payment expiry<input type='text' autocomplete='cc-exp' value='12/34'></label>
                         <label>Contact field<input type='email' autocomplete='email' value='synthetic@example.test'></label>
+                        <label>Dynamic field<input type='text' autocomplete='email' value='initially-benign@example.test'></label>
                         </body></html>
                         """;
                     var bodyBytes = Encoding.UTF8.GetBytes(body);

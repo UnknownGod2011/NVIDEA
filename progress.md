@@ -22,16 +22,16 @@ Blocked intentional remote plaintext HTTP navigation while preserving HTTPS and 
 ### 2026-09-18 — credential-bearing transport hardening
 Hardened HTTP(S) and WebSocket transport predicates to reject any URI with non-empty `UserInfo`, including otherwise-safe HTTPS/WSS and loopback HTTP/WS. Added regression coverage so credentials must remain in explicit authenticated browser/session mechanisms instead of URL authority fields.
 
-### 2026-09-18 — executable redirect-boundary fixture
-Added `tests/Nvidea.Core.Tests/PersistentBrowserRedirectIntegrationTests.cs`, an opt-in real-Chromium fixture enabled by `NVIDEA_RUN_PLAYWRIGHT_INTEGRATION=1`. It exercises the production `PersistentBrowserContextFactory` against a controlled loopback TCP HTTP server and records destination-side request counts. The critical test serves an allowed redirect whose `Location` contains synthetic URI user-info and requires the forbidden destination to receive zero requests. A positive control proves ordinary loopback navigation reaches the server. The fixture synchronizes on server observations and includes a bounded late-arrival window to prevent timing-related false passes.
+### 2026-09-18 — executable browser network-boundary fixtures
+Added opt-in real-Chromium fixtures enabled by `NVIDEA_RUN_PLAYWRIGHT_INTEGRATION=1`. They exercise production `PersistentBrowserContextFactory` against controlled loopback servers. Redirect and WebSocket checks require credential-bearing forbidden destinations to produce zero destination-side requests/handshakes, with positive controls and bounded late-arrival observation to reduce false passes.
 
-### 2026-09-18 — server-observed WebSocket refusal (latest run)
+### 2026-09-18 — persistent authenticated-state restart coverage (latest run)
 Completed:
-- Re-read this ledger and production persistent browser transport implementation before mutation.
-- Rechecked current official Playwright .NET docs: BrowserContext WebSocket routing applies to sockets created after registration; a routed WebSocket does not connect to the real server unless `ConnectToServer()` is called. Production registers routing before the fresh agent page.
-- Extended the real-Chromium fixture with `CredentialBearingWebSocket_IsStoppedBeforeServerHandshake`. The browser attempts a synthetic credential-bearing loopback `ws://` URL that would otherwise be loopback-eligible. The controlled TCP server counts `/forbidden-websocket`; the assertion requires that count to remain unchanged after the browser socket closes/errors plus a bounded late-arrival window.
-- This validates the property at the server handshake boundary rather than trusting browser events: if production accidentally calls `ConnectToServer()` for the forbidden socket, the HTTP Upgrade request becomes externally observable and the test fails.
-- Kept the test hermetic: loopback only, synthetic marker only, temporary NVIDEA browser profile, no real account/session/provider.
+- Re-read this ledger and the existing real-Chromium fixture before mutation.
+- Added `PersistentProfile_RestartPreservesCookieAndLocalStorage_WithoutRestoringStaleTabs` to the production-factory integration suite.
+- The test launches the actual persistent context against a synthetic loopback origin, writes a synthetic SameSite cookie plus local-storage preference, deliberately opens a second stale tab, cleanly closes the context, then relaunches using the identical user-data directory.
+- After restart it requires exactly one fresh page, verifies the cookie and local-storage value survived, and verifies no stale-tab URL was restored. This pins the intended authenticated-profile contract without using a real account or secret.
+- Kept the fixture hermetic: loopback only, temporary profile directory, synthetic values, no provider/account/network dependency beyond local sockets.
 - Explicitly verified repository metadata as exactly `UnknownGod2011/NVIDEA` immediately before each GitHub mutation. No other repository was mutated.
 
 Files changed this run:
@@ -39,9 +39,9 @@ Files changed this run:
 - `progress.md`
 
 Validation/evidence:
-- Static review confirms both redirect and WebSocket integration checks exercise production `PersistentBrowserContextFactory`.
-- Official Playwright .NET documentation confirms routed WebSockets are server-disconnected by default and connect only through `ConnectToServer()`; production calls it only after `EvaluateWebSocketTransport(...).Allowed`.
-- No executable Chromium PASS is claimed here. Tests remain opt-in and require restored .NET 8 dependencies plus installed Playwright Chromium.
+- Static review confirms the new persistence check exercises production `PersistentBrowserContextFactory` twice with the same state directory rather than mocking persistence.
+- The assertion simultaneously covers positive state persistence and negative stale-tab restoration, so retaining authentication cannot silently expand the browser's resumed navigation surface.
+- No executable Chromium PASS is claimed here. The integration suite remains opt-in and requires restored .NET 8 dependencies plus installed Playwright Chromium.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, authenticated user browser, Ollama, or inference operation was triggered.
 
 ## Security / privacy / failure review
@@ -49,16 +49,17 @@ Validation/evidence:
 - Service Workers remain disabled in the agent-owned context to reduce request-routing bypass while browser-managed cookies/local storage remain available for authenticated profile persistence.
 - Unsafe/unparsable request and socket URLs fail closed. Existing credential-typing blocks, consequential-action approvals, prompt-injection gates, download quarantine and emergency-stop architecture remain intact.
 - Redirect and WebSocket validation are hermetic and use loopback sockets plus synthetic non-secret credential markers. Network-boundary counters are used instead of browser-only success signals.
+- Profile-persistence validation uses only synthetic cookie/local-storage values and a disposable temporary profile; it does not copy or inspect a user's real browser profile.
 - Secret environment values remain presence-only in readiness tooling and are never printed, persisted, hashed, or measured.
 
 ## Known blockers / risks
-- The real-Chromium redirect and WebSocket fixtures still need execution on a machine with .NET 8, restored packages and Playwright Chromium. Until the redirect test passes, NVIDEA must not claim every redirect hop is blocked before dispatch.
+- The real-Chromium redirect, WebSocket and profile-persistence fixtures still need execution on a machine with .NET 8, restored packages and Playwright Chromium. Until the redirect test passes, NVIDEA must not claim every redirect hop is blocked before dispatch.
 - If `/forbidden-destination` is observed, BrowserContext request routing is insufficient for redirect-hop enforcement and must be replaced/hardened before relying on it for authenticated flows.
 - If `/forbidden-websocket` is observed, the WebSocket routing boundary is not enforcing its intended no-handshake property and must be corrected before authenticated judge flows.
-- Authenticated profile persistence still needs a hermetic real-Chromium fixture proving permitted cookie/local-storage state survives a context restart without exposing stale tabs.
+- If the profile restart test fails, persistent authenticated browser sessions are not recording-ready; determine whether Chromium shutdown semantics, factory startup behavior, or storage persistence is responsible before weakening assertions.
 - Blocking Service Workers can affect sites whose product/auth flows materially depend on workers; judge-path sites need compatibility testing without weakening the transport rule.
 - The strengthened live readiness preflight and unified submission suite still need execution on the actual Windows recording machine.
 - Unified judging verification and live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
 
 ## Single Best Next Task
-Run the opt-in Chromium redirect + WebSocket fixtures on the restored Windows/.NET 8 environment with Playwright Chromium installed. If both network-boundary assertions pass, add an authenticated-profile persistence integration test using only synthetic loopback cookies/local storage and verify a restart preserves state while stale tabs remain unavailable. If either forbidden server path receives a request, harden/replace that interception mechanism before proceeding. Then run the full browser suite and `scripts/live-demo-readiness.ps1 -RequireCloudResearch -ValidateBuild` before live judge-path capture.
+Run the opt-in Chromium redirect + WebSocket + profile-persistence fixtures on the restored Windows/.NET 8 environment with Playwright Chromium installed. Fix any observed production behavior rather than weakening the network/security assertions. If all three boundaries pass, add a hermetic cancellation/emergency-stop integration scenario proving a multi-step browser plan cannot execute a queued consequential action after cancellation, then run the full browser suite and `scripts/live-demo-readiness.ps1 -RequireCloudResearch -ValidateBuild` before live judge-path capture.

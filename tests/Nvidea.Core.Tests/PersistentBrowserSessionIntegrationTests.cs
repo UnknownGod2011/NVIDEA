@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -51,7 +52,7 @@ public sealed class PersistentBrowserSessionIntegrationTests
     }
 
     [BrowserIntegrationFact]
-    public async Task AllowedPopup_BecomesActive_AndCredentialBearingPopup_IsNeverAdopted()
+    public async Task AllowedPopup_BecomesActive_AndCredentialBearingPopup_IsBlockedBeforeDispatch()
     {
         await using var site = await LocalSessionSite.StartAsync();
         var stateDirectory = Path.Combine(Path.GetTempPath(), "nvidea-popup-browser-it", Guid.NewGuid().ToString("N"));
@@ -73,6 +74,7 @@ public sealed class PersistentBrowserSessionIntegrationTests
                 });
             var allowedOutcome = await ExecuteWithApprovalIfNeededAsync(runtime, allowed);
             Assert.Equal(AgentJobState.Completed, allowedOutcome.State);
+            await site.WaitForRequestCountAsync("/allowed-popup", 1, TimeSpan.FromSeconds(2));
 
             var allowedSnapshot = await runtime.GetSessionSnapshotAsync();
             Assert.Equal("/allowed-popup", allowedSnapshot.ActivePage.Url?.AbsolutePath);
@@ -100,7 +102,11 @@ public sealed class PersistentBrowserSessionIntegrationTests
             var blockedOutcome = await ExecuteWithApprovalIfNeededAsync(runtime, blocked);
             Assert.Equal(AgentJobState.Completed, blockedOutcome.State);
 
-            await Task.Delay(200);
+            // Retain a bounded observation window after Playwright reports completion. A policy that
+            // merely closes/rejects the popup after Chromium has already dispatched its request must fail.
+            await Task.Delay(350);
+            Assert.Equal(0, site.GetRequestCount("/credential-popup"));
+
             var blockedSnapshot = await runtime.GetSessionSnapshotAsync();
             Assert.All(blockedSnapshot.Pages, page =>
             {
@@ -163,6 +169,7 @@ public sealed class PersistentBrowserSessionIntegrationTests
         private readonly TcpListener _listener;
         private readonly CancellationTokenSource _stop = new();
         private readonly Task _acceptLoop;
+        private readonly ConcurrentDictionary<string, int> _requestCounts = new(StringComparer.Ordinal);
 
         private LocalSessionSite(TcpListener listener, Uri startUri)
         {
@@ -172,6 +179,18 @@ public sealed class PersistentBrowserSessionIntegrationTests
         }
 
         public Uri StartUri { get; }
+
+        public int GetRequestCount(string path) =>
+            _requestCounts.TryGetValue(path, out var count) ? count : 0;
+
+        public async Task WaitForRequestCountAsync(string path, int expectedMinimum, TimeSpan timeout)
+        {
+            using var timeoutCts = new CancellationTokenSource(timeout);
+            while (GetRequestCount(path) < expectedMinimum)
+            {
+                await Task.Delay(20, timeoutCts.Token).ConfigureAwait(false);
+            }
+        }
 
         public static Task<LocalSessionSite> StartAsync()
         {
@@ -222,6 +241,7 @@ public sealed class PersistentBrowserSessionIntegrationTests
                 var requestLine = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false) ?? string.Empty;
                 var parts = requestLine.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 var path = parts.Length >= 2 ? parts[1] : "/";
+                _requestCounts.AddOrUpdate(path, 1, static (_, count) => count + 1);
                 var cookie = string.Empty;
 
                 string? line;
@@ -252,7 +272,7 @@ public sealed class PersistentBrowserSessionIntegrationTests
                         <button onclick="window.open('{credentialPopup}','_blank')">Open credential popup</button>
                         </body></html>
                         """, string.Empty),
-                    "/credential-popup" => ("<html><body>credential-popup-must-never-be-adopted</body></html>", string.Empty),
+                    "/credential-popup" => ("<html><body>credential-popup-must-never-be-dispatched</body></html>", string.Empty),
                     _ => ("<html><body>not-found</body></html>", string.Empty)
                 };
 

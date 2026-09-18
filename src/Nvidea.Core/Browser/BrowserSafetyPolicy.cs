@@ -11,8 +11,10 @@ public sealed class BrowserSafetyPolicy
 
     private static readonly string[] SensitiveFieldTerms =
     {
-        "password", "passcode", "otp", "one-time", "2fa", "mfa", "cvv", "cvc", "card number",
-        "credit card", "debit card", "bank account", "routing number", "private key", "secret", "api key"
+        "password", "passcode", "pin", "otp", "one-time", "one time password", "verification code", "security code",
+        "2fa", "mfa", "cvv", "cvc", "card number", "credit card", "debit card", "bank account", "routing number",
+        "private key", "seed phrase", "recovery phrase", "recovery code", "backup code", "secret", "api key",
+        "access token", "refresh token", "bearer token", "social security number", "ssn"
     };
 
     public BrowserActionDecision Evaluate(BrowserAction action, BrowserObservation observation)
@@ -33,7 +35,7 @@ public sealed class BrowserSafetyPolicy
         if (ContainsAny(target, SensitiveFieldTerms))
         {
             if (action.Kind == BrowserActionKind.Type)
-                return Block("Typing secrets, credentials, OTPs, payment credentials, or private keys through the autonomous browser agent is blocked.");
+                return Block("Typing secrets, credentials, OTPs, payment credentials, identity numbers, recovery material, or private keys through the autonomous browser agent is blocked.");
 
             return High("The target appears security- or credential-sensitive and requires explicit approval.");
         }

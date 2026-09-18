@@ -65,8 +65,10 @@ try {
     }
 
     $previousOptIn = $env:NVIDEA_RUN_BROWSER_INTEGRATION
+    $resultsDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("nvidea-browser-tests-" + [Guid]::NewGuid().ToString("N"))
     try {
         $env:NVIDEA_RUN_BROWSER_INTEGRATION = "1"
+        New-Item -ItemType Directory -Path $resultsDirectory -Force | Out-Null
         if ($SecuritySuite) {
             Write-Host "Running curated Chromium security suite: $($securitySuiteClasses -join ', ')"
         }
@@ -74,11 +76,38 @@ try {
             Write-Host "Running opt-in browser integration tests with filter '$Filter'..."
         }
 
-        & $dotnet.Source test $testProject --configuration $Configuration --no-build --filter $effectiveFilter --logger "console;verbosity=normal"
+        & $dotnet.Source test $testProject --configuration $Configuration --no-build --filter $effectiveFilter --results-directory $resultsDirectory --logger "trx;LogFileName=browser-integration.trx" --logger "console;verbosity=normal"
         if ($LASTEXITCODE -ne 0) { throw "Browser integration tests failed with exit code $LASTEXITCODE." }
+
+        # dotnet test can exit successfully when a filter discovers zero tests. Treat that as a
+        # validation failure, and for the curated gate prove that every required fixture executed.
+        $trxPath = Join-Path $resultsDirectory "browser-integration.trx"
+        if (-not (Test-Path $trxPath -PathType Leaf)) {
+            throw "Browser integration test run produced no TRX evidence at '$trxPath'."
+        }
+
+        [xml]$trx = Get-Content -LiteralPath $trxPath -Raw
+        $executed = @($trx.TestRun.Results.UnitTestResult)
+        if ($executed.Count -eq 0) {
+            throw "Browser integration filter '$effectiveFilter' executed zero tests. Refusing a false-positive validation pass."
+        }
+
+        if ($SecuritySuite) {
+            $executedNames = @($executed | ForEach-Object { [string]$_.testName })
+            foreach ($requiredClass in $securitySuiteClasses) {
+                if (-not ($executedNames | Where-Object { $_ -like "*$requiredClass*" })) {
+                    throw "Curated Chromium security fixture '$requiredClass' did not execute. Refusing an incomplete validation pass."
+                }
+            }
+        }
+
+        Write-Host "Verified executable TRX evidence for $($executed.Count) browser integration test result(s)."
     }
     finally {
         $env:NVIDEA_RUN_BROWSER_INTEGRATION = $previousOptIn
+        if (Test-Path $resultsDirectory) {
+            Remove-Item -LiteralPath $resultsDirectory -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 finally {

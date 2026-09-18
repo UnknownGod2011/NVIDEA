@@ -15,9 +15,6 @@ public sealed class BrowserSafetyPolicy
         "2fa", "mfa", "cvv", "cvc", "card number", "credit card", "debit card", "bank account", "routing number",
         "private key", "seed phrase", "recovery phrase", "recovery code", "backup code", "secret", "api key",
         "access token", "refresh token", "bearer token", "social security number", "ssn",
-        // Standard HTML autocomplete tokens are browser-authored form semantics rather than model rationale.
-        // Including them here protects CSS/attribute locators even when a site deliberately gives the field
-        // an innocuous or empty visible label. Keep explicit variants rather than broad substring matching.
         "current-password", "new-password", "one-time-code", "cc-number", "cc-csc", "cc-exp", "cc-exp-month",
         "cc-exp-year", "cc-name", "transaction-amount", "transaction-currency"
     };
@@ -122,7 +119,12 @@ public sealed class BrowserSafetyPolicy
             {
                 parts.Add(observed.Name);
                 parts.Add(observed.Role);
+                // Value is retained for backwards-compatible non-secret classification, but the
+                // Playwright observer suppresses password values. Form metadata is explicitly
+                // non-secret and is the authoritative semantic signal for innocuously-labelled fields.
                 parts.Add(observed.Value);
+                parts.Add(observed.InputType);
+                parts.Add(observed.AutoComplete);
             }
         }
 

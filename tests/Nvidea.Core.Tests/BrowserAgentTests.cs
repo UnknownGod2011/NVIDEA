@@ -26,6 +26,40 @@ public sealed class BrowserAgentTests
         Assert.Equal(BrowserRiskLevel.High, decision.Risk);
     }
 
+    [Theory]
+    [InlineData("Display settings")]
+    [InlineData("Design preview")]
+    [InlineData("Assignment details")]
+    [InlineData("Secretary profile")]
+    public void SafetyPolicy_DoesNotEscalateHarmlessSubstringCollisions(string label)
+    {
+        var policy = new BrowserSafetyPolicy();
+        var action = new BrowserAction(BrowserActionKind.Click, BrowserLocator.ByRole("button", label));
+
+        var decision = policy.Evaluate(action, Observation("https://example.com", "Home"));
+
+        Assert.True(decision.Allowed);
+        Assert.False(decision.RequiresApproval);
+        Assert.Equal(BrowserRiskLevel.Medium, decision.Risk);
+    }
+
+    [Theory]
+    [InlineData("Pay-now")]
+    [InlineData("Please SIGN this")]
+    [InlineData("API_KEY")]
+    [InlineData("Confirm order #42")]
+    public void SafetyPolicy_StillEscalatesBoundedRiskTerms(string label)
+    {
+        var policy = new BrowserSafetyPolicy();
+        var action = new BrowserAction(BrowserActionKind.Click, BrowserLocator.ByRole("button", label));
+
+        var decision = policy.Evaluate(action, Observation("https://example.com", "Home"));
+
+        Assert.True(decision.Allowed);
+        Assert.True(decision.RequiresApproval);
+        Assert.Equal(BrowserRiskLevel.High, decision.Risk);
+    }
+
     [Fact]
     public void SafetyPolicy_RequiresApprovalForMutationOnPromptInjectionFlaggedPage()
     {

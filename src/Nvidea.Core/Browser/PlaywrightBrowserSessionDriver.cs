@@ -5,15 +5,16 @@ namespace Nvidea.Core.Browser;
 
 /// <summary>
 /// Session-aware browser driver that keeps the agent on newly-created permitted pages in a
-/// Playwright context. Popups/new tabs are adopted only after their URL satisfies the same
-/// HTTP(S)/host boundary as normal navigation. Cross-boundary popups are closed without being
-/// observed or interacted with by the agent. Browser downloads are captured into the configured
-/// NVIDEA quarantine before a Download action is allowed to return successfully.
+/// Playwright context. Popups/new tabs are adopted only after their URL satisfies the canonical
+/// transport and host boundary. Cross-boundary popups are closed without being observed or
+/// interacted with by the agent. Browser downloads are captured into the configured NVIDEA
+/// quarantine before a Download action is allowed to return successfully.
 /// </summary>
 public sealed class PlaywrightBrowserSessionDriver : IBrowserDriver
 {
     private readonly IBrowserContext _context;
     private readonly PlaywrightBrowserDriverOptions _options;
+    private readonly BrowserPageAdmissionPolicy _pageAdmission;
     private readonly BrowserDownloadQuarantine? _downloads;
     private readonly BrowserDownloadStagingGuard? _downloadStaging;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -33,6 +34,7 @@ public sealed class PlaywrightBrowserSessionDriver : IBrowserDriver
         _context = context ?? throw new ArgumentNullException(nameof(context));
         _activePage = initialPage ?? throw new ArgumentNullException(nameof(initialPage));
         _options = options ?? new PlaywrightBrowserDriverOptions();
+        _pageAdmission = new BrowserPageAdmissionPolicy(_options.NormalizedAllowedHosts);
         _downloads = downloads;
         _downloadStaging = downloadStaging;
 
@@ -65,17 +67,8 @@ public sealed class PlaywrightBrowserSessionDriver : IBrowserDriver
             await CreatePageDriver(page).ExecuteAsync(action, cancellationToken).ConfigureAwait(false);
 
             if (action.Kind == BrowserActionKind.Download)
-            {
-                // Playwright emits Page.Download when a transfer starts, while SaveAsAsync waits for
-                // the bytes to finish. Do not report the browser action as complete until a capture
-                // initiated by this active page after the click has reached durable quarantine.
                 await AwaitDownloadCaptureAsync(page, downloadBaseline, cancellationToken).ConfigureAwait(false);
-            }
 
-            // A click can synchronously create a popup/new tab whose Page event fires while its URL is
-            // still about:blank. Give only already-created candidate pages a short bounded window to
-            // commit navigation so a permitted popup can become the verifier's next active page. This
-            // never waits for or discovers unrelated future pages and never interacts with the popup.
             if (action.Kind == BrowserActionKind.Click && !_newPages.IsEmpty)
                 await ResolvePostClickPageAsync(cancellationToken).ConfigureAwait(false);
         }
@@ -127,10 +120,7 @@ public sealed class PlaywrightBrowserSessionDriver : IBrowserDriver
                 if (capture.Sequence <= baseline)
                     continue;
                 if (!ReferenceEquals(capture.Page, sourcePage))
-                {
-                    // The capture itself continues into quarantine, but it cannot prove this action.
                     continue;
-                }
 
                 await capture.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
                 return;
@@ -178,9 +168,6 @@ public sealed class PlaywrightBrowserSessionDriver : IBrowserDriver
             if (!_context.Pages.Any(page => !page.IsClosed))
                 throw new InvalidOperationException("Browser context has no open pages.");
 
-            // BrowserContext.Page is emitted for newly-created tabs/popups. Consume only the pages
-            // observed through that event rather than assuming BrowserContext.Pages has any
-            // documented creation-order semantics.
             var pendingCount = _newPages.Count;
             for (var i = 0; i < pendingCount && _newPages.TryDequeue(out var candidate); i++)
             {
@@ -208,7 +195,7 @@ public sealed class PlaywrightBrowserSessionDriver : IBrowserDriver
             {
                 var fallback = _context.Pages.FirstOrDefault(page => !page.IsClosed && IsPermitted(page.Url));
                 _activePage = fallback
-                    ?? throw new InvalidOperationException("No open browser page remains inside the permitted host boundary.");
+                    ?? throw new InvalidOperationException("No open browser page remains inside the permitted transport and host boundary.");
             }
 
             return _activePage;
@@ -244,7 +231,7 @@ public sealed class PlaywrightBrowserSessionDriver : IBrowserDriver
         if (_downloads is null)
             throw new InvalidOperationException("Browser download quarantine is not configured.");
         if (!TryParseWebUri(download.Page.Url, out var sourceUri) || !IsPermitted(download.Page.Url))
-            throw new InvalidOperationException("Download source page is outside the permitted web boundary.");
+            throw new InvalidOperationException("Download source page is outside the permitted transport and host boundary.");
 
         using var captureTimeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(
             Math.Min(120_000, Math.Max(1_000, _options.ActionTimeoutMilliseconds))));
@@ -280,9 +267,6 @@ public sealed class PlaywrightBrowserSessionDriver : IBrowserDriver
         }
         finally
         {
-            // Playwright retains its browser-managed copy until context close unless explicitly
-            // removed. Once quarantine capture has succeeded or failed, that transient duplicate
-            // should not continue consuming the bounded staging budget.
             try { await download.DeleteAsync().ConfigureAwait(false); }
             catch { }
         }
@@ -293,17 +277,10 @@ public sealed class PlaywrightBrowserSessionDriver : IBrowserDriver
     private void ValidatePermittedPage(IPage page)
     {
         if (!IsPermitted(page.Url))
-            throw new InvalidOperationException("Initial browser page is outside the permitted web boundary.");
+            throw new InvalidOperationException("Initial browser page is outside the permitted transport and host boundary.");
     }
 
-    private bool IsPermitted(string rawUrl)
-    {
-        if (!TryParseWebUri(rawUrl, out var uri))
-            return false;
-
-        var allowed = _options.NormalizedAllowedHosts;
-        return allowed.Count == 0 || allowed.Contains(uri.IdnHost);
-    }
+    private bool IsPermitted(string rawUrl) => _pageAdmission.IsAllowed(rawUrl);
 
     private static bool TryParseWebUri(string rawUrl, out Uri uri)
     {

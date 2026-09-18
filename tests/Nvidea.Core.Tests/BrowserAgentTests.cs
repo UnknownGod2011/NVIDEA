@@ -46,7 +46,7 @@ public sealed class BrowserAgentTests
     [Theory]
     [InlineData("Pay-now")]
     [InlineData("Please SIGN this")]
-    [InlineData("API_KEY")]
+    [InlineData("API key:")]
     [InlineData("Confirm order #42")]
     public void SafetyPolicy_StillEscalatesBoundedRiskTerms(string label)
     {

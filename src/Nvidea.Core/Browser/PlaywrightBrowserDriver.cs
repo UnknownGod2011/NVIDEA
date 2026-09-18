@@ -40,8 +40,9 @@ public sealed class PlaywrightBrowserDriver : IBrowserDriver
         var title = await _page.TitleAsync().WaitAsync(cancellationToken).ConfigureAwait(false);
         var snapshot = await _page.EvaluateAsync<DomObservationSnapshot>(
             """
-            ({ maxElements, maxText }) => {
+            ({ maxElements, maxText, sensitiveAutocompleteTokens }) => {
               const refAttr = 'data-nvidea-ref';
+              const sensitiveTokens = new Set((sensitiveAutocompleteTokens || []).map(x => String(x).trim().toLowerCase()).filter(Boolean));
               const candidates = Array.from(document.querySelectorAll('a,button,input,textarea,select,[role],[contenteditable="true"],[tabindex]')).slice(0, maxElements);
               const inferRole = (el) => {
                 const explicit = el.getAttribute('role'); if (explicit) return explicit.toLowerCase();
@@ -60,11 +61,12 @@ public sealed class PlaywrightBrowserDriver : IBrowserDriver
               const elements=candidates.map((el,i)=>{
                 const ref=`nv-${i+1}`; el.setAttribute(refAttr,ref);
                 const tag=el.tagName.toLowerCase();
-                // Only expose bounded, non-secret form semantics. Never infer metadata from or copy the field value.
+                // Only expose bounded, non-secret form semantics. Decide suppression entirely from
+                // metadata before touching el.value so password/OTP/payment values never enter the snapshot.
                 const inputType=tag==='input' ? (el.getAttribute('type')||'text').trim().toLowerCase().slice(0,64) : null;
                 const autoComplete=(tag==='input'||tag==='textarea'||tag==='select') ? (el.getAttribute('autocomplete')||'').trim().toLowerCase().replace(/\s+/g,' ').slice(0,128) : null;
-                const secret=tag==='input'&&inputType==='password';
-                const value=secret?null:('value' in el?String(el.value??''):null);
+                const suppressValue=inputType==='password'||(autoComplete&&autoComplete.split(/\s+/).some(token=>sensitiveTokens.has(token)));
+                const value=suppressValue?null:('value' in el?String(el.value??''):null);
                 return { reference:ref, role:inferRole(el), name:accessibleName(el)||null, value,
                   isVisible:visible(el), isEnabled:!el.disabled&&el.getAttribute('aria-disabled')!=='true',
                   isEditable:tag==='textarea'||tag==='select'||el.isContentEditable||(tag==='input'&&!['button','submit','reset','checkbox','radio','file'].includes(inputType)),
@@ -73,7 +75,12 @@ public sealed class PlaywrightBrowserDriver : IBrowserDriver
               const text=(document.body?.innerText||'').replace(/\u0000/g,'').slice(0,maxText);
               return {visibleText:text,elements};
             }
-            """, new { maxElements = _options.MaxObservedElements, maxText = _options.MaxObservationCharacters }).WaitAsync(cancellationToken).ConfigureAwait(false);
+            """, new
+            {
+                maxElements = _options.MaxObservedElements,
+                maxText = _options.MaxObservationCharacters,
+                sensitiveAutocompleteTokens = BrowserObservedValuePrivacyPolicy.SensitiveAutocompleteTokens
+            }).WaitAsync(cancellationToken).ConfigureAwait(false);
 
         var visibleText=snapshot?.VisibleText??string.Empty;
         var elements=(snapshot?.Elements??Array.Empty<DomElementSnapshot>()).Take(_options.MaxObservedElements)

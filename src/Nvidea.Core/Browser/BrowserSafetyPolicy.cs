@@ -150,5 +150,35 @@ public sealed class BrowserSafetyPolicy
     }
 
     private static bool ContainsAny(string haystack, IEnumerable<string> needles) =>
-        needles.Any(needle => haystack.Contains(needle, StringComparison.OrdinalIgnoreCase));
+        needles.Any(needle => ContainsBoundedTerm(haystack, needle));
+
+    // Risk keywords are intentionally matched as lexical terms/phrases rather than arbitrary
+    // substrings. Substring matching made harmless UI labels such as "Display settings",
+    // "Design preview", "Assignment", and "Secretary" look like pay/sign/secret actions,
+    // creating approval fatigue that undermines the value of real consequential-action gates.
+    // Letters and digits define a word constituent; punctuation, whitespace and underscores
+    // delimit terms so labels such as "Pay-now" and "API_KEY" still match conservatively.
+    private static bool ContainsBoundedTerm(string haystack, string term)
+    {
+        if (string.IsNullOrWhiteSpace(haystack) || string.IsNullOrWhiteSpace(term))
+            return false;
+
+        var searchFrom = 0;
+        while (searchFrom <= haystack.Length - term.Length)
+        {
+            var index = haystack.IndexOf(term, searchFrom, StringComparison.OrdinalIgnoreCase);
+            if (index < 0)
+                return false;
+
+            var beforeIsWord = index > 0 && char.IsLetterOrDigit(haystack[index - 1]);
+            var end = index + term.Length;
+            var afterIsWord = end < haystack.Length && char.IsLetterOrDigit(haystack[end]);
+            if (!beforeIsWord && !afterIsWord)
+                return true;
+
+            searchFrom = index + 1;
+        }
+
+        return false;
+    }
 }

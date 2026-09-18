@@ -25,24 +25,27 @@ Hardened HTTP(S) and WebSocket transport predicates to reject any URI with non-e
 ### 2026-09-18 — executable browser network-boundary fixtures
 Added opt-in real-Chromium fixtures enabled by `NVIDEA_RUN_PLAYWRIGHT_INTEGRATION=1`. They exercise production `PersistentBrowserContextFactory` against controlled loopback servers. Redirect and WebSocket checks require credential-bearing forbidden destinations to produce zero destination-side requests/handshakes, with positive controls and bounded late-arrival observation to reduce false passes.
 
-### 2026-09-18 — persistent authenticated-state restart coverage (latest run)
+### 2026-09-18 — persistent authenticated-state restart coverage
+Added a production-factory restart fixture that writes only synthetic cookie/local-storage state into a disposable loopback profile, closes Chromium, and relaunches the same user-data directory. The contract requires authenticated state to survive while stale tabs/navigation do not resume; exactly one fresh agent page must exist after restart.
+
+### 2026-09-18 — browser emergency-stop boundary (latest run)
 Completed:
-- Re-read this ledger and the existing real-Chromium fixture before mutation.
-- Added `PersistentProfile_RestartPreservesCookieAndLocalStorage_WithoutRestoringStaleTabs` to the production-factory integration suite.
-- The test launches the actual persistent context against a synthetic loopback origin, writes a synthetic SameSite cookie plus local-storage preference, deliberately opens a second stale tab, cleanly closes the context, then relaunches using the identical user-data directory.
-- After restart it requires exactly one fresh page, verifies the cookie and local-storage value survived, and verifies no stale-tab URL was restored. This pins the intended authenticated-profile contract without using a real account or secret.
-- Kept the fixture hermetic: loopback only, temporary profile directory, synthetic values, no provider/account/network dependency beyond local sockets.
+- Re-read this ledger, current browser executor, contracts, existing browser tests, and the real-Chromium fixture before mutation.
+- Added `BrowserCancellationBoundaryTests.ExecutePlan_CancellationAfterVerifiedAction_PreventsQueuedConsequentialAction`.
+- The deterministic fixture executes one ordinary browser action, requests synthetic emergency cancellation from the verifier immediately after that action is verified, then proves a queued `Send` click never executes.
+- The test additionally proves the queued consequential action never even reaches its approval gate after cancellation: driver execute count remains one, only `Open message` is recorded, verifier runs once, and approval request count remains zero.
+- This pins the executor's cancellation check between verified plan steps and protects against a future refactor accidentally advancing into a queued consequential action after emergency stop.
 - Explicitly verified repository metadata as exactly `UnknownGod2011/NVIDEA` immediately before each GitHub mutation. No other repository was mutated.
 
 Files changed this run:
-- `tests/Nvidea.Core.Tests/PersistentBrowserRedirectIntegrationTests.cs`
+- `tests/Nvidea.Core.Tests/BrowserCancellationBoundaryTests.cs`
 - `progress.md`
 
 Validation/evidence:
-- Static review confirms the new persistence check exercises production `PersistentBrowserContextFactory` twice with the same state directory rather than mocking persistence.
-- The assertion simultaneously covers positive state persistence and negative stale-tab restoration, so retaining authentication cannot silently expand the browser's resumed navigation surface.
-- No executable Chromium PASS is claimed here. The integration suite remains opt-in and requires restored .NET 8 dependencies plus installed Playwright Chromium.
-- No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, authenticated user browser, Ollama, or inference operation was triggered.
+- Static contract review confirms `BrowserAgentExecutor.ExecutePlanAsync` checks the caller cancellation token at the top of every plan iteration, while `ExecuteOneAsync` propagates caller cancellation rather than converting it into an ordinary driver-failure receipt.
+- The new test uses the production executor and production `BrowserSafetyPolicy`; only driver, verifier and approval boundary interfaces are deterministic fakes.
+- The second action is intentionally named `Send`, which the existing safety policy classifies as consequential/approval-requiring, so the assertion covers the important boundary rather than merely stopping a second harmless read.
+- No executable .NET PASS is claimed in this connector-only run. No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, authenticated user browser, Ollama, or inference operation was triggered.
 
 ## Security / privacy / failure review
 - Page navigation/request transport permits HTTPS or HTTP loopback only; WebSocket transport permits WSS or WS loopback only; all four forms reject embedded URI credentials.
@@ -50,6 +53,8 @@ Validation/evidence:
 - Unsafe/unparsable request and socket URLs fail closed. Existing credential-typing blocks, consequential-action approvals, prompt-injection gates, download quarantine and emergency-stop architecture remain intact.
 - Redirect and WebSocket validation are hermetic and use loopback sockets plus synthetic non-secret credential markers. Network-boundary counters are used instead of browser-only success signals.
 - Profile-persistence validation uses only synthetic cookie/local-storage values and a disposable temporary profile; it does not copy or inspect a user's real browser profile.
+- Emergency cancellation is now regression-pinned between verified plan steps so a queued consequential action cannot begin approval or driver execution after the stop signal is observed.
+- Cancellation cannot retroactively undo an external side effect that has already been dispatched; consequential actions therefore still require pre-action approval and post-action verification, and cancellation must be treated as a boundary before the next action rather than rollback.
 - Secret environment values remain presence-only in readiness tooling and are never printed, persisted, hashed, or measured.
 
 ## Known blockers / risks
@@ -57,9 +62,10 @@ Validation/evidence:
 - If `/forbidden-destination` is observed, BrowserContext request routing is insufficient for redirect-hop enforcement and must be replaced/hardened before relying on it for authenticated flows.
 - If `/forbidden-websocket` is observed, the WebSocket routing boundary is not enforcing its intended no-handshake property and must be corrected before authenticated judge flows.
 - If the profile restart test fails, persistent authenticated browser sessions are not recording-ready; determine whether Chromium shutdown semantics, factory startup behavior, or storage persistence is responsible before weakening assertions.
+- The new emergency-stop fixture is deterministic and does not yet prove cancellation against a real in-flight Playwright operation; a later integration check should cover a cancellable long-running browser wait/navigation without introducing flaky timing.
 - Blocking Service Workers can affect sites whose product/auth flows materially depend on workers; judge-path sites need compatibility testing without weakening the transport rule.
 - The strengthened live readiness preflight and unified submission suite still need execution on the actual Windows recording machine.
 - Unified judging verification and live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily and semantic ranking remain environment-validation items.
 
 ## Single Best Next Task
-Run the opt-in Chromium redirect + WebSocket + profile-persistence fixtures on the restored Windows/.NET 8 environment with Playwright Chromium installed. Fix any observed production behavior rather than weakening the network/security assertions. If all three boundaries pass, add a hermetic cancellation/emergency-stop integration scenario proving a multi-step browser plan cannot execute a queued consequential action after cancellation, then run the full browser suite and `scripts/live-demo-readiness.ps1 -RequireCloudResearch -ValidateBuild` before live judge-path capture.
+Run the opt-in Chromium redirect + WebSocket + profile-persistence fixtures on the restored Windows/.NET 8 environment with Playwright Chromium installed, together with the full deterministic browser suite including the new emergency-stop boundary test. Fix any observed production behavior rather than weakening security assertions. If those boundaries pass, add a hermetic real-Playwright cancellation fixture for an in-flight non-consequential operation, then run `scripts/live-demo-readiness.ps1 -RequireCloudResearch -ValidateBuild` before live judge-path capture.

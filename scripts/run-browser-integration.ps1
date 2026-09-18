@@ -2,6 +2,7 @@
 param(
     [switch]$InstallChromium,
     [switch]$SecuritySuite,
+    [switch]$KeepResults,
     [string]$Configuration = "Release",
     [string]$Filter = "BrowserObservedValueChromiumIntegrationTests"
 )
@@ -66,6 +67,7 @@ try {
 
     $previousOptIn = $env:NVIDEA_RUN_BROWSER_INTEGRATION
     $resultsDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("nvidea-browser-tests-" + [Guid]::NewGuid().ToString("N"))
+    $validationSucceeded = $false
     try {
         $env:NVIDEA_RUN_BROWSER_INTEGRATION = "1"
         New-Item -ItemType Directory -Path $resultsDirectory -Force | Out-Null
@@ -77,49 +79,59 @@ try {
         }
 
         & $dotnet.Source test $testProject --configuration $Configuration --no-build --filter $effectiveFilter --results-directory $resultsDirectory --logger "trx;LogFileName=browser-integration.trx" --logger "console;verbosity=normal"
-        if ($LASTEXITCODE -ne 0) { throw "Browser integration tests failed with exit code $LASTEXITCODE." }
+        if ($LASTEXITCODE -ne 0) { throw "Browser integration tests failed with exit code $LASTEXITCODE. Evidence retained at '$resultsDirectory'." }
 
         # dotnet test can exit successfully when a filter discovers zero tests, and adapters can
         # report skipped/not-executed results without proving the browser boundary. Treat both as
         # validation failures. For the curated gate, prove every required fixture actually passed.
         $trxPath = Join-Path $resultsDirectory "browser-integration.trx"
         if (-not (Test-Path $trxPath -PathType Leaf)) {
-            throw "Browser integration test run produced no TRX evidence at '$trxPath'."
+            throw "Browser integration test run produced no TRX evidence at '$trxPath'. Results directory retained at '$resultsDirectory'."
         }
 
         [xml]$trx = Get-Content -LiteralPath $trxPath -Raw
         $results = @($trx.TestRun.Results.UnitTestResult)
         if ($results.Count -eq 0) {
-            throw "Browser integration filter '$effectiveFilter' produced zero test results. Refusing a false-positive validation pass."
+            throw "Browser integration filter '$effectiveFilter' produced zero test results. Refusing a false-positive validation pass. Evidence retained at '$resultsDirectory'."
         }
 
         $passed = @($results | Where-Object { [string]$_.outcome -eq "Passed" })
         if ($passed.Count -eq 0) {
             $outcomes = @($results | ForEach-Object { [string]$_.outcome } | Sort-Object -Unique) -join ", "
-            throw "Browser integration produced no passed tests (outcomes: $outcomes). Skipped/not-executed evidence does not validate the Chromium boundary."
+            throw "Browser integration produced no passed tests (outcomes: $outcomes). Skipped/not-executed evidence does not validate the Chromium boundary. Evidence retained at '$resultsDirectory'."
         }
 
         $nonPassed = @($results | Where-Object { [string]$_.outcome -ne "Passed" })
         if ($nonPassed.Count -gt 0) {
             $summary = @($nonPassed | ForEach-Object { "'$([string]$_.testName)'=$([string]$_.outcome)" }) -join "; "
-            throw "Browser integration contains non-passed results: $summary. Refusing partial validation evidence."
+            throw "Browser integration contains non-passed results: $summary. Refusing partial validation evidence. Evidence retained at '$resultsDirectory'."
         }
 
         if ($SecuritySuite) {
             $passedNames = @($passed | ForEach-Object { [string]$_.testName })
             foreach ($requiredClass in $securitySuiteClasses) {
                 if (-not ($passedNames | Where-Object { $_ -like "*$requiredClass*" })) {
-                    throw "Curated Chromium security fixture '$requiredClass' has no passed test evidence. Refusing an incomplete validation pass."
+                    throw "Curated Chromium security fixture '$requiredClass' has no passed test evidence. Refusing an incomplete validation pass. Evidence retained at '$resultsDirectory'."
                 }
             }
         }
 
+        $validationSucceeded = $true
         Write-Host "Verified executable PASS evidence for all $($passed.Count) browser integration test result(s)."
+        if ($KeepResults) {
+            Write-Host "Keeping browser validation evidence at '$resultsDirectory'."
+        }
     }
     finally {
         $env:NVIDEA_RUN_BROWSER_INTEGRATION = $previousOptIn
-        if (Test-Path $resultsDirectory) {
+        # Failed security validation is forensic evidence: retain it by default so a developer can
+        # inspect the exact TRX/output instead of rerunning a potentially timing-sensitive browser
+        # failure. Successful runs remain ephemeral unless explicitly requested with -KeepResults.
+        if ($validationSucceeded -and -not $KeepResults -and (Test-Path $resultsDirectory)) {
             Remove-Item -LiteralPath $resultsDirectory -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        elseif ((Test-Path $resultsDirectory) -and -not $validationSucceeded) {
+            Write-Warning "Browser validation did not complete successfully. Evidence retained at '$resultsDirectory'."
         }
     }
 }

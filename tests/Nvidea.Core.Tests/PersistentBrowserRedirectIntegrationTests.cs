@@ -7,7 +7,7 @@ using Nvidea.Core.Browser;
 namespace Nvidea.Core.Tests;
 
 /// <summary>
-/// Real Chromium transport checks. These are opt-in because Playwright's browser binary is not
+/// Real Chromium transport and persistence checks. These are opt-in because Playwright's browser binary is not
 /// guaranteed to exist on every developer/CI machine. Set NVIDEA_RUN_PLAYWRIGHT_INTEGRATION=1
 /// after installing Chromium with Playwright to execute the network assertions.
 /// </summary>
@@ -47,10 +47,6 @@ public sealed class PersistentBrowserRedirectIntegrationTests
             session = await PersistentBrowserContextFactory.LaunchAsync(playwright, stateDirectory, server.UriFor("/safe"), new PlaywrightBrowserDriverOptions(ActionTimeoutMilliseconds: 5_000), headless: true);
             var page = session.Context.Pages.Single();
             var before = server.Count("/forbidden-websocket");
-
-            // A credential-bearing loopback WS would otherwise be transport-eligible. The production
-            // WebSocket route must reject it without ConnectToServer(), so no HTTP Upgrade handshake
-            // may reach the controlled server. Resolve on close/error to avoid depending on browser text.
             await page.EvaluateAsync("""
                 url => new Promise(resolve => {
                   try {
@@ -62,11 +58,54 @@ public sealed class PersistentBrowserRedirectIntegrationTests
                   } catch (_) { resolve(true); }
                 })
                 """, $"ws://nvidea-test-secret@127.0.0.1:{server.Port}/forbidden-websocket");
-
             await Task.Delay(250);
             Assert.Equal(before, server.Count("/forbidden-websocket"));
         }
         finally { if (session is not null) await session.Context.CloseAsync(); TryDeleteDirectory(stateDirectory); }
+    }
+
+    [Fact]
+    public async Task PersistentProfile_RestartPreservesCookieAndLocalStorage_WithoutRestoringStaleTabs()
+    {
+        if (!IntegrationEnabled()) return;
+        await using var server = await LoopbackHttpServer.StartAsync();
+        var stateDirectory = CreateStateDirectory();
+        PersistentBrowserContextSession? first = null;
+        PersistentBrowserContextSession? second = null;
+        try
+        {
+            using var playwright = await Playwright.CreateAsync();
+            var options = new PlaywrightBrowserDriverOptions(ActionTimeoutMilliseconds: 5_000);
+            first = await PersistentBrowserContextFactory.LaunchAsync(playwright, stateDirectory, server.UriFor("/profile-seed"), options, headless: true);
+            var firstPage = first.Context.Pages.Single();
+            await firstPage.EvaluateAsync("""
+                () => {
+                  document.cookie = 'nvidea_session=synthetic-cookie; Path=/; SameSite=Lax';
+                  localStorage.setItem('nvidea_preference', 'synthetic-local-storage');
+                  window.open('/stale-tab', '_blank');
+                }
+                """);
+            await firstPage.WaitForTimeoutAsync(100);
+            Assert.True(first.Context.Pages.Count >= 2);
+            await first.Context.CloseAsync();
+            first = null;
+
+            second = await PersistentBrowserContextFactory.LaunchAsync(playwright, stateDirectory, server.UriFor("/profile-resume"), options, headless: true);
+            Assert.Single(second.Context.Pages);
+            var resumed = second.Context.Pages.Single();
+            var persisted = await resumed.EvaluateAsync<string>("""
+                () => JSON.stringify({ cookie: document.cookie, local: localStorage.getItem('nvidea_preference') })
+                """);
+            Assert.Contains("nvidea_session=synthetic-cookie", persisted, StringComparison.Ordinal);
+            Assert.Contains("synthetic-local-storage", persisted, StringComparison.Ordinal);
+            Assert.DoesNotContain(second.Context.Pages, page => page.Url.Contains("/stale-tab", StringComparison.Ordinal));
+        }
+        finally
+        {
+            if (first is not null) await first.Context.CloseAsync();
+            if (second is not null) await second.Context.CloseAsync();
+            TryDeleteDirectory(stateDirectory);
+        }
     }
 
     [Fact]

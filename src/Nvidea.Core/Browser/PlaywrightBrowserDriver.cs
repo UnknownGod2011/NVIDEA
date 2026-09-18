@@ -17,6 +17,9 @@ public sealed record PlaywrightBrowserDriverOptions(
 /// Concrete Playwright implementation of the provider-neutral browser driver.
 /// It intentionally exposes only the bounded action vocabulary in BrowserActionKind.
 /// Browser safety/approval policy remains outside this class and must run before ExecuteAsync.
+/// Cancellation is fail-closed: if an in-flight Playwright action has not completed when the
+/// caller cancels, the agent-owned page is closed before cancellation is returned. This prevents
+/// a timed-out/cancelled action from continuing asynchronously after the executor has stopped.
 /// </summary>
 public sealed class PlaywrightBrowserDriver : IBrowserDriver
 {
@@ -163,20 +166,22 @@ public sealed class PlaywrightBrowserDriver : IBrowserDriver
             {
                 var destination = action.Destination ?? throw new InvalidOperationException("Navigate requires a destination URI.");
                 ValidateDestination(destination);
-                await _page.GotoAsync(destination.AbsoluteUri, new PageGotoOptions
+                await AwaitActionOrAbortPageAsync(_page.GotoAsync(destination.AbsoluteUri, new PageGotoOptions
                 {
                     Timeout = timeout,
                     WaitUntil = WaitUntilState.DOMContentLoaded
-                }).WaitAsync(cancellationToken).ConfigureAwait(false);
+                }), cancellationToken).ConfigureAwait(false);
                 return;
             }
             case BrowserActionKind.Back:
-                await _page.GoBackAsync(new PageGoBackOptions { Timeout = timeout, WaitUntil = WaitUntilState.DOMContentLoaded })
-                    .WaitAsync(cancellationToken).ConfigureAwait(false);
+                await AwaitActionOrAbortPageAsync(
+                    _page.GoBackAsync(new PageGoBackOptions { Timeout = timeout, WaitUntil = WaitUntilState.DOMContentLoaded }),
+                    cancellationToken).ConfigureAwait(false);
                 return;
             case BrowserActionKind.Refresh:
-                await _page.ReloadAsync(new PageReloadOptions { Timeout = timeout, WaitUntil = WaitUntilState.DOMContentLoaded })
-                    .WaitAsync(cancellationToken).ConfigureAwait(false);
+                await AwaitActionOrAbortPageAsync(
+                    _page.ReloadAsync(new PageReloadOptions { Timeout = timeout, WaitUntil = WaitUntilState.DOMContentLoaded }),
+                    cancellationToken).ConfigureAwait(false);
                 return;
         }
 
@@ -184,28 +189,63 @@ public sealed class PlaywrightBrowserDriver : IBrowserDriver
         switch (action.Kind)
         {
             case BrowserActionKind.Click:
-                await locator.ClickAsync(new LocatorClickOptions { Timeout = timeout }).WaitAsync(cancellationToken).ConfigureAwait(false);
+                await AwaitActionOrAbortPageAsync(locator.ClickAsync(new LocatorClickOptions { Timeout = timeout }), cancellationToken).ConfigureAwait(false);
                 break;
             case BrowserActionKind.Type:
-                await locator.FillAsync(action.Value ?? string.Empty, new LocatorFillOptions { Timeout = timeout })
-                    .WaitAsync(cancellationToken).ConfigureAwait(false);
+                await AwaitActionOrAbortPageAsync(locator.FillAsync(action.Value ?? string.Empty, new LocatorFillOptions { Timeout = timeout }), cancellationToken).ConfigureAwait(false);
                 break;
             case BrowserActionKind.Select:
-                await locator.SelectOptionAsync(action.Value ?? throw new InvalidOperationException("Select requires a value."),
-                        new LocatorSelectOptionOptions { Timeout = timeout })
-                    .WaitAsync(cancellationToken).ConfigureAwait(false);
+                await AwaitActionOrAbortPageAsync(
+                    locator.SelectOptionAsync(action.Value ?? throw new InvalidOperationException("Select requires a value."), new LocatorSelectOptionOptions { Timeout = timeout }),
+                    cancellationToken).ConfigureAwait(false);
                 break;
             case BrowserActionKind.Upload:
-                await locator.SetInputFilesAsync(action.Value ?? throw new InvalidOperationException("Upload requires a local file path."),
-                        new LocatorSetInputFilesOptions { Timeout = timeout })
-                    .WaitAsync(cancellationToken).ConfigureAwait(false);
+                await AwaitActionOrAbortPageAsync(
+                    locator.SetInputFilesAsync(action.Value ?? throw new InvalidOperationException("Upload requires a local file path."), new LocatorSetInputFilesOptions { Timeout = timeout }),
+                    cancellationToken).ConfigureAwait(false);
                 break;
             case BrowserActionKind.Download:
-                await locator.ClickAsync(new LocatorClickOptions { Timeout = timeout }).WaitAsync(cancellationToken).ConfigureAwait(false);
+                await AwaitActionOrAbortPageAsync(locator.ClickAsync(new LocatorClickOptions { Timeout = timeout }), cancellationToken).ConfigureAwait(false);
                 break;
             default:
                 throw new NotSupportedException($"Unsupported browser action: {action.Kind}.");
         }
+    }
+
+    private async Task AwaitActionOrAbortPageAsync(Task operation, CancellationToken cancellationToken)
+    {
+        if (!cancellationToken.CanBeCanceled)
+        {
+            await operation.ConfigureAwait(false);
+            return;
+        }
+
+        var cancellationSignal = Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        var completed = await Task.WhenAny(operation, cancellationSignal).ConfigureAwait(false);
+        if (completed == operation)
+        {
+            await operation.ConfigureAwait(false);
+            return;
+        }
+
+        // WaitAsync alone only stops the caller from waiting; it does not guarantee that the
+        // underlying browser command stops. Closing this agent-owned page is the fail-closed
+        // cancellation primitive, so a cancelled navigation/click cannot keep running behind
+        // an executor that already reported emergency stop.
+        try
+        {
+            await _page.CloseAsync(new PageCloseOptions { RunBeforeUnload = false }).ConfigureAwait(false);
+        }
+        catch (PlaywrightException)
+        {
+            // The operation may race with browser/page shutdown. Cancellation remains authoritative.
+        }
+
+        if (!operation.IsCompleted)
+            _ = operation.ContinueWith(static task => _ = task.Exception, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+
+        cancellationToken.ThrowIfCancellationRequested();
+        throw new OperationCanceledException(cancellationToken);
     }
 
     private ILocator ResolveLocator(BrowserLocator locator)

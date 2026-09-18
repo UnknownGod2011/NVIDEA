@@ -44,6 +44,23 @@ if (-not $version.StartsWith("8.")) {
     throw "NVIDEA browser integration requires .NET 8 SDK; found '$version'."
 }
 
+# Bind retained qualification evidence to the exact source revision. A missing Git
+# binary is tolerated for local development, but a dirty checkout is recorded so a
+# retained PASS cannot later be mistaken for evidence from the committed revision.
+$git = Get-Command git -ErrorAction SilentlyContinue
+$sourceCommit = $null
+$sourceDirty = $null
+if ($null -ne $git) {
+    $sourceCommit = (& $git.Source -C $repoRoot rev-parse HEAD 2>$null).Trim()
+    if ($LASTEXITCODE -eq 0) {
+        $dirtyLines = @(& $git.Source -C $repoRoot status --porcelain --untracked-files=normal 2>$null)
+        $sourceDirty = $dirtyLines.Count -gt 0
+    }
+    else {
+        $sourceCommit = $null
+    }
+}
+
 Push-Location $repoRoot
 try {
     Write-Host "Restoring NVIDEA test project..."
@@ -116,10 +133,32 @@ try {
             }
         }
 
+        # Emit a small, payload-free qualification receipt next to the TRX. This makes retained
+        # evidence independently reviewable: it states exactly which revision/configuration/filter
+        # produced the PASS without copying browser DOM, credentials, cookies, or test output.
+        $receipt = [ordered]@{
+            schemaVersion = 1
+            validatedAtUtc = [DateTimeOffset]::UtcNow.ToString("O")
+            sourceCommit = $sourceCommit
+            sourceDirty = $sourceDirty
+            dotnetSdk = $version
+            configuration = $Configuration
+            securitySuite = [bool]$SecuritySuite
+            effectiveFilter = $effectiveFilter
+            passedCount = $passed.Count
+            requiredFixtures = if ($SecuritySuite) { @($securitySuiteClasses) } else { @() }
+            passedTests = @($passed | ForEach-Object { [string]$_.testName } | Sort-Object)
+        }
+        $receiptPath = Join-Path $resultsDirectory "qualification-receipt.json"
+        $receipt | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $receiptPath -Encoding utf8
+
         $validationSucceeded = $true
         Write-Host "Verified executable PASS evidence for all $($passed.Count) browser integration test result(s)."
         if ($KeepResults) {
-            Write-Host "Keeping browser validation evidence at '$resultsDirectory'."
+            Write-Host "Keeping browser validation evidence at '$resultsDirectory' (TRX + qualification-receipt.json)."
+            if ($sourceDirty -eq $true) {
+                Write-Warning "Qualification PASS came from a dirty checkout; receipt records sourceDirty=true. Commit/re-run before treating it as release evidence."
+            }
         }
     }
     finally {

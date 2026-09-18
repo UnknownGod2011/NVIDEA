@@ -20,18 +20,19 @@ Hardened browser transport to HTTPS or HTTP loopback and WSS or WS loopback, rej
 Completed:
 - Refactored `BrowserObservedValuePrivacyPolicy` so sensitive HTML autocomplete tokens are a read-only canonical contract and the C# classifier derives from the same source.
 - Added contract coverage proving every published token is normalized, unique, directly suppression-triggering and suppression-triggering with legal HTML autocomplete qualifiers.
-- Wired the canonical token contract into the production Playwright DOM snapshot. Snapshot JavaScript now decides suppression from bounded `input type` / `autocomplete` metadata before accessing `el.value`.
+- Wired the canonical token contract into the production Playwright DOM snapshot. Snapshot JavaScript decides suppression from bounded `input type` / `autocomplete` metadata before accessing `el.value`.
 - Password, current/new-password, OTP and supported payment credential/expiry fields therefore serialize `value: null`; benign fields continue to expose bounded ordinary form values as before.
-- Kept classification token-bounded in the browser observer, matching the C# policy's whitespace-token semantics and avoiding substring false positives.
+- Added `BrowserObservedValueChromiumIntegrationTests`: a hermetic, opt-in real-Chromium loopback fixture with synthetic password, OTP, card number, CVV, expiry and benign email controls. It asserts sensitive values are null, non-secret `InputType`/`AutoComplete` survive, benign values remain observable, and production `BrowserSafetyPolicy` blocks accessibility-reference typing into every sensitive control.
+- The fixture reuses the existing `NVIDEA_RUN_BROWSER_INTEGRATION=1` opt-in convention and a temporary persistent browser profile; it performs no external network or paid-provider operation.
 - Verified repository metadata immediately before every mutation; target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 
 Files changed in latest run:
-- `src/Nvidea.Core/Browser/PlaywrightBrowserDriver.cs`
+- `tests/Nvidea.Core.Tests/BrowserObservedValueChromiumIntegrationTests.cs`
 - `progress.md`
 
 Validation/evidence:
-- Static inspection confirms the Playwright observer receives `BrowserObservedValuePrivacyPolicy.SensitiveAutocompleteTokens` as evaluation input instead of maintaining an independent sensitive-token list.
-- Static data-flow inspection confirms `suppressValue` is computed before the conditional expression that reads `el.value`; suppressed controls take the `null` branch.
+- Static inspection confirms the new fixture exercises the production `PersistentBrowserContextFactory`, `PlaywrightBrowserDriver`, observation path and `BrowserSafetyPolicy`, rather than a mock observer.
+- The loopback fixture contains only synthetic credentials and verifies both privacy suppression and preservation of the semantic metadata needed for fail-closed classification.
 - Existing deterministic policy/contract tests cover the canonical token vocabulary, but no executable .NET or Chromium PASS is claimed in this connector-only environment.
 - No GitHub Actions and no live/paid Nebius, Object Storage, Serverless, Tavily, authenticated browser, Ollama, or inference operation was triggered.
 
@@ -39,17 +40,17 @@ Validation/evidence:
 - Request transport permits HTTPS or HTTP loopback only; WebSockets permit WSS or WS loopback only; credential-bearing authority fields fail closed.
 - Agent-visible page admission is defense-in-depth with request routing.
 - Consequential actions require approval; sensitive autonomous typing is blocked across passwords, OTP/verification codes, payment credentials, private/recovery keys, API/access/refresh tokens and identity-number labels.
-- Browser observations now suppress password/OTP/payment values from metadata before reading the DOM value while retaining non-secret type/autocomplete semantics needed for safety decisions.
+- Browser observations suppress password/OTP/payment values from metadata before reading the DOM value while retaining non-secret type/autocomplete semantics needed for safety decisions.
 - Prompt-injection gates, quarantine, audit boundaries, Service Worker blocking, and emergency cancellation remain intact.
 - Emergency cancellation cannot retroactively undo an external side effect committed before cancellation.
 
 ## Known blockers / risks
-- The new production suppression path still needs a hermetic real-Chromium observation fixture proving innocuously labelled password/OTP/payment fields are observed with expected non-secret metadata, sensitive values are absent, benign values remain observable, and actions are blocked through generated accessibility references.
-- Real-Chromium redirect, WebSocket, profile-persistence, popup pre-dispatch and in-flight cancellation fixtures still need execution on Windows with .NET 8, restored packages and Playwright Chromium.
+- The new real-Chromium observed-value privacy fixture is committed but still needs execution on Windows with .NET 8, restored packages and matching Playwright Chromium; until then its PASS is unverified.
+- Real-Chromium redirect, WebSocket, profile-persistence, popup pre-dispatch and in-flight cancellation fixtures likewise still need execution in that environment.
 - Risk matching deliberately avoids stemming/broad substring matching to prevent approval fatigue.
 - Closing a page on emergency cancellation requires explicit fresh-page recovery before a later task.
 - Blocking Service Workers can affect sites whose auth/product flows depend on workers; judge-path compatibility needs validation without weakening transport policy.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and `scripts/live-demo-readiness.ps1 -RequireCloudResearch -ValidateBuild` remain environment-validation items.
 
 ## Single Best Next Task
-Add a hermetic opt-in real-Chromium observation fixture with innocuously labelled password, OTP, card-number/CVV/expiry and benign fields. Assert sensitive `BrowserElement.Value` values are null while `InputType`/`AutoComplete` survive, benign values remain visible, and accessibility-reference typing into sensitive controls is rejected by the production safety policy.
+Run the opt-in browser integration suite on a Windows/.NET 8 environment with matching Playwright Chromium and fix any real-browser failures, prioritizing `BrowserObservedValueChromiumIntegrationTests`; then record exact executable evidence without weakening transport, secret-suppression, or confirmation boundaries.

@@ -29,17 +29,18 @@ Added release browser verification pinned to the expected GitHub origin, exact c
 - `PersistedMemoryEmbeddingIntegrityTests` cover NaN, Infinity, dimension mismatch, missing vector/provenance, blank provider/model, empty vectors, valid preservation, durable sanitation, and lexical fallback.
 - Migration preview/snapshot independently treats malformed semantic state as stale if provider/model identity is blank, dimensions disagree, or any component is non-finite, while initialization sanitation can reduce such records to missing-embedding candidates before preview.
 - Migration remains local-provider-only, preserves sensitivity opt-ins, revalidates candidates before embedding, validates returned vectors/provenance, and uses reference-identity checks before applying results so concurrent user edits are not overwritten.
-- Added adversarial migration coverage: corrupt Sensitive/Restricted records remain excluded unless their explicit opt-ins are enabled, and NaN/+Infinity/-Infinity returned by a migration provider invalidate the entire affected batch before any record from that batch is persisted.
+- Adversarial migration coverage pins Sensitive/Restricted opt-ins even for corrupt semantic state and rejects NaN/+Infinity/-Infinity provider vectors before any record from that batch is persisted.
+- Migration interruption semantics are now pinned across multiple batches: a provider exception in a later batch preserves the already committed earlier batch and leaves only the failed batch resumable; cancellation during a later provider batch cannot apply that batch and likewise preserves earlier committed work.
 
 Files changed in latest run:
 - `tests/Nvidea.Core.Tests/MemoryEmbeddingMigrationTests.cs`
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md` completely, inspected the current migration implementation and existing migration test fixture before changing code.
-- Added a configurable test migration provider so adversarial vector output can be injected without weakening production interfaces.
-- The fail-closed batch tests assert zero post-initialization writes and no embedding/provenance applied when any vector in a two-record batch is non-finite.
-- Sensitivity coverage starts from corrupt persisted semantic state and verifies default exclusion, Sensitive-only opt-in, and explicit Restricted opt-in behavior.
+- Re-read `progress.md` completely and inspected `PersonalMemoryService.Migration.cs` plus the existing migration fixture before changing code.
+- Added a batch-aware test-provider hook without changing production interfaces.
+- Added `Migrate_ProviderFailureInLaterBatchPreservesCommittedEarlierBatch`: first batch persists, second provider call fails, exactly one post-initialization store write remains, first two records retain embeddings, third remains untouched, and preview exposes only the third record for resume.
+- Added `Migrate_CancellationInLaterBatchNeverAppliesThatBatch`: cancellation is triggered inside the second provider batch, `OperationCanceledException` propagates, exactly the first batch remains durable, and the unvalidated second batch is untouched.
 - Repository metadata was explicitly reverified immediately before every GitHub mutation; writable target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 - Connector environment cannot execute .NET 8 or Windows/PowerShell/Chromium, so compile/test/runtime PASS is not claimed.
 - No live/paid Nebius, Object Storage, Serverless, Tavily, authenticated browser, Ollama or inference operation was triggered.
@@ -49,16 +50,16 @@ Validation/evidence:
 - Browser validation remains fail closed and the release/judge trust chain remains unchanged.
 - Memory persistence fails soft for corrupt semantic metadata: malformed embeddings are discarded while user-authored memory content/provenance survives and deterministic lexical retrieval remains usable.
 - Migration repeats durable-state integrity assumptions rather than relying solely on initialization, reducing the chance that a future import/mutation path silently marks malformed semantic state as current.
-- Migration remains local-only and does not introduce cloud disclosure of personal memory content. Adversarial tests now pin Sensitive/Restricted opt-ins even when semantic metadata is corrupt.
-- Migration validates every returned vector in a batch before entering the apply/persist critical section; tests now pin the intended no-partial-apply behavior for non-finite provider output.
+- Migration remains local-only and does not introduce cloud disclosure of personal memory content. Sensitive/Restricted opt-ins remain explicit even when semantic metadata is corrupt.
+- Every returned vector in a batch is validated before entering the apply/persist critical section. New interruption tests pin the intended batch transaction boundary: already committed batches remain resumable durable progress, while a provider failure or cancellation cannot partially apply the currently unvalidated batch.
 
 ## Known blockers / risks
 - Real-Chromium fixtures still need execution on Windows with .NET 8 and matching Playwright Chromium; static connector work is not an executable PASS.
 - Verifier regression harness, release qualification wrapper, release gate, judge-recording wrapper and integrated readiness path each need local PowerShell 7 execution before PASS can be claimed.
-- Persisted-memory and migration changes, including the new adversarial tests, still need execution in a .NET 8 environment; compile/runtime success is not claimed from connector-only work.
+- Persisted-memory and migration changes, including interruption/adversarial tests, still need execution in a .NET 8 environment; compile/runtime success is not claimed from connector-only work.
 - SHA-256 browser receipts are integrity bindings, not digital signatures; freshness depends on the producer host clock.
 - Blocking Service Workers can affect sites whose auth/product flows depend on workers; judge-path compatibility still needs validation without weakening transport policy.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-Execute `MemoryEmbeddingMigrationTests`, `PersistedMemoryEmbeddingIntegrityTests`, and the broader core test suite under .NET 8 as soon as an executable environment is available. If connector-only execution remains unavailable, audit migration cancellation/provider-exception semantics and add focused coverage proving a failure in a later batch cannot corrupt already committed earlier batches and that cancellation never applies an unvalidated batch. Keep the clean Windows checkout as the required path for browser release qualification and the mandatory judge-recording gate.
+Execute `MemoryEmbeddingMigrationTests`, `PersistedMemoryEmbeddingIntegrityTests`, and the broader core test suite under .NET 8 as soon as an executable environment is available. If connector-only execution remains unavailable, audit the durable JSON memory store's crash/concurrent-write behavior and add focused tests around atomic replacement, malformed/truncated state recovery, and cancellation so the strengthened semantic/migration guarantees also hold at the filesystem persistence boundary. Keep the clean Windows checkout as the required path for browser release qualification and the mandatory judge-recording gate.

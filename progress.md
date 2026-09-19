@@ -24,37 +24,36 @@ Added release browser verification pinned to the expected GitHub origin, exact c
 
 ### 2026-09-19 — persisted memory embedding integrity hardening
 Completed:
-- Reviewed the layered memory implementation instead of continuing release-script work while Windows execution remains externally blocked.
-- Hardened `PersonalMemoryService.InitializeAsync` so persisted embedding data is treated as untrusted durable state: malformed vector/provenance pairs are stripped on load and the sanitized record is persisted back to storage.
-- Persisted embeddings are now rejected if the vector is empty, dimensions disagree, provider/model identity is blank, or any vector element is NaN/Infinity.
-- Added the same finite-vector and provenance identity checks to the semantic comparison boundary so malformed in-memory state cannot reach cosine scoring even if introduced outside normal write flow.
-- Lexical/recency/importance retrieval remains available when semantic state is rejected; no memory content is deleted solely because its embedding metadata is malformed.
+- Hardened `PersonalMemoryService.InitializeAsync` so persisted embedding data is treated as untrusted durable state: malformed vector/provenance pairs are stripped on load and sanitized state is persisted.
+- Persisted embeddings are rejected if empty, dimensionally inconsistent, missing provider/model identity, or containing NaN/Infinity; the semantic comparison boundary repeats finite/provenance checks as defense in depth.
+- User-authored memory content/provenance survives semantic corruption and lexical/recency/importance retrieval remains available.
+- Added `PersistedMemoryEmbeddingIntegrityTests` covering NaN, Infinity, dimension mismatch, missing vector/provenance, blank provider/model, empty vectors, valid embedding preservation, persistence of sanitized state, and lexical fallback when a query embedding exists but persisted semantic state is invalid.
 - Verified repository metadata immediately before each mutation; target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 
 Files changed in latest run:
-- `src/Nvidea.Core/Memory/PersonalMemoryService.cs`
+- `tests/Nvidea.Core.Tests/PersistedMemoryEmbeddingIntegrityTests.cs`
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md` completely, inspected recent commits and the current memory models/service before implementation.
-- Static review confirms new sanitization executes while initialization holds the memory gate, before records become queryable, and the existing initialization persistence pass writes sanitized persistent records atomically through the configured store path.
-- Existing newly-generated embeddings already pass `ValidateEmbedding`; this change closes the corresponding persisted-state trust boundary and adds defense in depth at comparison time.
-- Connector environment cannot execute the .NET test suite or Windows/PowerShell/Chromium, so no executable PASS is claimed.
+- Re-read `progress.md` completely and inspected the current memory service/models and test project before implementation.
+- The new tests assert both in-memory behavior and the durable write-back boundary via a recording `IMemoryStore`, rather than testing only a private helper.
+- Lexical-fallback coverage deliberately supplies a valid query embedding from the same nominal embedding space while persisted memory contains NaN; semantic score must remain zero and the memory remains retrievable lexically.
+- Connector environment cannot execute the .NET test suite or Windows/PowerShell/Chromium, so the new tests are committed regression coverage but no executable PASS is claimed.
 - No live/paid Nebius, Object Storage, Serverless, Tavily, authenticated browser, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
 - Browser transport, credential-bearing authority rejection, consequential-action approvals, sensitive autonomous-typing blocks, observation suppression, quarantine, prompt-injection boundaries and emergency cancellation remain intact.
 - Browser validation remains fail closed and the release/judge trust chain remains unchanged.
-- Memory persistence is now explicitly fail-soft for corrupt semantic metadata: malformed embeddings are discarded while user-authored memory content/provenance survives and deterministic lexical retrieval remains usable.
-- This avoids NaN/Infinity poisoning of semantic ranking and prevents incomplete or forged provider/model metadata from being treated as a comparable embedding space.
+- Memory persistence fails soft for corrupt semantic metadata: malformed embeddings are discarded while user-authored memory content/provenance survives and deterministic lexical retrieval remains usable.
+- Regression coverage now pins that trust-boundary behavior against malformed durable state, reducing the risk that later ranking/migration work silently reintroduces NaN/Infinity poisoning or trusts incomplete embedding provenance.
 
 ## Known blockers / risks
 - Real-Chromium fixtures still need execution on Windows with .NET 8 and matching Playwright Chromium; static connector work is not an executable PASS.
 - Verifier regression harness, release qualification wrapper, release gate, judge-recording wrapper and integrated readiness path each need local PowerShell 7 execution before PASS can be claimed.
-- The new persisted-memory sanitization needs executable .NET unit coverage; current evidence is static review only.
+- The new persisted-memory regression tests still need execution in a .NET 8 environment; compile/runtime success is not claimed from connector-only work.
 - SHA-256 browser receipts are integrity bindings, not digital signatures; freshness depends on the producer host clock.
 - Blocking Service Workers can affect sites whose auth/product flows depend on workers; judge-path compatibility still needs validation without weakening transport policy.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-Add focused executable unit tests for persisted-memory sanitization (NaN/Infinity, dimension mismatch, missing provenance/provider/model, valid embedding preservation and lexical fallback), run the .NET test suite where execution is available, then return to the clean Windows recording checkout for `run-release-browser-qualification.ps1` and the mandatory judge-recording gate.
+Run the focused `PersistedMemoryEmbeddingIntegrityTests` and broader `Nvidea.Core.Tests` under .NET 8 when executable tooling is available; fix any compile/runtime issues immediately. If green, inspect the memory embedding migration path for the same durable-state trust assumptions and add fail-safe/adversarial coverage where needed, while the clean Windows recording checkout remains the required path for browser release qualification and the mandatory judge-recording gate.

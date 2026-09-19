@@ -15,8 +15,6 @@ $trxPath = Join-Path $evidence "browser-integration.trx"
 if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) { throw "Qualification receipt not found: $receiptPath" }
 if (-not (Test-Path -LiteralPath $trxPath -PathType Leaf)) { throw "Browser integration TRX not found: $trxPath" }
 
-# This list is intentionally independent of receipt metadata. Release/judge verification must not
-# let the evidence producer redefine what "the security suite" means by emitting a smaller set.
 $canonicalSecurityFixtures = @(
     "BrowserObservedValueChromiumIntegrationTests",
     "BrowserDownloadChromiumIntegrationTests",
@@ -30,16 +28,28 @@ function Test-FixtureIdentityInTestName {
         [Parameter(Mandatory = $true)][string]$TestName,
         [Parameter(Mandatory = $true)][string]$FixtureName
     )
-
     $escapedFixture = [Regex]::Escape($FixtureName)
     return [Regex]::IsMatch($TestName, "(^|\.)$escapedFixture(\.|$)", [Text.RegularExpressions.RegexOptions]::CultureInvariant)
 }
 
-$receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
+function Assert-JsonString {
+    param([Parameter(Mandatory = $true)]$Value, [Parameter(Mandatory = $true)][string]$Field, [switch]$AllowEmpty)
+    if ($Value -isnot [string]) { throw "Qualification receipt $Field must be a JSON string." }
+    if (-not $AllowEmpty -and [string]::IsNullOrWhiteSpace($Value)) { throw "Qualification receipt $Field must not be empty." }
+}
 
-# Validate the payload-free schema shape and primitive JSON types before coercing any value. PowerShell
-# conversions are permissive (for example, non-empty strings can become $true), so release evidence must
-# not be able to satisfy boolean/integer checks through type confusion.
+function Assert-JsonStringArray {
+    param([Parameter(Mandatory = $true)]$Value, [Parameter(Mandatory = $true)][string]$Field, [switch]$AllowEmptyArray)
+    if ($Value -is [string] -or $Value -isnot [System.Array]) { throw "Qualification receipt $Field must be a JSON array." }
+    if (-not $AllowEmptyArray -and $Value.Count -eq 0) { throw "Qualification receipt $Field must not be empty." }
+    for ($i = 0; $i -lt $Value.Count; $i++) {
+        if ($Value[$i] -isnot [string] -or [string]::IsNullOrWhiteSpace([string]$Value[$i])) {
+            throw "Qualification receipt $Field[$i] must be a non-empty JSON string."
+        }
+    }
+}
+
+$receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
 $allowedReceiptFields = @(
     "schemaVersion", "validatedAtUtc", "sourceCommit", "sourceDirty", "dotnetSdk",
     "configuration", "securitySuite", "effectiveFilter", "trxSha256", "passedCount",
@@ -55,15 +65,20 @@ if ($receipt.securitySuite -isnot [bool]) { throw "Qualification receipt securit
 if ($null -ne $receipt.sourceDirty -and $receipt.sourceDirty -isnot [bool]) { throw "Qualification receipt sourceDirty must be a JSON boolean or null." }
 if ($receipt.passedCount -isnot [long] -and $receipt.passedCount -isnot [int]) { throw "Qualification receipt passedCount must be a JSON integer." }
 if ([long]$receipt.passedCount -lt 1) { throw "Qualification receipt passedCount must be positive." }
-if ($receipt.requiredFixtures -is [string] -or $receipt.requiredFixtures -isnot [System.Array]) { throw "Qualification receipt requiredFixtures must be a JSON array." }
-if ($receipt.passedTests -is [string] -or $receipt.passedTests -isnot [System.Array]) { throw "Qualification receipt passedTests must be a JSON array." }
+Assert-JsonString -Value $receipt.validatedAtUtc -Field "validatedAtUtc"
+Assert-JsonString -Value $receipt.sourceCommit -Field "sourceCommit"
+Assert-JsonString -Value $receipt.dotnetSdk -Field "dotnetSdk"
+Assert-JsonString -Value $receipt.configuration -Field "configuration"
+Assert-JsonString -Value $receipt.effectiveFilter -Field "effectiveFilter" -AllowEmpty
+Assert-JsonString -Value $receipt.trxSha256 -Field "trxSha256"
+Assert-JsonStringArray -Value $receipt.requiredFixtures -Field "requiredFixtures" -AllowEmptyArray
+Assert-JsonStringArray -Value $receipt.passedTests -Field "passedTests"
 
-if ([string]::IsNullOrWhiteSpace([string]$receipt.sourceCommit)) { throw "Qualification receipt has no sourceCommit. Release/judge evidence must come from a Git checkout." }
 if ($RequireCleanSource -and $receipt.sourceDirty -ne $false) { throw "Qualification receipt is not from a proven-clean checkout (sourceDirty=$($receipt.sourceDirty))." }
-if (-not [string]::IsNullOrWhiteSpace($ExpectedCommit) -and -not [string]::Equals([string]$receipt.sourceCommit, $ExpectedCommit.Trim(), [StringComparison]::OrdinalIgnoreCase)) { throw "Qualification source commit '$($receipt.sourceCommit)' does not match expected commit '$ExpectedCommit'." }
+if (-not [string]::IsNullOrWhiteSpace($ExpectedCommit) -and -not [string]::Equals($receipt.sourceCommit, $ExpectedCommit.Trim(), [StringComparison]::OrdinalIgnoreCase)) { throw "Qualification source commit '$($receipt.sourceCommit)' does not match expected commit '$ExpectedCommit'." }
 if ($RequireSecuritySuite -and $receipt.securitySuite -ne $true) { throw "Qualification receipt is not from the curated Chromium security suite. Re-run with -SecuritySuite." }
 
-$declaredTrxSha256 = ([string]$receipt.trxSha256).Trim().ToLowerInvariant()
+$declaredTrxSha256 = $receipt.trxSha256.Trim().ToLowerInvariant()
 if ($declaredTrxSha256 -notmatch '^[0-9a-f]{64}$') { throw "Qualification receipt trxSha256 is missing or malformed." }
 $actualTrxSha256 = (Get-FileHash -LiteralPath $trxPath -Algorithm SHA256).Hash.ToLowerInvariant()
 if (-not [string]::Equals($declaredTrxSha256, $actualTrxSha256, [StringComparison]::Ordinal)) { throw "TRX SHA-256 does not match qualification receipt. Evidence may be stale, mixed, or modified." }
@@ -77,14 +92,18 @@ if ($nonPassed.Count -gt 0) {
     throw "TRX contains non-passed results: $summary"
 }
 $trxPassedNames = @($results | ForEach-Object { [string]$_.testName } | Sort-Object)
-$receiptPassedNames = @($receipt.passedTests | ForEach-Object { [string]$_ } | Sort-Object)
+if (@($trxPassedNames | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -gt 0) { throw "TRX contains a passed result with an empty testName." }
+$duplicateTrxNames = @($trxPassedNames | Group-Object | Where-Object { $_.Count -gt 1 } | ForEach-Object { $_.Name })
+if ($duplicateTrxNames.Count -gt 0) { throw "TRX contains duplicate passed test names; exact receipt correlation would be ambiguous: $($duplicateTrxNames -join ', ')." }
+$receiptPassedNames = @($receipt.passedTests | Sort-Object)
+$duplicateReceiptNames = @($receiptPassedNames | Group-Object | Where-Object { $_.Count -gt 1 } | ForEach-Object { $_.Name })
+if ($duplicateReceiptNames.Count -gt 0) { throw "Qualification receipt contains duplicate passedTests: $($duplicateReceiptNames -join ', ')." }
 if ([long]$receipt.passedCount -ne $trxPassedNames.Count) { throw "Receipt passedCount '$($receipt.passedCount)' does not match TRX passed count '$($trxPassedNames.Count)'." }
 if ($receiptPassedNames.Count -ne $trxPassedNames.Count -or (Compare-Object -ReferenceObject $trxPassedNames -DifferenceObject $receiptPassedNames).Count -ne 0) { throw "Receipt passedTests do not exactly match the TRX PASS evidence." }
 
-$requiredFixtures = @($receipt.requiredFixtures | ForEach-Object { [string]$_ })
+$requiredFixtures = @($receipt.requiredFixtures)
 if ($receipt.securitySuite -eq $true) {
     if ($requiredFixtures.Count -eq 0) { throw "Security-suite receipt declares no required fixtures." }
-    if (@($requiredFixtures | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -gt 0) { throw "Security-suite receipt contains an empty required fixture name." }
     $duplicateFixtures = @($requiredFixtures | Group-Object | Where-Object { $_.Count -gt 1 } | ForEach-Object { $_.Name })
     if ($duplicateFixtures.Count -gt 0) { throw "Security-suite receipt contains duplicate required fixture(s): $($duplicateFixtures -join ', ')." }
     $fixtureDifference = @(Compare-Object -ReferenceObject @($canonicalSecurityFixtures | Sort-Object) -DifferenceObject @($requiredFixtures | Sort-Object))
@@ -97,7 +116,7 @@ if ($receipt.securitySuite -eq $true) {
 elseif ($requiredFixtures.Count -gt 0) { throw "Non-security qualification receipt unexpectedly declares required security fixtures. Refusing inconsistent evidence metadata." }
 
 $validatedAt = [DateTimeOffset]::MinValue
-if (-not [DateTimeOffset]::TryParse([string]$receipt.validatedAtUtc, [ref]$validatedAt)) { throw "Qualification receipt validatedAtUtc is invalid." }
+if (-not [DateTimeOffset]::TryParse($receipt.validatedAtUtc, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind, [ref]$validatedAt)) { throw "Qualification receipt validatedAtUtc is invalid or not an invariant round-trip timestamp." }
 
 Write-Host "Chromium qualification evidence verified."
 Write-Host "  Commit: $($receipt.sourceCommit)"

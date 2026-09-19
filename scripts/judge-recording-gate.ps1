@@ -41,8 +41,20 @@ if (-not (Test-Path -LiteralPath $resolvedEvidence.Path -PathType Container)) {
     throw 'Browser qualification evidence must be a directory.'
 }
 
+# Diagnostic skip switches are intentionally retained because they are useful when
+# isolating a broken recording machine. They must never be able to produce a PASS,
+# however: a green judge-recording result is itself release evidence and therefore
+# means every mandatory trust check ran.
+$diagnosticOverrides = @()
+if ($SkipVerifierRegression) { $diagnosticOverrides += 'verifier regression' }
+if ($SkipBuildValidation) { $diagnosticOverrides += 'build validation' }
+$diagnosticMode = $diagnosticOverrides.Count -gt 0
+
 Write-Host 'Running fail-closed NVIDEA judge recording gate...'
 Write-Host 'This gate requires cloud-research configuration and fresh browser qualification evidence.'
+if ($diagnosticMode) {
+    Write-Warning ("Diagnostic mode enabled; skipped checks: {0}. This invocation can NEVER produce a judge-recording PASS." -f ($diagnosticOverrides -join ', '))
+}
 
 # Both subordinate scripts intentionally own process exit semantics. Execute them in
 # child PowerShell processes so this recording-specific wrapper independently observes
@@ -57,7 +69,7 @@ if (-not $SkipVerifierRegression) {
         throw "Judge recording gate failed because the browser qualification verifier regression harness exited with code $verifierRegressionExitCode. Do not trust browser qualification evidence or record this checkout."
     }
 } else {
-    Write-Warning 'Verifier regression was explicitly skipped. This override is for diagnostics only and weakens the recording gate.'
+    Write-Warning 'Verifier regression was explicitly skipped for diagnostic isolation; final recording remains blocked.'
 }
 
 $childArgs = @(
@@ -69,7 +81,7 @@ $childArgs = @(
 if (-not $SkipBuildValidation) {
     $childArgs += '-ValidateBuild'
 } else {
-    Write-Warning 'Build validation was explicitly skipped. This override is for diagnostics only and should not be used for the final judge recording.'
+    Write-Warning 'Build validation was explicitly skipped for diagnostic isolation; final recording remains blocked.'
 }
 
 & $pwsh @childArgs
@@ -78,5 +90,9 @@ if ($readinessExitCode -ne 0) {
     throw "Judge recording gate failed because live demo readiness exited with code $readinessExitCode. Do not record or release this checkout."
 }
 
-Write-Host 'NVIDEA judge recording gate PASS. Verifier self-test, browser qualification evidence, cloud readiness, and default build validation were enforced unless an explicit diagnostic override was supplied.'
+if ($diagnosticMode) {
+    throw ("Diagnostic checks completed, but judge recording remains BLOCKED because mandatory checks were skipped: {0}. Re-run without diagnostic skip flags to obtain a PASS." -f ($diagnosticOverrides -join ', '))
+}
+
+Write-Host 'NVIDEA judge recording gate PASS. Verifier self-test, browser qualification evidence, cloud readiness, and build validation were all enforced.'
 exit 0

@@ -22,25 +22,24 @@ Added `scripts/run-browser-integration.ps1`: .NET 8 enforcement, restore/build, 
 ### 2026-09-19 — release and judge recording trust chain
 Added release browser verification pinned to the expected GitHub origin, exact clean HEAD, canonical suite and fresh evidence. Integrated qualification into live-demo readiness. Added `judge-recording-gate.ps1`: Windows/PowerShell 7, mandatory browser evidence, verifier self-test, cloud-research readiness and build validation are required. Diagnostic skip switches can run troubleshooting checks but can never mint a recording PASS. Added `run-release-browser-qualification.ps1` so wrong-repository, ambiguous-HEAD, or dirty-source states fail before expensive Chromium execution. Producer-side qualification rechecks exact HEAD and complete tracked/untracked cleanliness after Chromium succeeds, so source drift during the run invalidates evidence.
 
-### 2026-09-19 to 2026-09-20 — memory embedding integrity
+### 2026-09-19 to 2026-09-20 — memory embedding and persistence integrity
 - Persisted embedding data is treated as untrusted durable state: malformed vector/provenance pairs are stripped on load and sanitized state is persisted.
 - Persisted embeddings are rejected if empty, dimensionally inconsistent, missing provider/model identity, or containing NaN/Infinity; semantic comparison repeats finite/provenance checks as defense in depth.
 - User-authored memory content/provenance survives semantic corruption and lexical/recency/importance retrieval remains available.
-- `PersistedMemoryEmbeddingIntegrityTests` cover NaN, Infinity, dimension mismatch, missing vector/provenance, blank provider/model, empty vectors, valid preservation, durable sanitation, and lexical fallback.
-- Migration preview/snapshot independently treats malformed semantic state as stale if provider/model identity is blank, dimensions disagree, or any component is non-finite, while initialization sanitation can reduce such records to missing-embedding candidates before preview.
-- Migration remains local-provider-only, preserves sensitivity opt-ins, revalidates candidates before embedding, validates returned vectors/provenance, and uses reference-identity checks before applying results so concurrent user edits are not overwritten.
-- Adversarial migration coverage pins Sensitive/Restricted opt-ins even for corrupt semantic state and rejects NaN/+Infinity/-Infinity provider vectors before any record from that batch is persisted.
-- Migration interruption semantics are now pinned across multiple batches: a provider exception in a later batch preserves the already committed earlier batch and leaves only the failed batch resumable; cancellation during a later provider batch cannot apply that batch and likewise preserves earlier committed work.
+- `PersistedMemoryEmbeddingIntegrityTests` cover corrupt semantic state, valid preservation, durable sanitation, and lexical fallback.
+- Migration independently treats malformed semantic state as stale, remains local-provider-only, preserves sensitivity opt-ins, revalidates candidates before embedding, validates returned vectors/provenance, and uses reference-identity checks so concurrent user edits are not overwritten.
+- Adversarial migration coverage pins Sensitive/Restricted opt-ins, rejects non-finite provider vectors before batch persistence, and proves later-batch provider failure/cancellation preserves earlier committed work without partially applying the active batch.
+- Added `JsonFileMemoryStoreTests` around the filesystem boundary: replacement of an existing snapshot, malformed/truncated JSON fail-closed behavior without source rewriting, pre-cancelled write preservation, serialized concurrent writes that cannot produce a mixed snapshot, and temp-file cleanup expectations.
 
 Files changed in latest run:
-- `tests/Nvidea.Core.Tests/MemoryEmbeddingMigrationTests.cs`
+- `tests/Nvidea.Core.Tests/JsonFileMemoryStoreTests.cs`
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md` completely and inspected `PersonalMemoryService.Migration.cs` plus the existing migration fixture before changing code.
-- Added a batch-aware test-provider hook without changing production interfaces.
-- Added `Migrate_ProviderFailureInLaterBatchPreservesCommittedEarlierBatch`: first batch persists, second provider call fails, exactly one post-initialization store write remains, first two records retain embeddings, third remains untouched, and preview exposes only the third record for resume.
-- Added `Migrate_CancellationInLaterBatchNeverAppliesThatBatch`: cancellation is triggered inside the second provider batch, `OperationCanceledException` propagates, exactly the first batch remains durable, and the unvalidated second batch is untouched.
+- Re-read `progress.md` completely and inspected `JsonFileMemoryStore.cs` before changing code.
+- The store already serializes access with a `SemaphoreSlim`, writes a uniquely named sibling temp file using asynchronous `FileOptions.WriteThrough`, flushes it, then replaces the destination with `File.Move(..., overwrite: true)` and removes leftover temp state in `finally`.
+- New tests pin that malformed/truncated JSON raises `InvalidDataException` and leaves the corrupt source byte-for-byte unchanged rather than silently resetting personal memory.
+- New tests pin that a cancellation already requested before a write cannot replace the durable snapshot, and concurrent writes through one store instance resolve to one complete snapshot rather than interleaved records.
 - Repository metadata was explicitly reverified immediately before every GitHub mutation; writable target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 - Connector environment cannot execute .NET 8 or Windows/PowerShell/Chromium, so compile/test/runtime PASS is not claimed.
 - No live/paid Nebius, Object Storage, Serverless, Tavily, authenticated browser, Ollama or inference operation was triggered.
@@ -48,18 +47,19 @@ Validation/evidence:
 ## Security / privacy / failure review
 - Browser transport, credential-bearing authority rejection, consequential-action approvals, sensitive autonomous-typing blocks, observation suppression, quarantine, prompt-injection boundaries and emergency cancellation remain intact.
 - Browser validation remains fail closed and the release/judge trust chain remains unchanged.
-- Memory persistence fails soft for corrupt semantic metadata: malformed embeddings are discarded while user-authored memory content/provenance survives and deterministic lexical retrieval remains usable.
-- Migration repeats durable-state integrity assumptions rather than relying solely on initialization, reducing the chance that a future import/mutation path silently marks malformed semantic state as current.
+- Memory persistence fails soft for corrupt semantic metadata while malformed/truncated store JSON itself fails closed; the store does not silently discard or overwrite unreadable personal memory.
 - Migration remains local-only and does not introduce cloud disclosure of personal memory content. Sensitive/Restricted opt-ins remain explicit even when semantic metadata is corrupt.
-- Every returned vector in a batch is validated before entering the apply/persist critical section. New interruption tests pin the intended batch transaction boundary: already committed batches remain resumable durable progress, while a provider failure or cancellation cannot partially apply the currently unvalidated batch.
+- Migration batch validation and interruption semantics remain intact: already committed batches remain resumable durable progress, while provider failure/cancellation cannot partially apply an unvalidated batch.
+- Filesystem persistence uses same-directory temp files and serialized access. The new tests document the intended atomic-snapshot contract and cleanup behavior without weakening encryption/DPAPI behavior.
 
 ## Known blockers / risks
 - Real-Chromium fixtures still need execution on Windows with .NET 8 and matching Playwright Chromium; static connector work is not an executable PASS.
 - Verifier regression harness, release qualification wrapper, release gate, judge-recording wrapper and integrated readiness path each need local PowerShell 7 execution before PASS can be claimed.
-- Persisted-memory and migration changes, including interruption/adversarial tests, still need execution in a .NET 8 environment; compile/runtime success is not claimed from connector-only work.
+- Persisted-memory, migration and new JSON-store tests still need execution in a .NET 8 environment; compile/runtime success is not claimed from connector-only work.
+- `File.Move(..., overwrite: true)` is relied upon as the final same-volume replacement step; crash/power-loss durability semantics still depend on the host filesystem/OS and need Windows validation. The current store has no backup/recovery generation if the destination itself becomes unreadable after a system-level failure.
 - SHA-256 browser receipts are integrity bindings, not digital signatures; freshness depends on the producer host clock.
 - Blocking Service Workers can affect sites whose auth/product flows depend on workers; judge-path compatibility still needs validation without weakening transport policy.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-Execute `MemoryEmbeddingMigrationTests`, `PersistedMemoryEmbeddingIntegrityTests`, and the broader core test suite under .NET 8 as soon as an executable environment is available. If connector-only execution remains unavailable, audit the durable JSON memory store's crash/concurrent-write behavior and add focused tests around atomic replacement, malformed/truncated state recovery, and cancellation so the strengthened semantic/migration guarantees also hold at the filesystem persistence boundary. Keep the clean Windows checkout as the required path for browser release qualification and the mandatory judge-recording gate.
+Execute `JsonFileMemoryStoreTests`, `MemoryEmbeddingMigrationTests`, `PersistedMemoryEmbeddingIntegrityTests`, and the broader core test suite under .NET 8 as soon as an executable environment is available. If connector-only execution remains unavailable, harden the JSON store against destination corruption/system-level interruption with a narrowly scoped last-known-good recovery generation (without silently accepting malformed current state), plus tests proving recovery provenance, cancellation safety, bounded backup retention and encrypted-state compatibility. Keep the clean Windows checkout as the required path for browser release qualification and the mandatory judge-recording gate.

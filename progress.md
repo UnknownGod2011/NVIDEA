@@ -17,24 +17,25 @@ Implemented Windows shell, Nebius/Nemotron inference, layered memory, Tavily res
 Hardened browser transport to HTTPS or HTTP loopback and WSS or WS loopback; rejected embedded URI credentials; added request/WebSocket routing, Service Worker blocking, post-action location enforcement, download quarantine, credential/prompt-injection/consequential-action gates, authenticated-state restart coverage, redirect/WebSocket no-dispatch fixtures, emergency-stop coverage and canonical page admission. Expanded credential classification across password, OTP, PIN, recovery material, API/access/refresh tokens, identity-number labels and standard security/payment autocomplete tokens. Production snapshots suppress password/OTP/payment values before reading DOM values. Hermetic real-Chromium coverage includes sensitive fields, benign controls, accessibility-reference safety and SPA in-place field repurposing.
 
 ### 2026-09-18 to 2026-09-19 — executable browser qualification
-Added `scripts/run-browser-integration.ps1`: .NET 8 enforcement, restore/build, project-pinned Playwright Chromium install, process-scoped integration opt-in, curated `-SecuritySuite`, deterministic failure propagation, and fail-closed TRX validation against zero-test, missing evidence, skipped/not-executed, non-passed and partial-suite false positives. Failed runs retain forensic evidence; `-KeepResults` retains successful evidence. Successful retained runs emit a payload-free qualification receipt with source/configuration/test provenance. Added independent `scripts/verify-browser-qualification.ps1` to re-prove source provenance, clean-source policy, exact receipt/TRX test agreement, curated fixture PASS evidence and payload-free schema constraints. Schema v2 binds the receipt to the exact TRX bytes with SHA-256 and verifies that digest before parsing test semantics.
+Added `scripts/run-browser-integration.ps1`: .NET 8 enforcement, restore/build, project-pinned Playwright Chromium install, process-scoped integration opt-in, curated `-SecuritySuite`, deterministic failure propagation, and fail-closed TRX validation against zero-test, missing evidence, skipped/not-executed, non-passed and partial-suite false positives. Failed runs retain forensic evidence; `-KeepResults` retains successful evidence. Successful retained runs emit a payload-free schema-v2 qualification receipt bound to exact TRX bytes with SHA-256. Added independent `scripts/verify-browser-qualification.ps1` to re-prove source provenance, clean-source policy, exact receipt/TRX test agreement, canonical fixture PASS evidence and payload-free schema constraints.
 
-### 2026-09-19 — independent security-suite proof hardening
+### 2026-09-19 — security-suite identity hardening
 Completed:
 - Independent verifier owns the canonical five-fixture Chromium security-suite definition and requires exact set equality; producer metadata cannot redefine completeness.
-- Hardened canonical fixture PASS matching from substring/wildcard matching to escaped dot-segment identity matching. A test/class such as `BrowserDownloadChromiumIntegrationTestsFake` can no longer satisfy the required `BrowserDownloadChromiumIntegrationTests` boundary merely by containing its name.
-- Fixture matching now accepts only the canonical class as a complete VSTest name segment (`(^|\.)Fixture(\.|$)`), with fixture text regex-escaped and verifier-controlled.
+- Verifier canonical fixture PASS matching requires escaped dot-segment class identity (`(^|\.)Fixture(\.|$)`), preventing longer lookalike class names from satisfying a required boundary.
+- Producer `scripts/run-browser-integration.ps1` now applies the same exact-class identity rule before it is allowed to mint a qualification receipt. Previously its local completeness check still used substring wildcard matching even though the independent verifier was strict.
+- Producer fixture regex is built only from hard-coded suite constants and `[Regex]::Escape`; test/receipt data cannot inject regex behavior.
 - Preserved schema-v2 TRX SHA-256 binding, exact receipt/TRX PASS-name/count agreement, clean-source/expected-commit controls, payload-free field allowlist and fail-closed non-passed-result handling.
 - Verified repository metadata immediately before every mutation; target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 
 Files changed in latest run:
-- `scripts/verify-browser-qualification.ps1`
+- `scripts/run-browser-integration.ps1`
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md`, recent commits, repository tree and verifier before modification.
-- Static threat review identified a false-positive identity edge: prior `-like "*$requiredFixture*"` matching could accept a longer unrelated/spoofed class name containing a canonical fixture string.
-- Static review confirms the new regex uses `[Regex]::Escape` and explicit dot/start/end boundaries; receipt data does not control the fixture regex.
+- Re-read `progress.md`, latest commits, producer and independent verifier before modification.
+- Static review identified producer/verifier policy drift: verifier rejected substring fixture spoofing, but producer could still mint a receipt after a substring-only fixture presence check.
+- Static review confirms producer and verifier now both use escaped complete VSTest dot-segment class matching; the verifier remains independent because it owns its own canonical fixture constants and repeats validation from retained evidence.
 - No executable PowerShell/.NET/Chromium PASS is claimed in this connector-only environment.
 - No live/paid Nebius, Object Storage, Serverless, Tavily, authenticated browser, Ollama or inference operation was triggered.
 
@@ -43,18 +44,19 @@ Validation/evidence:
 - Consequential actions require approval; sensitive autonomous typing is blocked across passwords, OTP/verification codes, payment credentials, private/recovery keys, API/access/refresh tokens and identity-number labels.
 - Browser observations suppress password/OTP/payment values before reading DOM values while retaining bounded non-secret semantics needed for safety decisions.
 - Browser validation fails closed on process failure, missing/empty evidence, skipped/not-executed evidence, any non-passed result and incomplete curated-suite PASS evidence.
+- Both evidence producer and independent verifier require each canonical fixture as a complete VSTest class-name segment; longer lookalike classes cannot satisfy suite completeness.
 - Qualification schema v2 binds receipt metadata to exact TRX bytes with SHA-256; independent verification checks byte integrity before semantic evidence.
-- Release/judge verification independently pins the canonical five-fixture suite and requires each canonical fixture as a complete VSTest class-name segment; producer metadata and substring lookalikes cannot redefine/satisfy completeness.
+- Release/judge verification independently pins the canonical five-fixture suite; producer metadata cannot redefine completeness.
 - Receipt remains payload-free and verifier rejects unreviewed top-level schema expansion.
 - Prompt-injection gates, quarantine, audit boundaries, Service Worker blocking and emergency cancellation remain intact.
 
 ## Known blockers / risks
 - Real-Chromium fixtures still need execution on Windows with .NET 8 and matching Playwright Chromium; static connector work is not an executable PASS.
 - SHA-256 binds receipt -> TRX integrity but is not a digital signature; anyone able to replace both files can recompute a matching pair. Source-commit matching and clean-checkout enforcement remain required for release/judge evidence.
-- The canonical fixture list currently exists in both producer and independent verifier by design; intentional suite changes must update both after security review, otherwise verification fails closed.
+- The canonical fixture list exists in both producer and independent verifier by design; intentional suite changes must update both after security review, otherwise verification fails closed.
 - Release/judge verification should use `-RequireCleanSource -RequireSecuritySuite -ExpectedCommit <commit>`; dirty-checkout or custom-filter evidence remains useful only for developer diagnosis.
 - Retained failure directories under OS temp can accumulate until developer cleanup.
-- Fixture-presence validation depends on standard VSTest dot-delimited fully qualified test naming; an adapter naming-format change will intentionally fail closed and require reviewed verifier adaptation.
+- Fixture-presence validation depends on standard VSTest dot-delimited fully qualified test naming; an adapter naming-format change will intentionally fail closed and require reviewed adaptation.
 - Blocking Service Workers can affect sites whose auth/product flows depend on workers; judge-path compatibility still needs validation without weakening transport policy.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and `scripts/live-demo-readiness.ps1 -RequireCloudResearch -ValidateBuild` remain environment-validation items.
 

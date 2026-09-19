@@ -29,6 +29,35 @@ public sealed class MemoryEmbeddingMigrationTests
     }
 
     [Fact]
+    public async Task Preview_CorruptSemanticStateStillHonorsSensitivityOptIns()
+    {
+        var corruptSensitive = WithCorruptEmbedding(CreateMemory("sensitive", MemorySensitivity.Sensitive));
+        var corruptRestricted = WithCorruptEmbedding(CreateMemory("restricted", MemorySensitivity.Restricted));
+        var store = new InMemoryStore { Records = [corruptSensitive, corruptRestricted] };
+        using var service = new PersonalMemoryService(store, embeddingProvider: new MigrationProvider());
+
+        var defaultPlan = await service.PreviewEmbeddingMigrationAsync();
+        var sensitivePlan = await service.PreviewEmbeddingMigrationAsync(new MemoryEmbeddingMigrationOptions
+        {
+            IncludeSensitive = true,
+        });
+        var allPlan = await service.PreviewEmbeddingMigrationAsync(new MemoryEmbeddingMigrationOptions
+        {
+            IncludeSensitive = true,
+            IncludeRestricted = true,
+        });
+
+        Assert.Empty(defaultPlan.Candidates);
+        Assert.Equal(1, defaultPlan.ExcludedSensitive);
+        Assert.Equal(1, defaultPlan.ExcludedRestricted);
+        Assert.Single(sensitivePlan.Candidates);
+        Assert.Equal("sensitive", sensitivePlan.Candidates[0].Id);
+        Assert.Equal(MemoryEmbeddingMigrationReason.StaleEmbeddingSpace, sensitivePlan.Candidates[0].Reason);
+        Assert.Single(allPlan.Candidates, candidate => candidate.Id == "sensitive");
+        Assert.Single(allPlan.Candidates, candidate => candidate.Id == "restricted");
+    }
+
+    [Fact]
     public async Task Migrate_PersistsEachBatchAndBecomesResumable()
     {
         var store = new InMemoryStore
@@ -52,6 +81,32 @@ public sealed class MemoryEmbeddingMigrationTests
         Assert.Equal(2, store.WriteCountAfterInitialization);
         Assert.Empty(secondPlan.Candidates);
         Assert.All(store.Records, memory => Assert.Equal("model-current", memory.EmbeddingProvenance?.Model));
+    }
+
+    [Theory]
+    [InlineData(float.NaN)]
+    [InlineData(float.PositiveInfinity)]
+    [InlineData(float.NegativeInfinity)]
+    public async Task Migrate_InvalidProviderVectorFailsClosedWithoutApplyingBatch(float invalidValue)
+    {
+        var originalOne = CreateMemory("one", MemorySensitivity.Personal);
+        var originalTwo = CreateMemory("two", MemorySensitivity.Personal);
+        var store = new InMemoryStore { Records = [originalOne, originalTwo] };
+        var provider = new MigrationProvider(vectorFactory: index =>
+            index == 0
+                ? new float[] { 1, 2, 3 }
+                : new float[] { 1, invalidValue, 3 });
+        using var service = new PersonalMemoryService(store, embeddingProvider: provider);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.MigrateEmbeddingsAsync(
+            new MemoryEmbeddingMigrationOptions { BatchSize = 2 }));
+
+        Assert.Equal(0, store.WriteCountAfterInitialization);
+        Assert.All(store.Records, memory =>
+        {
+            Assert.Null(memory.Embedding);
+            Assert.Null(memory.EmbeddingProvenance);
+        });
     }
 
     [Fact]
@@ -106,6 +161,17 @@ public sealed class MemoryEmbeddingMigrationTests
         LastAccessedAt = DateTimeOffset.UtcNow,
     };
 
+    private static MemoryRecord WithCorruptEmbedding(MemoryRecord memory) => memory with
+    {
+        Embedding = new float[] { 1, float.NaN, 3 },
+        EmbeddingProvenance = new MemoryEmbeddingProvenance(
+            "test-local",
+            "model-current",
+            3,
+            true,
+            DateTimeOffset.UtcNow),
+    };
+
     private sealed class InMemoryStore : IMemoryStore
     {
         public IReadOnlyList<MemoryRecord> Records { get; set; } = Array.Empty<MemoryRecord>();
@@ -126,11 +192,17 @@ public sealed class MemoryEmbeddingMigrationTests
     private sealed class MigrationProvider : IMemoryEmbeddingMigrationProvider
     {
         private readonly Func<Task>? _beforeFirstResult;
+        private readonly Func<int, IReadOnlyList<float>>? _vectorFactory;
         private bool _callbackInvoked;
 
-        public MigrationProvider(Func<Task>? beforeFirstResult = null, bool isLocal = true, int maxBatchSize = 8)
+        public MigrationProvider(
+            Func<Task>? beforeFirstResult = null,
+            bool isLocal = true,
+            int maxBatchSize = 8,
+            Func<int, IReadOnlyList<float>>? vectorFactory = null)
         {
             _beforeFirstResult = beforeFirstResult;
+            _vectorFactory = vectorFactory;
             MigrationTarget = new MemoryEmbeddingMigrationTarget("test-local", "model-current", isLocal, maxBatchSize, 3);
         }
 
@@ -153,7 +225,7 @@ public sealed class MemoryEmbeddingMigrationTests
             }
 
             return texts.Select((_, index) => new MemoryEmbeddingVector(
-                new float[] { 1, index + 1, 1 },
+                _vectorFactory?.Invoke(index) ?? new float[] { 1, index + 1, 1 },
                 new MemoryEmbeddingProvenance(
                     MigrationTarget.Provider,
                     MigrationTarget.Model,

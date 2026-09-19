@@ -23,21 +23,24 @@ Added `scripts/run-browser-integration.ps1`: .NET 8 enforcement, restore/build, 
 Added a hermetic verifier regression harness covering canonical evidence and malformed provenance/type/suite/lookalike/TRX-tampering/time cases. Hardened evidence timestamps to exact UTC round-trip form with future-date rejection and optional freshness. Added `scripts/verify-release-browser-gate.ps1`, pinning expected GitHub origin, exact clean current HEAD, canonical suite and fresh evidence for release/judge qualification.
 
 ### 2026-09-19 — recording-day readiness integration
+Integrated browser release qualification into `scripts/live-demo-readiness.ps1` via optional `-BrowserEvidenceDirectory` and bounded freshness. When evidence is supplied, readiness delegates to the dedicated release gate so repository-origin, exact-HEAD, clean-checkout, canonical-suite and freshness policy has one fail-closed owner.
+
+### 2026-09-19 — judge recording runbook qualification contract
 Completed:
-- Integrated browser release qualification directly into `scripts/live-demo-readiness.ps1` via optional `-BrowserEvidenceDirectory` and bounded `-BrowserEvidenceMaxAgeHours` (default 24h).
-- When browser evidence is supplied, recording-day readiness invokes the dedicated release gate rather than duplicating verifier policy. The gate therefore remains the single owner of repository-origin, exact-HEAD, clean-checkout, canonical-suite and freshness requirements.
-- A failed browser gate becomes an explicit readiness blocker with a do-not-record/release message. Existing behavior remains compatible when no evidence directory is supplied, avoiding accidental breakage of non-browser setup checks.
-- Kept the check local/offline: no provider/network operation is introduced by readiness.
+- Updated `docs/judge-demo-runbook.md` so the operator-facing preflight now explicitly requires the verifier regression harness, a fresh retained real-Chromium canonical security-suite run, and the integrated `live-demo-readiness.ps1 -RequireCloudResearch -ValidateBuild -BrowserEvidenceDirectory <retained-browser-evidence-directory>` gate before recording.
+- Documented that the readiness gate binds browser qualification to the expected NVIDEA GitHub origin, exact clean current HEAD, intact TRX/receipt evidence, canonical suite and default 24-hour freshness policy.
+- Added an explicit do-not-record rule on gate failure and an explicit requalification rule after source changes. This closes the prior operational gap where the code supported a strong browser release gate but the judge runbook did not require operators to invoke it.
+- Clarified that retained qualification evidence stays off-screen and is not a portable credential or a substitute for the source checkout.
 - Verified repository metadata immediately before each mutation; target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 
 Files changed in latest run:
-- `scripts/live-demo-readiness.ps1`
+- `docs/judge-demo-runbook.md`
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md` completely and inspected current live-demo readiness implementation before selecting the task.
-- Static review confirms browser qualification is delegated to the existing release gate, preserving a single fail-closed policy path rather than creating a weaker parallel implementation.
-- Connector environment cannot execute PowerShell 7/Windows Chromium, so the integrated readiness path remains execution-unverified here; no PowerShell, build or Chromium PASS is claimed.
+- Re-read `progress.md` completely, inspected recent commits, `scripts/live-demo-readiness.ps1`, the docs directory, and the existing judge runbook before changing it.
+- Static review confirms the documented recording command matches the actual readiness parameters and routes browser qualification through the dedicated release gate rather than duplicating policy.
+- Connector environment cannot execute PowerShell 7/Windows Chromium, so the documented end-to-end sequence remains execution-unverified here; no PowerShell, build or Chromium PASS is claimed.
 - No live/paid Nebius, Object Storage, Serverless, Tavily, authenticated browser, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
@@ -47,17 +50,16 @@ Validation/evidence:
 - Browser validation fails closed on process failure, missing/empty evidence, skipped/not-executed evidence, any non-passed result and incomplete curated-suite PASS evidence.
 - Qualification schema v2 binds receipt metadata to exact TRX bytes with SHA-256; independent verification checks byte integrity before semantic evidence.
 - Release/judge verification independently pins the canonical five-fixture suite and the release gate pins exact repository, clean current HEAD and evidence freshness.
-- Recording-day readiness can now require that same release gate, preventing a browser-heavy judge recording from being treated as ready merely because secrets/build/demo-contract checks pass.
+- Recording-day readiness can require that same release gate, and the judge runbook now explicitly requires it for the browser-heavy final recording.
 - Prompt-injection gates, quarantine, audit boundaries, Service Worker blocking and emergency cancellation remain intact.
 
 ## Known blockers / risks
 - Real-Chromium fixtures still need execution on Windows with .NET 8 and matching Playwright Chromium; static connector work is not an executable PASS.
-- Verifier regression harness, release gate and newly integrated readiness path each need local PowerShell 7 execution before PASS can be claimed.
-- Browser evidence remains opt-in to general readiness for backward compatibility; recording instructions should explicitly supply `-BrowserEvidenceDirectory` for the browser demo.
+- Verifier regression harness, release gate and integrated readiness path each need local PowerShell 7 execution before PASS can be claimed.
 - SHA-256 binds receipt -> TRX integrity but is not a digital signature; anyone able to replace both files can recompute a matching pair. Exact source-commit matching and clean-checkout enforcement remain required.
 - Freshness depends on the producer host clock; it is not a cryptographic timestamp authority.
 - Blocking Service Workers can affect sites whose auth/product flows depend on workers; judge-path compatibility still needs validation without weakening transport policy.
-- Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full `live-demo-readiness.ps1 -RequireCloudResearch -ValidateBuild -BrowserEvidenceDirectory ...` remain environment-validation items.
+- Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-On a clean Windows PowerShell 7 checkout, run the verifier harness, then `./scripts/run-browser-integration.ps1 -InstallChromium -SecuritySuite -KeepResults`, then execute `./scripts/live-demo-readiness.ps1 -RequireCloudResearch -ValidateBuild -BrowserEvidenceDirectory <retained-dir>`. Fix any mismatch without weakening fail-closed semantics. Once this integrated recording-day gate passes, validate the authenticated judge-path browser sites and document the exact recording command in the demo runbook.
+On the clean Windows recording checkout, execute the now-documented sequence: `./scripts/test-browser-qualification-verifier.ps1`, then `./scripts/run-browser-integration.ps1 -InstallChromium -SecuritySuite -KeepResults`, then `./scripts/live-demo-readiness.ps1 -RequireCloudResearch -ValidateBuild -BrowserEvidenceDirectory <retained-browser-evidence-directory>`. Fix any mismatch without weakening fail-closed semantics. After that passes, validate the exact authenticated judge-path browser site/session and record any site-specific compatibility constraint in the runbook without bypassing login/CAPTCHA/MFA/site safeguards.

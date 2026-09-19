@@ -19,13 +19,15 @@ Hardened browser transport to HTTPS or HTTP loopback and WSS or WS loopback; rej
 ### 2026-09-18 to 2026-09-19 — executable browser qualification
 Added `scripts/run-browser-integration.ps1`: .NET 8 enforcement, restore/build, project-pinned Playwright Chromium install, process-scoped integration opt-in, curated `-SecuritySuite`, deterministic failure propagation, and fail-closed TRX validation against zero-test, missing evidence, skipped/not-executed, non-passed and partial-suite false positives. Failed runs retain forensic evidence; `-KeepResults` retains successful evidence. Successful retained runs emit a payload-free schema-v2 qualification receipt bound to exact TRX bytes with SHA-256. Added independent `scripts/verify-browser-qualification.ps1` to re-prove source provenance, clean-source policy, exact receipt/TRX test agreement, canonical fixture PASS evidence and payload-free schema constraints.
 
-### 2026-09-19 — security-suite identity and receipt-type hardening
+### 2026-09-19 — qualification evidence hardening
 Completed:
-- Producer and independent verifier both require canonical security fixtures as complete VSTest dot-delimited class-name segments; longer lookalike classes cannot satisfy suite completeness.
+- Producer and independent verifier require canonical security fixtures as complete VSTest dot-delimited class-name segments; longer lookalike classes cannot satisfy suite completeness.
 - Independent verifier owns the canonical five-fixture suite and requires exact set equality; producer metadata cannot redefine completeness.
-- Hardened `verify-browser-qualification.ps1` against JSON/PowerShell type confusion: all required schema-v2 fields must exist; `schemaVersion` and `passedCount` must be JSON integers; `securitySuite` must be a JSON boolean; `sourceDirty` must be boolean or null; `requiredFixtures` and `passedTests` must be arrays. A string such as `"false"` can no longer be coerced/truth-tested as a boolean security claim.
-- `passedCount` must be positive before it is compared with exact TRX PASS evidence.
-- Strict unexpected-field rejection remains, so the payload-free receipt contract is closed on both missing and unreviewed fields.
+- Verifier rejects missing/unexpected receipt fields and primitive type confusion for integer/boolean fields.
+- Verifier now also proves all scalar metadata fields are actual JSON strings before use; non-string `sourceCommit`, digest, timestamp, SDK/configuration/filter values cannot pass through PowerShell string coercion.
+- `requiredFixtures` and `passedTests` must be actual JSON arrays whose elements are non-empty JSON strings. Null/object/numeric elements fail closed instead of being stringified.
+- Duplicate PASS names in either TRX or receipt now fail closed because name-only exact correlation would otherwise be ambiguous; empty TRX PASS names are also rejected.
+- Timestamp parsing now uses invariant round-trip semantics rather than ambient locale parsing.
 - Preserved schema-v2 TRX SHA-256 binding, exact receipt/TRX PASS-name/count agreement, clean-source/expected-commit controls and fail-closed non-passed-result handling.
 - Verified repository metadata immediately before every mutation; target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 
@@ -34,9 +36,9 @@ Files changed in latest run:
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md`, latest commits, producer and independent verifier before modification.
-- Static security review found permissive PowerShell coercion at the receipt trust boundary: several values were cast or truth-tested without first proving their JSON primitive type. The verifier now validates shape/types before semantic checks.
-- Static review confirms receipt arrays cannot be substituted with strings, security booleans cannot be substituted with truthy strings, and required fields cannot be omitted and silently interpreted through null/coercion paths.
+- Re-read `progress.md`, latest commits and the independent verifier before modification.
+- Static security review found remaining coercion paths in string-valued metadata and array elements. These are now shape/type checked before semantic use.
+- Static review found duplicate test names could make name-only receipt/TRX correlation ambiguous even with equal counts; both evidence sides now reject duplicate PASS names.
 - No executable PowerShell/.NET/Chromium PASS is claimed in this connector-only environment.
 - No live/paid Nebius, Object Storage, Serverless, Tavily, authenticated browser, Ollama or inference operation was triggered.
 
@@ -46,7 +48,7 @@ Validation/evidence:
 - Browser observations suppress password/OTP/payment values before reading DOM values while retaining bounded non-secret semantics needed for safety decisions.
 - Browser validation fails closed on process failure, missing/empty evidence, skipped/not-executed evidence, any non-passed result and incomplete curated-suite PASS evidence.
 - Qualification schema v2 binds receipt metadata to exact TRX bytes with SHA-256; independent verification checks byte integrity before semantic evidence.
-- Receipt schema now fails closed on missing/unexpected fields and primitive JSON type mismatches before PowerShell coercion can affect security decisions.
+- Receipt schema fails closed on missing/unexpected fields, primitive JSON type mismatches, malformed string arrays and ambiguous duplicate PASS identities before PowerShell coercion can affect security decisions.
 - Release/judge verification independently pins the canonical five-fixture suite; producer metadata cannot redefine completeness.
 - Prompt-injection gates, quarantine, audit boundaries, Service Worker blocking and emergency cancellation remain intact.
 

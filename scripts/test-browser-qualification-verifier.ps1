@@ -6,6 +6,7 @@ Set-StrictMode -Version Latest
 
 $verifier = Join-Path $PSScriptRoot "verify-browser-qualification.ps1"
 if (-not (Test-Path -LiteralPath $verifier -PathType Leaf)) { throw "Verifier not found: $verifier" }
+$pwsh = Get-Command pwsh -ErrorAction Stop
 
 $canonicalFixtures = @(
     "BrowserObservedValueChromiumIntegrationTests",
@@ -65,12 +66,14 @@ function New-Case {
 
 function Invoke-Case {
     param([string]$Name, [string]$Directory, [bool]$ShouldPass)
-    $output = & $verifier -EvidenceDirectory $Directory -RequireCleanSource -RequireSecuritySuite -ExpectedCommit $commit 2>&1
-    $passed = $LASTEXITCODE -eq 0
-    if ($passed -ne $ShouldPass) {
-        throw "Regression case '$Name' expected pass=$ShouldPass but observed pass=$passed. Output: $($output -join [Environment]::NewLine)"
+    # Execute the verifier in a child PowerShell process so expected terminating errors in
+    # negative cases become an exit code rather than terminating this regression harness.
+    $output = & $pwsh.Source -NoProfile -NonInteractive -File $verifier -EvidenceDirectory $Directory -RequireCleanSource -RequireSecuritySuite -ExpectedCommit $commit 2>&1
+    $accepted = $LASTEXITCODE -eq 0
+    if ($accepted -ne $ShouldPass) {
+        throw "Regression case '$Name' expected acceptance=$ShouldPass but observed acceptance=$accepted. Output: $($output -join [Environment]::NewLine)"
     }
-    Write-Host "PASS regression case: $Name (accepted=$passed)"
+    Write-Host "PASS regression case: $Name (accepted=$accepted)"
 }
 
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null

@@ -26,11 +26,13 @@ Added hermetic verifier regression coverage for canonical evidence plus malforme
 Added `scripts/judge-recording-gate.ps1`: browser evidence is mandatory, Windows/PowerShell 7 are required, cloud-research readiness is always enabled, build validation is default-on, and subordinate exit statuses are independently enforced across child `pwsh` processes.
 
 ### 2026-09-19 — verifier self-test is now part of the recording trust chain
+Hardened `scripts/judge-recording-gate.ps1` so the hermetic browser qualification verifier regression harness runs by default before retained browser evidence is trusted. Regression and readiness execute in child `pwsh` processes and non-zero statuses block recording. Diagnostic skip switches are visible and warned.
+
+### 2026-09-19 — weakened diagnostic runs can no longer mint a recording PASS
 Completed:
-- Hardened `scripts/judge-recording-gate.ps1` so the hermetic browser qualification verifier regression harness runs by default before any retained browser evidence is trusted.
-- The regression harness executes in its own `pwsh` child process and any non-zero status blocks recording immediately. This proves the verifier's canonical-positive and tamper/type/suite/time rejection behavior on the recording machine before the release verifier is relied upon.
-- Added `-SkipVerifierRegression` only as an explicit diagnostic override and emit a warning when it is used. The default final-recording path remains fail closed.
-- Added an explicit warning for `-SkipBuildValidation` as well, making both weakening overrides visible rather than silent.
+- Closed a release-evidence semantic gap in `scripts/judge-recording-gate.ps1`: `-SkipVerifierRegression` and `-SkipBuildValidation` remain available for troubleshooting, but any invocation using either switch is now permanently diagnostic and cannot exit with a judge-recording PASS.
+- The gate records which mandatory checks were skipped, emits an upfront warning, still runs the remaining useful diagnostics, then fails closed even if those diagnostics succeed. Operators must re-run without skip flags to obtain the canonical PASS.
+- Simplified the final success statement so PASS now unambiguously means verifier self-test, browser qualification, cloud readiness, and build validation were all enforced.
 - Verified repository metadata immediately before every mutation; target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 
 Files changed in latest run:
@@ -38,9 +40,9 @@ Files changed in latest run:
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md` completely; inspected recent commits/repository tree plus the recording gate and integrated live-demo readiness implementation before changing code.
-- Static review confirmed the recording wrapper now orders trust establishment as verifier self-test -> integrated readiness -> release evidence verification/build/cloud configuration.
-- Child-process boundaries preserve subordinate scripts' intentional `exit` contracts while allowing the recording gate to independently reject non-zero statuses.
+- Re-read `progress.md` completely and inspected recent commits plus the current recording gate before changing code.
+- Static control-flow review confirms both diagnostic skip switches set `diagnosticMode`; after readiness returns successfully, diagnostic mode throws rather than reaching the PASS/exit-0 path.
+- Default invocation behavior is unchanged except for a stronger, unambiguous PASS statement.
 - Connector environment cannot execute PowerShell 7/Windows Chromium, so no script/build/Chromium PASS is claimed.
 - No live/paid Nebius, Object Storage, Serverless, Tavily, authenticated browser, Ollama or inference operation was triggered.
 
@@ -51,7 +53,7 @@ Validation/evidence:
 - Browser validation fails closed on process failure, missing/empty evidence, skipped/not-executed evidence, any non-passed result and incomplete curated-suite PASS evidence.
 - Qualification schema v2 binds receipt metadata to exact TRX bytes with SHA-256; independent verification checks byte integrity before semantic evidence.
 - Release verification independently pins canonical fixtures, exact repository, clean current HEAD and evidence freshness.
-- The judge-specific gate makes browser evidence structurally mandatory and now self-tests the evidence verifier before trusting it; diagnostic weakening overrides are explicit and warned.
+- The judge-specific gate makes browser evidence structurally mandatory, self-tests the evidence verifier before trusting it, and now guarantees diagnostic weakening overrides can never produce recording PASS evidence.
 - Prompt-injection gates, quarantine, audit boundaries, Service Worker blocking and emergency cancellation remain intact.
 
 ## Known blockers / risks
@@ -63,4 +65,4 @@ Validation/evidence:
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-On the clean Windows recording checkout, produce fresh evidence with `./scripts/run-browser-integration.ps1 -InstallChromium -SecuritySuite -KeepResults`, then run only the canonical final entry point `./scripts/judge-recording-gate.ps1 -BrowserEvidenceDirectory <retained-browser-evidence-directory>` without diagnostic skip flags. The gate now self-tests the verifier automatically. Fix any mismatch without weakening fail-closed semantics; once it passes, validate the exact authenticated judge-path browser site/session without bypassing login/CAPTCHA/MFA/site safeguards.
+On the clean Windows recording checkout, produce fresh evidence with `./scripts/run-browser-integration.ps1 -InstallChromium -SecuritySuite -KeepResults`, then run only the canonical final entry point `./scripts/judge-recording-gate.ps1 -BrowserEvidenceDirectory <retained-browser-evidence-directory>` without diagnostic skip flags. Fix any mismatch without weakening fail-closed semantics; once it passes, validate the exact authenticated judge-path browser site/session without bypassing login/CAPTCHA/MFA/site safeguards.

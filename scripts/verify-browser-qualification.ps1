@@ -3,7 +3,8 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$EvidenceDirectory,
     [string]$ExpectedCommit,
-    [switch]$RequireCleanSource
+    [switch]$RequireCleanSource,
+    [switch]$RequireSecuritySuite
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,6 +20,7 @@ if ([int]$receipt.schemaVersion -ne 2) { throw "Unsupported qualification receip
 if ([string]::IsNullOrWhiteSpace([string]$receipt.sourceCommit)) { throw "Qualification receipt has no sourceCommit. Release/judge evidence must come from a Git checkout." }
 if ($RequireCleanSource -and $receipt.sourceDirty -ne $false) { throw "Qualification receipt is not from a proven-clean checkout (sourceDirty=$($receipt.sourceDirty))." }
 if (-not [string]::IsNullOrWhiteSpace($ExpectedCommit) -and -not [string]::Equals([string]$receipt.sourceCommit, $ExpectedCommit.Trim(), [StringComparison]::OrdinalIgnoreCase)) { throw "Qualification source commit '$($receipt.sourceCommit)' does not match expected commit '$ExpectedCommit'." }
+if ($RequireSecuritySuite -and $receipt.securitySuite -ne $true) { throw "Qualification receipt is not from the curated Chromium security suite. Re-run with -SecuritySuite." }
 
 # Verify byte-level evidence integrity before parsing the TRX. This prevents a receipt from being
 # paired with a modified/replaced TRX that happens to preserve the same semantic test names.
@@ -43,9 +45,15 @@ if ($receiptPassedNames.Count -ne $trxPassedNames.Count -or (Compare-Object -Ref
 $requiredFixtures = @($receipt.requiredFixtures | ForEach-Object { [string]$_ })
 if ($receipt.securitySuite -eq $true) {
     if ($requiredFixtures.Count -eq 0) { throw "Security-suite receipt declares no required fixtures." }
+    $duplicateFixtures = @($requiredFixtures | Group-Object | Where-Object { $_.Count -gt 1 } | ForEach-Object { $_.Name })
+    if ($duplicateFixtures.Count -gt 0) { throw "Security-suite receipt contains duplicate required fixture(s): $($duplicateFixtures -join ', ')." }
     foreach ($requiredFixture in $requiredFixtures) {
+        if ([string]::IsNullOrWhiteSpace($requiredFixture)) { throw "Security-suite receipt contains an empty required fixture name." }
         if (-not ($trxPassedNames | Where-Object { $_ -like "*$requiredFixture*" })) { throw "Required security fixture '$requiredFixture' has no PASS evidence in the TRX." }
     }
+}
+elseif ($requiredFixtures.Count -gt 0) {
+    throw "Non-security qualification receipt unexpectedly declares required security fixtures. Refusing inconsistent evidence metadata."
 }
 
 $allowedReceiptFields = @(

@@ -15,6 +15,16 @@ $trxPath = Join-Path $evidence "browser-integration.trx"
 if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) { throw "Qualification receipt not found: $receiptPath" }
 if (-not (Test-Path -LiteralPath $trxPath -PathType Leaf)) { throw "Browser integration TRX not found: $trxPath" }
 
+# This list is intentionally independent of receipt metadata. Release/judge verification must not
+# let the evidence producer redefine what "the security suite" means by emitting a smaller set.
+$canonicalSecurityFixtures = @(
+    "BrowserObservedValueChromiumIntegrationTests",
+    "BrowserDownloadChromiumIntegrationTests",
+    "PersistentBrowserRedirectIntegrationTests",
+    "PersistentBrowserSessionIntegrationTests",
+    "PlaywrightInFlightCancellationIntegrationTests"
+)
+
 $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
 if ([int]$receipt.schemaVersion -ne 2) { throw "Unsupported qualification receipt schemaVersion '$($receipt.schemaVersion)'. Re-run qualification to produce schema v2 digest-bound evidence." }
 if ([string]::IsNullOrWhiteSpace([string]$receipt.sourceCommit)) { throw "Qualification receipt has no sourceCommit. Release/judge evidence must come from a Git checkout." }
@@ -45,11 +55,19 @@ if ($receiptPassedNames.Count -ne $trxPassedNames.Count -or (Compare-Object -Ref
 $requiredFixtures = @($receipt.requiredFixtures | ForEach-Object { [string]$_ })
 if ($receipt.securitySuite -eq $true) {
     if ($requiredFixtures.Count -eq 0) { throw "Security-suite receipt declares no required fixtures." }
+    if (@($requiredFixtures | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -gt 0) { throw "Security-suite receipt contains an empty required fixture name." }
     $duplicateFixtures = @($requiredFixtures | Group-Object | Where-Object { $_.Count -gt 1 } | ForEach-Object { $_.Name })
     if ($duplicateFixtures.Count -gt 0) { throw "Security-suite receipt contains duplicate required fixture(s): $($duplicateFixtures -join ', ')." }
-    foreach ($requiredFixture in $requiredFixtures) {
-        if ([string]::IsNullOrWhiteSpace($requiredFixture)) { throw "Security-suite receipt contains an empty required fixture name." }
-        if (-not ($trxPassedNames | Where-Object { $_ -like "*$requiredFixture*" })) { throw "Required security fixture '$requiredFixture' has no PASS evidence in the TRX." }
+
+    # Exact set equality is critical: securitySuite=true is not sufficient if a buggy or modified
+    # producer can omit a canonical boundary and then describe its reduced set as complete.
+    $fixtureDifference = @(Compare-Object -ReferenceObject @($canonicalSecurityFixtures | Sort-Object) -DifferenceObject @($requiredFixtures | Sort-Object))
+    if ($fixtureDifference.Count -gt 0) {
+        throw "Security-suite receipt does not declare the verifier's canonical fixture set. Evidence may come from a reduced or incompatible suite."
+    }
+    foreach ($requiredFixture in $canonicalSecurityFixtures) {
+        # Canonical names are constants, so wildcard interpretation cannot be influenced by receipt data.
+        if (-not ($trxPassedNames | Where-Object { $_ -like "*$requiredFixture*" })) { throw "Required canonical security fixture '$requiredFixture' has no PASS evidence in the TRX." }
     }
 }
 elseif ($requiredFixtures.Count -gt 0) {

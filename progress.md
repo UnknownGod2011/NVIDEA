@@ -22,38 +22,39 @@ Added `scripts/run-browser-integration.ps1`: .NET 8 enforcement, restore/build, 
 ### 2026-09-19 — release and judge recording trust chain
 Added release browser verification pinned to the expected GitHub origin, exact clean HEAD, canonical suite and fresh evidence. Integrated qualification into live-demo readiness. Added `judge-recording-gate.ps1`: Windows/PowerShell 7, mandatory browser evidence, verifier self-test, cloud-research readiness and build validation are required. Diagnostic skip switches can run troubleshooting checks but can never mint a recording PASS. Added `run-release-browser-qualification.ps1` so wrong-repository, ambiguous-HEAD, or dirty-source states fail before expensive Chromium execution. Producer-side qualification rechecks exact HEAD and complete tracked/untracked cleanliness after Chromium succeeds, so source drift during the run invalidates evidence.
 
-### 2026-09-19 — persisted memory embedding integrity hardening
-Completed:
-- Hardened `PersonalMemoryService.InitializeAsync` so persisted embedding data is treated as untrusted durable state: malformed vector/provenance pairs are stripped on load and sanitized state is persisted.
-- Persisted embeddings are rejected if empty, dimensionally inconsistent, missing provider/model identity, or containing NaN/Infinity; the semantic comparison boundary repeats finite/provenance checks as defense in depth.
+### 2026-09-19 to 2026-09-20 — memory embedding integrity
+- Persisted embedding data is treated as untrusted durable state: malformed vector/provenance pairs are stripped on load and sanitized state is persisted.
+- Persisted embeddings are rejected if empty, dimensionally inconsistent, missing provider/model identity, or containing NaN/Infinity; semantic comparison repeats finite/provenance checks as defense in depth.
 - User-authored memory content/provenance survives semantic corruption and lexical/recency/importance retrieval remains available.
-- Added `PersistedMemoryEmbeddingIntegrityTests` covering NaN, Infinity, dimension mismatch, missing vector/provenance, blank provider/model, empty vectors, valid embedding preservation, persistence of sanitized state, and lexical fallback when a query embedding exists but persisted semantic state is invalid.
-- Verified repository metadata immediately before each mutation; target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
+- `PersistedMemoryEmbeddingIntegrityTests` cover NaN, Infinity, dimension mismatch, missing vector/provenance, blank provider/model, empty vectors, valid preservation, durable sanitation, and lexical fallback.
+- Audited `PersonalMemoryService.Migration`: migration preview/snapshot now independently treats malformed in-memory semantic state as stale if provider/model identity is blank, dimensions disagree, or any component is non-finite. This is defense in depth beyond initialization sanitation and protects future import/mutation paths from causing corrupt vectors to be considered current.
+- Migration still requires an explicitly local provider, preserves sensitivity opt-ins, revalidates candidates before embedding, validates returned vectors/provenance, and uses reference-identity checks before applying results so concurrent user edits are not overwritten.
 
 Files changed in latest run:
-- `tests/Nvidea.Core.Tests/PersistedMemoryEmbeddingIntegrityTests.cs`
+- `src/Nvidea.Core/Memory/PersonalMemoryService.Migration.cs`
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md` completely and inspected the current memory service/models and test project before implementation.
-- The new tests assert both in-memory behavior and the durable write-back boundary via a recording `IMemoryStore`, rather than testing only a private helper.
-- Lexical-fallback coverage deliberately supplies a valid query embedding from the same nominal embedding space while persisted memory contains NaN; semantic score must remain zero and the memory remains retrievable lexically.
-- Connector environment cannot execute the .NET test suite or Windows/PowerShell/Chromium, so the new tests are committed regression coverage but no executable PASS is claimed.
+- Re-read `progress.md` completely and inspected the migration design/documentation, current migration implementation, memory sanitation/scoring implementation, and test inventory before changing code.
+- The migration candidate classifier now rejects non-finite vectors and incomplete provenance even if initialization sanitation is later bypassed by a new import/mutation path.
+- Repository metadata was explicitly reverified immediately before every GitHub mutation; writable target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
+- Connector environment cannot execute .NET 8 or Windows/PowerShell/Chromium, so compile/test/runtime PASS is not claimed.
 - No live/paid Nebius, Object Storage, Serverless, Tavily, authenticated browser, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
 - Browser transport, credential-bearing authority rejection, consequential-action approvals, sensitive autonomous-typing blocks, observation suppression, quarantine, prompt-injection boundaries and emergency cancellation remain intact.
 - Browser validation remains fail closed and the release/judge trust chain remains unchanged.
 - Memory persistence fails soft for corrupt semantic metadata: malformed embeddings are discarded while user-authored memory content/provenance survives and deterministic lexical retrieval remains usable.
-- Regression coverage now pins that trust-boundary behavior against malformed durable state, reducing the risk that later ranking/migration work silently reintroduces NaN/Infinity poisoning or trusts incomplete embedding provenance.
+- Migration now repeats the durable-state integrity assumptions rather than relying solely on initialization, reducing the chance that a future import/mutation path silently marks malformed semantic state as current.
+- Migration remains local-only and does not introduce cloud disclosure of personal memory content.
 
 ## Known blockers / risks
 - Real-Chromium fixtures still need execution on Windows with .NET 8 and matching Playwright Chromium; static connector work is not an executable PASS.
 - Verifier regression harness, release qualification wrapper, release gate, judge-recording wrapper and integrated readiness path each need local PowerShell 7 execution before PASS can be claimed.
-- The new persisted-memory regression tests still need execution in a .NET 8 environment; compile/runtime success is not claimed from connector-only work.
+- Persisted-memory and migration changes still need execution in a .NET 8 environment; compile/runtime success is not claimed from connector-only work.
 - SHA-256 browser receipts are integrity bindings, not digital signatures; freshness depends on the producer host clock.
 - Blocking Service Workers can affect sites whose auth/product flows depend on workers; judge-path compatibility still needs validation without weakening transport policy.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-Run the focused `PersistedMemoryEmbeddingIntegrityTests` and broader `Nvidea.Core.Tests` under .NET 8 when executable tooling is available; fix any compile/runtime issues immediately. If green, inspect the memory embedding migration path for the same durable-state trust assumptions and add fail-safe/adversarial coverage where needed, while the clean Windows recording checkout remains the required path for browser release qualification and the mandatory judge-recording gate.
+Add focused migration adversarial tests proving malformed semantic state is classified for local re-indexing without exposing Sensitive/Restricted memories unless explicitly opted in, and that invalid/non-finite vectors returned by the migration provider fail closed without partially applying the affected batch. Execute the focused memory suites under .NET 8 as soon as an executable environment is available; meanwhile keep the clean Windows checkout as the required path for browser release qualification and the mandatory judge-recording gate.

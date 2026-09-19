@@ -20,40 +20,41 @@ Hardened browser transport to HTTPS or HTTP loopback and WSS or WS loopback; rej
 Added `scripts/run-browser-integration.ps1`: .NET 8 enforcement, restore/build, project-pinned Playwright Chromium install, process-scoped integration opt-in, curated security suite, deterministic failure propagation, fail-closed TRX validation, and payload-free schema-v2 qualification receipts bound to exact TRX bytes with SHA-256. Added independent verifier with canonical fixture pinning, exact receipt/TRX agreement, source provenance, clean-source policy, strict schema/type checks, timestamp validation and freshness support. Added hermetic verifier regression coverage for canonical evidence plus malformed provenance/type/suite/lookalike/TRX-tampering/time cases.
 
 ### 2026-09-19 — release and judge recording trust chain
-Added release browser verification pinned to the expected GitHub origin, exact clean HEAD, canonical suite and fresh evidence. Integrated qualification into live-demo readiness. Added `judge-recording-gate.ps1`: Windows/PowerShell 7, mandatory browser evidence, verifier self-test, cloud-research readiness and build validation are required. Diagnostic skip switches can run troubleshooting checks but can never mint a recording PASS. Added `run-release-browser-qualification.ps1` so wrong-repository, ambiguous-HEAD, or dirty-source states fail before expensive Chromium execution.
+Added release browser verification pinned to the expected GitHub origin, exact clean HEAD, canonical suite and fresh evidence. Integrated qualification into live-demo readiness. Added `judge-recording-gate.ps1`: Windows/PowerShell 7, mandatory browser evidence, verifier self-test, cloud-research readiness and build validation are required. Diagnostic skip switches can run troubleshooting checks but can never mint a recording PASS. Added `run-release-browser-qualification.ps1` so wrong-repository, ambiguous-HEAD, or dirty-source states fail before expensive Chromium execution. Producer-side qualification rechecks exact HEAD and complete tracked/untracked cleanliness after Chromium succeeds, so source drift during the run invalidates evidence.
 
-### 2026-09-19 — qualification now rejects source drift during execution
+### 2026-09-19 — persisted memory embedding integrity hardening
 Completed:
-- Hardened `scripts/run-release-browser-qualification.ps1` so the source provenance boundary covers the entire real-Chromium qualification interval rather than only its start.
-- After the browser runner succeeds, the wrapper independently resolves HEAD again and requires it to be the exact same 40-hex commit observed before execution.
-- It also re-runs `git status --porcelain --untracked-files=normal` and requires the checkout to remain clean.
-- A concurrent commit/checkout, editor-generated tracked or untracked change, or inability to re-check Git state now invalidates otherwise-passing Chromium evidence and requires a fresh run.
+- Reviewed the layered memory implementation instead of continuing release-script work while Windows execution remains externally blocked.
+- Hardened `PersonalMemoryService.InitializeAsync` so persisted embedding data is treated as untrusted durable state: malformed vector/provenance pairs are stripped on load and the sanitized record is persisted back to storage.
+- Persisted embeddings are now rejected if the vector is empty, dimensions disagree, provider/model identity is blank, or any vector element is NaN/Infinity.
+- Added the same finite-vector and provenance identity checks to the semantic comparison boundary so malformed in-memory state cannot reach cosine scoring even if introduced outside normal write flow.
+- Lexical/recency/importance retrieval remains available when semantic state is rejected; no memory content is deleted solely because its embedding metadata is malformed.
 - Verified repository metadata immediately before each mutation; target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 
 Files changed in latest run:
-- `scripts/run-release-browser-qualification.ps1`
+- `src/Nvidea.Core/Memory/PersonalMemoryService.cs`
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md` completely and inspected recent commits, the current source tree, memory implementation, browser runner and release qualification wrapper before selecting the task.
-- Static control-flow review confirms pre-run origin/HEAD/clean checks remain intact; successful Chromium execution is now followed by exact HEAD equality and post-run cleanliness checks before PASS can be emitted.
-- The change does not weaken or duplicate the existing project-pinned Chromium suite, TRX semantic validation, receipt hashing, independent verifier, freshness policy, release gate or judge gate.
-- Connector environment cannot execute Windows/PowerShell 7/Chromium, so no executable PASS is claimed.
+- Re-read `progress.md` completely, inspected recent commits and the current memory models/service before implementation.
+- Static review confirms new sanitization executes while initialization holds the memory gate, before records become queryable, and the existing initialization persistence pass writes sanitized persistent records atomically through the configured store path.
+- Existing newly-generated embeddings already pass `ValidateEmbedding`; this change closes the corresponding persisted-state trust boundary and adds defense in depth at comparison time.
+- Connector environment cannot execute the .NET test suite or Windows/PowerShell/Chromium, so no executable PASS is claimed.
 - No live/paid Nebius, Object Storage, Serverless, Tavily, authenticated browser, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
 - Browser transport, credential-bearing authority rejection, consequential-action approvals, sensitive autonomous-typing blocks, observation suppression, quarantine, prompt-injection boundaries and emergency cancellation remain intact.
-- Browser validation fails closed on process failure, missing/empty/skipped evidence, non-passed results and incomplete canonical fixtures. Schema v2 binds receipts to exact TRX bytes; independent verification checks integrity and semantics.
-- Release verification pins canonical fixtures, exact repository, clean current HEAD and evidence freshness. The judge gate self-tests its verifier and requires browser qualification, cloud readiness and build validation.
-- Producer-side qualification now checks repository/commit/cleanliness both before and after expensive execution, closing the source-drift window during qualification. Downstream independent verification remains mandatory.
+- Browser validation remains fail closed and the release/judge trust chain remains unchanged.
+- Memory persistence is now explicitly fail-soft for corrupt semantic metadata: malformed embeddings are discarded while user-authored memory content/provenance survives and deterministic lexical retrieval remains usable.
+- This avoids NaN/Infinity poisoning of semantic ranking and prevents incomplete or forged provider/model metadata from being treated as a comparable embedding space.
 
 ## Known blockers / risks
 - Real-Chromium fixtures still need execution on Windows with .NET 8 and matching Playwright Chromium; static connector work is not an executable PASS.
 - Verifier regression harness, release qualification wrapper, release gate, judge-recording wrapper and integrated readiness path each need local PowerShell 7 execution before PASS can be claimed.
-- SHA-256 binds receipt -> TRX integrity but is not a digital signature; exact source-commit matching and clean-checkout enforcement remain required.
-- Freshness depends on the producer host clock; it is not a cryptographic timestamp authority.
+- The new persisted-memory sanitization needs executable .NET unit coverage; current evidence is static review only.
+- SHA-256 browser receipts are integrity bindings, not digital signatures; freshness depends on the producer host clock.
 - Blocking Service Workers can affect sites whose auth/product flows depend on workers; judge-path compatibility still needs validation without weakening transport policy.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-On the clean Windows recording checkout, run `./scripts/run-release-browser-qualification.ps1 -InstallChromium`; retain its emitted evidence directory, then run only `./scripts/judge-recording-gate.ps1 -BrowserEvidenceDirectory <retained-browser-evidence-directory>` without diagnostic skip flags. Fix any mismatch without weakening fail-closed semantics; once it passes, validate the exact authenticated judge-path browser site/session without bypassing login/CAPTCHA/MFA/site safeguards.
+Add focused executable unit tests for persisted-memory sanitization (NaN/Infinity, dimension mismatch, missing provenance/provider/model, valid embedding preservation and lexical fallback), run the .NET test suite where execution is available, then return to the clean Windows recording checkout for `run-release-browser-qualification.ps1` and the mandatory judge-recording gate.

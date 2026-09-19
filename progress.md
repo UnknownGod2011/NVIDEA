@@ -20,24 +20,24 @@ Hardened browser transport to HTTPS or HTTP loopback and WSS or WS loopback; rej
 Added `scripts/run-browser-integration.ps1`: .NET 8 enforcement, restore/build, project-pinned Playwright Chromium install, process-scoped integration opt-in, curated security suite, deterministic failure propagation, fail-closed TRX validation, and payload-free schema-v2 qualification receipts bound to exact TRX bytes with SHA-256. Added independent verifier with canonical fixture pinning, exact receipt/TRX agreement, source provenance, clean-source policy, strict schema/type checks, timestamp validation and freshness support. Added hermetic verifier regression coverage for canonical evidence plus malformed provenance/type/suite/lookalike/TRX-tampering/time cases.
 
 ### 2026-09-19 — release and judge recording trust chain
-Added release browser verification pinned to the expected GitHub origin, exact clean HEAD, canonical suite and fresh evidence. Integrated qualification into live-demo readiness. Added `judge-recording-gate.ps1`: Windows/PowerShell 7, mandatory browser evidence, verifier self-test, cloud-research readiness and build validation are required. Diagnostic skip switches can run troubleshooting checks but can never mint a recording PASS. The judge runbook requires fresh retained real-Chromium evidence and fail-closed readiness before recording.
+Added release browser verification pinned to the expected GitHub origin, exact clean HEAD, canonical suite and fresh evidence. Integrated qualification into live-demo readiness. Added `judge-recording-gate.ps1`: Windows/PowerShell 7, mandatory browser evidence, verifier self-test, cloud-research readiness and build validation are required. Diagnostic skip switches can run troubleshooting checks but can never mint a recording PASS. Added `run-release-browser-qualification.ps1` so wrong-repository, ambiguous-HEAD, or dirty-source states fail before expensive Chromium execution.
 
-### 2026-09-19 — clean-source qualification now fails before expensive Chromium work
+### 2026-09-19 — qualification now rejects source drift during execution
 Completed:
-- Added `scripts/run-release-browser-qualification.ps1` as the canonical producer-side entry point for release/judge browser evidence.
-- Before invoking restore/build/Chromium, it requires PowerShell 7 + Windows, resolves Git, pins `origin` to `UnknownGod2011/NVIDEA`, resolves an exact 40-hex HEAD, and requires `git status --porcelain --untracked-files=normal` to succeed and be empty.
-- It then launches the existing browser runner in a child `pwsh` with `-SecuritySuite -KeepResults` (and optional `-InstallChromium`) and independently enforces the child exit status.
-- This prevents wasting an expensive real-Chromium qualification run on the wrong repository, ambiguous Git provenance, or a dirty checkout that the downstream release gate would necessarily reject.
+- Hardened `scripts/run-release-browser-qualification.ps1` so the source provenance boundary covers the entire real-Chromium qualification interval rather than only its start.
+- After the browser runner succeeds, the wrapper independently resolves HEAD again and requires it to be the exact same 40-hex commit observed before execution.
+- It also re-runs `git status --porcelain --untracked-files=normal` and requires the checkout to remain clean.
+- A concurrent commit/checkout, editor-generated tracked or untracked change, or inability to re-check Git state now invalidates otherwise-passing Chromium evidence and requires a fresh run.
 - Verified repository metadata immediately before each mutation; target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 
 Files changed in latest run:
-- `scripts/run-release-browser-qualification.ps1` (new)
+- `scripts/run-release-browser-qualification.ps1`
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md` completely, inspected recent commits, current judge gate, current browser runner and source tree before selecting the task.
-- Static review confirms release qualification checks repository identity, exact commit identity and working-tree cleanliness before spawning the existing canonical security-suite producer, and rejects any non-zero producer status.
-- The existing producer still owns project-pinned Playwright installation, curated fixture execution, TRX semantic validation and schema-v2 receipt generation; no duplicate qualification implementation was introduced.
+- Re-read `progress.md` completely and inspected recent commits, the current source tree, memory implementation, browser runner and release qualification wrapper before selecting the task.
+- Static control-flow review confirms pre-run origin/HEAD/clean checks remain intact; successful Chromium execution is now followed by exact HEAD equality and post-run cleanliness checks before PASS can be emitted.
+- The change does not weaken or duplicate the existing project-pinned Chromium suite, TRX semantic validation, receipt hashing, independent verifier, freshness policy, release gate or judge gate.
 - Connector environment cannot execute Windows/PowerShell 7/Chromium, so no executable PASS is claimed.
 - No live/paid Nebius, Object Storage, Serverless, Tavily, authenticated browser, Ollama or inference operation was triggered.
 
@@ -45,7 +45,7 @@ Validation/evidence:
 - Browser transport, credential-bearing authority rejection, consequential-action approvals, sensitive autonomous-typing blocks, observation suppression, quarantine, prompt-injection boundaries and emergency cancellation remain intact.
 - Browser validation fails closed on process failure, missing/empty/skipped evidence, non-passed results and incomplete canonical fixtures. Schema v2 binds receipts to exact TRX bytes; independent verification checks integrity and semantics.
 - Release verification pins canonical fixtures, exact repository, clean current HEAD and evidence freshness. The judge gate self-tests its verifier and requires browser qualification, cloud readiness and build validation.
-- The new producer-side release wrapper establishes repository/commit/cleanliness provenance before costly Chromium execution; downstream independent verification remains mandatory rather than trusting the wrapper alone.
+- Producer-side qualification now checks repository/commit/cleanliness both before and after expensive execution, closing the source-drift window during qualification. Downstream independent verification remains mandatory.
 
 ## Known blockers / risks
 - Real-Chromium fixtures still need execution on Windows with .NET 8 and matching Playwright Chromium; static connector work is not an executable PASS.

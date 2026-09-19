@@ -112,6 +112,70 @@ public sealed class MemoryEmbeddingMigrationTests
     }
 
     [Fact]
+    public async Task Migrate_ProviderFailureInLaterBatchPreservesCommittedEarlierBatch()
+    {
+        var store = new InMemoryStore
+        {
+            Records =
+            [
+                CreateMemory("one", MemorySensitivity.Personal),
+                CreateMemory("two", MemorySensitivity.Personal),
+                CreateMemory("three", MemorySensitivity.Personal),
+            ],
+        };
+        var provider = new MigrationProvider(
+            maxBatchSize: 2,
+            beforeBatchResult: (batchNumber, _) => batchNumber == 2
+                ? Task.FromException(new InvalidOperationException("simulated local provider failure"))
+                : Task.CompletedTask);
+        using var service = new PersonalMemoryService(store, embeddingProvider: provider);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.MigrateEmbeddingsAsync(
+            new MemoryEmbeddingMigrationOptions { BatchSize = 2 }));
+
+        Assert.Equal(1, store.WriteCountAfterInitialization);
+        Assert.Equal(2, store.Records.Count(memory => memory.Embedding is not null));
+        Assert.Null(store.Records.Single(memory => memory.Id == "three").Embedding);
+
+        var resumePlan = await service.PreviewEmbeddingMigrationAsync();
+        var remaining = Assert.Single(resumePlan.Candidates);
+        Assert.Equal("three", remaining.Id);
+    }
+
+    [Fact]
+    public async Task Migrate_CancellationInLaterBatchNeverAppliesThatBatch()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var store = new InMemoryStore
+        {
+            Records =
+            [
+                CreateMemory("one", MemorySensitivity.Personal),
+                CreateMemory("two", MemorySensitivity.Personal),
+                CreateMemory("three", MemorySensitivity.Personal),
+            ],
+        };
+        var provider = new MigrationProvider(
+            maxBatchSize: 2,
+            beforeBatchResult: (batchNumber, token) =>
+            {
+                if (batchNumber == 2)
+                    cancellation.Cancel();
+                token.ThrowIfCancellationRequested();
+                return Task.CompletedTask;
+            });
+        using var service = new PersonalMemoryService(store, embeddingProvider: provider);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.MigrateEmbeddingsAsync(
+            new MemoryEmbeddingMigrationOptions { BatchSize = 2 },
+            cancellationToken: cancellation.Token));
+
+        Assert.Equal(1, store.WriteCountAfterInitialization);
+        Assert.Equal(2, store.Records.Count(memory => memory.Embedding is not null));
+        Assert.Null(store.Records.Single(memory => memory.Id == "three").Embedding);
+    }
+
+    [Fact]
     public async Task Migrate_DoesNotOverwriteConcurrentMemoryChange()
     {
         var store = new InMemoryStore { Records = [CreateMemory("race", MemorySensitivity.Personal)] };
@@ -195,16 +259,20 @@ public sealed class MemoryEmbeddingMigrationTests
     {
         private readonly Func<Task>? _beforeFirstResult;
         private readonly Func<int, IReadOnlyList<float>>? _vectorFactory;
+        private readonly Func<int, CancellationToken, Task>? _beforeBatchResult;
         private bool _callbackInvoked;
+        private int _batchNumber;
 
         public MigrationProvider(
             Func<Task>? beforeFirstResult = null,
             bool isLocal = true,
             int maxBatchSize = 8,
-            Func<int, IReadOnlyList<float>>? vectorFactory = null)
+            Func<int, IReadOnlyList<float>>? vectorFactory = null,
+            Func<int, CancellationToken, Task>? beforeBatchResult = null)
         {
             _beforeFirstResult = beforeFirstResult;
             _vectorFactory = vectorFactory;
+            _beforeBatchResult = beforeBatchResult;
             MigrationTarget = new MemoryEmbeddingMigrationTarget("test-local", "model-current", isLocal, maxBatchSize, 3);
         }
 
@@ -220,12 +288,17 @@ public sealed class MemoryEmbeddingMigrationTests
             IReadOnlyList<string> texts,
             CancellationToken cancellationToken = default)
         {
+            var batchNumber = Interlocked.Increment(ref _batchNumber);
+            if (_beforeBatchResult is not null)
+                await _beforeBatchResult(batchNumber, cancellationToken);
+
             if (!_callbackInvoked && _beforeFirstResult is not null)
             {
                 _callbackInvoked = true;
                 await _beforeFirstResult();
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             return texts.Select((_, index) => new MemoryEmbeddingVector(
                 _vectorFactory?.Invoke(index) ?? new float[] { 1, index + 1, 1 },
                 new MemoryEmbeddingProvenance(

@@ -15,6 +15,7 @@ public sealed class JsonFileMemoryStore : IMemoryStore, IDisposable
     };
 
     private readonly string _path;
+    private readonly string _backupPath;
     private readonly ILocalStateProtector? _protector;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private bool _disposed;
@@ -25,6 +26,7 @@ public sealed class JsonFileMemoryStore : IMemoryStore, IDisposable
             throw new ArgumentException("A memory file path is required.", nameof(path));
 
         _path = Path.GetFullPath(path);
+        _backupPath = $"{_path}.bak";
         _protector = protector ?? (OperatingSystem.IsWindows() ? new WindowsDpapiLocalStateProtector() : null);
     }
 
@@ -37,24 +39,11 @@ public sealed class JsonFileMemoryStore : IMemoryStore, IDisposable
             if (!File.Exists(_path))
                 return Array.Empty<MemoryRecord>();
 
-            var persisted = await File.ReadAllBytesAsync(_path, cancellationToken).ConfigureAwait(false);
-            var payload = DecodePersisted(persisted);
+            var (records, wasProtected) = await ReadSnapshotUnlockedAsync(_path, cancellationToken).ConfigureAwait(false);
+            if (_protector is not null && !wasProtected)
+                await PersistUnlockedAsync(records, cancellationToken).ConfigureAwait(false);
 
-            List<MemoryRecord>? records;
-            try
-            {
-                records = JsonSerializer.Deserialize<List<MemoryRecord>>(payload.Plaintext, JsonOptions);
-            }
-            catch (JsonException ex)
-            {
-                throw new InvalidDataException("Memory store contains invalid data.", ex);
-            }
-
-            var result = records ?? new List<MemoryRecord>();
-            if (_protector is not null && !payload.WasProtected)
-                await PersistUnlockedAsync(result, cancellationToken).ConfigureAwait(false);
-
-            return result;
+            return records;
         }
         finally
         {
@@ -71,6 +60,30 @@ public sealed class JsonFileMemoryStore : IMemoryStore, IDisposable
         try
         {
             await PersistUnlockedAsync(memories, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Explicitly restores the bounded last-known-good generation. Normal reads never fall back to the
+    /// backup silently: malformed current state remains a fail-closed condition requiring user/operator intent.
+    /// </summary>
+    public async Task<IReadOnlyList<MemoryRecord>> RecoverLastKnownGoodAsync(CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (!File.Exists(_backupPath))
+                throw new InvalidOperationException("No last-known-good memory snapshot is available.");
+
+            var (records, _) = await ReadSnapshotUnlockedAsync(_backupPath, cancellationToken).ConfigureAwait(false);
+            var persisted = await File.ReadAllBytesAsync(_backupPath, cancellationToken).ConfigureAwait(false);
+            await ReplaceFileUnlockedAsync(_path, persisted, cancellationToken).ConfigureAwait(false);
+            return records;
         }
         finally
         {
@@ -98,6 +111,25 @@ public sealed class JsonFileMemoryStore : IMemoryStore, IDisposable
         return new LocalStatePayload(persisted, false);
     }
 
+    private async Task<(List<MemoryRecord> Records, bool WasProtected)> ReadSnapshotUnlockedAsync(
+        string path,
+        CancellationToken cancellationToken)
+    {
+        var persisted = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
+        var payload = DecodePersisted(persisted);
+
+        try
+        {
+            var records = JsonSerializer.Deserialize<List<MemoryRecord>>(payload.Plaintext, JsonOptions)
+                ?? new List<MemoryRecord>();
+            return (records, payload.WasProtected);
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidDataException("Memory store contains invalid data.", ex);
+        }
+    }
+
     private async Task PersistUnlockedAsync(
         IReadOnlyCollection<MemoryRecord> memories,
         CancellationToken cancellationToken)
@@ -111,7 +143,32 @@ public sealed class JsonFileMemoryStore : IMemoryStore, IDisposable
             ? plaintext
             : LocalStateEnvelope.Encode(plaintext, _protector, ProtectionPurpose);
 
-        var tempPath = $"{_path}.{Guid.NewGuid():N}.tmp";
+        // Preserve at most one previous generation, but only when the current snapshot is demonstrably
+        // readable with the configured protection context. A corrupt current file is never promoted to backup.
+        if (File.Exists(_path))
+        {
+            try
+            {
+                _ = await ReadSnapshotUnlockedAsync(_path, cancellationToken).ConfigureAwait(false);
+                var current = await File.ReadAllBytesAsync(_path, cancellationToken).ConfigureAwait(false);
+                await ReplaceFileUnlockedAsync(_backupPath, current, cancellationToken).ConfigureAwait(false);
+            }
+            catch (InvalidDataException)
+            {
+                // Explicit writes may repair a corrupt primary, but the corrupt bytes must not displace a
+                // previously known-good recovery generation.
+            }
+        }
+
+        await ReplaceFileUnlockedAsync(_path, persisted, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task ReplaceFileUnlockedAsync(
+        string destinationPath,
+        byte[] persisted,
+        CancellationToken cancellationToken)
+    {
+        var tempPath = $"{destinationPath}.{Guid.NewGuid():N}.tmp";
         try
         {
             await using (var stream = new FileStream(
@@ -126,7 +183,7 @@ public sealed class JsonFileMemoryStore : IMemoryStore, IDisposable
                 await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
             }
 
-            File.Move(tempPath, _path, overwrite: true);
+            File.Move(tempPath, destinationPath, overwrite: true);
         }
         finally
         {

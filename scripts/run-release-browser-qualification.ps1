@@ -57,5 +57,24 @@ if ($exitCode -ne 0) {
     throw "Release browser qualification failed with exit code $exitCode. Do not use its evidence for judge recording."
 }
 
-Write-Host 'Release browser qualification PASS. Retain the emitted evidence directory and pass it to judge-recording-gate.ps1.'
+# Qualification can take minutes and invokes restore/build/browser processes. Treat the source tree as
+# part of the measured system for the entire interval, not merely at launch. A concurrent checkout,
+# editor save, generated untracked file, or commit must invalidate the evidence even if Chromium passed.
+$postHead = (& $git -C $repoRoot rev-parse --verify HEAD 2>$null).Trim()
+if ($LASTEXITCODE -ne 0 -or $postHead -notmatch '^[0-9a-fA-F]{40}$') {
+    throw 'Browser tests passed, but source HEAD could not be re-verified afterward. Evidence is invalid.'
+}
+if (-not [string]::Equals($head, $postHead, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Browser tests passed, but source HEAD changed during qualification ($head -> $postHead). Evidence is invalid; re-run from the new clean HEAD."
+}
+
+$postDirty = @(& $git -C $repoRoot status --porcelain --untracked-files=normal 2>$null)
+if ($LASTEXITCODE -ne 0) {
+    throw 'Browser tests passed, but working-tree cleanliness could not be re-verified afterward. Evidence is invalid.'
+}
+if ($postDirty.Count -gt 0) {
+    throw 'Browser tests passed, but the NVIDEA working tree changed during qualification. Evidence is invalid; restore a clean checkout and re-run.'
+}
+
+Write-Host "Release browser qualification PASS for unchanged clean source commit $head. Retain the emitted evidence directory and pass it to judge-recording-gate.ps1."
 exit 0

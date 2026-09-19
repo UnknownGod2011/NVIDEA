@@ -19,23 +19,24 @@ Hardened browser transport to HTTPS or HTTP loopback and WSS or WS loopback; rej
 ### 2026-09-18 to 2026-09-19 — executable browser qualification
 Added `scripts/run-browser-integration.ps1`: .NET 8 enforcement, restore/build, project-pinned Playwright Chromium install, process-scoped integration opt-in, curated `-SecuritySuite`, deterministic failure propagation, and fail-closed TRX validation against zero-test, missing evidence, skipped/not-executed, non-passed and partial-suite false positives. Failed runs retain forensic evidence; `-KeepResults` retains successful evidence. Successful retained runs emit a payload-free schema-v2 qualification receipt bound to exact TRX bytes with SHA-256. Added independent `scripts/verify-browser-qualification.ps1` to re-prove source provenance, clean-source policy, exact receipt/TRX test agreement, canonical fixture PASS evidence and payload-free schema constraints.
 
-### 2026-09-19 — security-suite identity hardening
+### 2026-09-19 — security-suite identity and receipt-type hardening
 Completed:
-- Independent verifier owns the canonical five-fixture Chromium security-suite definition and requires exact set equality; producer metadata cannot redefine completeness.
-- Verifier canonical fixture PASS matching requires escaped dot-segment class identity (`(^|\.)Fixture(\.|$)`), preventing longer lookalike class names from satisfying a required boundary.
-- Producer `scripts/run-browser-integration.ps1` now applies the same exact-class identity rule before it is allowed to mint a qualification receipt. Previously its local completeness check still used substring wildcard matching even though the independent verifier was strict.
-- Producer fixture regex is built only from hard-coded suite constants and `[Regex]::Escape`; test/receipt data cannot inject regex behavior.
-- Preserved schema-v2 TRX SHA-256 binding, exact receipt/TRX PASS-name/count agreement, clean-source/expected-commit controls, payload-free field allowlist and fail-closed non-passed-result handling.
+- Producer and independent verifier both require canonical security fixtures as complete VSTest dot-delimited class-name segments; longer lookalike classes cannot satisfy suite completeness.
+- Independent verifier owns the canonical five-fixture suite and requires exact set equality; producer metadata cannot redefine completeness.
+- Hardened `verify-browser-qualification.ps1` against JSON/PowerShell type confusion: all required schema-v2 fields must exist; `schemaVersion` and `passedCount` must be JSON integers; `securitySuite` must be a JSON boolean; `sourceDirty` must be boolean or null; `requiredFixtures` and `passedTests` must be arrays. A string such as `"false"` can no longer be coerced/truth-tested as a boolean security claim.
+- `passedCount` must be positive before it is compared with exact TRX PASS evidence.
+- Strict unexpected-field rejection remains, so the payload-free receipt contract is closed on both missing and unreviewed fields.
+- Preserved schema-v2 TRX SHA-256 binding, exact receipt/TRX PASS-name/count agreement, clean-source/expected-commit controls and fail-closed non-passed-result handling.
 - Verified repository metadata immediately before every mutation; target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 
 Files changed in latest run:
-- `scripts/run-browser-integration.ps1`
+- `scripts/verify-browser-qualification.ps1`
 - `progress.md`
 
 Validation/evidence:
 - Re-read `progress.md`, latest commits, producer and independent verifier before modification.
-- Static review identified producer/verifier policy drift: verifier rejected substring fixture spoofing, but producer could still mint a receipt after a substring-only fixture presence check.
-- Static review confirms producer and verifier now both use escaped complete VSTest dot-segment class matching; the verifier remains independent because it owns its own canonical fixture constants and repeats validation from retained evidence.
+- Static security review found permissive PowerShell coercion at the receipt trust boundary: several values were cast or truth-tested without first proving their JSON primitive type. The verifier now validates shape/types before semantic checks.
+- Static review confirms receipt arrays cannot be substituted with strings, security booleans cannot be substituted with truthy strings, and required fields cannot be omitted and silently interpreted through null/coercion paths.
 - No executable PowerShell/.NET/Chromium PASS is claimed in this connector-only environment.
 - No live/paid Nebius, Object Storage, Serverless, Tavily, authenticated browser, Ollama or inference operation was triggered.
 
@@ -44,10 +45,9 @@ Validation/evidence:
 - Consequential actions require approval; sensitive autonomous typing is blocked across passwords, OTP/verification codes, payment credentials, private/recovery keys, API/access/refresh tokens and identity-number labels.
 - Browser observations suppress password/OTP/payment values before reading DOM values while retaining bounded non-secret semantics needed for safety decisions.
 - Browser validation fails closed on process failure, missing/empty evidence, skipped/not-executed evidence, any non-passed result and incomplete curated-suite PASS evidence.
-- Both evidence producer and independent verifier require each canonical fixture as a complete VSTest class-name segment; longer lookalike classes cannot satisfy suite completeness.
 - Qualification schema v2 binds receipt metadata to exact TRX bytes with SHA-256; independent verification checks byte integrity before semantic evidence.
+- Receipt schema now fails closed on missing/unexpected fields and primitive JSON type mismatches before PowerShell coercion can affect security decisions.
 - Release/judge verification independently pins the canonical five-fixture suite; producer metadata cannot redefine completeness.
-- Receipt remains payload-free and verifier rejects unreviewed top-level schema expansion.
 - Prompt-injection gates, quarantine, audit boundaries, Service Worker blocking and emergency cancellation remain intact.
 
 ## Known blockers / risks

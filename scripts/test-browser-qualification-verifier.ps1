@@ -34,12 +34,13 @@ function Write-Receipt {
         [string[]]$PassedTests,
         [object]$SourceCommit = $commit,
         [object]$SecuritySuite = $true,
-        [object]$RequiredFixtures = $canonicalFixtures
+        [object]$RequiredFixtures = $canonicalFixtures,
+        [object]$ValidatedAtUtc = ([DateTimeOffset]::UtcNow.ToString("O"))
     )
     $trxPath = Join-Path $Directory "browser-integration.trx"
     $receipt = [ordered]@{
         schemaVersion = 2
-        validatedAtUtc = [DateTimeOffset]::UtcNow.ToString("O")
+        validatedAtUtc = $ValidatedAtUtc
         sourceCommit = $SourceCommit
         sourceDirty = $false
         dotnetSdk = "8.0.100"
@@ -65,10 +66,12 @@ function New-Case {
 }
 
 function Invoke-Case {
-    param([string]$Name, [string]$Directory, [bool]$ShouldPass)
+    param([string]$Name, [string]$Directory, [bool]$ShouldPass, [Nullable[int]]$MaxEvidenceAgeHours = $null)
+    $arguments = @("-NoProfile", "-NonInteractive", "-File", $verifier, "-EvidenceDirectory", $Directory, "-RequireCleanSource", "-RequireSecuritySuite", "-ExpectedCommit", $commit)
+    if ($null -ne $MaxEvidenceAgeHours) { $arguments += @("-MaxEvidenceAgeHours", [string]$MaxEvidenceAgeHours.Value) }
     # Execute the verifier in a child PowerShell process so expected terminating errors in
     # negative cases become an exit code rather than terminating this regression harness.
-    $output = & $pwsh.Source -NoProfile -NonInteractive -File $verifier -EvidenceDirectory $Directory -RequireCleanSource -RequireSecuritySuite -ExpectedCommit $commit 2>&1
+    $output = & $pwsh.Source @arguments 2>&1
     $accepted = $LASTEXITCODE -eq 0
     if ($accepted -ne $ShouldPass) {
         throw "Regression case '$Name' expected acceptance=$ShouldPass but observed acceptance=$accepted. Output: $($output -join [Environment]::NewLine)"
@@ -79,7 +82,7 @@ function Invoke-Case {
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 try {
     $baseline = New-Case -Name "baseline"
-    Invoke-Case -Name "valid canonical evidence" -Directory $baseline -ShouldPass $true
+    Invoke-Case -Name "valid canonical evidence" -Directory $baseline -ShouldPass $true -MaxEvidenceAgeHours 24
 
     $badCommit = New-Case -Name "bad-commit"
     Write-Receipt -Directory $badCommit -PassedTests @($canonicalFixtures | ForEach-Object { "Nvidea.Core.Tests.$_.Passes" }) -SourceCommit "main"
@@ -106,6 +109,18 @@ try {
     $tampered = New-Case -Name "tampered-trx"
     Add-Content -LiteralPath (Join-Path $tampered "browser-integration.trx") -Value "<!-- tampered after receipt -->"
     Invoke-Case -Name "TRX digest tampering rejected" -Directory $tampered -ShouldPass $false
+
+    $nonUtc = New-Case -Name "non-utc-time"
+    Write-Receipt -Directory $nonUtc -PassedTests @($canonicalFixtures | ForEach-Object { "Nvidea.Core.Tests.$_.Passes" }) -ValidatedAtUtc ([DateTimeOffset]::Now.ToOffset([TimeSpan]::FromHours(5.5)).ToString("O"))
+    Invoke-Case -Name "non-UTC validation timestamp rejected" -Directory $nonUtc -ShouldPass $false
+
+    $future = New-Case -Name "future-time"
+    Write-Receipt -Directory $future -PassedTests @($canonicalFixtures | ForEach-Object { "Nvidea.Core.Tests.$_.Passes" }) -ValidatedAtUtc ([DateTimeOffset]::UtcNow.AddHours(1).ToString("O"))
+    Invoke-Case -Name "implausible future evidence rejected" -Directory $future -ShouldPass $false
+
+    $stale = New-Case -Name "stale-time"
+    Write-Receipt -Directory $stale -PassedTests @($canonicalFixtures | ForEach-Object { "Nvidea.Core.Tests.$_.Passes" }) -ValidatedAtUtc ([DateTimeOffset]::UtcNow.AddHours(-48).ToString("O"))
+    Invoke-Case -Name "stale release evidence rejected when freshness required" -Directory $stale -ShouldPass $false -MaxEvidenceAgeHours 24
 
     Write-Host "All qualification verifier regression cases passed."
 }

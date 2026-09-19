@@ -4,7 +4,9 @@ param(
     [string]$EvidenceDirectory,
     [string]$ExpectedCommit,
     [switch]$RequireCleanSource,
-    [switch]$RequireSecuritySuite
+    [switch]$RequireSecuritySuite,
+    [ValidateRange(1, 8760)]
+    [int]$MaxEvidenceAgeHours
 )
 
 $ErrorActionPreference = "Stop"
@@ -123,7 +125,13 @@ if ($receipt.securitySuite -eq $true) {
 elseif ($requiredFixtures.Count -gt 0) { throw "Non-security qualification receipt unexpectedly declares required security fixtures. Refusing inconsistent evidence metadata." }
 
 $validatedAt = [DateTimeOffset]::MinValue
-if (-not [DateTimeOffset]::TryParse($receipt.validatedAtUtc, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind, [ref]$validatedAt)) { throw "Qualification receipt validatedAtUtc is invalid or not an invariant round-trip timestamp." }
+if (-not [DateTimeOffset]::TryParseExact($receipt.validatedAtUtc, "O", [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind, [ref]$validatedAt)) { throw "Qualification receipt validatedAtUtc must be an invariant round-trip timestamp." }
+if ($validatedAt.Offset -ne [TimeSpan]::Zero) { throw "Qualification receipt validatedAtUtc must use an explicit UTC offset." }
+$nowUtc = [DateTimeOffset]::UtcNow
+if ($validatedAt -gt $nowUtc.AddMinutes(5)) { throw "Qualification receipt validatedAtUtc is implausibly in the future." }
+if ($PSBoundParameters.ContainsKey("MaxEvidenceAgeHours") -and $validatedAt -lt $nowUtc.AddHours(-$MaxEvidenceAgeHours)) {
+    throw "Qualification evidence is older than the permitted $MaxEvidenceAgeHours hour(s). Re-run qualification for fresh release/judge evidence."
+}
 
 Write-Host "Chromium qualification evidence verified."
 Write-Host "  Commit: $sourceCommit"

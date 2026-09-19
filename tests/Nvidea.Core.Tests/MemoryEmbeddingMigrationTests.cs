@@ -52,7 +52,9 @@ public sealed class MemoryEmbeddingMigrationTests
         Assert.Equal(1, defaultPlan.ExcludedRestricted);
         Assert.Single(sensitivePlan.Candidates);
         Assert.Equal("sensitive", sensitivePlan.Candidates[0].Id);
-        Assert.Equal(MemoryEmbeddingMigrationReason.StaleEmbeddingSpace, sensitivePlan.Candidates[0].Reason);
+        // Initialization strips corrupt semantic metadata before migration preview; the record must
+        // remain a re-index candidate, but privacy opt-ins still control whether it is exposed.
+        Assert.Equal(MemoryEmbeddingMigrationReason.MissingEmbedding, sensitivePlan.Candidates[0].Reason);
         Assert.Single(allPlan.Candidates, candidate => candidate.Id == "sensitive");
         Assert.Single(allPlan.Candidates, candidate => candidate.Id == "restricted");
     }

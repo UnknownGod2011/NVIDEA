@@ -12,13 +12,18 @@ Before recording, use **New demo session** in the Judge Evidence dialog and conf
 
 1. Build `Nvidea.Core`, `Nvidea.Windows`, and `Nvidea.Worker` on the Windows demo machine.
 2. Run the positive and adversarial evaluator suites and the demo-package validator.
-3. Confirm the Windows shell can invoke from the global hotkey and the emergency stop is reachable.
-4. Confirm Nebius Token Factory/Nemotron readiness without displaying credentials.
-5. Confirm Tavily is configured and a research request returns source-backed results.
-6. Confirm the chosen browser demo site/session is already authenticated if authentication is required; never automate login, CAPTCHA, MFA, or other safeguards.
-7. Confirm the browser scenario has a deterministic consequential final action that pauses for exact-scope approval.
-8. If demonstrating live Nebius background execution, verify the redacted live PASS artifact before recording. Otherwise explicitly present the background path as an implemented contract/readiness path, not a completed live provider run.
-9. Open the Judge Evidence dialog, start a New demo session, and verify all session milestones are initially absent.
+3. Run `./scripts/test-browser-qualification-verifier.ps1` under PowerShell 7. Treat any verifier regression failure as a release blocker.
+4. From the exact clean commit that will be recorded, run `./scripts/run-browser-integration.ps1 -InstallChromium -SecuritySuite -KeepResults`. Retain the successful evidence directory; do not reuse evidence from another commit or a dirty checkout.
+5. Run `./scripts/live-demo-readiness.ps1 -RequireCloudResearch -ValidateBuild -BrowserEvidenceDirectory <retained-browser-evidence-directory>`. This is the recording gate: it delegates to `verify-release-browser-gate.ps1`, which requires the expected NVIDEA GitHub origin, exact clean current HEAD, canonical browser security suite, intact TRX/receipt evidence, and evidence no older than 24 hours by default. **Do not record if this command fails.**
+6. Confirm the Windows shell can invoke from the global hotkey and the emergency stop is reachable.
+7. Confirm Nebius Token Factory/Nemotron readiness without displaying credentials.
+8. Confirm Tavily is configured and a research request returns source-backed results.
+9. Confirm the chosen browser demo site/session is already authenticated if authentication is required; never automate login, CAPTCHA, MFA, or other safeguards.
+10. Confirm the browser scenario has a deterministic consequential final action that pauses for exact-scope approval.
+11. If demonstrating live Nebius background execution, verify the redacted live PASS artifact before recording. Otherwise explicitly present the background path as an implemented contract/readiness path, not a completed live provider run.
+12. Open the Judge Evidence dialog, start a New demo session, and verify all session milestones are initially absent.
+
+The retained browser evidence directory is qualification evidence, not a portable credential or a substitute for the checkout. Keep it off-screen during the demo. If source code changes after qualification, rerun the browser suite and readiness gate from the new clean HEAD; the release gate intentionally rejects evidence bound to a different commit.
 
 If any live dependency fails preflight, do not improvise a stronger claim. Use the fallback noted below and preserve the evidence-class distinction.
 

@@ -23,21 +23,24 @@ Added `scripts/run-browser-integration.ps1`: .NET 8 enforcement, restore/build, 
 Added hermetic verifier regression coverage for canonical evidence plus malformed provenance/type/suite/lookalike/TRX-tampering/time cases. Hardened evidence timestamps to exact UTC round-trip form with future-date rejection and optional freshness. Added `scripts/verify-release-browser-gate.ps1`, pinning expected GitHub origin, exact clean current HEAD, canonical suite and fresh evidence. Integrated that release qualification into `scripts/live-demo-readiness.ps1` and updated the judge runbook to require verifier regression, a fresh retained real-Chromium security-suite run, and integrated readiness before recording.
 
 ### 2026-09-19 — fail-closed judge recording entry point
+Added `scripts/judge-recording-gate.ps1`: browser evidence is mandatory, Windows/PowerShell 7 are required, cloud-research readiness is always enabled, build validation is default-on, and subordinate exit statuses are independently enforced across child `pwsh` processes.
+
+### 2026-09-19 — verifier self-test is now part of the recording trust chain
 Completed:
-- Added `scripts/judge-recording-gate.ps1` as the recording-specific entry point where browser qualification evidence is a mandatory parameter rather than an optional readiness enhancement.
-- The gate requires Windows + PowerShell 7, resolves and validates the evidence directory, always enables cloud-research readiness, enables build validation by default, and forwards the bounded browser-evidence freshness policy.
-- Runs `live-demo-readiness.ps1` in a child `pwsh` process because readiness intentionally terminates with an exit status. This prevents its nested `exit` contract from bypassing the wrapper's final recording decision and lets the wrapper fail closed on any non-zero readiness status.
-- `-SkipBuildValidation` exists only as an explicit operator override for diagnostics; the default judge path validates the existing restored build.
+- Hardened `scripts/judge-recording-gate.ps1` so the hermetic browser qualification verifier regression harness runs by default before any retained browser evidence is trusted.
+- The regression harness executes in its own `pwsh` child process and any non-zero status blocks recording immediately. This proves the verifier's canonical-positive and tamper/type/suite/time rejection behavior on the recording machine before the release verifier is relied upon.
+- Added `-SkipVerifierRegression` only as an explicit diagnostic override and emit a warning when it is used. The default final-recording path remains fail closed.
+- Added an explicit warning for `-SkipBuildValidation` as well, making both weakening overrides visible rather than silent.
 - Verified repository metadata immediately before every mutation; target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 
 Files changed in latest run:
-- `scripts/judge-recording-gate.ps1` (new)
+- `scripts/judge-recording-gate.ps1`
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md` completely and inspected recent commits, repository tree, `scripts/live-demo-readiness.ps1`, and the judge runbook before implementation.
-- Static review identified that `live-demo-readiness.ps1` intentionally keeps browser evidence optional for general readiness. The new recording-specific wrapper removes that omission hazard without changing backward-compatible general readiness behavior.
-- Static review also identified that nested PowerShell scripts using `exit` are safer to compose as child processes when the caller must independently enforce a final decision; the wrapper therefore invokes readiness through `pwsh` and checks `$LASTEXITCODE`.
+- Re-read `progress.md` completely; inspected recent commits/repository tree plus the recording gate and integrated live-demo readiness implementation before changing code.
+- Static review confirmed the recording wrapper now orders trust establishment as verifier self-test -> integrated readiness -> release evidence verification/build/cloud configuration.
+- Child-process boundaries preserve subordinate scripts' intentional `exit` contracts while allowing the recording gate to independently reject non-zero statuses.
 - Connector environment cannot execute PowerShell 7/Windows Chromium, so no script/build/Chromium PASS is claimed.
 - No live/paid Nebius, Object Storage, Serverless, Tavily, authenticated browser, Ollama or inference operation was triggered.
 
@@ -48,7 +51,7 @@ Validation/evidence:
 - Browser validation fails closed on process failure, missing/empty evidence, skipped/not-executed evidence, any non-passed result and incomplete curated-suite PASS evidence.
 - Qualification schema v2 binds receipt metadata to exact TRX bytes with SHA-256; independent verification checks byte integrity before semantic evidence.
 - Release verification independently pins canonical fixtures, exact repository, clean current HEAD and evidence freshness.
-- The judge-specific gate now makes browser evidence structurally mandatory and propagates readiness failure across a process boundary instead of depending on an optional argument convention.
+- The judge-specific gate makes browser evidence structurally mandatory and now self-tests the evidence verifier before trusting it; diagnostic weakening overrides are explicit and warned.
 - Prompt-injection gates, quarantine, audit boundaries, Service Worker blocking and emergency cancellation remain intact.
 
 ## Known blockers / risks
@@ -60,4 +63,4 @@ Validation/evidence:
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-On the clean Windows recording checkout, run `./scripts/test-browser-qualification-verifier.ps1`, then `./scripts/run-browser-integration.ps1 -InstallChromium -SecuritySuite -KeepResults`, then use the new mandatory entry point `./scripts/judge-recording-gate.ps1 -BrowserEvidenceDirectory <retained-browser-evidence-directory>`. Fix any mismatch without weakening fail-closed semantics. Once that passes, validate the exact authenticated judge-path browser site/session and record any site-specific compatibility constraint without bypassing login/CAPTCHA/MFA/site safeguards.
+On the clean Windows recording checkout, produce fresh evidence with `./scripts/run-browser-integration.ps1 -InstallChromium -SecuritySuite -KeepResults`, then run only the canonical final entry point `./scripts/judge-recording-gate.ps1 -BrowserEvidenceDirectory <retained-browser-evidence-directory>` without diagnostic skip flags. The gate now self-tests the verifier automatically. Fix any mismatch without weakening fail-closed semantics; once it passes, validate the exact authenticated judge-path browser site/session without bypassing login/CAPTCHA/MFA/site safeguards.

@@ -45,7 +45,7 @@ public sealed partial class PersonalMemoryService : IDisposable
                 if (record.Retention == MemoryRetention.Session || IsExpired(record, now))
                     continue;
 
-                _memories[record.Id] = record;
+                _memories[record.Id] = SanitizePersistedEmbedding(record);
             }
 
             _initialized = true;
@@ -359,6 +359,24 @@ public sealed partial class PersonalMemoryService : IDisposable
         return embedding;
     }
 
+    private static MemoryRecord SanitizePersistedEmbedding(MemoryRecord memory)
+    {
+        if (memory.Embedding is null && memory.EmbeddingProvenance is null)
+            return memory;
+
+        if (memory.Embedding is null || memory.EmbeddingProvenance is null)
+            return memory with { Embedding = null, EmbeddingProvenance = null };
+
+        var provenance = memory.EmbeddingProvenance;
+        var valid = memory.Embedding.Count > 0 &&
+                    provenance.Dimensions == memory.Embedding.Count &&
+                    !string.IsNullOrWhiteSpace(provenance.Provider) &&
+                    !string.IsNullOrWhiteSpace(provenance.Model) &&
+                    memory.Embedding.All(float.IsFinite);
+
+        return valid ? memory : memory with { Embedding = null, EmbeddingProvenance = null };
+    }
+
     private static bool CanCompareEmbeddings(MemoryEmbeddingVector? queryEmbedding, MemoryRecord memory)
     {
         if (queryEmbedding is null || memory.Embedding is null || memory.EmbeddingProvenance is null)
@@ -368,6 +386,9 @@ public sealed partial class PersonalMemoryService : IDisposable
         return queryEmbedding.Vector.Count == memory.Embedding.Count &&
                queryProvenance.Dimensions == queryEmbedding.Vector.Count &&
                memoryProvenance.Dimensions == memory.Embedding.Count &&
+               memory.Embedding.All(float.IsFinite) &&
+               !string.IsNullOrWhiteSpace(memoryProvenance.Provider) &&
+               !string.IsNullOrWhiteSpace(memoryProvenance.Model) &&
                string.Equals(queryProvenance.Provider, memoryProvenance.Provider, StringComparison.Ordinal) &&
                string.Equals(queryProvenance.Model, memoryProvenance.Model, StringComparison.Ordinal);
     }

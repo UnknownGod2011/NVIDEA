@@ -223,8 +223,16 @@ public sealed partial class PersonalMemoryService
             return MemoryEmbeddingMigrationReason.MissingEmbedding;
         if (memory.EmbeddingProvenance is null)
             return MemoryEmbeddingMigrationReason.MissingProvenance;
-        if (memory.EmbeddingProvenance.Dimensions != memory.Embedding.Count ||
-            !provider.IsCurrentEmbedding(memory.EmbeddingProvenance))
+
+        // Migration is a second trust boundary over durable semantic state. Initialization normally
+        // sanitizes these cases, but preview/snapshot logic must remain fail-safe if a malformed
+        // record ever reaches the in-memory set through future import/mutation paths.
+        var provenance = memory.EmbeddingProvenance;
+        if (provenance.Dimensions != memory.Embedding.Count ||
+            string.IsNullOrWhiteSpace(provenance.Provider) ||
+            string.IsNullOrWhiteSpace(provenance.Model) ||
+            memory.Embedding.Any(value => !float.IsFinite(value)) ||
+            !provider.IsCurrentEmbedding(provenance))
         {
             return MemoryEmbeddingMigrationReason.StaleEmbeddingSpace;
         }

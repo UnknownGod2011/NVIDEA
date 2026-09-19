@@ -79,6 +79,73 @@ public sealed class JsonFileMemoryStoreTests : IDisposable
         Assert.Empty(Directory.GetFiles(_directory, "memory.json.*.tmp"));
     }
 
+    [Fact]
+    public async Task ReadAllAsync_CorruptPrimaryDoesNotSilentlyFallBackToBackup()
+    {
+        Directory.CreateDirectory(_directory);
+        var path = Path.Combine(_directory, "memory.json");
+        using var store = new JsonFileMemoryStore(path, protector: null);
+        await store.WriteAllAsync(new[] { CreateRecord("generation one") });
+        await store.WriteAllAsync(new[] { CreateRecord("generation two") });
+        var backupBeforeCorruption = await File.ReadAllBytesAsync($"{path}.bak");
+        await File.WriteAllTextAsync(path, "{truncated");
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => store.ReadAllAsync());
+
+        Assert.Equal("{truncated", await File.ReadAllTextAsync(path));
+        Assert.Equal(backupBeforeCorruption, await File.ReadAllBytesAsync($"{path}.bak"));
+    }
+
+    [Fact]
+    public async Task RecoverLastKnownGoodAsync_RequiresExplicitIntentAndRestoresPreviousGeneration()
+    {
+        Directory.CreateDirectory(_directory);
+        var path = Path.Combine(_directory, "memory.json");
+        using var store = new JsonFileMemoryStore(path, protector: null);
+        await store.WriteAllAsync(new[] { CreateRecord("known good") });
+        await store.WriteAllAsync(new[] { CreateRecord("new current") });
+        await File.WriteAllTextAsync(path, "not-json");
+
+        var recovered = await store.RecoverLastKnownGoodAsync();
+        var record = Assert.Single(recovered);
+        Assert.Equal("known good", record.Content);
+
+        var current = Assert.Single(await store.ReadAllAsync());
+        Assert.Equal("known good", current.Content);
+        Assert.Empty(Directory.GetFiles(_directory, "memory.json*.tmp"));
+    }
+
+    [Fact]
+    public async Task WriteAllAsync_CorruptPrimaryNeverDisplacesKnownGoodBackup()
+    {
+        Directory.CreateDirectory(_directory);
+        var path = Path.Combine(_directory, "memory.json");
+        using var store = new JsonFileMemoryStore(path, protector: null);
+        await store.WriteAllAsync(new[] { CreateRecord("backup source") });
+        await store.WriteAllAsync(new[] { CreateRecord("current before corruption") });
+        var backup = await File.ReadAllBytesAsync($"{path}.bak");
+        await File.WriteAllTextAsync(path, "broken-primary");
+
+        await store.WriteAllAsync(new[] { CreateRecord("repaired current") });
+
+        Assert.Equal(backup, await File.ReadAllBytesAsync($"{path}.bak"));
+        Assert.Equal("repaired current", Assert.Single(await store.ReadAllAsync()).Content);
+    }
+
+    [Fact]
+    public async Task RecoverLastKnownGoodAsync_WithoutBackupFailsWithoutChangingPrimary()
+    {
+        Directory.CreateDirectory(_directory);
+        var path = Path.Combine(_directory, "memory.json");
+        var corrupt = Encoding.UTF8.GetBytes("corrupt-primary");
+        await File.WriteAllBytesAsync(path, corrupt);
+        using var store = new JsonFileMemoryStore(path, protector: null);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => store.RecoverLastKnownGoodAsync());
+
+        Assert.Equal(corrupt, await File.ReadAllBytesAsync(path));
+    }
+
     private static MemoryRecord CreateRecord(string content) => new()
     {
         Id = Guid.NewGuid(),

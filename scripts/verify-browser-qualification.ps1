@@ -74,8 +74,15 @@ Assert-JsonString -Value $receipt.trxSha256 -Field "trxSha256"
 Assert-JsonStringArray -Value $receipt.requiredFixtures -Field "requiredFixtures" -AllowEmptyArray
 Assert-JsonStringArray -Value $receipt.passedTests -Field "passedTests"
 
+$sourceCommit = $receipt.sourceCommit.Trim().ToLowerInvariant()
+if ($sourceCommit -notmatch '^[0-9a-f]{40}$') { throw "Qualification receipt sourceCommit must be a full 40-character Git SHA-1 object ID, not a symbolic, abbreviated, or malformed ref." }
+$expectedCommitNormalized = $null
+if (-not [string]::IsNullOrWhiteSpace($ExpectedCommit)) {
+    $expectedCommitNormalized = $ExpectedCommit.Trim().ToLowerInvariant()
+    if ($expectedCommitNormalized -notmatch '^[0-9a-f]{40}$') { throw "ExpectedCommit must be a full 40-character Git SHA-1 object ID." }
+}
 if ($RequireCleanSource -and $receipt.sourceDirty -ne $false) { throw "Qualification receipt is not from a proven-clean checkout (sourceDirty=$($receipt.sourceDirty))." }
-if (-not [string]::IsNullOrWhiteSpace($ExpectedCommit) -and -not [string]::Equals($receipt.sourceCommit, $ExpectedCommit.Trim(), [StringComparison]::OrdinalIgnoreCase)) { throw "Qualification source commit '$($receipt.sourceCommit)' does not match expected commit '$ExpectedCommit'." }
+if ($null -ne $expectedCommitNormalized -and -not [string]::Equals($sourceCommit, $expectedCommitNormalized, [StringComparison]::Ordinal)) { throw "Qualification source commit '$sourceCommit' does not match expected commit '$expectedCommitNormalized'." }
 if ($RequireSecuritySuite -and $receipt.securitySuite -ne $true) { throw "Qualification receipt is not from the curated Chromium security suite. Re-run with -SecuritySuite." }
 
 $declaredTrxSha256 = $receipt.trxSha256.Trim().ToLowerInvariant()
@@ -119,7 +126,7 @@ $validatedAt = [DateTimeOffset]::MinValue
 if (-not [DateTimeOffset]::TryParse($receipt.validatedAtUtc, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind, [ref]$validatedAt)) { throw "Qualification receipt validatedAtUtc is invalid or not an invariant round-trip timestamp." }
 
 Write-Host "Chromium qualification evidence verified."
-Write-Host "  Commit: $($receipt.sourceCommit)"
+Write-Host "  Commit: $sourceCommit"
 Write-Host "  Clean source: $(-not [bool]$receipt.sourceDirty)"
 Write-Host "  Passed tests: $($trxPassedNames.Count)"
 Write-Host "  Security suite: $($receipt.securitySuite)"

@@ -25,6 +25,19 @@ $canonicalSecurityFixtures = @(
     "PlaywrightInFlightCancellationIntegrationTests"
 )
 
+function Test-FixtureIdentityInTestName {
+    param(
+        [Parameter(Mandatory = $true)][string]$TestName,
+        [Parameter(Mandatory = $true)][string]$FixtureName
+    )
+
+    # VSTest names normally use namespace/class/method dot separators. Match the class as a complete
+    # segment rather than a substring so a crafted/unrelated class such as
+    # BrowserDownloadChromiumIntegrationTestsFake cannot satisfy release evidence.
+    $escapedFixture = [Regex]::Escape($FixtureName)
+    return [Regex]::IsMatch($TestName, "(^|\.)$escapedFixture(\.|$)", [Text.RegularExpressions.RegexOptions]::CultureInvariant)
+}
+
 $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
 if ([int]$receipt.schemaVersion -ne 2) { throw "Unsupported qualification receipt schemaVersion '$($receipt.schemaVersion)'. Re-run qualification to produce schema v2 digest-bound evidence." }
 if ([string]::IsNullOrWhiteSpace([string]$receipt.sourceCommit)) { throw "Qualification receipt has no sourceCommit. Release/judge evidence must come from a Git checkout." }
@@ -66,8 +79,8 @@ if ($receipt.securitySuite -eq $true) {
         throw "Security-suite receipt does not declare the verifier's canonical fixture set. Evidence may come from a reduced or incompatible suite."
     }
     foreach ($requiredFixture in $canonicalSecurityFixtures) {
-        # Canonical names are constants, so wildcard interpretation cannot be influenced by receipt data.
-        if (-not ($trxPassedNames | Where-Object { $_ -like "*$requiredFixture*" })) { throw "Required canonical security fixture '$requiredFixture' has no PASS evidence in the TRX." }
+        $fixturePasses = @($trxPassedNames | Where-Object { Test-FixtureIdentityInTestName -TestName $_ -FixtureName $requiredFixture })
+        if ($fixturePasses.Count -eq 0) { throw "Required canonical security fixture '$requiredFixture' has no PASS evidence in the TRX." }
     }
 }
 elseif ($requiredFixtures.Count -gt 0) {

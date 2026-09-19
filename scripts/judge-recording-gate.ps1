@@ -36,23 +36,19 @@ if (-not (Test-Path -LiteralPath $resolvedEvidence.Path -PathType Container)) {
     throw 'Browser qualification evidence must be a directory.'
 }
 
-$arguments = @{
-    RequireCloudResearch = $true
-    BrowserEvidenceDirectory = $resolvedEvidence.Path
-    BrowserEvidenceMaxAgeHours = $BrowserEvidenceMaxAgeHours
-}
-if (-not $SkipBuildValidation) {
-    $arguments.ValidateBuild = $true
-}
-
 Write-Host 'Running fail-closed NVIDEA judge recording gate...'
 Write-Host 'This gate requires cloud-research configuration and fresh browser qualification evidence.'
 
-# Run readiness in a child PowerShell process because its contract intentionally exits
-# with a process status. This keeps that status observable here and prevents a nested
-# `exit` from bypassing this wrapper's final decision.
+# Readiness intentionally exits with a process status. Run it in a child PowerShell
+# process so its status remains observable here and cannot bypass this wrapper's final
+# recording decision.
 $pwsh = (Get-Command pwsh -ErrorAction Stop).Source
-$childArgs = @('-NoLogo', '-NoProfile', '-File', $readinessScript, '-RequireCloudResearch', '-BrowserEvidenceDirectory', $resolvedEvidence.Path, '-BrowserEvidenceMaxAgeHours', [string]$BrowserEvidenceMaxAgeHours)
+$childArgs = @(
+    '-NoLogo', '-NoProfile', '-File', $readinessScript,
+    '-RequireCloudResearch',
+    '-BrowserEvidenceDirectory', $resolvedEvidence.Path,
+    '-BrowserEvidenceMaxAgeHours', [string]$BrowserEvidenceMaxAgeHours
+)
 if (-not $SkipBuildValidation) {
     $childArgs += '-ValidateBuild'
 }

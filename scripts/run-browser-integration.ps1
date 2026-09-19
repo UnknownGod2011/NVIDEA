@@ -24,6 +24,19 @@ $securitySuiteClasses = @(
 )
 $effectiveFilter = if ($SecuritySuite) { ($securitySuiteClasses | ForEach-Object { "FullyQualifiedName~$_" }) -join "|" } else { "FullyQualifiedName~$Filter" }
 
+function Test-FixtureIdentityInTestName {
+    param(
+        [Parameter(Mandatory = $true)][string]$TestName,
+        [Parameter(Mandatory = $true)][string]$FixtureName
+    )
+
+    # VSTest fully-qualified names use namespace/class/method dot separators. Require the class as
+    # a complete segment so a longer lookalike class cannot satisfy producer-side qualification.
+    # The independent verifier repeats this check with its own canonical fixture constants.
+    $escapedFixture = [Regex]::Escape($FixtureName)
+    return [Regex]::IsMatch($TestName, "(^|\.)$escapedFixture(\.|$)", [Text.RegularExpressions.RegexOptions]::CultureInvariant)
+}
+
 $dotnet = Get-Command dotnet -ErrorAction Stop
 $version = (& $dotnet.Source --version).Trim()
 if (-not $version.StartsWith("8.")) { throw "NVIDEA browser integration requires .NET 8 SDK; found '$version'." }
@@ -85,7 +98,8 @@ try {
         if ($SecuritySuite) {
             $passedNames = @($passed | ForEach-Object { [string]$_.testName })
             foreach ($requiredClass in $securitySuiteClasses) {
-                if (-not ($passedNames | Where-Object { $_ -like "*$requiredClass*" })) { throw "Curated Chromium security fixture '$requiredClass' has no passed test evidence. Refusing an incomplete validation pass. Evidence retained at '$resultsDirectory'." }
+                $fixturePasses = @($passedNames | Where-Object { Test-FixtureIdentityInTestName -TestName $_ -FixtureName $requiredClass })
+                if ($fixturePasses.Count -eq 0) { throw "Curated Chromium security fixture '$requiredClass' has no exact-class passed test evidence. Refusing an incomplete validation pass. Evidence retained at '$resultsDirectory'." }
             }
         }
 

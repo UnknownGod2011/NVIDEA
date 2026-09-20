@@ -32,18 +32,17 @@ Added release browser verification pinned to the expected GitHub origin, exact c
 - JSON memory persistence serializes access and uses same-directory write-through temp files before replacement. Tests pin replacement, malformed/truncated fail-closed reads, cancellation preservation and non-interleaved concurrent snapshots.
 - Added a bounded `.bak` last-known-good generation. Before replacing a valid current primary, its exact persisted bytes are atomically copied to the backup; malformed current bytes can never displace an existing known-good generation. Normal reads never silently fall back. Recovery requires explicit `RecoverLastKnownGoodAsync` intent, validates/decrypts the backup with the same protection context before replacement, then restores the exact persisted generation.
 - Recovery tests pin explicit-only fallback, previous-generation restoration, missing-backup failure without primary mutation, corrupt-primary backup preservation, and temp cleanup.
+- Protected recovery coverage now pins the confidentiality and context-binding contract: both current and `.bak` snapshots retain the protected envelope and do not contain memory content as plaintext; a mismatched protection context fails backup validation before replacement and leaves both primary and backup byte-for-byte unchanged.
 
 Files changed in latest run:
-- `src/Nvidea.Core/Memory/JsonFileMemoryStore.cs`
 - `tests/Nvidea.Core.Tests/JsonFileMemoryStoreTests.cs`
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md` completely and inspected the production JSON memory store and its existing tests before changing code.
-- Recovery is deliberately not automatic: `ReadAllAsync` still throws on malformed current state even when `.bak` exists, preventing silent rollback or concealment of corruption.
-- Backup retention is bounded to one sibling `.bak` generation; it copies exact persisted bytes, so encrypted/DPAPI envelopes are retained rather than decrypted into a recovery side channel.
-- A current snapshot is promoted to backup only after it successfully decodes and deserializes under the configured protection context. Explicit writes can repair a corrupt primary without overwriting the prior known-good backup with corrupt bytes.
-- Recovery validates the backup before touching the primary and uses the same write-through temporary replacement primitive; missing/invalid backup therefore fails before primary replacement.
+- Re-read `progress.md` completely and inspected `JsonFileMemoryStore`, `LocalStateEnvelope`, existing JSON-store tests, and the repository's established `ILocalStateProtector` test pattern before changing code.
+- Added `ProtectedSnapshots_PrimaryAndBackupNeverPersistPlaintextContent`, which asserts both generations carry the protected-envelope header, neither leaks its generation's memory content in persisted UTF-8 bytes, and the current snapshot still round-trips through the configured protector.
+- Added `RecoverLastKnownGoodAsync_ProtectionContextMismatchPreservesPrimary`, using a deterministic context-bound test protector that throws `CryptographicException` on context mismatch so the production envelope converts the mismatch into its fail-closed `InvalidDataException` boundary.
+- The mismatch test captures both files before recovery and asserts the primary and backup are byte-for-byte unchanged after failure, with no recovery temp-file residue.
 - Repository metadata was explicitly reverified immediately before every GitHub mutation; writable target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 - Connector environment cannot execute .NET 8 or Windows/PowerShell/Chromium, so compile/test/runtime PASS is not claimed.
 - No live/paid Nebius, Object Storage, Serverless, Tavily, authenticated browser, Ollama or inference operation was triggered.
@@ -52,8 +51,8 @@ Validation/evidence:
 - Browser transport, credential-bearing authority rejection, consequential-action approvals, sensitive autonomous-typing blocks, observation suppression, quarantine, prompt-injection boundaries and emergency cancellation remain intact.
 - Browser validation remains fail closed and the release/judge trust chain remains unchanged.
 - Memory persistence fails soft for corrupt semantic metadata while malformed/truncated primary JSON itself fails closed; recovery is an explicit operation rather than an implicit fallback.
-- The backup contains the same at-rest representation as the primary. On Windows with the configured DPAPI protector it remains protected; no plaintext backup is introduced by this feature.
-- Corrupt or protection-incompatible current state is never promoted to last-known-good. Invalid backup state is validated before replacement, preserving the primary on recovery failure.
+- The backup contains the same at-rest representation as the primary. Protected-store regression coverage now explicitly guards against accidental plaintext backup regressions.
+- Corrupt or protection-incompatible current state is never promoted to last-known-good. Invalid or wrong-context backup state is validated before replacement, preserving the primary on recovery failure.
 - Migration remains local-only and does not introduce cloud disclosure of personal memory content. Sensitive/Restricted opt-ins remain explicit even when semantic metadata is corrupt.
 - Migration batch validation and interruption semantics remain intact: already committed batches remain resumable durable progress, while provider failure/cancellation cannot partially apply an unvalidated batch.
 
@@ -64,9 +63,10 @@ Validation/evidence:
 - `File.Move(..., overwrite: true)` is relied upon as the final same-volume replacement step; crash/power-loss durability semantics still depend on the host filesystem/OS and need Windows validation.
 - The recovery generation is intentionally one snapshot deep. It protects against a corrupt current destination but is not a journal, transactional database, or substitute for user backups. A filesystem failure affecting both sibling files remains unrecoverable here.
 - Recovery is currently a core API; Windows UX should expose it only with clear corruption/provenance messaging and explicit confirmation rather than automatically invoking it.
+- The deterministic test protector is only a contract fixture, not production cryptography; Windows DPAPI behavior still requires Windows execution coverage.
 - SHA-256 browser receipts are integrity bindings, not digital signatures; freshness depends on the producer host clock.
 - Blocking Service Workers can affect sites whose auth/product flows depend on workers; judge-path compatibility still needs validation without weakening transport policy.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-Execute `JsonFileMemoryStoreTests`, `MemoryEmbeddingMigrationTests`, `PersistedMemoryEmbeddingIntegrityTests`, and the broader core test suite under .NET 8 as soon as an executable environment is available. If connector-only execution remains unavailable, add focused protected-envelope recovery coverage using the repository's test protector (or equivalent existing local-state fixture) to prove backup bytes never become plaintext and protection-context mismatch fails before primary replacement; then wire an explicit, judge-safe Windows recovery UX only after the core contract is executable. Keep the clean Windows checkout as the required path for browser release qualification and the mandatory judge-recording gate.
+Execute `JsonFileMemoryStoreTests`, `MemoryEmbeddingMigrationTests`, `PersistedMemoryEmbeddingIntegrityTests`, and the broader core test suite under .NET 8 as soon as an executable environment is available. If connector-only execution remains unavailable, audit the Windows memory-management UX and add an explicit recovery surface that clearly reports corruption, identifies that recovery rolls back one generation, requires deliberate confirmation, and never auto-recovers; keep recovery details payload-free in audit/UI telemetry. Keep the clean Windows checkout as the required path for browser release qualification and the mandatory judge-recording gate.

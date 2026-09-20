@@ -39,16 +39,8 @@ public partial class JudgeEvidenceDialog : Window
 
     internal static string BuildDurableResearchSummary(DesktopDurableResearchReceipt? receipt)
     {
-        if (receipt is null)
-            return "No completed durable research receipt is available for the current job.";
-
-        var plan = receipt.MultiQueryPlan ? $"Nemotron plan: VERIFIED · {receipt.PlannedQueryCount} queries" : $"Nemotron plan: VERIFIED · {receipt.PlannedQueryCount} query";
-        var evidence = $"Tavily evidence: BOUND · {receipt.EvidenceSourceCount} sources";
-        var synthesis = receipt.HasMachineVerifiableCitations
-            ? $"Cited synthesis: VERIFIED · {receipt.ValidatedCitationCount} validated citations"
-            : "Cited synthesis: NOT VERIFIED";
-        var restart = receipt.RestartStable ? "Restart lineage: BOUND" : "Restart lineage: NOT VERIFIED";
-        return $"{plan}\n{evidence}\n{synthesis}\n{restart}";
+        var presentation = DesktopResearchLineagePresentationProjector.Project(receipt);
+        return string.Join("\n", presentation.RenderedFields);
     }
 
     private static string BuildSessionEvidenceSummary(SessionEvidenceSnapshot snapshot)

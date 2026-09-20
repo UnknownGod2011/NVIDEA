@@ -66,9 +66,26 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
-        if (_root is not null)
-            _root.DisposeAsync().AsTask().GetAwaiter().GetResult();
-        base.OnExit(e);
+        // Detach first so re-entrant/duplicate exit paths cannot attempt to dispose the same
+        // authority graph twice. Cleanup failure must never prevent WPF from completing its
+        // own shutdown path or turn a normal/cancelled exit into an unhandled exception.
+        var root = _root;
+        _root = null;
+        try
+        {
+            if (root is not null)
+                root.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+        catch
+        {
+            // Exit is a last-resort trust boundary: do not surface provider/resource exception
+            // details (which may contain paths or endpoint diagnostics), and do not retry cleanup
+            // against a partially disposed graph. Process teardown releases remaining handles.
+        }
+        finally
+        {
+            base.OnExit(e);
+        }
     }
 
     private static async Task<bool> TryRecoverMemoryWithExplicitConsentAsync()

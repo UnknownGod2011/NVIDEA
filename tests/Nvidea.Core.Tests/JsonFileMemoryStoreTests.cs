@@ -1,6 +1,8 @@
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Nvidea.Core.Memory;
+using Nvidea.Core.Security;
 
 namespace Nvidea.Core.Tests;
 
@@ -146,6 +148,48 @@ public sealed class JsonFileMemoryStoreTests : IDisposable
         Assert.Equal(corrupt, await File.ReadAllBytesAsync(path));
     }
 
+    [Fact]
+    public async Task ProtectedSnapshots_PrimaryAndBackupNeverPersistPlaintextContent()
+    {
+        Directory.CreateDirectory(_directory);
+        var path = Path.Combine(_directory, "memory.json");
+        var protector = new ContextBoundTestProtector("context-a");
+        using var store = new JsonFileMemoryStore(path, protector);
+
+        await store.WriteAllAsync(new[] { CreateRecord("private-generation-one") });
+        await store.WriteAllAsync(new[] { CreateRecord("private-generation-two") });
+
+        var primary = await File.ReadAllBytesAsync(path);
+        var backup = await File.ReadAllBytesAsync($"{path}.bak");
+        Assert.True(LocalStateEnvelope.HasProtectedHeader(primary));
+        Assert.True(LocalStateEnvelope.HasProtectedHeader(backup));
+        Assert.DoesNotContain("private-generation-two", Encoding.UTF8.GetString(primary), StringComparison.Ordinal);
+        Assert.DoesNotContain("private-generation-one", Encoding.UTF8.GetString(backup), StringComparison.Ordinal);
+        Assert.Equal("private-generation-two", Assert.Single(await store.ReadAllAsync()).Content);
+    }
+
+    [Fact]
+    public async Task RecoverLastKnownGoodAsync_ProtectionContextMismatchPreservesPrimary()
+    {
+        Directory.CreateDirectory(_directory);
+        var path = Path.Combine(_directory, "memory.json");
+        using (var writer = new JsonFileMemoryStore(path, new ContextBoundTestProtector("context-a")))
+        {
+            await writer.WriteAllAsync(new[] { CreateRecord("protected backup") });
+            await writer.WriteAllAsync(new[] { CreateRecord("protected current") });
+        }
+
+        var primaryBefore = await File.ReadAllBytesAsync(path);
+        var backupBefore = await File.ReadAllBytesAsync($"{path}.bak");
+        using var wrongContextStore = new JsonFileMemoryStore(path, new ContextBoundTestProtector("context-b"));
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => wrongContextStore.RecoverLastKnownGoodAsync());
+
+        Assert.Equal(primaryBefore, await File.ReadAllBytesAsync(path));
+        Assert.Equal(backupBefore, await File.ReadAllBytesAsync($"{path}.bak"));
+        Assert.Empty(Directory.GetFiles(_directory, "memory.json*.tmp"));
+    }
+
     private static MemoryRecord CreateRecord(string content) => new()
     {
         Id = Guid.NewGuid(),
@@ -163,5 +207,35 @@ public sealed class JsonFileMemoryStoreTests : IDisposable
     {
         if (Directory.Exists(_directory))
             Directory.Delete(_directory, recursive: true);
+    }
+
+    private sealed class ContextBoundTestProtector(string context) : ILocalStateProtector
+    {
+        private readonly byte[] _context = Encoding.UTF8.GetBytes(context + "|");
+
+        public byte[] Protect(ReadOnlySpan<byte> plaintext, string purpose)
+        {
+            var purposeBytes = Encoding.UTF8.GetBytes(purpose + "|");
+            var result = new byte[_context.Length + purposeBytes.Length + plaintext.Length];
+            _context.CopyTo(result, 0);
+            purposeBytes.CopyTo(result, _context.Length);
+            plaintext.CopyTo(result.AsSpan(_context.Length + purposeBytes.Length));
+            Array.Reverse(result);
+            return result;
+        }
+
+        public byte[] Unprotect(ReadOnlySpan<byte> protectedData, string purpose)
+        {
+            var copy = protectedData.ToArray();
+            Array.Reverse(copy);
+            var purposeBytes = Encoding.UTF8.GetBytes(purpose + "|");
+            if (!copy.AsSpan().StartsWith(_context) ||
+                !copy.AsSpan(_context.Length).StartsWith(purposeBytes))
+            {
+                throw new CryptographicException("Protection context mismatch.");
+            }
+
+            return copy[(_context.Length + purposeBytes.Length)..];
+        }
     }
 }

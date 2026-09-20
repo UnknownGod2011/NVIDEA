@@ -22,21 +22,19 @@ Persisted embedding state is treated as untrusted; malformed vector/provenance s
 ### 2026-09-20 — startup/shutdown lifecycle hardening
 WPF startup/recovery cancellation is distinct from corruption/configuration failure and cannot authorize rollback. `App.OnExit` detaches the root before disposal, contains payload-bearing cleanup failures, prevents duplicate disposal and guarantees WPF base shutdown.
 
-### 2026-09-20 — partial-construction ownership groundwork
-- Audited `NvideaCompositionRoot.CreateFromEnvironmentAsync` and confirmed the remaining leak boundary: Nebius HTTP, memory store/service/provider, Tavily HTTP and cloud clients can be allocated before a root is returned; a later initialization exception leaves the WPF host with no owner.
-- Added `StartupResourceLease`, an internal construction-time ownership primitive. Resources are registered as they are acquired, released in reverse order on failure, and ownership can be transferred atomically with `ReleaseAll()` only after successful root construction.
-- Cleanup exceptions are deliberately contained so a secondary `Dispose` failure cannot replace the authoritative startup exception or leak provider/path diagnostics. The lease is idempotent and rejects registrations after transfer/disposal.
-- Added focused tests for reverse-order exactly-once cleanup, continuation after a throwing disposer, successful ownership transfer, and fail-closed late registration.
-- The lease is intentionally not yet wired into `CreateFromEnvironmentAsync`; doing so safely requires registering each resource at its exact acquisition point and avoiding double ownership with the existing cloud-provider preflight cleanup. This is the immediate next task.
+### 2026-09-20 — partial-construction ownership hardening
+- Added `StartupResourceLease`, a construction-time ownership primitive with reverse-order, exactly-once best-effort cleanup and explicit successful ownership transfer.
+- Integrated the lease into `NvideaCompositionRoot.CreateFromEnvironmentAsync`. Nebius HTTP, memory store, optional local embedding provider, memory service, Tavily HTTP, and successfully transferred Nebius Object Storage/Serverless HTTP resources are now owned immediately after acquisition and cannot be orphaned by a later startup exception or cancellation.
+- Preserved the existing inner cloud-provider failure boundary: Object Storage/Serverless resources are disposed inside the provider factory only when acquisition/preflight has not escaped. They are registered with the outer startup lease only after `CreateAfterDestinationPreflight` succeeds, avoiding overlapping owners/double-disposal.
+- Root ownership is transferred only after the complete `NvideaCompositionRoot` constructor succeeds. Any failure before that point leaves the lease authoritative; after `ReleaseAll`, the normal root `DisposeAsync` path remains authoritative.
 
 Files changed in latest run:
-- `src/Nvidea.Core/Desktop/StartupResourceLease.cs`
-- `tests/Nvidea.Core.Tests/StartupResourceLeaseTests.cs`
+- `src/Nvidea.Core/Desktop/NvideaCompositionRoot.cs`
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md` completely and inspected recent commits plus `NvideaCompositionRoot.CreateFromEnvironmentAsync`, `DisposeAsync`, WPF startup/exit flow, and `PersonalMemoryService.Dispose` before implementation.
-- Static review confirms the lease releases in LIFO order, attempts every registered cleanup even when one throws, disposes at most once, and becomes a no-op after explicit ownership transfer.
+- Re-read `progress.md` completely and inspected `NvideaCompositionRoot.CreateFromEnvironmentAsync`, `StartupResourceLease`, `PersonalMemoryService` disposal, and local embedding-provider construction before implementation.
+- Static ownership review confirms acquisition/cleanup order is coherent: memory service is disposed before its provider/store; cloud Serverless HTTP is disposed before Object Storage on startup unwind; Nebius HTTP is last. No provider resource is registered with two active startup owners.
 - Repository metadata was explicitly reverified immediately before every GitHub mutation; writable target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 - Connector environment cannot execute .NET 8 or Windows/PowerShell/Chromium, so compile/test/runtime PASS is not claimed.
 - No live/paid Nebius, Object Storage, Serverless, Tavily, authenticated browser, Ollama or inference operation was triggered.
@@ -44,13 +42,13 @@ Validation/evidence:
 ## Security / privacy / failure review
 - Browser transport, credential-bearing authority rejection, consequential-action approvals, sensitive autonomous-typing blocks, observation suppression, quarantine, prompt-injection boundaries and emergency cancellation remain intact.
 - Memory recovery remains explicit, one-generation bounded, protection-context validated, fail closed and non-mutating during eligibility checks. Migration remains local-only and Sensitive/Restricted opt-ins remain explicit.
-- Shutdown cleanup and the new construction-time lease are payload-free failure boundaries: cleanup errors cannot replace the primary startup/exit failure or be projected to UI.
-- `StartupResourceLease` has no secret access and stores only disposable object references; it does not log, serialize or inspect provider state.
+- Startup/shutdown cleanup is payload-free: cleanup failures cannot replace the authoritative startup/exit exception or be projected to UI.
+- The construction lease stores only disposable references and never logs, serializes or inspects provider credentials/state. Cancellation follows the same cleanup path as every other failed construction.
 
 ## Known blockers / risks
-- `StartupResourceLease` is tested by source coverage but is not yet integrated into `NvideaCompositionRoot.CreateFromEnvironmentAsync`; partial-construction leaks remain possible until that wiring lands.
+- Factory-level fault-injection tests are still needed to prove the newly integrated lease at the composition boundary, especially failures after memory initialization, after Tavily acquisition, after successful cloud-provider transfer, and during final composition.
 - Real-Chromium fixtures and the release/judge qualification scripts still need execution on Windows with .NET 8, PowerShell 7 and matching Playwright Chromium.
-- Persisted-memory, migration, JSON-store/recovery/probe, startup/shutdown and new ownership-lease tests still need compile/runtime execution under .NET 8 on Windows.
+- Persisted-memory, migration, JSON-store/recovery/probe, startup/shutdown and ownership-lease tests still need compile/runtime execution under .NET 8 on Windows.
 - `File.Move(..., overwrite: true)` crash/power-loss durability semantics depend on host filesystem/OS and need Windows validation.
 - Recovery is intentionally one snapshot deep, not a journal/database/user backup.
 - SHA-256 browser receipts are integrity bindings, not signatures; freshness depends on producer host clock.
@@ -58,4 +56,4 @@ Validation/evidence:
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-Integrate `StartupResourceLease` into `NvideaCompositionRoot.CreateFromEnvironmentAsync`: register Nebius HTTP, memory store/service/provider, Tavily HTTP, and successfully transferred Object Storage/serverless resources at their exact acquisition points; transfer lease ownership only after the complete root is constructed; preserve the existing inner cloud-preflight cleanup without double-disposal. Add a factory seam or focused fault-injection coverage proving failures during memory initialization, Tavily/cloud setup and final composition release every acquired resource exactly once while preserving the original exception. Then execute the accumulated lifecycle/memory suites on Windows/.NET 8 when an executable environment is available.
+Add a narrow factory seam/fault-injection harness around composition-root acquisitions and write deterministic tests proving failures after memory initialization, Tavily acquisition, successful cloud-provider transfer and immediately before ownership release dispose every acquired resource exactly once while preserving the original exception/cancellation. Then execute the accumulated lifecycle/memory suites on Windows/.NET 8 when an executable environment is available.

@@ -38,17 +38,19 @@ Hardened browser transport to HTTPS or loopback HTTP and WSS or loopback WS; rej
 - Cancellation propagates instead of being converted into authorization or an ordinary negative result.
 - Added `MemoryRecoveryAvailabilityProbeTests` covering corrupt-primary eligibility, healthy-primary rejection, missing-generation rejection, cancellation, invalid paths, byte-for-byte preservation of both primary and backup during eligibility checks, and absence of temp-file residue.
 
+### 2026-09-20 — startup/recovery cancellation routing
+- Audited the WPF startup exception routing after making recovery eligibility cancellation-aware. Found that cancellation raised while already inside the `InvalidDataException` catch could escape the `async void` startup handler because sibling catches do not intercept exceptions thrown from another catch block.
+- Added explicit `OperationCanceledException` handling for both initial composition-root startup and the recovery-eligibility/recovery path. Cancellation now shuts down cleanly and never falls through to the generic configuration/provider failure text or becomes evidence authorizing memory rollback.
+- `TryRecoverMemoryWithExplicitConsentAsync` now preserves cancellation semantics instead of swallowing cancellation in its broad recovery-failure catch. Ordinary recovery validation failures remain credential-safe and payload-free.
+- This is a control-flow/failure-semantics hardening change only; no recovery authorization rule, memory content, provider configuration or browser policy was weakened.
+
 Files changed in latest run:
-- `src/Nvidea.Core/Memory/JsonFileMemoryStore.cs`
-- `src/Nvidea.Core/Memory/MemoryRecoveryAvailabilityProbe.cs`
 - `src/Nvidea.Windows/App.xaml.cs`
-- `tests/Nvidea.Core.Tests/MemoryRecoveryAvailabilityProbeTests.cs`
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md` completely and inspected the current WPF startup recovery flow, `JsonFileMemoryStore`, existing JSON-store tests and Core test layout before implementation.
-- Recovery eligibility is now independently testable without WPF/MessageBox automation while the actual destructive recovery operation remains in the production store and behind explicit UI consent.
-- Eligibility does not read/validate the backup before consent and does not mutate either generation; backup protection-context validation still happens only inside `RecoverLastKnownGoodAsync` after explicit approval.
+- Re-read `progress.md` completely and inspected the current WPF startup/recovery exception flow before implementation.
+- Static control-flow review confirms `OperationCanceledException` from initial startup is handled before `InvalidDataException`, and cancellation thrown from the independent recovery probe is handled inside the `InvalidDataException` branch rather than escaping the `async void` handler.
 - Repository metadata was explicitly reverified immediately before every GitHub mutation; writable target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 - Connector environment cannot execute .NET 8 or Windows/PowerShell/Chromium, so compile/test/runtime PASS is not claimed.
 - No live/paid Nebius, Object Storage, Serverless, Tavily, authenticated browser, Ollama or inference operation was triggered.
@@ -58,13 +60,14 @@ Validation/evidence:
 - Browser validation remains fail closed and the release/judge trust chain remains unchanged.
 - Memory recovery is explicit, one-generation bounded and protection-context validated. The backup contains the same protected at-rest representation as primary; no plaintext recovery copy is created.
 - Recovery eligibility is fail closed and non-mutating. A healthy memory primary cannot authorize rollback for an unrelated startup `InvalidDataException`, and merely checking eligibility cannot rotate/migrate persisted memory.
+- Startup/recovery cancellation is now distinct from corruption/configuration failure: it neither offers rollback nor emits misleading provider diagnostics.
 - The recovery UI defaults to Cancel. Successful recovery requires restart, avoiding reuse of partially initialized services.
 - Migration remains local-only; Sensitive/Restricted opt-ins remain explicit. Provider failure/cancellation cannot partially apply an unvalidated migration batch.
 
 ## Known blockers / risks
 - Real-Chromium fixtures still need execution on Windows with .NET 8 and matching Playwright Chromium; static connector work is not an executable PASS.
 - Verifier regression harness, release qualification wrapper, release gate, judge-recording wrapper and integrated readiness path each need local PowerShell 7 execution before PASS can be claimed.
-- Persisted-memory, migration, JSON-store/recovery/probe tests and the WPF recovery path still need compile/runtime execution under .NET 8 on Windows.
+- Persisted-memory, migration, JSON-store/recovery/probe tests and the WPF recovery/cancellation paths still need compile/runtime execution under .NET 8 on Windows.
 - `File.Move(..., overwrite: true)` is relied upon as the final same-volume replacement step; crash/power-loss durability semantics depend on host filesystem/OS and need Windows validation.
 - Recovery is intentionally one snapshot deep, not a journal/database/user backup. A filesystem failure affecting both sibling files remains unrecoverable here.
 - Production recovery assumes the normal default Windows state directory used by `CreateFromEnvironmentAsync()`; test-only/custom state-directory startup is not exposed by the WPF entry point.
@@ -73,4 +76,4 @@ Validation/evidence:
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-Execute `MemoryRecoveryAvailabilityProbeTests`, `JsonFileMemoryStoreTests`, `MemoryEmbeddingMigrationTests`, `PersistedMemoryEmbeddingIntegrityTests`, build the WPF host, and exercise the explicit recovery prompt on Windows/.NET 8 as soon as an executable environment is available. Verify Cancel is the default and leaves both files byte-identical, unrelated `InvalidDataException` does not offer memory recovery when the primary validates, wrong DPAPI context cannot restore, successful recovery requires restart, and recovered memory initializes normally. If connector-only execution remains unavailable, next audit startup cancellation/shutdown behavior so cancellation cannot fall through to a misleading generic failure or recovery path. Keep the clean Windows checkout as the required path for browser release qualification and mandatory judge-recording gate.
+Execute `MemoryRecoveryAvailabilityProbeTests`, `JsonFileMemoryStoreTests`, `MemoryEmbeddingMigrationTests`, `PersistedMemoryEmbeddingIntegrityTests`, build the WPF host, and exercise startup cancellation plus the explicit recovery prompt on Windows/.NET 8. Verify cancellation never offers rollback or generic provider diagnostics, Cancel remains the default and leaves both files byte-identical, wrong DPAPI context cannot restore, successful recovery requires restart, and recovered memory initializes normally. If connector-only execution remains unavailable, audit `OnExit`/partial composition-root disposal so failed or cancelled startup cannot synchronously deadlock shutdown or leak partially initialized resources. Keep the clean Windows checkout as the required path for browser release qualification and mandatory judge-recording gate.

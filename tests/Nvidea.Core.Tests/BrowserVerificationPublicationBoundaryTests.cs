@@ -85,13 +85,14 @@ public sealed class BrowserVerificationPublicationBoundaryTests
             jobId,
             definition,
             AgentJobState.Completed,
-            new AgentJobCheckpoint("browser.action.verified", payload, now),
+            JobExecutionLocation.Local,
             Attempt: 1,
+            Checkpoint: new AgentJobCheckpoint("browser.action.verified", payload, now),
+            ApprovalScope: null,
+            LastError: null,
             CreatedAt: now.AddSeconds(-2),
             UpdatedAt: now,
-            NextAttemptAt: null,
-            LastError: null,
-            ApprovalScope: null);
+            NextAttemptAt: null);
     }
 
     private sealed class ThrowingProtector : ILocalStateProtector

@@ -19,42 +19,41 @@ Hardened browser transport to HTTPS or loopback HTTP and WSS or loopback WS; rej
 ### 2026-09-19 to 2026-09-20 — memory integrity and explicit recovery
 Persisted embedding state is treated as untrusted; malformed vector/provenance state is stripped while user-authored memory survives. Migration remains local-provider-only, preserves Sensitive/Restricted opt-ins, revalidates candidates, validates vectors/provenance, skips concurrent edits, and has invalid-vector/failure/cancellation coverage. JSON persistence serializes access, uses same-directory write-through replacement, and maintains one bounded `.bak` last-known-good generation. Recovery is explicit, protection-context validated, fail-closed and never automatic. Startup recovery eligibility uses non-mutating primary validation and cannot be authorized by unrelated startup failure.
 
-### 2026-09-20 — startup/shutdown lifecycle hardening
-WPF startup/recovery cancellation is distinct from corruption/configuration failure and cannot authorize rollback. `App.OnExit` detaches the root before disposal, contains payload-bearing cleanup failures, prevents duplicate disposal and guarantees WPF base shutdown.
+### 2026-09-20 — startup/shutdown and partial-construction ownership
+WPF cancellation is distinct from corruption/configuration failure. Exit cleanup is contained and idempotent. `StartupResourceLease` provides reverse-order, exactly-once best-effort cleanup until a complete composition root assumes ownership. Deterministic failure coverage exercises failures after memory, Tavily, cloud transfer and pre-release, including cleanup-failure and cancellation semantics.
 
-### 2026-09-20 — partial-construction ownership hardening
-- Added and integrated `StartupResourceLease`, providing reverse-order, exactly-once best-effort cleanup until a complete `NvideaCompositionRoot` assumes ownership.
-- Nebius HTTP, memory store/provider/service, Tavily HTTP and successfully transferred Object Storage/Serverless resources now receive an owner immediately after acquisition; the existing inner cloud preflight remains the sole owner until transfer.
-- Added a deterministic composition-startup failure harness and tests for failures after memory initialization, Tavily acquisition, cloud-provider transfer and immediately before ownership release. Coverage asserts LIFO exactly-once cleanup, continued unwind after a cleanup failure, preservation of the exact authoritative exception instance, and cancellation semantics.
+### 2026-09-20 — desktop Tavily research evidence
+- Added `DesktopResearchEvidence` and `DesktopResearchEvidenceProjector` as a payload-free evidence boundary over completed research reports.
+- The Windows-facing `DesktopInvocationResult` can now project source count, validated citation count, unique planned-query count, unique-host diversity, unknown-publication-time count, warning count, Tavily provider credits, multi-query evidence, canonical-source uniqueness and machine-verifiable citation presence without exposing questions, answers, URLs, titles, snippets or provider payloads.
+- Added deterministic tests for multi-query/diverse-source/citation evidence, duplicate canonical-source detection, unknown freshness, and projection directly through the desktop invocation result.
 
 Files changed in latest run:
-- `src/Nvidea.Core/Desktop/CompositionStartupFailureBoundary.cs`
-- `tests/Nvidea.Core.Tests/CompositionStartupFailureBoundaryTests.cs`
+- `src/Nvidea.Core/Desktop/DesktopResearchEvidence.cs`
+- `tests/Nvidea.Core.Tests/DesktopResearchEvidenceTests.cs`
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md` completely and inspected current `NvideaCompositionRoot.CreateFromEnvironmentAsync`, ownership order, recent commits and existing test layout before implementation.
-- Static review confirms the deterministic harness uses the same production `StartupResourceLease` primitive and models the production acquisition order: Nebius -> store -> embedding -> memory -> Tavily -> Object Storage -> Serverless, therefore expected unwind is exact reverse order.
-- Tests additionally force a synthetic memory cleanup failure and require later cleanup to continue while the original startup exception remains authoritative; cancellation is required to remain `OperationCanceledException`.
+- Re-read `progress.md` completely, inspected current research engine/Tavily contracts and Windows desktop invocation path, and reviewed recent commits before implementation.
+- Static review confirms the evidence projection is derived only from the completed `ResearchReport`; no network call, secret, query text, URL, title, snippet or answer is persisted/projected by the new type.
+- Tests deliberately use private marker strings and assert they do not appear in the projected evidence representation; duplicate canonical URLs fail the uniqueness signal rather than being presented as deduplicated proof.
+- `PublishedAt == null` is conservatively reported as freshness unknown; the projector does not claim that timestamped evidence is necessarily fresh or that unknown evidence is stale.
 - Repository metadata was explicitly reverified immediately before every GitHub mutation; writable target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 - Connector environment cannot execute .NET 8 or Windows/PowerShell/Chromium, so compile/test/runtime PASS is not claimed.
-- No live/paid Nebius, Object Storage, Serverless, Tavily, authenticated browser, Ollama or inference operation was triggered.
+- No live/paid Nebius, Object Storage, Serverless, Tavily, browser, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
-- Browser transport, credential-bearing authority rejection, consequential-action approvals, sensitive autonomous-typing blocks, observation suppression, quarantine, prompt-injection boundaries and emergency cancellation remain intact.
-- Memory recovery remains explicit, one-generation bounded, protection-context validated, fail closed and non-mutating during eligibility checks. Migration remains local-only and Sensitive/Restricted opt-ins remain explicit.
-- Startup/shutdown cleanup remains payload-free: cleanup failures cannot replace the authoritative startup/exit exception or be projected to UI.
-- The new fault harness contains no credentials/provider payloads and is deterministic; it exercises ownership semantics without network/cloud access.
+- Browser transport, credential authority rejection, consequential-action approvals, sensitive typing blocks, prompt-injection boundaries and emergency cancellation remain intact.
+- Memory recovery remains explicit, bounded, protection-context validated, fail closed and non-mutating during eligibility checks.
+- Startup/shutdown cleanup failures cannot replace authoritative startup/exit failures or be projected to UI.
+- Research evidence is deliberately payload-free and conservative: counts/signals are evidence of runtime structure, not proof that sources are true. Missing publication timestamps remain unknown rather than being promoted to freshness claims.
 
 ## Known blockers / risks
-- The deterministic fault harness proves the ownership primitive and production acquisition ordering, but it does not yet inject failures into the live `CreateFromEnvironmentAsync` body itself; a future dependency-factory seam can close that final integration gap if warranted without making production construction over-configurable.
-- Real-Chromium fixtures and the release/judge qualification scripts still need execution on Windows with .NET 8, PowerShell 7 and matching Playwright Chromium.
-- Persisted-memory, migration, JSON-store/recovery/probe, startup/shutdown and ownership/failure-boundary tests still need compile/runtime execution under .NET 8 on Windows.
-- `File.Move(..., overwrite: true)` crash/power-loss durability semantics depend on host filesystem/OS and need Windows validation.
-- Recovery is intentionally one snapshot deep, not a journal/database/user backup.
-- SHA-256 browser receipts are integrity bindings, not signatures; freshness depends on producer host clock.
-- Blocking Service Workers can affect sites whose auth/product flows depend on workers; judge-path compatibility still needs validation without weakening policy.
+- The new desktop research evidence tests still need compile/runtime execution under .NET 8; all accumulated Windows suites remain pending executable-environment validation.
+- Multi-query evidence currently proves that returned sources span multiple distinct query strings; a later end-to-end checkpoint receipt should bind this to the original Nemotron plan even when a planned query returns zero sources.
+- Canonical uniqueness is an explicit signal, not a substitute for semantic near-duplicate detection.
+- Resumable durable research state still needs a single judge-facing receipt that survives restart and binds plan -> gathered evidence -> synthesis without leaking payloads.
+- Real-Chromium fixtures and release/judge qualification scripts still need execution on Windows with .NET 8, PowerShell 7 and matching Playwright Chromium.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-Shift back from lifecycle hardening to product-value validation: audit the Tavily research path against the current hackathon demo contract and add deterministic end-to-end research evidence coverage proving multi-query planning, source provenance/deduplication, uncertainty/staleness handling and resumable job state survive through the Windows-facing product runtime. Then execute accumulated lifecycle/memory suites on Windows/.NET 8 when an executable environment is available.
+Extend durable research checkpoints with a payload-free, restart-stable receipt binding the Nemotron plan fingerprint, Tavily evidence/canonical-source fingerprint, synthesis citation validation and resume state; surface that receipt through the desktop judge-evidence path so the <=3 minute demo can prove Tavily multi-query research and resumability rather than merely claim them.

@@ -51,6 +51,27 @@ public sealed class JsonFileMemoryStore : IMemoryStore, IDisposable
         }
     }
 
+    /// <summary>
+    /// Validates and deserializes the current primary without migrating, rewriting, backing up or otherwise
+    /// mutating durable state. This is intended for fail-closed startup/recovery eligibility checks.
+    /// </summary>
+    public async Task ValidatePrimaryAsync(CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (!File.Exists(_path))
+                throw new FileNotFoundException("Memory primary does not exist.", _path);
+
+            _ = await ReadSnapshotUnlockedAsync(_path, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     public async Task WriteAllAsync(IReadOnlyCollection<MemoryRecord> memories, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(memories);

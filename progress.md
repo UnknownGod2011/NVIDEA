@@ -34,15 +34,18 @@ Added stale-evidence clearing and `DurableBrowserVerificationPublisher`. Publica
 ### 2026-09-21 — publisher contract/adversarial validation
 Added deterministic `DurableBrowserVerificationPublisherTests` covering successful approved publication, fail-closed gating for Pending/Running/WaitingForApproval/Failed/Cancelled jobs, cross-job evidence rejection, consequential completion without observed approval, and stale-receipt clearing before a new action. These tests encode the intended no-false-green semantics before production host composition.
 
+### 2026-09-21 — product-facing durable browser evidence read boundary
+`BrowserProductRuntime` now exposes only `DesktopBrowserVerificationPresentation` through `ReadVerificationPresentationAsync`. The publisher is an internal optional dependency; until trusted host composition supplies it, the product API deterministically returns NOT VERIFIED instead of inferring success from provider readiness, session milestones, or raw browser outcomes. This keeps URLs, locators, typed values, page content, approval authority and diagnostics outside the product/judge evidence API.
+
 ## Latest run
 Files changed:
-- `tests/Nvidea.Core.Tests/DurableBrowserVerificationPublisherTests.cs`
+- `src/Nvidea.Core/Desktop/BrowserProductRuntime.cs`
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md` completely and inspected current repository tree, recent commits, `BrowserHostRuntime`, `BrowserProductRuntime`, `DurableBrowserVerificationPublisher`, receipt/store, local-state protection and job contracts before changing code.
-- Added deterministic tests for the highest-risk publisher invariants rather than adding a mock production success path.
-- Static review confirms non-Completed durable states cannot publish; cross-job structural evidence throws before persistence; required approval without `ApprovalObserved` throws; and `BeginActionAsync` removes prior verified presentation.
+- Re-read `progress.md` completely and inspected the current default-branch tree, `BrowserHostRuntime`, `BrowserProductRuntime`, `DurableBrowserVerificationPublisher`, protected receipt store, and CurrentUser DPAPI protection boundary before changing code.
+- Added the product-facing durable browser presentation read path without manufacturing a production green state before host publication is wired.
+- Static review confirms the new API returns only the closed Core presentation type and fails closed when no trusted publisher is composed.
 - Repository metadata was explicitly reverified immediately before every GitHub mutation; writable target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 - Connector environment cannot execute .NET 8 or Windows/PowerShell/Chromium, so compile/test/runtime PASS is not claimed.
 - No live/paid Nebius, Object Storage, Serverless, Tavily, browser or inference operation was triggered.
@@ -55,15 +58,16 @@ Validation/evidence:
 - Existing verified action checkpoints retain URL/verification detail for goal recovery; protected judge receipts are a separate least-authority artifact.
 - Receipt SHA-256 is tamper evidence, not authenticity by itself; authenticity inherits protected local state. Windows production uses CurrentUser DPAPI with purpose-derived entropy.
 - Missing, plaintext, corrupt, wrong-context, malformed or integrity-invalid protected judge evidence remains NOT VERIFIED.
+- Product callers cannot read the receipt or raw durable evidence directly; the new read API exposes only the closed `DesktopBrowserVerificationPresentation` projection.
 
 ## Known blockers / risks
 - New Core changes require executable .NET 8 validation; accumulated Windows/Chromium suites remain pending environment validation.
-- `DurableBrowserVerificationPublisher` is not yet composed into `BrowserHostRuntime`; production browser actions therefore still do not publish the protected receipt and WPF correctly remains NOT VERIFIED.
+- `DurableBrowserVerificationPublisher` is still not composed into `BrowserHostRuntime`; production browser actions therefore do not yet publish the protected receipt and the new product read API correctly remains NOT VERIFIED.
 - Host wiring must call `BeginActionAsync` before durable action admission, then attempt publication only after `RunNextStepAsync` returns Completed. Publication failure after completion must not make callers replay a side effect.
-- `BrowserProductRuntime` still lacks a read-only latest durable browser presentation API.
+- WPF Judge Evidence still needs to consume `BrowserProductRuntime.ReadVerificationPresentationAsync` once production composition supplies the publisher.
 - A production-path test is still needed to prove publication failure after durable completion cannot be surfaced as replayable browser failure.
 - Cross-process coordination for the receipt file is not needed by the single Windows host today, but must be revisited if a second local writer is introduced.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-Compose `DurableBrowserVerificationPublisher` into `BrowserHostRuntime` with CurrentUser DPAPI: clear stale evidence before new action admission; after `RunNextStepAsync` returns authoritative Completed, publish structural evidence without converting a post-side-effect publication failure into a replayable browser failure. Then expose `ReadPresentationAsync` through `BrowserProductRuntime`, feed it into WPF Judge Evidence, and add the production-path no-replay test.
+Compose `DurableBrowserVerificationPublisher` into `BrowserHostRuntime` with CurrentUser DPAPI: clear stale evidence before new action admission; after `RunNextStepAsync` returns authoritative Completed, publish structural evidence while swallowing/reporting evidence-publication failure as NOT VERIFIED rather than converting a completed browser side effect into a replayable action failure. Then inject the same publisher into `BrowserProductRuntime`, feed `ReadVerificationPresentationAsync` into WPF Judge Evidence, and add the production-path no-replay test.

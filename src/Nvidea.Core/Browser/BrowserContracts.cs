@@ -114,7 +114,8 @@ public sealed record BrowserActionReceipt(
     string? VerificationDetail,
     Uri UrlBefore,
     Uri UrlAfter,
-    string? Error = null);
+    string? Error = null,
+    bool ApprovalGranted = false);
 
 public interface IBrowserDriver
 {

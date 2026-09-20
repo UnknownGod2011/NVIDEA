@@ -21,26 +21,51 @@ public static class DesktopBrowserVerificationProjector
         if (receipts is null || receipts.Count == 0)
             return NotVerified("No completed browser action evidence is available.");
 
+        var durable = receipts.Select(static receipt => new DurableBrowserActionEvidence(
+            receipt.ActionId,
+            receipt.Action.Kind,
+            receipt.Decision.Risk,
+            receipt.Decision.Allowed,
+            receipt.Decision.RequiresApproval,
+            receipt.ApprovalGranted,
+            receipt.DriverReportedSuccess,
+            receipt.Verified,
+            receipt.StartedAt,
+            receipt.CompletedAt)).ToArray();
+
+        return ProjectDurable(durable);
+    }
+
+    internal static DesktopBrowserVerificationPresentation ProjectDurable(IReadOnlyList<DurableBrowserActionEvidence>? actions)
+    {
+        if (actions is null || actions.Count == 0)
+            return NotVerified("No completed browser action evidence is available.");
+
         var approvalCount = 0;
-        foreach (var receipt in receipts)
+        var ids = new HashSet<Guid>();
+        foreach (var action in actions)
         {
-            if (receipt is null
-                || receipt.ActionId == Guid.Empty
-                || receipt.CompletedAt < receipt.StartedAt
-                || !receipt.Decision.Allowed
-                || !receipt.DriverReportedSuccess
-                || !receipt.Verified)
+            if (action is null
+                || action.ActionId == Guid.Empty
+                || !ids.Add(action.ActionId)
+                || action.CompletedAt < action.StartedAt
+                || !action.Allowed
+                || !action.DriverReportedSuccess
+                || !action.PostStateVerified)
             {
-                return NotVerified("Browser execution is incomplete or lacks verified post-action evidence.", receipts.Count, approvalCount);
+                return NotVerified("Browser execution is incomplete or lacks verified post-action evidence.", actions.Count, approvalCount);
             }
 
-            if (receipt.Decision.Risk == BrowserRiskLevel.Blocked)
-                return NotVerified("A blocked browser action cannot be presented as verified.", receipts.Count, approvalCount);
+            if (action.Risk == BrowserRiskLevel.Blocked)
+                return NotVerified("A blocked browser action cannot be presented as verified.", actions.Count, approvalCount);
 
-            if (receipt.Decision.RequiresApproval)
+            if (action.ApprovalObserved && !action.RequiredApproval)
+                return NotVerified("Browser approval evidence is structurally inconsistent.", actions.Count, approvalCount);
+
+            if (action.RequiredApproval)
             {
-                if (!receipt.ApprovalGranted)
-                    return NotVerified("A consequential browser action lacks explicit approval evidence.", receipts.Count, approvalCount);
+                if (!action.ApprovalObserved)
+                    return NotVerified("A consequential browser action lacks explicit approval evidence.", actions.Count, approvalCount);
                 approvalCount++;
             }
         }
@@ -48,14 +73,16 @@ public static class DesktopBrowserVerificationProjector
         return new DesktopBrowserVerificationPresentation(
             Verified: true,
             Status: "VERIFIED browser execution",
-            ExecutionEvidence: $"{receipts.Count} action(s) executed through the guarded browser runtime.",
+            ExecutionEvidence: $"{actions.Count} action(s) executed through the guarded browser runtime.",
             PermissionEvidence: approvalCount == 0
                 ? "No action in this run required consequential-action approval."
                 : $"{approvalCount} consequential action(s) carry explicit approval evidence.",
             PostStateEvidence: "Every executed action has observed post-action verification.",
-            ActionCount: receipts.Count,
+            ActionCount: actions.Count,
             ApprovalCount: approvalCount);
     }
+
+    internal static DesktopBrowserVerificationPresentation NotVerifiedDurable(string reason) => NotVerified(reason);
 
     private static DesktopBrowserVerificationPresentation NotVerified(
         string reason,

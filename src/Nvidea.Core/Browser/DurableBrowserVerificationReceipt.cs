@@ -40,14 +40,30 @@ public sealed record DurableBrowserVerificationReceipt(
         if (receipts.Count == 0)
             throw new ArgumentException("At least one browser receipt is required.", nameof(receipts));
 
-        var actions = receipts.Select(Project).ToArray();
-        ValidateActions(actions);
-        var completedAt = actions.Max(static x => x.CompletedAt);
+        return CreateFromEvidence(receipts.Select(Project).ToArray());
+    }
+
+    /// <summary>
+    /// Reconstitutes a committed receipt from an already payload-free structural projection.
+    /// This is used only after the durable browser orchestrator has committed a Completed job, so
+    /// receipt persistence cannot race ahead of authoritative job completion. No approval authority
+    /// can be reconstructed from this data.
+    /// </summary>
+    public static DurableBrowserVerificationReceipt CreateFromEvidence(
+        IReadOnlyList<DurableBrowserActionEvidence> actions)
+    {
+        ArgumentNullException.ThrowIfNull(actions);
+        if (actions.Count == 0)
+            throw new ArgumentException("At least one browser action evidence record is required.", nameof(actions));
+
+        var snapshot = actions.ToArray();
+        ValidateActions(snapshot);
+        var completedAt = snapshot.Max(static x => x.CompletedAt);
         return new DurableBrowserVerificationReceipt(
             CurrentVersion,
             completedAt,
-            actions,
-            ComputeCommitment(CurrentVersion, completedAt, actions));
+            snapshot,
+            ComputeCommitment(CurrentVersion, completedAt, snapshot));
     }
 
     public bool HasValidIntegrity()

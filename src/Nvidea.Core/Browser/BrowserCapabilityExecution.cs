@@ -155,6 +155,12 @@ public sealed class BrowserCapabilityExecutionService
                 toolResult.RequiresApproval ? toolResult.ApprovalScope : null);
         }
 
+        // This bit is evidence, never authority. CapabilityToolExecutor is the last-mile authority
+        // boundary: if a consequential invocation reaches Executed=true, it has already validated
+        // and consumed the exact ApprovalGrant. Deriving the historical fact here avoids trusting
+        // the mere presence of an approval object (which may be stale, mismatched or invalid).
+        var approvalGranted = effectiveDecision.RequiresApproval;
+
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -174,7 +180,8 @@ public sealed class BrowserCapabilityExecutionService
                     Verified: verification.Verified,
                     VerificationDetail: verification.Detail,
                     before.Url,
-                    after.Url),
+                    after.Url,
+                    ApprovalGranted: approvalGranted),
                 RequiresApproval: false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -195,7 +202,8 @@ public sealed class BrowserCapabilityExecutionService
                     VerificationDetail: PostExecutionDiagnostic,
                     before.Url,
                     before.Url,
-                    PostExecutionDiagnostic),
+                    PostExecutionDiagnostic,
+                    ApprovalGranted: approvalGranted),
                 RequiresApproval: false);
         }
     }

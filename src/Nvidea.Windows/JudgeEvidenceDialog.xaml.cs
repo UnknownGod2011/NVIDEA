@@ -1,4 +1,5 @@
 using System.Windows;
+using Nvidea.Core.Browser;
 using Nvidea.Core.Desktop;
 
 namespace Nvidea.Windows;
@@ -8,7 +9,7 @@ public partial class JudgeEvidenceDialog : Window
     private readonly Func<SessionEvidenceSnapshot> _snapshot;
     private readonly Action _resetSessionEvidence;
 
-    public JudgeEvidenceDialog(DesktopResearchReadiness readiness, Func<SessionEvidenceSnapshot> snapshot, Action resetSessionEvidence, DesktopDurableResearchReceipt? durableResearchReceipt = null)
+    public JudgeEvidenceDialog(DesktopResearchReadiness readiness, Func<SessionEvidenceSnapshot> snapshot, Action resetSessionEvidence, DesktopDurableResearchReceipt? durableResearchReceipt = null, DesktopBrowserVerificationPresentation? browserVerification = null)
     {
         ArgumentNullException.ThrowIfNull(readiness);
         _snapshot = snapshot ?? throw new ArgumentNullException(nameof(snapshot));
@@ -16,6 +17,7 @@ public partial class JudgeEvidenceDialog : Window
         InitializeComponent();
         ProviderReadinessText.Text = BuildReadinessSummary(readiness);
         DurableResearchReceiptText.Text = BuildDurableResearchSummary(durableResearchReceipt);
+        BrowserVerificationText.Text = BuildBrowserVerificationSummary(browserVerification);
         RefreshSessionEvidence();
     }
 
@@ -41,6 +43,20 @@ public partial class JudgeEvidenceDialog : Window
     {
         var presentation = DesktopResearchLineagePresentationProjector.Project(receipt);
         return string.Join("\n", presentation.RenderedFields);
+    }
+
+    internal static string BuildBrowserVerificationSummary(DesktopBrowserVerificationPresentation? presentation)
+    {
+        if (presentation is null)
+            return "NOT VERIFIED browser execution\nNo authoritative browser receipt projection is available for this evidence view.";
+
+        return string.Join("\n", new[]
+        {
+            presentation.Status,
+            presentation.ExecutionEvidence,
+            presentation.PermissionEvidence,
+            presentation.PostStateEvidence
+        });
     }
 
     private static string BuildSessionEvidenceSummary(SessionEvidenceSnapshot snapshot)

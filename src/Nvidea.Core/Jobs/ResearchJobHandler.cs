@@ -50,17 +50,12 @@ public sealed class ResearchJobHandler : IAgentJobHandler
 
     public string JobType => Type;
 
-    public async Task<JobStepResult> ExecuteStepAsync(
-        AgentJobRecord job,
-        CancellationToken cancellationToken = default)
+    public async Task<JobStepResult> ExecuteStepAsync(AgentJobRecord job, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(job);
         if (!string.Equals(job.Definition.JobType, Type, StringComparison.Ordinal))
             throw new InvalidOperationException($"ResearchJobHandler cannot execute job type '{job.Definition.JobType}'.");
-
-        var checkpoint = job.Checkpoint
-            ?? throw new InvalidOperationException("Research jobs require an initial request checkpoint.");
-
+        var checkpoint = job.Checkpoint ?? throw new InvalidOperationException("Research jobs require an initial request checkpoint.");
         return checkpoint.Step switch
         {
             RequestedStep => await PlanAsync(checkpoint.Payload, cancellationToken).ConfigureAwait(false),
@@ -74,10 +69,7 @@ public sealed class ResearchJobHandler : IAgentJobHandler
     public static AgentJobCheckpoint CreateInitialCheckpoint(string question)
     {
         ValidateQuestion(question);
-        return new AgentJobCheckpoint(
-            RequestedStep,
-            SerializeBounded(new RequestedCheckpoint(question.Trim())),
-            DateTimeOffset.UtcNow);
+        return new AgentJobCheckpoint(RequestedStep, SerializeBounded(new RequestedCheckpoint(question.Trim())), DateTimeOffset.UtcNow);
     }
 
     public static ResearchReport ReadCompletedReport(AgentJobRecord job)
@@ -89,8 +81,7 @@ public sealed class ResearchJobHandler : IAgentJobHandler
     public static DurableResearchReceipt ReadCompletedReceipt(AgentJobRecord job)
     {
         var completed = ReadCompletedCheckpoint(job);
-        return completed.Receipt
-            ?? throw new InvalidOperationException("Completed research checkpoint predates durable research receipts.");
+        return completed.Receipt ?? throw new InvalidOperationException("Completed research checkpoint predates durable research receipts.");
     }
 
     private static CompletedCheckpoint ReadCompletedCheckpoint(AgentJobRecord job)
@@ -107,11 +98,7 @@ public sealed class ResearchJobHandler : IAgentJobHandler
         ValidateQuestion(requested.Question);
         var plan = await _engine.PlanAsync(requested.Question, cancellationToken).ConfigureAwait(false);
         var lineage = new ResearchReceiptLineage(Fingerprint(plan), plan.Queries.Count, null, 0);
-
-        return new JobStepResult(
-            Completed: false,
-            CheckpointStep: PlannedStep,
-            CheckpointPayload: SerializeBounded(new PlannedCheckpoint(requested.Question, plan, lineage)));
+        return new JobStepResult(false, PlannedStep, SerializeBounded(new PlannedCheckpoint(requested.Question, plan, lineage)));
     }
 
     private async Task<JobStepResult> GatherAsync(string? payload, CancellationToken cancellationToken)
@@ -124,30 +111,32 @@ public sealed class ResearchJobHandler : IAgentJobHandler
             throw new InvalidOperationException("Research plan checkpoint receipt does not match its persisted plan.");
 
         var prepared = await _engine.GatherEvidenceAsync(planned.Question, plan, cancellationToken).ConfigureAwait(false);
-        var lineage = new ResearchReceiptLineage(
-            planFingerprint,
-            plan.Queries.Count,
-            FingerprintEvidence(prepared),
-            prepared.Batch.Sources.Count);
-
-        return new JobStepResult(
-            Completed: false,
-            CheckpointStep: EvidenceStep,
-            CheckpointPayload: SerializeBounded(new EvidenceCheckpoint(planned.Question, prepared, lineage)));
+        var evidenceFingerprint = FingerprintEvidenceBoundToPlan(planFingerprint, prepared);
+        var lineage = new ResearchReceiptLineage(planFingerprint, plan.Queries.Count, evidenceFingerprint, prepared.Batch.Sources.Count);
+        return new JobStepResult(false, EvidenceStep, SerializeBounded(new EvidenceCheckpoint(planned.Question, prepared, lineage)));
     }
 
     private async Task<JobStepResult> SynthesizeAsync(string? payload, CancellationToken cancellationToken)
     {
-        var evidenceCheckpoint = DeserializeBounded<EvidenceCheckpoint>(payload);
-        ValidateQuestion(evidenceCheckpoint.Question);
-        var prepared = evidenceCheckpoint.Prepared
-            ?? throw new InvalidOperationException("Research evidence checkpoint is missing prepared evidence.");
-        var evidenceFingerprint = FingerprintEvidence(prepared);
-        var lineage = evidenceCheckpoint.Lineage;
-        if (lineage is not null && (!FixedEquals(lineage.EvidenceSha256, evidenceFingerprint) || string.IsNullOrWhiteSpace(lineage.PlanSha256)))
-            throw new InvalidOperationException("Research evidence checkpoint receipt does not match its persisted evidence.");
+        var checkpoint = DeserializeBounded<EvidenceCheckpoint>(payload);
+        ValidateQuestion(checkpoint.Question);
+        var prepared = checkpoint.Prepared ?? throw new InvalidOperationException("Research evidence checkpoint is missing prepared evidence.");
+        var lineage = checkpoint.Lineage;
 
-        var report = await _engine.SynthesizeAsync(evidenceCheckpoint.Question, prepared, cancellationToken).ConfigureAwait(false);
+        string evidenceFingerprint;
+        if (lineage is null)
+        {
+            // Legacy evidence remains resumable, but cannot claim a plan-bound receipt.
+            evidenceFingerprint = Fingerprint(prepared);
+        }
+        else
+        {
+            evidenceFingerprint = FingerprintEvidenceBoundToPlan(lineage.PlanSha256, prepared);
+            if (!FixedEquals(lineage.EvidenceSha256, evidenceFingerprint))
+                throw new InvalidOperationException("Research evidence checkpoint receipt does not match its persisted plan/evidence binding.");
+        }
+
+        var report = await _engine.SynthesizeAsync(checkpoint.Question, prepared, cancellationToken).ConfigureAwait(false);
         var receipt = new DurableResearchReceipt(
             lineage?.PlanSha256 ?? "legacy-unavailable",
             evidenceFingerprint,
@@ -156,20 +145,13 @@ public sealed class ResearchJobHandler : IAgentJobHandler
             prepared.Batch.Sources.Count,
             report.UsedCitations.Count,
             report.UsedCitations.Count > 0);
-
-        return new JobStepResult(
-            Completed: true,
-            CheckpointStep: CompletedStep,
-            CheckpointPayload: SerializeBounded(new CompletedCheckpoint(report, receipt)));
+        return new JobStepResult(true, CompletedStep, SerializeBounded(new CompletedCheckpoint(report, receipt)));
     }
 
     private static string Fingerprint<T>(T value) => Sha256(JsonSerializer.Serialize(value, JsonOptions));
 
-    private static string FingerprintEvidence(ResearchPreparedEvidence prepared)
-    {
-        // Bind all persisted prepared evidence, including Tavily provenance/credits and local quality metadata.
-        return Fingerprint(prepared);
-    }
+    private static string FingerprintEvidenceBoundToPlan(string planSha256, ResearchPreparedEvidence prepared) =>
+        Sha256($"{planSha256}:{Fingerprint(prepared)}");
 
     private static string FingerprintSynthesis(ResearchReport report) => Sha256(report.AnswerMarkdown ?? string.Empty);
 
@@ -178,18 +160,14 @@ public sealed class ResearchJobHandler : IAgentJobHandler
 
     private static bool FixedEquals(string? left, string? right)
     {
-        if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right))
-            return false;
+        if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right)) return false;
         try
         {
             var leftBytes = Convert.FromHexString(left);
             var rightBytes = Convert.FromHexString(right);
             return leftBytes.Length == rightBytes.Length && CryptographicOperations.FixedTimeEquals(leftBytes, rightBytes);
         }
-        catch (FormatException)
-        {
-            return false;
-        }
+        catch (FormatException) { return false; }
     }
 
     private static string SerializeBounded<T>(T value)
@@ -202,13 +180,10 @@ public sealed class ResearchJobHandler : IAgentJobHandler
 
     private static T DeserializeBounded<T>(string? payload)
     {
-        if (string.IsNullOrWhiteSpace(payload))
-            throw new InvalidOperationException("Research checkpoint payload is missing.");
+        if (string.IsNullOrWhiteSpace(payload)) throw new InvalidOperationException("Research checkpoint payload is missing.");
         if (Encoding.UTF8.GetByteCount(payload) > MaxCheckpointUtf8Bytes)
             throw new InvalidOperationException($"Research checkpoint exceeds the {MaxCheckpointUtf8Bytes} byte durability limit.");
-
-        return JsonSerializer.Deserialize<T>(payload, JsonOptions)
-            ?? throw new InvalidOperationException("Research checkpoint payload is invalid.");
+        return JsonSerializer.Deserialize<T>(payload, JsonOptions) ?? throw new InvalidOperationException("Research checkpoint payload is invalid.");
     }
 
     private static void ValidateQuestion(string? question)
@@ -221,9 +196,5 @@ public sealed class ResearchJobHandler : IAgentJobHandler
     private sealed record PlannedCheckpoint(string Question, ResearchPlan? Plan, ResearchReceiptLineage? Lineage = null);
     private sealed record EvidenceCheckpoint(string Question, ResearchPreparedEvidence? Prepared, ResearchReceiptLineage? Lineage = null);
     private sealed record CompletedCheckpoint(ResearchReport? Report, DurableResearchReceipt? Receipt = null);
-    private sealed record ResearchReceiptLineage(
-        string PlanSha256,
-        int PlannedQueryCount,
-        string? EvidenceSha256,
-        int EvidenceSourceCount);
+    private sealed record ResearchReceiptLineage(string PlanSha256, int PlannedQueryCount, string? EvidenceSha256, int EvidenceSourceCount);
 }

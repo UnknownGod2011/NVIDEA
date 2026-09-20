@@ -42,8 +42,9 @@ public static class DesktopResearchEvidenceProjector
             .Where(url => !string.IsNullOrWhiteSpace(url))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Count();
-        var unknownFreshness = report.QualityBySourceId?.Values
-            .Count(quality => quality.FreshnessBasis == ResearchFreshnessBasis.Unknown) ?? 0;
+        // PublishedAt is provider evidence, not a guarantee of freshness. A missing timestamp is
+        // projected only as "freshness unknown"; it must never be interpreted as fresh or stale.
+        var unknownFreshness = sources.Count(source => source.PublishedAt is null);
 
         return new DesktopResearchEvidence(
             sources.Count,

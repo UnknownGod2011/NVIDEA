@@ -37,39 +37,45 @@ Added explicit `ApprovalGranted` action evidence and Core-owned `DesktopBrowserV
 ### 2026-09-20 — durable browser checkpoint bridge
 - Added `DurableBrowserVerificationReceipt.CreateFromEvidence`, allowing a committed receipt to be built from an already payload-free structural projection without reconstructing a raw browser receipt or any approval authority.
 - Extended the successful `BrowserActionJobHandler` terminal checkpoint with `durableEvidence`: action id/kind, risk/policy result, historical approval observation, driver success, post-state verification and timestamps.
-- The structural evidence is emitted only after driver success and post-state verification; failed and side-effect-ambiguous attempts throw before this checkpoint is produced.
-- Existing URL/verification-detail checkpoint fields remain for browser recovery/display compatibility; the new nested structural projection is the only material intended to cross into the protected judge receipt store.
-- Deliberately did not write the protected receipt from the handler: handler execution occurs before the orchestrator's authoritative Completed transition. Persisting there would create a crash window in which judge evidence could claim completion before durable job state did.
+- Structural evidence is emitted only after driver success and post-state verification; failed and side-effect-ambiguous attempts throw before this checkpoint is produced.
+
+### 2026-09-20 — authoritative evidence publication boundary
+- Added fail-closed clearing to `DurableBrowserVerificationReceiptStore`, so an older completed receipt can be removed before a new browser action is admitted instead of being misrepresented as evidence for a newer pending/failed run.
+- Added `DurableBrowserVerificationPublisher`, the narrow post-commit bridge from an orchestrator-returned `AgentJobRecord` to the protected receipt store.
+- Publication requires authoritative `Completed` state, exact `browser.action.verified` checkpoint, structural `durableEvidence`, job/action identity binding, allowed execution, driver success, verified post-state, and historical approval evidence whenever approval was required.
+- Legacy/reconciled checkpoints without structural evidence do not overwrite the store. Malformed, cross-job, failed, unverified or approval-inconsistent structural evidence fails closed before persistence.
+- Publisher also exposes only the existing payload-free `DesktopBrowserVerificationPresentation` on read.
 
 Files changed in latest run:
-- `src/Nvidea.Core/Browser/DurableBrowserVerificationReceipt.cs`
-- `src/Nvidea.Core/Jobs/BrowserActionJobHandler.cs`
+- `src/Nvidea.Core/Browser/DurableBrowserVerificationReceiptStore.cs`
+- `src/Nvidea.Core/Desktop/DurableBrowserVerificationPublisher.cs`
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md` completely and inspected recent commits plus the current Browser, Desktop, Jobs and Security implementation before changing code.
-- Traced `BrowserProductRuntime`, `BrowserHostRuntime`, `BrowserActionJobHandler`, `BrowserCapabilityExecutionService`, the durable receipt/store and CurrentUser DPAPI boundary.
-- Static control-flow review confirms structural terminal evidence is produced only after `DriverReportedSuccess=true` and `Verified=true`; failed/unverified execution exits by exception first.
-- `CreateFromEvidence` snapshots the input list and reuses the existing action validation + canonical commitment path, preventing callers from bypassing receipt invariants.
+- Re-read `progress.md` completely and inspected current BrowserHostRuntime, BrowserProductRuntime, BrowserActionJobHandler, durable receipt/store, local-state protection and repository tree before changing code.
+- Static review confirms the publisher cannot accept Pending/Running/WaitingForApproval/Failed/Cancelled records and binds structural evidence ActionId to the durable JobId.
+- Static review confirms stale-evidence clearing is a separate pre-admission operation and publication consumes only the payload-free nested projection, never URL/locator/typed/page/approval-token data.
 - Repository metadata was explicitly reverified immediately before every GitHub mutation; writable target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 - Connector environment cannot execute .NET 8 or Windows/PowerShell/Chromium, so compile/test/runtime PASS is not claimed.
 - No live/paid Nebius, Object Storage, Serverless, Tavily, browser or inference operation was triggered.
 
 ## Security / privacy / failure review
 - `ApprovalGranted`/`ApprovalObserved` remains historical evidence only; it contains no exact scope/token/reusable authority and is never accepted as authorization.
-- The handler does not persist the protected judge receipt itself, preserving the invariant that evidence publication must happen only after authoritative durable completion.
-- Failed, denied, cancelled and ambiguous executions cannot create the new structural terminal checkpoint through the normal handler path.
+- Old judge evidence must be cleared before a new action is admitted; clear failure must abort admission before browser side effects.
+- Post-commit publication must never be interpreted as browser-action failure: the durable job may already be Completed. The host wiring must therefore fail the evidence surface closed without encouraging replay of a completed side effect.
+- Failed, denied, cancelled and ambiguous executions cannot create the structural terminal checkpoint through the normal handler path.
 - Existing browser action verified checkpoints still retain URL/verification detail for goal recovery; the protected judge receipt remains a deliberately separate least-authority artifact.
 - Receipt SHA-256 is tamper evidence, not authenticity by itself; authenticity inherits the local protected-state boundary. On Windows production this is CurrentUser DPAPI with purpose-derived entropy.
 - Missing, plaintext, corrupt, wrong-protection-context, malformed JSON or integrity-invalid protected judge evidence fails closed and must remain NOT VERIFIED.
 
 ## Known blockers / risks
 - New Core changes require compile/runtime execution under .NET 8; accumulated Windows/Chromium suites remain pending executable-environment validation.
-- The authoritative post-commit handoff is not wired yet: after `RunNextStepAsync` returns a durably Completed `AgentJobRecord`, `BrowserHostRuntime` must extract only `durableEvidence`, create/write the protected receipt, and never overwrite the last valid receipt for non-Completed/legacy/ambiguous records.
-- `BrowserProductRuntime` still lacks a read-only latest durable browser presentation API, so WPF Judge Evidence correctly remains NOT VERIFIED rather than manufacturing evidence.
-- A deterministic production-path test must prove approved consequential execution yields `ApprovalObserved=true` in the structural checkpoint and that failed/cancelled/denied/stale/mismatched/ambiguous/partially verified runs cannot publish or overwrite a valid receipt.
+- `DurableBrowserVerificationPublisher` is not yet composed into `BrowserHostRuntime`; therefore production browser actions still do not publish the protected receipt and WPF correctly remains NOT VERIFIED.
+- Host wiring must call `BeginActionAsync` before durable action admission, then attempt publication only after `RunNextStepAsync` returns Completed. Publication failure after completion must not make callers replay a side effect.
+- `BrowserProductRuntime` still lacks a read-only latest durable browser presentation API.
+- Deterministic tests are still needed for publisher state gating, cross-job evidence rejection, stale-receipt clearing, successful approved publication, and publication-failure/no-replay semantics.
 - Cross-process coordination for the receipt file is not yet needed by the single Windows host, but should be revisited if a second local writer is introduced.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-Implement the authoritative post-commit handoff in `BrowserHostRuntime`: only after `RunNextStepAsync` returns a durably `Completed` record with valid `durableEvidence`, create and atomically write `DurableBrowserVerificationReceiptStore`; never publish from failed/cancelled/denied/ambiguous/legacy records. Then expose a read-only payload-free presentation through `BrowserProductRuntime` and feed it into WPF Judge Evidence, with deterministic overwrite/failure tests.
+Compose `DurableBrowserVerificationPublisher` into `BrowserHostRuntime` with CurrentUser DPAPI: clear stale evidence before new action admission; after `RunNextStepAsync` returns authoritative Completed, publish structural evidence without converting a post-side-effect publication failure into a replayable browser failure. Then expose `ReadPresentationAsync` through `BrowserProductRuntime`, feed it into WPF Judge Evidence, and add deterministic production-path tests.

@@ -23,37 +23,45 @@ Persisted embedding state is treated as untrusted; malformed vector/provenance s
 WPF cancellation is distinct from corruption/configuration failure. Exit cleanup is contained and idempotent. `StartupResourceLease` provides reverse-order, exactly-once best-effort cleanup until a complete composition root assumes ownership. Deterministic failure coverage exercises failures after memory, Tavily, cloud transfer and pre-release, including cleanup-failure and cancellation semantics.
 
 ### 2026-09-20 — desktop Tavily research evidence
-- Added `DesktopResearchEvidence` and `DesktopResearchEvidenceProjector` as a payload-free evidence boundary over completed research reports.
-- The Windows-facing `DesktopInvocationResult` can now project source count, validated citation count, unique planned-query count, unique-host diversity, unknown-publication-time count, warning count, Tavily provider credits, multi-query evidence, canonical-source uniqueness and machine-verifiable citation presence without exposing questions, answers, URLs, titles, snippets or provider payloads.
-- Added deterministic tests for multi-query/diverse-source/citation evidence, duplicate canonical-source detection, unknown freshness, and projection directly through the desktop invocation result.
+Added `DesktopResearchEvidence` as a payload-free evidence boundary over completed reports: source/citation/query/domain/freshness/warning/credit counts plus conservative multi-query, canonical-uniqueness and machine-citation signals.
+
+### 2026-09-20 — restart-stable research provenance receipt
+- Durable research checkpoints now carry a SHA-256 lineage from the Nemotron plan into Tavily prepared evidence and final synthesis.
+- The evidence commitment is domain-separated by the plan fingerprint (`SHA256(planSha256 + ':' + preparedEvidenceSha256)`), so changing either persisted plan lineage or prepared Tavily evidence fails closed before synthesis.
+- Completed jobs expose `DurableResearchReceipt`: plan/evidence/synthesis commitments plus planned-query, evidence-source and validated-citation counts. It contains no question, query, URL, title, snippet, evidence text or answer text.
+- Added `DesktopDurableResearchReceipt` projection for judge-facing Windows evidence, including multi-query-plan, machine-citation and restart-stable signals.
+- Legacy evidence checkpoints remain resumable but explicitly cannot claim a historical plan commitment (`legacy-unavailable`).
+- Added deterministic restart simulation proving synthesis resumes from the persisted evidence checkpoint without another provider call, payload markers do not appear in the receipt, and tampered evidence is rejected before Nemotron synthesis.
 
 Files changed in latest run:
-- `src/Nvidea.Core/Desktop/DesktopResearchEvidence.cs`
-- `tests/Nvidea.Core.Tests/DesktopResearchEvidenceTests.cs`
+- `src/Nvidea.Core/Jobs/ResearchJobHandler.cs`
+- `src/Nvidea.Core/Desktop/DesktopDurableResearchReceipt.cs`
+- `tests/Nvidea.Core.Tests/DurableResearchReceiptTests.cs`
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md` completely, inspected current research engine/Tavily contracts and Windows desktop invocation path, and reviewed recent commits before implementation.
-- Static review confirms the evidence projection is derived only from the completed `ResearchReport`; no network call, secret, query text, URL, title, snippet or answer is persisted/projected by the new type.
-- Tests deliberately use private marker strings and assert they do not appear in the projected evidence representation; duplicate canonical URLs fail the uniqueness signal rather than being presented as deduplicated proof.
-- `PublishedAt == null` is conservatively reported as freshness unknown; the projector does not claim that timestamped evidence is necessarily fresh or that unknown evidence is stale.
+- Re-read `progress.md` completely and inspected the durable research handler, research engine, Tavily contracts, current tree and recent commits before implementation.
+- Static review confirms the receipt is computed from the actual persisted plan/prepared-evidence/final-answer objects, not from demo constants or provider claims.
+- Evidence commitment binds the plan hash and full serialized prepared evidence (including source provenance, Tavily credit count and deterministic quality metadata). Synthesis commitment binds the final answer bytes.
+- Restart test constructs a new handler after evidence persistence and uses a provider that throws if called, pinning no-repeat Tavily semantics.
+- Tamper test changes persisted evidence while retaining its old lineage and requires rejection before any synthesis inference request.
 - Repository metadata was explicitly reverified immediately before every GitHub mutation; writable target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 - Connector environment cannot execute .NET 8 or Windows/PowerShell/Chromium, so compile/test/runtime PASS is not claimed.
 - No live/paid Nebius, Object Storage, Serverless, Tavily, browser, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
+- Research receipt fingerprints are one-way commitments, not authentication signatures. Their integrity inherits the protection/authority of the durable checkpoint store; they should be described to judges as restart-stable binding evidence, not third-party attestation.
+- Receipt projection deliberately excludes research payloads. Low-entropy payloads could theoretically be guessed against a bare hash, but the public receipt never exposes separate question/query hashes; plan/evidence commitments cover structured high-entropy objects and are intended for equality/integrity evidence, not secrecy by themselves.
 - Browser transport, credential authority rejection, consequential-action approvals, sensitive typing blocks, prompt-injection boundaries and emergency cancellation remain intact.
 - Memory recovery remains explicit, bounded, protection-context validated, fail closed and non-mutating during eligibility checks.
 - Startup/shutdown cleanup failures cannot replace authoritative startup/exit failures or be projected to UI.
-- Research evidence is deliberately payload-free and conservative: counts/signals are evidence of runtime structure, not proof that sources are true. Missing publication timestamps remain unknown rather than being promoted to freshness claims.
 
 ## Known blockers / risks
-- The new desktop research evidence tests still need compile/runtime execution under .NET 8; all accumulated Windows suites remain pending executable-environment validation.
-- Multi-query evidence currently proves that returned sources span multiple distinct query strings; a later end-to-end checkpoint receipt should bind this to the original Nemotron plan even when a planned query returns zero sources.
-- Canonical uniqueness is an explicit signal, not a substitute for semantic near-duplicate detection.
-- Resumable durable research state still needs a single judge-facing receipt that survives restart and binds plan -> gathered evidence -> synthesis without leaking payloads.
+- New durable-receipt code/tests still require compile/runtime execution under .NET 8; all accumulated Windows suites remain pending executable-environment validation.
+- `DesktopDurableResearchReceipt` is a Core projection ready for the judge surface, but the WPF Judge Evidence dialog does not yet render completed durable-research receipts.
+- Receipt commitments prove persisted-stage consistency, not truth of web sources and not cryptographic third-party attestation.
 - Real-Chromium fixtures and release/judge qualification scripts still need execution on Windows with .NET 8, PowerShell 7 and matching Playwright Chromium.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-Extend durable research checkpoints with a payload-free, restart-stable receipt binding the Nemotron plan fingerprint, Tavily evidence/canonical-source fingerprint, synthesis citation validation and resume state; surface that receipt through the desktop judge-evidence path so the <=3 minute demo can prove Tavily multi-query research and resumability rather than merely claim them.
+Wire completed `DesktopDurableResearchReceipt` values into the existing WPF Judge Evidence dialog/session evidence path with concise plan -> Tavily evidence -> cited synthesis labels, then add projection/UI-state tests that prove no research payload can cross that judge-facing boundary.

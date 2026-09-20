@@ -1,10 +1,10 @@
 <Window x:Class="Nvidea.Windows.JudgeEvidenceDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="NVIDEA · Live architecture evidence" Height="720" Width="720"
-        MinHeight="600" MinWidth="620" WindowStartupLocation="CenterOwner" ResizeMode="CanResizeWithGrip">
+        Title="NVIDEA · Live architecture evidence" Height="780" Width="720"
+        MinHeight="640" MinWidth="620" WindowStartupLocation="CenterOwner" ResizeMode="CanResizeWithGrip">
     <Grid Margin="18">
-        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <StackPanel>
             <TextBlock Text="Live architecture evidence" FontSize="22" FontWeight="SemiBold"/>
             <TextBlock Text="Runtime-derived proof for the hackathon demo — never a simulated success screen." Margin="0,3,0,12" Opacity="0.68"/>
@@ -23,14 +23,21 @@
                 <TextBlock Text="Derived from the completed durable checkpoint. Only structural counts and integrity state cross this boundary; questions, queries, URLs, titles, snippets, source text, answers and hashes are not rendered." Margin="0,5,0,0" FontSize="11" Opacity="0.58" TextWrapping="Wrap"/>
             </StackPanel>
         </Border>
-        <Border Grid.Row="3" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,0,0,12">
+        <Border Grid.Row="3" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,0,0,10">
+            <StackPanel>
+                <TextBlock Text="Browser execution verification" FontWeight="SemiBold"/>
+                <TextBlock x:Name="BrowserVerificationText" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                <TextBlock Text="This panel accepts only Core-projected receipt evidence. Missing evidence fails closed; URLs, locators, typed values, page text, verification details, errors and approval rationale are never rendered." Margin="0,5,0,0" FontSize="11" Opacity="0.58" TextWrapping="Wrap"/>
+            </StackPanel>
+        </Border>
+        <Border Grid.Row="4" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,0,0,12">
             <StackPanel>
                 <TextBlock Text="Verified this session" FontWeight="SemiBold"/>
                 <TextBlock x:Name="SessionEvidenceText" Margin="0,4,0,0" TextWrapping="Wrap"/>
                 <TextBlock Text="Milestones appear only after production success boundaries. This projection contains only a closed milestone kind and first-observed timestamp; prompts, memory contents, sources, URLs, provider IDs and model output are structurally excluded." Margin="0,5,0,0" FontSize="11" Opacity="0.58" TextWrapping="Wrap"/>
             </StackPanel>
         </Border>
-        <ScrollViewer Grid.Row="4" VerticalScrollBarVisibility="Auto">
+        <ScrollViewer Grid.Row="5" VerticalScrollBarVisibility="Auto">
             <StackPanel>
                 <TextBlock Text="What this build can prove" FontWeight="SemiBold" Margin="0,0,0,7"/>
                 <TextBlock Text="✓ Windows invocation: global Ctrl+Shift+Space capture with active-app/selection context and explicit clipboard disclosure." TextWrapping="Wrap" Margin="0,3"/>
@@ -44,7 +51,7 @@
                 </Border>
             </StackPanel>
         </ScrollViewer>
-        <Grid Grid.Row="5" Margin="0,12,0,0">
+        <Grid Grid.Row="6" Margin="0,12,0,0">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <Button x:Name="NewDemoSessionButton" Content="New demo session" Padding="12,5" HorizontalAlignment="Left" Click="NewDemoSessionButton_Click" ToolTip="Clear only ephemeral session milestones after confirmation. Durable memory, jobs, browser state and audit history are preserved."/>
             <Button Grid.Column="1" Content="Close" Width="90" Padding="12,5" HorizontalAlignment="Right" IsCancel="True"/>

@@ -13,11 +13,16 @@ public sealed class BrowserProductRuntime
 {
     private readonly BrowserHostRuntime _host;
     private readonly BrowserSessionEvidenceRecorder _sessionEvidence;
+    private readonly DurableBrowserVerificationPublisher? _verificationPublisher;
 
-    internal BrowserProductRuntime(BrowserHostRuntime host, SessionEvidenceLedger? sessionEvidence = null)
+    internal BrowserProductRuntime(
+        BrowserHostRuntime host,
+        SessionEvidenceLedger? sessionEvidence = null,
+        DurableBrowserVerificationPublisher? verificationPublisher = null)
     {
         _host = host ?? throw new ArgumentNullException(nameof(host));
         _sessionEvidence = new BrowserSessionEvidenceRecorder(sessionEvidence ?? SessionEvidenceLedger.ProcessLocal);
+        _verificationPublisher = verificationPublisher;
     }
 
     public async Task<BrowserJobOutcome> StartActionAsync(
@@ -51,6 +56,17 @@ public sealed class BrowserProductRuntime
         var outcome = await _host.CancelAsync(jobId, cancellationToken).ConfigureAwait(false);
         return BrowserProductOutcomeTrust.Project(outcome);
     }
+
+    /// <summary>
+    /// Returns only the Core-owned, payload-free durable browser verification projection suitable for
+    /// judge-facing UI. Until the trusted host composes a publisher this fails closed rather than
+    /// deriving a green state from live milestones, provider readiness, or raw browser outcomes.
+    /// </summary>
+    public Task<DesktopBrowserVerificationPresentation> ReadVerificationPresentationAsync(
+        CancellationToken cancellationToken = default) =>
+        _verificationPublisher?.ReadPresentationAsync(cancellationToken)
+        ?? Task.FromResult(DesktopBrowserVerificationProjector.NotVerifiedDurable(
+            "Durable browser verification evidence is not connected to this runtime."));
 
     public Task<IReadOnlyList<BrowserDownloadRecord>> ListDownloadsAsync(
         CancellationToken cancellationToken = default) =>
@@ -92,6 +108,7 @@ public sealed class BrowserProductRuntime
             .ConfigureAwait(false);
         // Discard is an irreversible filesystem delete. Evidence is downstream of successful
         // exact-scope authorization and deletion, never merely downstream of showing a prompt.
+        // Rejected scope, cancellation, validation failure, and failed deletion all throw before here.
         _sessionEvidence.ObserveAcceptedConsequentialApproval();
         return receipt;
     }

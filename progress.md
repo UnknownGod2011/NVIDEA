@@ -10,70 +10,54 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Judge evidence surface projects real provider readiness plus payload-free, production-observed session milestones.
 
 ## Persistent history
-### 2026-09-06 to 2026-09-17
-Implemented Windows shell, Nebius/Nemotron inference, layered memory, Tavily research, permission/audit engine, durable jobs, Playwright browser execution, DPAPI state protection, encrypted remote execution, local voice, deployment/evaluator tooling, crash-consistency hardening, judge-visible runtime evidence, deterministic demo/runbook, submission validation, independent receipts and live-demo readiness tooling.
+### 2026-09-06 to 2026-09-17 — product foundation
+Implemented the Windows shell, Nebius/Nemotron inference, layered memory, Tavily research, permission/audit engine, durable jobs, Playwright browser execution, DPAPI state protection, encrypted remote execution, local voice, deployment/evaluator tooling, crash-consistency hardening, judge-visible runtime evidence, deterministic demo/runbook, submission validation, independent receipts and live-demo readiness tooling.
 
 ### 2026-09-17 to 2026-09-19 — browser safety and qualification
 Hardened browser transport to HTTPS or loopback HTTP and WSS or loopback WS; rejected embedded URI credentials; added request/WebSocket routing, Service Worker blocking, post-action location enforcement, download quarantine, credential/prompt-injection/consequential-action gates, authenticated-state restart coverage, redirect/WebSocket no-dispatch fixtures, emergency-stop coverage and canonical page admission. Added real-Chromium qualification, TRX validation, SHA-256 evidence receipts, independent verification, clean exact-HEAD provenance, release gate and judge-recording gate. Producer rechecks HEAD and tracked/untracked cleanliness after Chromium so source drift invalidates evidence.
 
 ### 2026-09-19 to 2026-09-20 — memory embedding and persistence integrity
-- Persisted embedding state is untrusted: malformed vector/provenance pairs, empty/dimensionally inconsistent vectors, missing provider/model identity and NaN/Infinity are stripped while user-authored memory survives.
-- Semantic comparison repeats finite/provenance checks; lexical/recency/importance retrieval remains available after semantic corruption.
-- Migration treats malformed semantic state as stale, remains local-provider-only, preserves Sensitive/Restricted opt-ins, revalidates candidates, validates provider vectors/provenance and skips concurrent edits.
-- Adversarial tests cover corrupt semantic state, valid preservation, lexical fallback, sensitivity policy, invalid provider vectors and multi-batch provider failure/cancellation without partial active-batch application.
-- JSON persistence serializes access and uses same-directory write-through temp replacement. Tests cover replacement, malformed/truncated fail-closed reads, cancellation preservation and non-interleaved concurrent snapshots.
-- Added one bounded `.bak` last-known-good generation. Only demonstrably readable current state can become backup; corrupt current bytes never displace known-good backup. Normal reads never silently fall back.
-- `RecoverLastKnownGoodAsync` requires explicit intent, validates/decrypts backup under the same protection context before replacement, then restores exact persisted bytes. Tests cover explicit-only fallback, previous-generation restoration, missing backup, corrupt-primary backup preservation, temp cleanup, protected-envelope confidentiality and wrong-context fail-closed behavior.
+Persisted embedding state is treated as untrusted: malformed vector/provenance pairs, empty/dimensionally inconsistent vectors, missing provider/model identity and NaN/Infinity are stripped while user-authored memory survives. Semantic comparison repeats finite/provenance checks; lexical/recency/importance retrieval remains available after semantic corruption. Migration remains local-provider-only, preserves Sensitive/Restricted opt-ins, revalidates candidates, validates provider vectors/provenance, skips concurrent edits, and has adversarial invalid-vector/failure/cancellation coverage.
 
-### 2026-09-20 — explicit Windows memory recovery UX
-- Added a startup recovery surface in `src/Nvidea.Windows/App.xaml.cs` for the bounded last-known-good memory generation.
-- Recovery is never automatic. The prompt appears only after startup reports `InvalidDataException`, the default production `memory.json` and `.bak` both exist, and the current personal-memory primary itself independently fails validation. This prevents unrelated protected-subsystem failures from opportunistically triggering memory rollback.
-- The dialog clearly states that recovery rolls back exactly one generation, recent memory changes may be lost, no memory content is displayed, no cloud provider is contacted, and Cancel leaves files unchanged. Cancel is the default choice.
-- On explicit OK, recovery uses the production `JsonFileMemoryStore` and therefore the same Windows DPAPI/protected-envelope validation and atomic replacement path. Failed backup validation is credential-safe/payload-free and does not intentionally replace the primary.
-- After successful recovery the app closes and requires a clean restart instead of continuing with partially initialized provider/runtime state.
+JSON memory persistence serializes access and uses same-directory write-through replacement. Added one bounded `.bak` last-known-good generation; only demonstrably readable current state can become backup and corrupt current bytes never displace known-good backup. Normal reads never silently fall back. Explicit recovery validates/decrypts the backup under the same protection context before replacement. Coverage includes malformed/truncated state, cancellation, concurrent snapshots, previous-generation restoration, protected-envelope confidentiality and wrong-context fail-closed behavior.
 
-### 2026-09-20 — testable, non-mutating recovery eligibility
-- Extracted startup rollback eligibility into `MemoryRecoveryAvailabilityProbe`, used by the WPF host. It authorizes offering recovery only when both generations exist and the primary specifically fails memory validation with `InvalidDataException`; missing files, path/IO/permission failures and a healthy primary fail closed.
-- Added `JsonFileMemoryStore.ValidatePrimaryAsync`, a deliberately non-mutating validation path. Unlike normal `ReadAllAsync`, it cannot migrate legacy plaintext, rotate the backup or rewrite durable state merely because startup is deciding whether to show a recovery dialog.
-- Cancellation propagates instead of being converted into authorization or an ordinary negative result.
-- Added `MemoryRecoveryAvailabilityProbeTests` covering corrupt-primary eligibility, healthy-primary rejection, missing-generation rejection, cancellation, invalid paths, byte-for-byte preservation of both primary and backup during eligibility checks, and absence of temp-file residue.
+### 2026-09-20 — explicit, fail-closed Windows memory recovery
+Added startup recovery UX that is never automatic and defaults to Cancel. Recovery is offered only when both memory generations exist and the memory primary itself independently fails validation; unrelated startup failures cannot authorize rollback. Added non-mutating `ValidatePrimaryAsync` plus `MemoryRecoveryAvailabilityProbe`, so merely checking eligibility cannot migrate/rotate durable memory. Successful recovery requires a clean restart. Startup and recovery cancellation are handled separately from corruption/configuration failure and never trigger rollback or misleading provider diagnostics.
 
-### 2026-09-20 — startup/recovery cancellation routing
-- Audited the WPF startup exception routing after making recovery eligibility cancellation-aware. Found that cancellation raised while already inside the `InvalidDataException` catch could escape the `async void` startup handler because sibling catches do not intercept exceptions thrown from another catch block.
-- Added explicit `OperationCanceledException` handling for both initial composition-root startup and the recovery-eligibility/recovery path. Cancellation now shuts down cleanly and never falls through to the generic configuration/provider failure text or becomes evidence authorizing memory rollback.
-- `TryRecoverMemoryWithExplicitConsentAsync` now preserves cancellation semantics instead of swallowing cancellation in its broad recovery-failure catch. Ordinary recovery validation failures remain credential-safe and payload-free.
-- This is a control-flow/failure-semantics hardening change only; no recovery authorization rule, memory content, provider configuration or browser policy was weakened.
+### 2026-09-20 — shutdown disposal hardening
+- Audited `App.OnExit` and `NvideaCompositionRoot.DisposeAsync` after startup/recovery cancellation hardening.
+- Found that WPF synchronously called `DisposeAsync().GetResult()` without a failure boundary. Any cleanup exception could escape `OnExit`, skip `base.OnExit`, and turn an otherwise safe normal/cancelled shutdown into an unhandled teardown failure.
+- `App.OnExit` now detaches `_root` before disposal so re-entrant/duplicate exit paths cannot dispose the same authority graph twice.
+- Composition-root disposal is wrapped in a last-resort payload-free failure boundary. Cleanup exceptions are not displayed/logged with provider/path details, cleanup is not retried against a partially disposed graph, and `base.OnExit(e)` is guaranteed through `finally`.
+- This does not weaken browser, memory, permission, provider, recovery, or cloud policy. It only makes process teardown deterministic when resource cleanup itself fails.
 
 Files changed in latest run:
 - `src/Nvidea.Windows/App.xaml.cs`
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md` completely and inspected the current WPF startup/recovery exception flow before implementation.
-- Static control-flow review confirms `OperationCanceledException` from initial startup is handled before `InvalidDataException`, and cancellation thrown from the independent recovery probe is handled inside the `InvalidDataException` branch rather than escaping the `async void` handler.
+- Re-read `progress.md` completely, inspected current recent commits, WPF startup/exit flow, and `NvideaCompositionRoot.DisposeAsync` before implementation.
+- Static control-flow review confirms `_root` is cleared before disposal, duplicate exit cannot reuse it, cleanup exceptions cannot bypass `base.OnExit`, and no exception detail is projected to UI.
 - Repository metadata was explicitly reverified immediately before every GitHub mutation; writable target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 - Connector environment cannot execute .NET 8 or Windows/PowerShell/Chromium, so compile/test/runtime PASS is not claimed.
 - No live/paid Nebius, Object Storage, Serverless, Tavily, authenticated browser, Ollama or inference operation was triggered.
 
 ## Security / privacy / failure review
 - Browser transport, credential-bearing authority rejection, consequential-action approvals, sensitive autonomous-typing blocks, observation suppression, quarantine, prompt-injection boundaries and emergency cancellation remain intact.
-- Browser validation remains fail closed and the release/judge trust chain remains unchanged.
-- Memory recovery is explicit, one-generation bounded and protection-context validated. The backup contains the same protected at-rest representation as primary; no plaintext recovery copy is created.
-- Recovery eligibility is fail closed and non-mutating. A healthy memory primary cannot authorize rollback for an unrelated startup `InvalidDataException`, and merely checking eligibility cannot rotate/migrate persisted memory.
-- Startup/recovery cancellation is now distinct from corruption/configuration failure: it neither offers rollback nor emits misleading provider diagnostics.
-- The recovery UI defaults to Cancel. Successful recovery requires restart, avoiding reuse of partially initialized services.
+- Memory recovery remains explicit, one-generation bounded, protection-context validated, fail closed and non-mutating during eligibility checks. Startup/recovery cancellation remains distinct from corruption/configuration failure.
+- Shutdown cleanup failures are now credential-safe/payload-free and cannot prevent WPF's base exit path. Root authority is detached before cleanup to prevent duplicate disposal attempts.
 - Migration remains local-only; Sensitive/Restricted opt-ins remain explicit. Provider failure/cancellation cannot partially apply an unvalidated migration batch.
 
 ## Known blockers / risks
 - Real-Chromium fixtures still need execution on Windows with .NET 8 and matching Playwright Chromium; static connector work is not an executable PASS.
 - Verifier regression harness, release qualification wrapper, release gate, judge-recording wrapper and integrated readiness path each need local PowerShell 7 execution before PASS can be claimed.
-- Persisted-memory, migration, JSON-store/recovery/probe tests and the WPF recovery/cancellation paths still need compile/runtime execution under .NET 8 on Windows.
+- Persisted-memory, migration, JSON-store/recovery/probe tests and the WPF recovery/cancellation/shutdown paths still need compile/runtime execution under .NET 8 on Windows.
+- `NvideaCompositionRoot.CreateFromEnvironmentAsync` still constructs several disposable resources before returning the root. If startup fails after those allocations but before return, the WPF host never receives an owner to dispose. This partial-construction cleanup path needs explicit factory-level ownership hardening.
 - `File.Move(..., overwrite: true)` is relied upon as the final same-volume replacement step; crash/power-loss durability semantics depend on host filesystem/OS and need Windows validation.
 - Recovery is intentionally one snapshot deep, not a journal/database/user backup. A filesystem failure affecting both sibling files remains unrecoverable here.
-- Production recovery assumes the normal default Windows state directory used by `CreateFromEnvironmentAsync()`; test-only/custom state-directory startup is not exposed by the WPF entry point.
 - SHA-256 browser receipts are integrity bindings, not signatures; freshness depends on producer host clock.
 - Blocking Service Workers can affect sites whose auth/product flows depend on workers; judge-path compatibility still needs validation without weakening policy.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-Execute `MemoryRecoveryAvailabilityProbeTests`, `JsonFileMemoryStoreTests`, `MemoryEmbeddingMigrationTests`, `PersistedMemoryEmbeddingIntegrityTests`, build the WPF host, and exercise startup cancellation plus the explicit recovery prompt on Windows/.NET 8. Verify cancellation never offers rollback or generic provider diagnostics, Cancel remains the default and leaves both files byte-identical, wrong DPAPI context cannot restore, successful recovery requires restart, and recovered memory initializes normally. If connector-only execution remains unavailable, audit `OnExit`/partial composition-root disposal so failed or cancelled startup cannot synchronously deadlock shutdown or leak partially initialized resources. Keep the clean Windows checkout as the required path for browser release qualification and mandatory judge-recording gate.
+Harden `NvideaCompositionRoot.CreateFromEnvironmentAsync` partial-construction ownership. Ensure Nebius/Tavily HTTP clients, memory store/provider/service, Object Storage/serverless resources and any successfully created runtime are disposed exactly once if initialization, memory load, Tavily setup, cloud preflight, or final composition throws before a root is returned. Add focused fault-injection/API-surface coverage where feasible without live providers. Then execute the accumulated memory/startup/shutdown suites on Windows/.NET 8 when an executable environment is available. Keep the clean Windows checkout as the required path for browser release qualification and the mandatory judge-recording gate.

@@ -64,25 +64,8 @@ public partial class App : Application
             return false;
 
         var memoryPath = Path.Combine(localAppData, "NVIDEA", "memory.json");
-        if (!File.Exists(memoryPath) || !File.Exists($"{memoryPath}.bak"))
+        if (!await MemoryRecoveryAvailabilityProbe.IsRecoveryOfferAllowedAsync(memoryPath).ConfigureAwait(true))
             return false;
-
-        using var store = new JsonFileMemoryStore(memoryPath);
-        try
-        {
-            // The startup InvalidDataException may have originated from another protected subsystem.
-            // Offer memory rollback only when the memory primary independently fails its own validation.
-            _ = await store.ReadAllAsync().ConfigureAwait(true);
-            return false;
-        }
-        catch (InvalidDataException)
-        {
-            // Expected prerequisite for presenting the explicit one-generation recovery choice.
-        }
-        catch
-        {
-            return false;
-        }
 
         var choice = MessageBox.Show(
             "NVIDEA verified that the current personal-memory file cannot be opened safely, and a previous generation is available.\n\n" +
@@ -96,6 +79,7 @@ public partial class App : Application
         if (choice != MessageBoxResult.OK)
             return false;
 
+        using var store = new JsonFileMemoryStore(memoryPath);
         try
         {
             _ = await store.RecoverLastKnownGoodAsync().ConfigureAwait(true);

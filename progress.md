@@ -34,18 +34,21 @@ Added stale-evidence clearing, `DurableBrowserVerificationPublisher`, adversaria
 ### 2026-09-21 — shared browser verification composition root
 Added `BrowserVerificationRuntime`, a single-owner composition object that creates the production receipt store with Windows CurrentUser DPAPI, owns one shared publisher plus publication boundary, and exposes only the payload-free presentation read path. This prevents host publication and product/judge reads from silently drifting onto different receipt files/protectors/publisher instances. Added deterministic tests for initial NOT VERIFIED state and stale-evidence clearing through the shared boundary.
 
+### 2026-09-21 — structural action lifecycle ordering
+Added `BrowserVerificationActionLifecycle`, a narrow host-facing boundary that makes evidence ordering structural: stale evidence is cleared before the durable create delegate is invoked, and publication observes only the authoritative record returned by the durable run-next-step delegate. Publication failure remains observational and cannot replace/downgrade a Completed job into a replayable action failure.
+
 ## Latest run
 Files changed:
-- `src/Nvidea.Core/Desktop/BrowserVerificationRuntime.cs`
-- `tests/Nvidea.Core.Tests/BrowserVerificationRuntimeTests.cs`
+- `src/Nvidea.Core/Desktop/BrowserVerificationActionLifecycle.cs`
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md` completely and inspected the current default-branch tree, `BrowserHostRuntime`, `BrowserProductRuntime`, `BrowserVerificationPublicationBoundary`, publisher/store and Windows DPAPI implementation before changing code.
-- Added the missing shared production composition object rather than creating independent publisher instances in host and product layers.
-- Production factory uses the existing `WindowsDpapiLocalStateProtector` and a dedicated `browser-verification-receipt.json.protected` file beneath the already single-owner browser state directory.
-- Test/composition seam still routes publication and reads through one publisher instance; deterministic tests cover fail-closed initial state and stale receipt removal before admission.
+- Re-read `progress.md` completely and inspected current commits/tree, `BrowserHostRuntime`, `BrowserVerificationRuntime`, and `BrowserVerificationPublicationBoundary` before implementation.
+- Added a host-facing lifecycle primitive rather than duplicating ordering logic at multiple browser entry points.
+- `AdmitAsync` clears the previous protected judge receipt before invoking durable creation; clear failure therefore occurs before the new action is admitted.
+- `AdvanceAsync` first receives the orchestrator-returned authoritative `AgentJobRecord`, then performs observational publication and returns a result that preserves that exact authoritative record.
 - Repository metadata was explicitly reverified immediately before every GitHub mutation; writable target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
+- A mistaken intermediate contents update was immediately detected before further work and the branch was restored exactly to the prior known-good `e702e626adcd4ccd295d5f492165437d44dfa2ba` state before the real changes were applied; no broken placeholder remains on `main`.
 - Connector environment cannot execute .NET 8 or Windows/PowerShell/Chromium, so compile/test/runtime PASS is not claimed.
 - No live/paid Nebius, Object Storage, Serverless, Tavily, browser or inference operation was triggered.
 
@@ -57,16 +60,16 @@ Validation/evidence:
 - Existing verified action checkpoints retain URL/verification detail for goal recovery; protected judge receipts are a separate least-authority artifact.
 - Receipt SHA-256 is tamper evidence, not authenticity by itself; authenticity inherits protected local state. Windows production uses CurrentUser DPAPI with purpose-derived entropy.
 - Missing, plaintext, corrupt, wrong-context, malformed or integrity-invalid protected judge evidence remains NOT VERIFIED.
-- Shared composition now makes it structurally harder for publication and presentation to use different stores or protection contexts.
+- Shared composition plus the new lifecycle boundary makes it structurally harder for host call sites to reverse clear/create or completion/publication ordering.
 
 ## Known blockers / risks
 - New Core changes require executable .NET 8 validation; accumulated Windows/Chromium suites remain pending environment validation.
-- `BrowserVerificationRuntime` is not yet injected into `BrowserHostRuntime`; production browser actions therefore still do not publish the protected receipt.
-- Host wiring must call `Publication.BeginActionAsync` before durable `CreateAsync` admits a new action and `Publication.ObserveCommittedAsync` only on the orchestrator-returned authoritative record.
+- `BrowserVerificationRuntime` and `BrowserVerificationActionLifecycle` are not yet injected into `BrowserHostRuntime`; production browser actions therefore still do not publish the protected receipt.
+- Host wiring should use one lifecycle instance around durable `_jobs.CreateAsync` and every `_jobs.RunNextStepAsync` path rather than calling publication primitives independently.
 - `BrowserProductRuntime` must receive the exact publisher/read path owned by the same `BrowserVerificationRuntime`; WPF Judge Evidence still needs to consume that presentation.
 - A production-host integration test is still needed after composition to prove clear-before-admission and completed-side-effect/no-replay behavior end to end.
 - Cross-process coordination for the receipt file is not needed by the single Windows host today, but must be revisited if a second local writer is introduced.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-Inject one `BrowserVerificationRuntime.CreateWindows(fullStateDirectory)` instance into `BrowserHostRuntime`: call `Publication.BeginActionAsync` before durable action admission; run `Publication.ObserveCommittedAsync` after every `RunNextStepAsync` path that can return Completed while preserving the authoritative Completed outcome on evidence failure. Pass the same runtime/publisher read path into `BrowserProductRuntime`, feed it into WPF Judge Evidence, and add production-host integration coverage.
+Inject one `BrowserVerificationRuntime.CreateWindows(fullStateDirectory)` plus one `BrowserVerificationActionLifecycle` into `BrowserHostRuntime`, routing durable `_jobs.CreateAsync` through `AdmitAsync` and every `_jobs.RunNextStepAsync` path through `AdvanceAsync`. Then pass the same runtime read path into `BrowserProductRuntime`/WPF Judge Evidence and add production-host integration coverage proving stale-clear ordering and completed-side-effect/no-replay behavior.

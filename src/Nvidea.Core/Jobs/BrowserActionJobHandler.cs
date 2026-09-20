@@ -44,13 +44,7 @@ public sealed class BrowserActionJobHandler : IAgentJobHandler
         if (!string.Equals(job.Definition.JobType, Type, StringComparison.Ordinal))
             throw new InvalidOperationException($"BrowserActionJobHandler cannot execute job type '{job.Definition.JobType}'.");
 
-        // Execution accepts only the explicitly versioned typed-verification contract.
-        // Unversioned legacy checkpoints must pass through BrowserActionCheckpointMigrationService
-        // before they can reach an execution boundary.
         var action = BrowserActionCheckpointCodec.DeserializeCurrent(job.Checkpoint?.Payload);
-
-        // Use the job id as the stable capability action id. It is descriptive audit
-        // scope only, not authorization, and stays constant across approval resume.
         var firstAttempt = await _execution
             .ExecuteAsync(action, approval: null, stableActionId: job.JobId, cancellationToken)
             .ConfigureAwait(false);
@@ -78,8 +72,6 @@ public sealed class BrowserActionJobHandler : IAgentJobHandler
 
             if (approvedAttempt.RequiresApproval)
             {
-                // Fail closed if the exact policy scope changed between preflight and
-                // execution. Never reuse or translate approval to a new scope.
                 return new JobStepResult(
                     Completed: false,
                     RequiresApproval: true,
@@ -119,13 +111,25 @@ public sealed class BrowserActionJobHandler : IAgentJobHandler
 
         if (!receipt.Verified)
         {
-            // The driver says the side effect was issued, but fresh observation did not prove
-            // the intended postcondition. Retrying can duplicate submits/sends/uploads/etc.
-            // Signal ambiguity explicitly so the orchestrator leaves the durable Running
-            // checkpoint available for recovery instead of entering automatic retry.
             throw new AmbiguousJobExecutionException(
                 "Browser action may have executed but its post-action state was not verified.");
         }
+
+        // Keep the existing recovery/display fields, but also commit the minimum structural facts
+        // needed to derive a non-authorizing durable judge receipt *after* the orchestrator has
+        // durably transitioned this job to Completed. Approval scope/token and typed values are
+        // intentionally absent from this projection.
+        var evidence = new DurableBrowserActionEvidence(
+            receipt.ActionId,
+            receipt.Action.Kind,
+            receipt.Decision.Risk,
+            receipt.Decision.Allowed,
+            receipt.Decision.RequiresApproval,
+            receipt.ApprovalGranted,
+            receipt.DriverReportedSuccess,
+            receipt.Verified,
+            receipt.StartedAt.ToUniversalTime(),
+            receipt.CompletedAt.ToUniversalTime());
 
         return new JobStepResult(
             Completed: true,
@@ -137,7 +141,8 @@ public sealed class BrowserActionJobHandler : IAgentJobHandler
                 receipt.UrlBefore,
                 receipt.UrlAfter,
                 receipt.VerificationDetail,
-                receipt.CompletedAt
+                receipt.CompletedAt,
+                durableEvidence = evidence
             }, JsonOptions));
     }
 }

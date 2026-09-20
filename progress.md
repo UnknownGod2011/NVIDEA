@@ -7,7 +7,7 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - .NET 8 Core + WPF Windows host + deployable remote worker.
 - NVIDIA Nemotron through Nebius Token Factory; layered privacy-aware memory; Tavily research; safe Playwright browser automation; capability permissions/audit.
 - Encrypted Nebius remote research with atomic dispatch trust root, lifecycle/cancellation reconciliation, exact-once result ingestion and Object Storage/Serverless worker transport.
-- Judge evidence surface projects real provider readiness, payload-free durable research lineage, and production-observed session milestones.
+- Judge evidence surface projects real provider readiness, payload-free durable research lineage, browser-verification state, and production-observed session milestones.
 
 ## Persistent history
 ### 2026-09-06 to 2026-09-17 — product foundation
@@ -30,40 +30,45 @@ Added `ResearchProductRuntime.ReadCompletedReceiptAsync`; WPF Judge Evidence re-
 
 ### 2026-09-20 — browser judge-verification boundary
 - Added explicit `ApprovalGranted` evidence to `BrowserActionReceipt`; the executor records it only after the approval gate returns true. Existing/legacy receipts default false, so they cannot retroactively claim approval.
-- Added Core-owned `DesktopBrowserVerificationPresentation` / projector. Judge/demo surfaces can now consume fixed payload-free browser evidence without receiving URLs, locators, typed values, page text, verification details, errors or rationale.
+- Added Core-owned `DesktopBrowserVerificationPresentation` / projector. Judge/demo surfaces can consume fixed payload-free browser evidence without receiving URLs, locators, typed values, page text, verification details, errors or rationale.
 - Projection fails closed for empty evidence, invalid action IDs/timestamps, disallowed or blocked decisions, driver failure, unverified post-state, and any approval-required action lacking explicit approval evidence.
 - Added deterministic tests for verified approved actions, approval bypass, unverified/blocked actions, empty evidence, and private-marker/URL non-disclosure.
 
+### 2026-09-20 — browser evidence UI fail-closed integration
+- WPF Judge Evidence now has a dedicated Browser execution verification panel and accepts only the Core-owned `DesktopBrowserVerificationPresentation` projection.
+- Missing authoritative browser evidence renders explicit `NOT VERIFIED browser execution`; the UI never infers verification from session milestones or capability readiness.
+- Rendering is limited to the Core projection's fixed status/execution/permission/post-state fields. URLs, locators, typed values, page text, verification details, raw errors and approval rationale remain outside the WPF boundary.
+- The dialog API is backwards-compatible via an optional browser projection while the authoritative durable receipt reader is implemented next.
+
 Files changed in latest run:
-- `src/Nvidea.Core/Browser/BrowserContracts.cs`
-- `src/Nvidea.Core/Browser/BrowserAgentExecutor.cs`
-- `src/Nvidea.Core/Browser/DesktopBrowserVerificationPresentation.cs`
-- `tests/Nvidea.Core.Tests/DesktopBrowserVerificationPresentationTests.cs`
+- `src/Nvidea.Windows/JudgeEvidenceDialog.xaml`
+- `src/Nvidea.Windows/JudgeEvidenceDialog.xaml.cs`
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md` completely and inspected browser contracts/executor and existing browser test inventory before implementation.
-- Approval evidence is now an explicit receipt fact rather than inferred from `RequiresApproval && success`; legacy/default receipts therefore fail closed for consequential actions.
-- Presentation accepts only receipts and emits fixed structural text/counts; no browser payload fields are copied into the presentation.
-- Tests deliberately place a private marker in a typed value/rationale and private URL state in the receipt and require neither to render.
+- Re-read `progress.md` completely and inspected current WPF Judge Evidence, `DesktopBrowserVerificationPresentation`, browser product runtime, durable browser-goal store and recent commits before implementation.
+- The new panel defaults to a closed negative state; no existing session milestone can accidentally turn it green.
+- WPF receives no raw `BrowserActionReceipt`, preventing the judge surface from accessing URL/value/site-controlled payload fields.
 - Repository metadata was explicitly reverified immediately before every GitHub mutation; writable target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 - Connector environment cannot execute .NET 8 or Windows/PowerShell/Chromium, so compile/test/runtime PASS is not claimed.
 - No live/paid Nebius, Object Storage, Serverless, Tavily, browser or inference operation was triggered.
 
 ## Security / privacy / failure review
 - Browser approval is positive evidence only when the approval gate actually returned true. Denial, unavailable approval and legacy receipts remain false.
-- Browser judge projection is deliberately payload-free and cannot leak typed secrets, page content, URLs or raw diagnostics through its public fields.
-- The projection proves the local guarded execution/verification path represented by the supplied receipts; it is not third-party attestation and does not prove website truth.
+- Browser judge projection and WPF rendering are deliberately payload-free and cannot leak typed secrets, page content, URLs or raw diagnostics through their public fields.
+- Missing browser evidence is visibly NOT VERIFIED; readiness/session milestones are not substitutes for authoritative action receipts.
+- The projection proves the local guarded execution/verification path represented by supplied receipts; it is not third-party attestation and does not prove website truth.
 - Durable research receipt fingerprints are one-way commitments, not authentication signatures; integrity inherits the protected durable store.
 - Browser transport, credential authority rejection, consequential-action approvals, sensitive typing blocks, prompt-injection boundaries and emergency cancellation remain intact.
 - Memory recovery remains explicit, bounded, protection-context validated, fail closed and non-mutating during eligibility checks.
 
 ## Known blockers / risks
-- Latest Core changes require compile/runtime execution under .NET 8/Windows; accumulated Windows suites remain pending executable-environment validation.
+- Latest WPF/Core changes require compile/runtime execution under .NET 8/Windows; accumulated Windows suites remain pending executable-environment validation.
 - Real-Chromium fixtures and release/judge qualification scripts still need execution on Windows with .NET 8, PowerShell 7 and matching Playwright Chromium.
-- The new browser presentation is not yet wired into the WPF Judge Evidence dialog or a durable/restart-stable browser receipt store; current projection is over in-memory action receipts.
+- Browser verification UI is now wired, but the caller does not yet supply an authoritative projection because browser action receipts are not yet exposed through a durable/restart-stable least-authority evidence reader. It therefore correctly shows NOT VERIFIED rather than manufacturing evidence.
+- Existing durable browser-goal state intentionally strips approval grants and typed values; restart-stable judge evidence must bind safe receipt facts without persisting reusable authorization material.
 - Receipt evidence demonstrates execution-policy consistency, not truth of remote page content or cryptographic third-party attestation.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-Wire `DesktopBrowserVerificationPresentation` into the WPF Judge Evidence surface through an authoritative browser-session evidence boundary, then bind the presentation to durable/audit-backed browser receipts so restart-stable requested-action -> approval -> observed-post-state lineage can be demonstrated without exposing browser payloads.
+Implement a least-authority durable browser verification receipt store/reader that persists only non-authorizing structural evidence (action identity/kind, policy outcome, explicit approval-observed boolean, driver success, post-state verified, timestamps and integrity lineage), then have `BrowserProductRuntime` project the latest completed run through `DesktopBrowserVerificationProjector` and pass that closed projection into WPF Judge Evidence. Never persist approval grants, exact scopes, typed values, URLs, locators, page content or raw diagnostics.

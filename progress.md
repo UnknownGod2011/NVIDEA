@@ -32,22 +32,28 @@ Added explicit `ApprovalGranted` action evidence and Core-owned `DesktopBrowserV
 - Store serialisation buffers and persisted read buffers are zeroed best-effort after use. Writes reject invalid receipts before touching durable state and serialize under a process-local gate.
 - Added deterministic store tests for protected round-trip, private marker non-disclosure, plaintext downgrade rejection and integrity-tampered protected payload rejection.
 
+### 2026-09-20 — production approval evidence correctness
+- Audited the actual `BrowserHostRuntime -> BrowserActionJobHandler -> BrowserCapabilityExecutionService -> CapabilityToolExecutor` path before wiring durable receipts and found an important evidence mismatch: `ApprovalGranted` was set by the standalone browser-agent executor but not by the production capability execution path used by the Windows host.
+- Fixed `BrowserCapabilityExecutionService` so a consequential action records `ApprovalGranted=true` only downstream of `CapabilityToolExecutor` returning `Executed=true`. This is intentionally derived from successful last-mile authorization/consumption, not from the mere presence of an `ApprovalGrant` object.
+- Post-execution verification failures retain the historical approval fact while remaining unverified, so they still fail closed in `DesktopBrowserVerificationProjector` and cannot become green judge evidence.
+- Waiting/denied/mismatched/stale approvals never reach `Executed=true` and therefore never gain approval evidence.
+
 Files changed in latest run:
-- `src/Nvidea.Core/Browser/DurableBrowserVerificationReceiptStore.cs`
-- `tests/Nvidea.Core.Tests/DurableBrowserVerificationReceiptStoreTests.cs`
+- `src/Nvidea.Core/Browser/BrowserCapabilityExecution.cs`
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md` completely; inspected recent commits, `BrowserProductRuntime`, durable browser receipt model, local-state protection envelope and atomic writer before implementation.
-- Static review confirms the store never receives or serializes raw browser actions; its persistence input is the already payload-free durable receipt.
-- Protection purpose is store-specific (`browser-verification-receipt/v1`), preventing cross-store ciphertext transplant under DPAPI purpose-derived entropy.
-- Plaintext legacy/downgrade files fail closed rather than being silently migrated into judge evidence.
+- Re-read `progress.md` completely and inspected current repository tree/recent commits before implementation.
+- Traced the real Windows production path through `BrowserProductRuntime`, `BrowserHostRuntime`, `BrowserActionJobHandler`, `BrowserCapabilityExecutionService`, `CapabilityToolExecutor`, durable receipt model/store and judge presentation.
+- Static control-flow review confirms the new approval bit is assigned only after the last-mile tool executor reports execution; failed approval preflight returns earlier.
+- Existing durable receipt validation still requires `ApprovalObserved` only when `RequiredApproval`, and judge projection still requires all actions allowed + driver-successful + post-state-verified plus historical approval for every approval-required action.
 - Repository metadata was explicitly reverified immediately before every GitHub mutation; writable target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 - Connector environment cannot execute .NET 8 or Windows/PowerShell/Chromium, so compile/test/runtime PASS is not claimed.
 - No live/paid Nebius, Object Storage, Serverless, Tavily, browser or inference operation was triggered.
 
 ## Security / privacy / failure review
-- `ApprovalObserved` remains historical evidence only; it is never an approval grant and carries no exact scope/token/reusable authority.
+- `ApprovalGranted`/`ApprovalObserved` is historical evidence only; it carries no exact scope/token/reusable authority and is never accepted as authorization.
+- Evidence is derived after last-mile capability authorization, preventing stale/mismatched approval objects from being treated as successful approval evidence.
 - The protected receipt store is separate from browser recovery checkpoints and approval authority, avoiding accidental authority resurrection after restart.
 - Browser judge projection and durable receipt remain payload-free. Private marker tests guard against accidental persistence of typed/locator/URL/detail fields.
 - Receipt SHA-256 is tamper evidence, not authenticity by itself; authenticity inherits the local protected-state boundary. On Windows production this is CurrentUser DPAPI with purpose-derived entropy.
@@ -56,11 +62,12 @@ Validation/evidence:
 
 ## Known blockers / risks
 - New Core changes require compile/runtime execution under .NET 8; accumulated Windows/Chromium suites remain pending executable-environment validation.
-- Protected receipt persistence now exists, but the trusted terminal browser execution path does not yet write it and `BrowserProductRuntime` does not yet expose a read-only latest-completed presentation. WPF therefore still correctly shows NOT VERIFIED rather than manufacturing evidence.
+- The trusted terminal browser execution path still does not write `DurableBrowserVerificationReceiptStore`, and `BrowserProductRuntime` does not yet expose a read-only latest-completed presentation. WPF therefore still correctly shows NOT VERIFIED rather than manufacturing evidence.
+- A dedicated deterministic test for the newly corrected production `ApprovalGranted` derivation should be added together with terminal receipt wiring; static review is the strongest evidence available in this run.
 - Cross-process coordination for the receipt file is not yet needed by the single Windows host, but should be revisited if a second local writer is introduced.
 - Existing browser action verified checkpoints retain URL/verification detail for goal recovery; judge receipt remains deliberately separate so planner recovery is not weakened.
 - Receipt evidence demonstrates execution-policy consistency, not truth of remote page content or cryptographic third-party attestation.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-Wire `DurableBrowserVerificationReceiptStore` into the trusted browser terminal-completion path so only a fully verified completed run can replace the latest receipt, then add a read-only `BrowserProductRuntime` method that returns only `DesktopBrowserVerificationPresentation` and feed it into WPF Judge Evidence. Add restart/tamper/failure tests proving failed, cancelled, denied, ambiguous or partially verified runs cannot overwrite the last valid receipt.
+Wire the now-correct production `BrowserActionReceipt` into `DurableBrowserVerificationReceiptStore` only after the orchestrator has durably reached Completed, without persisting failed/cancelled/denied/ambiguous attempts or weakening approval ephemerality. Then add a read-only `BrowserProductRuntime` presentation reader and feed it into WPF Judge Evidence. Add deterministic tests proving a verified consequential action records historical approval, while failed, cancelled, denied, stale/mismatched approval, ambiguous and partially verified runs cannot overwrite the last valid receipt.

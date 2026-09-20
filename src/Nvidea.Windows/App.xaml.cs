@@ -19,16 +19,30 @@ public partial class App : Application
             MainWindow = window;
             window.Show();
         }
+        catch (OperationCanceledException)
+        {
+            ShutdownAfterStartupCancellation();
+        }
         catch (InvalidDataException)
         {
-            if (await TryRecoverMemoryWithExplicitConsentAsync().ConfigureAwait(true))
+            try
             {
-                MessageBox.Show(
-                    "The previous durable memory generation was restored successfully. NVIDEA will now close. Restart it to open the recovered state. No memory content was displayed during recovery.",
-                    "Memory recovery complete",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Information);
-                Shutdown(0);
+                if (await TryRecoverMemoryWithExplicitConsentAsync().ConfigureAwait(true))
+                {
+                    MessageBox.Show(
+                        "The previous durable memory generation was restored successfully. NVIDEA will now close. Restart it to open the recovered state. No memory content was displayed during recovery.",
+                        "Memory recovery complete",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                    Shutdown(0);
+                    return;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Cancellation during the independent recovery-eligibility probe must not
+                // fall through to the generic configuration failure or authorize rollback.
+                ShutdownAfterStartupCancellation();
                 return;
             }
 
@@ -85,6 +99,12 @@ public partial class App : Application
             _ = await store.RecoverLastKnownGoodAsync().ConfigureAwait(true);
             return true;
         }
+        catch (OperationCanceledException)
+        {
+            // Preserve cancellation semantics. The startup caller owns shutdown behavior;
+            // cancellation must never be disguised as a failed recovery or trigger fallback.
+            throw;
+        }
         catch
         {
             MessageBox.Show(
@@ -94,6 +114,14 @@ public partial class App : Application
                 MessageBoxImage.Error);
             return false;
         }
+    }
+
+    private void ShutdownAfterStartupCancellation()
+    {
+        // Startup/recovery cancellation is neither a credential/configuration failure nor
+        // evidence that memory rollback is safe. Exit without offering recovery or emitting
+        // misleading provider diagnostics. A later launch starts from durable state normally.
+        Shutdown(0);
     }
 
     private static string BuildCredentialSafeStartupFailureText()

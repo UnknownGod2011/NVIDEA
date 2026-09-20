@@ -55,6 +55,26 @@ public sealed class DurableBrowserVerificationReceiptStore
         }
     }
 
+    /// <summary>
+    /// Removes previously published judge evidence before a new browser action is admitted.
+    /// This prevents a completed receipt from an older action being mistaken for evidence about a
+    /// newer pending/failed/ambiguous action. Failure to clear is surfaced before any new action runs.
+    /// </summary>
+    public async Task ClearAsync(CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (File.Exists(_path))
+                File.Delete(_path);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     public async Task<DurableBrowserVerificationReceipt?> ReadAsync(CancellationToken cancellationToken = default)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);

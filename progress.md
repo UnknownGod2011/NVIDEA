@@ -26,42 +26,44 @@ WPF cancellation is distinct from corruption/configuration failure. Exit cleanup
 Added `DesktopResearchEvidence` as a payload-free evidence boundary over completed reports. Durable research checkpoints carry SHA-256 lineage from the Nemotron plan into Tavily prepared evidence and final synthesis. Completed jobs expose `DurableResearchReceipt`; legacy evidence remains resumable but cannot claim historical plan provenance. Deterministic restart simulation proves synthesis can resume from persisted evidence without another Tavily provider call and tampered evidence is rejected before synthesis.
 
 ### 2026-09-20 — judge-visible durable research lineage
-Added `ResearchProductRuntime.ReadCompletedReceiptAsync`, a narrow read path that re-reads the authoritative durable job and returns only the completed receipt without requiring the local Tavily executor. WPF Judge Evidence reads the durable store at dialog-open time and fails closed for incomplete, legacy-unproven, corrupt or concurrently changing research. The UI shows structural Nemotron-plan/Tavily-evidence/cited-synthesis/restart-lineage state only; payloads and commitment hashes are not rendered.
+Added `ResearchProductRuntime.ReadCompletedReceiptAsync`; WPF Judge Evidence re-reads the authoritative durable store and fails closed for incomplete, legacy-unproven, corrupt or concurrently changing research. `DesktopResearchLineagePresentation` moved verification copy into Core so WPF only renders a closed payload-free projection; malformed or structurally inconsistent receipts cannot become green/verified.
 
-### 2026-09-20 — Core-owned closed judge presentation
-- Added `DesktopResearchLineagePresentation` and projector in Core so WPF no longer decides whether a durable receipt deserves green/verified copy.
-- Presentation is closed to fixed product text plus structural counts. It never carries receipt commitments, question/query/URL/title/snippet/source/answer/provider payload fields.
-- The projector fails closed for null/incomplete receipts, missing citation verification, non-positive structural counts, malformed SHA-256 commitment shape, restart instability, and inconsistent multi-query metadata.
-- WPF `BuildDurableResearchSummary` now only joins Core-owned rendered fields; verification semantics are no longer duplicated in the UI layer.
-- Added deterministic Core tests for verified presentation, null/incomplete/legacy cases, malformed commitment shapes, private-marker non-disclosure and absence of URL-like content.
+### 2026-09-20 — browser judge-verification boundary
+- Added explicit `ApprovalGranted` evidence to `BrowserActionReceipt`; the executor records it only after the approval gate returns true. Existing/legacy receipts default false, so they cannot retroactively claim approval.
+- Added Core-owned `DesktopBrowserVerificationPresentation` / projector. Judge/demo surfaces can now consume fixed payload-free browser evidence without receiving URLs, locators, typed values, page text, verification details, errors or rationale.
+- Projection fails closed for empty evidence, invalid action IDs/timestamps, disallowed or blocked decisions, driver failure, unverified post-state, and any approval-required action lacking explicit approval evidence.
+- Added deterministic tests for verified approved actions, approval bypass, unverified/blocked actions, empty evidence, and private-marker/URL non-disclosure.
 
 Files changed in latest run:
-- `src/Nvidea.Core/Desktop/DesktopResearchLineagePresentation.cs`
-- `src/Nvidea.Windows/JudgeEvidenceDialog.xaml.cs`
-- `tests/Nvidea.Core.Tests/DesktopResearchLineagePresentationTests.cs`
+- `src/Nvidea.Core/Browser/BrowserContracts.cs`
+- `src/Nvidea.Core/Browser/BrowserAgentExecutor.cs`
+- `src/Nvidea.Core/Browser/DesktopBrowserVerificationPresentation.cs`
+- `tests/Nvidea.Core.Tests/DesktopBrowserVerificationPresentationTests.cs`
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md` completely, inspected the current durable receipt projection, judge dialog, existing research evidence tests, and recent commits before implementation.
-- Core presentation has no research-payload inputs other than the already payload-free `DesktopDurableResearchReceipt`; rendered fields exclude all three commitments.
-- Defensive validation prevents arbitrary malformed or internally inconsistent receipt projections from becoming green. Cryptographic lineage validation remains authoritative upstream in `ResearchJobHandler.ReadCompletedReceipt`; presentation does not claim to authenticate a syntactically valid but fabricated hash.
-- Tests deliberately place a private marker in a malformed commitment and require it never to appear in any rendered field.
+- Re-read `progress.md` completely and inspected browser contracts/executor and existing browser test inventory before implementation.
+- Approval evidence is now an explicit receipt fact rather than inferred from `RequiresApproval && success`; legacy/default receipts therefore fail closed for consequential actions.
+- Presentation accepts only receipts and emits fixed structural text/counts; no browser payload fields are copied into the presentation.
+- Tests deliberately place a private marker in a typed value/rationale and private URL state in the receipt and require neither to render.
 - Repository metadata was explicitly reverified immediately before every GitHub mutation; writable target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 - Connector environment cannot execute .NET 8 or Windows/PowerShell/Chromium, so compile/test/runtime PASS is not claimed.
-- No live/paid Nebius, Object Storage, Serverless, Tavily, browser, Ollama or inference operation was triggered.
+- No live/paid Nebius, Object Storage, Serverless, Tavily, browser or inference operation was triggered.
 
 ## Security / privacy / failure review
-- Durable research receipt fingerprints are one-way commitments, not authentication signatures; integrity inherits the protected durable store and must not be described as third-party attestation.
-- Judge rendering is now a closed Core projection. Malformed, incomplete, legacy-unproven or structurally inconsistent input yields explicit NOT VERIFIED copy rather than optimistic evidence.
-- Syntactically valid commitment substitution is detected at the authoritative durable-job lineage boundary, not by the presentation layer; this separation is intentional.
+- Browser approval is positive evidence only when the approval gate actually returned true. Denial, unavailable approval and legacy receipts remain false.
+- Browser judge projection is deliberately payload-free and cannot leak typed secrets, page content, URLs or raw diagnostics through its public fields.
+- The projection proves the local guarded execution/verification path represented by the supplied receipts; it is not third-party attestation and does not prove website truth.
+- Durable research receipt fingerprints are one-way commitments, not authentication signatures; integrity inherits the protected durable store.
 - Browser transport, credential authority rejection, consequential-action approvals, sensitive typing blocks, prompt-injection boundaries and emergency cancellation remain intact.
 - Memory recovery remains explicit, bounded, protection-context validated, fail closed and non-mutating during eligibility checks.
 
 ## Known blockers / risks
-- Latest Core/WPF changes require compile/runtime execution under .NET 8/Windows; all accumulated Windows suites remain pending executable-environment validation.
+- Latest Core changes require compile/runtime execution under .NET 8/Windows; accumulated Windows suites remain pending executable-environment validation.
 - Real-Chromium fixtures and release/judge qualification scripts still need execution on Windows with .NET 8, PowerShell 7 and matching Playwright Chromium.
-- Receipt commitments prove persisted-stage consistency, not truth of web sources and not cryptographic third-party attestation.
+- The new browser presentation is not yet wired into the WPF Judge Evidence dialog or a durable/restart-stable browser receipt store; current projection is over in-memory action receipts.
+- Receipt evidence demonstrates execution-policy consistency, not truth of remote page content or cryptographic third-party attestation.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-Move the same closed-evidence pattern onto the browser demo path: create a Core-owned, payload-free browser verification presentation/receipt that binds requested action -> observed post-state -> permission/consequential-action decision -> restart/audit evidence, with adversarial tests proving unverified, prompt-injected, cancelled or approval-bypassed runs can never render as judge-verified.
+Wire `DesktopBrowserVerificationPresentation` into the WPF Judge Evidence surface through an authoritative browser-session evidence boundary, then bind the presentation to durable/audit-backed browser receipts so restart-stable requested-action -> approval -> observed-post-state lineage can be demonstrated without exposing browser payloads.

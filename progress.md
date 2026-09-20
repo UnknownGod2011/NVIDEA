@@ -11,64 +11,54 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 
 ## Persistent history
 ### 2026-09-06 to 2026-09-17 — product foundation
-Implemented the Windows shell, Nebius/Nemotron inference, layered memory, Tavily research, permission/audit engine, durable jobs, Playwright browser execution, DPAPI state protection, encrypted remote execution, local voice, deployment/evaluator tooling, crash-consistency hardening, judge-visible runtime evidence, deterministic demo/runbook, submission validation, independent receipts and live-demo readiness tooling.
+Implemented Windows shell, Nebius/Nemotron inference, layered memory, Tavily research, permission/audit engine, durable jobs, Playwright browser execution, DPAPI state protection, encrypted remote execution, local voice, deployment/evaluator tooling, crash-consistency hardening, judge-visible runtime evidence, deterministic demo/runbook, submission validation, independent receipts and live-demo readiness tooling.
 
 ### 2026-09-17 to 2026-09-19 — browser safety and qualification
-Hardened browser transport to HTTPS or loopback HTTP and WSS or loopback WS; rejected embedded URI credentials; added request/WebSocket routing, Service Worker blocking, post-action location enforcement, download quarantine, credential/prompt-injection/consequential-action gates, authenticated-state restart coverage, redirect/WebSocket no-dispatch fixtures, emergency-stop coverage and canonical page admission. Added real-Chromium qualification, TRX validation, SHA-256 evidence receipts, independent verification, clean exact-HEAD provenance, release gate and judge-recording gate.
+Hardened browser transport, redirects/WebSockets, Service Worker blocking, page admission, download quarantine, credential/prompt-injection/consequential-action gates, authenticated-state restart behavior, emergency stop, real-Chromium qualification and SHA-256 release/judge evidence tooling.
 
-### 2026-09-19 to 2026-09-20 — memory integrity and explicit recovery
-Persisted embedding state is treated as untrusted; malformed vector/provenance state is stripped while user-authored memory survives. Migration remains local-provider-only, preserves Sensitive/Restricted opt-ins, revalidates candidates, validates vectors/provenance, skips concurrent edits, and has invalid-vector/failure/cancellation coverage. JSON persistence serializes access, uses same-directory write-through replacement, and maintains one bounded `.bak` last-known-good generation. Recovery is explicit, protection-context validated, fail-closed and never automatic. Startup recovery eligibility uses non-mutating primary validation and cannot be authorized by unrelated startup failure.
+### 2026-09-19 to 2026-09-20 — memory/startup integrity
+Persisted embedding state is untrusted and malformed vector/provenance data is stripped while user memory survives. Recovery is explicit, bounded and protection-context validated. Startup/shutdown gained cancellation-safe cleanup and `StartupResourceLease` reverse-order exactly-once partial-construction ownership.
 
-### 2026-09-20 — startup/shutdown and partial-construction ownership
-WPF cancellation is distinct from corruption/configuration failure. Exit cleanup is contained and idempotent. `StartupResourceLease` provides reverse-order, exactly-once best-effort cleanup until a complete composition root assumes ownership. Deterministic failure coverage exercises failures after memory, Tavily, cloud transfer and pre-release, including cleanup-failure and cancellation semantics.
+### 2026-09-20 — Tavily and research provenance
+Added payload-free `DesktopResearchEvidence`, SHA-256 lineage across Nemotron plan -> Tavily prepared evidence -> cited synthesis, restart-stable `DurableResearchReceipt`, no-repeat-Tavily restart simulation, authoritative receipt reading, and Core-owned judge presentation that fails closed for legacy/corrupt/inconsistent evidence.
 
-### 2026-09-20 — Tavily evidence and restart-stable research provenance
-Added `DesktopResearchEvidence` as a payload-free evidence boundary over completed reports. Durable research checkpoints carry SHA-256 lineage from the Nemotron plan into Tavily prepared evidence and final synthesis. Completed jobs expose `DurableResearchReceipt`; legacy evidence remains resumable but cannot claim historical plan provenance. Deterministic restart simulation proves synthesis can resume from persisted evidence without another Tavily provider call and tampered evidence is rejected before synthesis.
+### 2026-09-20 — browser judge-verification boundary and UI
+Added explicit `ApprovalGranted` action evidence and Core-owned `DesktopBrowserVerificationPresentation`. It fails closed for empty/invalid/blocked/failed/unverified actions and consequential actions without explicit approval evidence. WPF Judge Evidence has a dedicated browser panel and cannot receive raw URLs, locators, typed values, page text, verification details, errors or rationale. Missing authoritative evidence remains visibly NOT VERIFIED.
 
-### 2026-09-20 — judge-visible durable research lineage
-Added `ResearchProductRuntime.ReadCompletedReceiptAsync`; WPF Judge Evidence re-reads the authoritative durable store and fails closed for incomplete, legacy-unproven, corrupt or concurrently changing research. `DesktopResearchLineagePresentation` moved verification copy into Core so WPF only renders a closed payload-free projection; malformed or structurally inconsistent receipts cannot become green/verified.
-
-### 2026-09-20 — browser judge-verification boundary
-- Added explicit `ApprovalGranted` evidence to `BrowserActionReceipt`; the executor records it only after the approval gate returns true. Existing/legacy receipts default false, so they cannot retroactively claim approval.
-- Added Core-owned `DesktopBrowserVerificationPresentation` / projector. Judge/demo surfaces can consume fixed payload-free browser evidence without receiving URLs, locators, typed values, page text, verification details, errors or rationale.
-- Projection fails closed for empty evidence, invalid action IDs/timestamps, disallowed or blocked decisions, driver failure, unverified post-state, and any approval-required action lacking explicit approval evidence.
-- Added deterministic tests for verified approved actions, approval bypass, unverified/blocked actions, empty evidence, and private-marker/URL non-disclosure.
-
-### 2026-09-20 — browser evidence UI fail-closed integration
-- WPF Judge Evidence now has a dedicated Browser execution verification panel and accepts only the Core-owned `DesktopBrowserVerificationPresentation` projection.
-- Missing authoritative browser evidence renders explicit `NOT VERIFIED browser execution`; the UI never infers verification from session milestones or capability readiness.
-- Rendering is limited to the Core projection's fixed status/execution/permission/post-state fields. URLs, locators, typed values, page text, verification details, raw errors and approval rationale remain outside the WPF boundary.
-- The dialog API is backwards-compatible via an optional browser projection while the authoritative durable receipt reader is implemented next.
+### 2026-09-20 — least-authority durable browser receipt model
+- Added `DurableBrowserActionEvidence` and `DurableBrowserVerificationReceipt` as restart-stable, non-authorizing structural evidence.
+- Durable evidence contains only action id/kind, risk/policy outcome, whether approval was required and historically observed, driver success, post-state verification and timestamps. It excludes URLs, locators, typed values, page content, approval scopes/tokens, diagnostics, policy rationale and verification detail.
+- Receipt SHA-256 commitment binds ordered structural evidence; read-side integrity validation uses fixed-time comparison and fails closed on version mismatch, duplicate/empty action identity, invalid timestamps, inconsistent approval metadata, changed completion time or commitment mismatch.
+- `DesktopBrowserVerificationProjector` now shares one validation path for live receipts and durable structural evidence, preventing durable/demo semantics from drifting from the live judge projection.
+- Added deterministic tests for verified approved evidence, private marker/URL/detail non-disclosure, structural tampering rejection and impossible approval metadata.
 
 Files changed in latest run:
-- `src/Nvidea.Windows/JudgeEvidenceDialog.xaml`
-- `src/Nvidea.Windows/JudgeEvidenceDialog.xaml.cs`
+- `src/Nvidea.Core/Browser/DurableBrowserVerificationReceipt.cs`
+- `src/Nvidea.Core/Browser/DesktopBrowserVerificationPresentation.cs`
+- `tests/Nvidea.Core.Tests/DurableBrowserVerificationReceiptTests.cs`
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md` completely and inspected current WPF Judge Evidence, `DesktopBrowserVerificationPresentation`, browser product runtime, durable browser-goal store and recent commits before implementation.
-- The new panel defaults to a closed negative state; no existing session milestone can accidentally turn it green.
-- WPF receives no raw `BrowserActionReceipt`, preventing the judge surface from accessing URL/value/site-controlled payload fields.
+- Re-read `progress.md` completely; inspected recent commits, browser product runtime, durable goal store, browser contracts, browser job checkpoint behavior and current judge projection before implementation.
+- Static review confirms the durable receipt type has no fields capable of carrying URL/locator/value/page text/approval scope/raw diagnostic payloads.
+- Tamper detection covers all persisted structural fields through a canonical SHA-256 commitment and fixed-time comparison.
 - Repository metadata was explicitly reverified immediately before every GitHub mutation; writable target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 - Connector environment cannot execute .NET 8 or Windows/PowerShell/Chromium, so compile/test/runtime PASS is not claimed.
 - No live/paid Nebius, Object Storage, Serverless, Tavily, browser or inference operation was triggered.
 
 ## Security / privacy / failure review
-- Browser approval is positive evidence only when the approval gate actually returned true. Denial, unavailable approval and legacy receipts remain false.
-- Browser judge projection and WPF rendering are deliberately payload-free and cannot leak typed secrets, page content, URLs or raw diagnostics through their public fields.
-- Missing browser evidence is visibly NOT VERIFIED; readiness/session milestones are not substitutes for authoritative action receipts.
-- The projection proves the local guarded execution/verification path represented by supplied receipts; it is not third-party attestation and does not prove website truth.
-- Durable research receipt fingerprints are one-way commitments, not authentication signatures; integrity inherits the protected durable store.
-- Browser transport, credential authority rejection, consequential-action approvals, sensitive typing blocks, prompt-injection boundaries and emergency cancellation remain intact.
-- Memory recovery remains explicit, bounded, protection-context validated, fail closed and non-mutating during eligibility checks.
+- `ApprovalObserved` is explicitly historical evidence only; it is never an approval grant and carries no exact scope/token/reusable authority.
+- Browser judge projection and durable receipt remain payload-free. Private marker tests guard against accidental persistence of typed/locator/URL/detail fields.
+- Integrity commitment is local tamper evidence, not a signature or third-party attestation; authenticity still inherits the protected durable state boundary that will own the store.
+- Missing/corrupt durable evidence must remain NOT VERIFIED and cannot be substituted by provider readiness or session milestones.
+- Existing browser transport, credential authority rejection, consequential-action approvals, sensitive typing blocks, prompt-injection boundaries and emergency cancellation remain intact.
 
 ## Known blockers / risks
-- Latest WPF/Core changes require compile/runtime execution under .NET 8/Windows; accumulated Windows suites remain pending executable-environment validation.
-- Real-Chromium fixtures and release/judge qualification scripts still need execution on Windows with .NET 8, PowerShell 7 and matching Playwright Chromium.
-- Browser verification UI is now wired, but the caller does not yet supply an authoritative projection because browser action receipts are not yet exposed through a durable/restart-stable least-authority evidence reader. It therefore correctly shows NOT VERIFIED rather than manufacturing evidence.
-- Existing durable browser-goal state intentionally strips approval grants and typed values; restart-stable judge evidence must bind safe receipt facts without persisting reusable authorization material.
+- New Core changes require compile/runtime execution under .NET 8; accumulated Windows/Chromium suites remain pending executable-environment validation.
+- The least-authority durable receipt model and integrity validator now exist, but production persistence/reader wiring is not complete. WPF therefore still correctly shows NOT VERIFIED rather than manufacturing evidence.
+- Existing browser action verified checkpoints retain URL/verification detail for goal recovery; the new judge receipt must be stored separately or those checkpoints must be migrated carefully without breaking planner recovery.
 - Receipt evidence demonstrates execution-policy consistency, not truth of remote page content or cryptographic third-party attestation.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-Implement a least-authority durable browser verification receipt store/reader that persists only non-authorizing structural evidence (action identity/kind, policy outcome, explicit approval-observed boolean, driver success, post-state verified, timestamps and integrity lineage), then have `BrowserProductRuntime` project the latest completed run through `DesktopBrowserVerificationProjector` and pass that closed projection into WPF Judge Evidence. Never persist approval grants, exact scopes, typed values, URLs, locators, page content or raw diagnostics.
+Add a protected atomic `DurableBrowserVerificationReceipt` store under the existing local-state protection boundary, record receipts from the trusted browser execution path only after terminal verified execution, and expose a read-only latest-completed presentation through `BrowserProductRuntime` to WPF Judge Evidence. Keep the store separate from approval authority and never persist exact scopes, grants, URLs, locators, values, page content or raw diagnostics.

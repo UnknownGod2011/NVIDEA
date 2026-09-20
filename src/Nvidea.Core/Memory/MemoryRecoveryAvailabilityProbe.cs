@@ -2,8 +2,8 @@ namespace Nvidea.Core.Memory;
 
 /// <summary>
 /// Determines whether the desktop may offer the explicit one-generation memory recovery choice.
-/// The probe never reads the backup: backup validation remains an operation performed only after
-/// explicit user consent by <see cref="JsonFileMemoryStore.RecoverLastKnownGoodAsync"/>.
+/// The probe never reads the backup and never rewrites the primary: backup validation remains an operation
+/// performed only after explicit user consent by <see cref="JsonFileMemoryStore.RecoverLastKnownGoodAsync"/>.
 /// </summary>
 public static class MemoryRecoveryAvailabilityProbe
 {
@@ -31,8 +31,9 @@ public static class MemoryRecoveryAvailabilityProbe
         try
         {
             // A healthy memory primary proves that a startup InvalidDataException originated elsewhere.
-            // In that case rollback must not be offered merely because a backup happens to exist.
-            _ = await store.ReadAllAsync(cancellationToken).ConfigureAwait(false);
+            // ValidatePrimaryAsync is intentionally non-mutating so merely deciding whether to show a
+            // recovery prompt cannot migrate plaintext, rotate backups or otherwise alter durable state.
+            await store.ValidatePrimaryAsync(cancellationToken).ConfigureAwait(false);
             return false;
         }
         catch (InvalidDataException)

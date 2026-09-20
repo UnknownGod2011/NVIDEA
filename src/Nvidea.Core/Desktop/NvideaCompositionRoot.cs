@@ -75,14 +75,21 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         var dataDirectory = ResolveStateDirectory(stateDirectory);
         Directory.CreateDirectory(dataDirectory);
 
+        // Until the completed root exists, every disposable acquired below belongs to this
+        // construction lease. Any exception (including cancellation) unwinds all successfully
+        // acquired resources in reverse order without replacing the authoritative startup error.
+        using var startupLease = new StartupResourceLease();
+
         var nebiusOptions = NebiusOptions.FromEnvironment();
-        var nebiusHttp = ProviderHttpClientFactory.CreateNoRedirectClient();
+        var nebiusHttp = startupLease.Own(ProviderHttpClientFactory.CreateNoRedirectClient());
         var inference = new NebiusTokenFactoryClient(nebiusHttp, nebiusOptions);
 
-        var memoryStore = new JsonFileMemoryStore(Path.Combine(dataDirectory, "memory.json"));
+        var memoryStore = startupLease.Own(new JsonFileMemoryStore(Path.Combine(dataDirectory, "memory.json")));
         var memoryEmbeddingConfiguration = LocalMemoryEmbeddingConfiguration.FromEnvironment();
         var memoryEmbeddingProvider = memoryEmbeddingConfiguration.CreateProvider();
-        var memory = new PersonalMemoryService(memoryStore, embeddingProvider: memoryEmbeddingProvider);
+        if (memoryEmbeddingProvider is not null)
+            startupLease.Own(memoryEmbeddingProvider);
+        var memory = startupLease.Own(new PersonalMemoryService(memoryStore, embeddingProvider: memoryEmbeddingProvider));
         await memory.InitializeAsync(cancellationToken).ConfigureAwait(false);
 
         HttpClient? tavilyHttp = null;
@@ -98,7 +105,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         var tavilyKey = Environment.GetEnvironmentVariable("TAVILY_API_KEY");
         if (!string.IsNullOrWhiteSpace(tavilyKey))
         {
-            tavilyHttp = ProviderHttpClientFactory.CreateNoRedirectClient();
+            tavilyHttp = startupLease.Own(ProviderHttpClientFactory.CreateNoRedirectClient());
             var tavily = new TavilyResearchClient(tavilyHttp, new TavilyOptions { ApiKey = tavilyKey });
             researchEngine = new ResearchEngine(inference, tavily);
             localResearch = new ResearchJobRuntime(researchDirectory, researchEngine);
@@ -107,60 +114,54 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         if (cloudMode.LifecycleEnabled)
         {
             var configuration = NebiusResearchLiveConfigurationLoader.LoadFromEnvironment();
-            try
-            {
-                var providers = NebiusResearchLiveProviderStartup.CreateAfterDestinationPreflight(
-                    configuration,
-                    () =>
+            var providers = NebiusResearchLiveProviderStartup.CreateAfterDestinationPreflight(
+                configuration,
+                () =>
+                {
+                    NebiusObjectStorageClient? objectStorage = null;
+                    HttpClient? serverlessHttp = null;
+                    try
                     {
-                        NebiusObjectStorageClient? objectStorage = null;
-                        HttpClient? serverlessHttp = null;
-                        try
-                        {
-                            objectStorage = new NebiusObjectStorageClient(configuration.ObjectStorageOptions);
-                            serverlessHttp = ProviderHttpClientFactory.CreateNoRedirectClient();
-                            var transport = new S3ProtectedResearchTransport(objectStorage);
-                            var serverless = new NebiusServerlessJobClient(
-                                serverlessHttp,
-                                new NebiusServerlessOptions(
-                                    configuration.ServerlessAccessToken,
-                                    configuration.ProjectId,
-                                    RequestTimeout: TimeSpan.FromSeconds(30),
-                                    MaxRetries: 2));
-                            return (ObjectStorage: objectStorage, ServerlessHttp: serverlessHttp, Transport: transport, Serverless: serverless);
-                        }
-                        catch
-                        {
-                            serverlessHttp?.Dispose();
-                            objectStorage?.Dispose();
-                            throw;
-                        }
-                    });
+                        objectStorage = new NebiusObjectStorageClient(configuration.ObjectStorageOptions);
+                        serverlessHttp = ProviderHttpClientFactory.CreateNoRedirectClient();
+                        var transport = new S3ProtectedResearchTransport(objectStorage);
+                        var serverless = new NebiusServerlessJobClient(
+                            serverlessHttp,
+                            new NebiusServerlessOptions(
+                                configuration.ServerlessAccessToken,
+                                configuration.ProjectId,
+                                RequestTimeout: TimeSpan.FromSeconds(30),
+                                MaxRetries: 2));
+                        return (ObjectStorage: objectStorage, ServerlessHttp: serverlessHttp, Transport: transport, Serverless: serverless);
+                    }
+                    catch
+                    {
+                        // These resources have not escaped the provider factory yet, so this is
+                        // their sole failure owner. Once the factory succeeds the outer startup
+                        // lease assumes ownership, avoiding a double-disposal boundary.
+                        serverlessHttp?.Dispose();
+                        objectStorage?.Dispose();
+                        throw;
+                    }
+                });
 
-                researchObjectStorage = providers.ObjectStorage;
-                researchServerlessHttp = providers.ServerlessHttp;
-                var store = new JsonAgentJobStore(Path.Combine(researchDirectory, "research-jobs.json"));
-                IAuditTrail audit = new JsonLinesAuditTrail(Path.Combine(researchDirectory, "research-cloud-audit.jsonl"));
-                IRemoteResearchClientRuntime remote = NebiusResearchLiveRuntimeFactory.Create(
-                    store,
-                    providers.Serverless,
-                    providers.Transport,
-                    providers.Transport,
-                    providers.Transport,
-                    configuration.DispatchOptions,
-                    configuration.ClientPrivateKeyPem,
-                    audit);
-                remote = CreateObservedRemoteResearchRuntime(remote);
-                cloudResearch = new ResearchCloudExecutionCoordinator(researchDirectory, remote);
-            }
-            catch
-            {
-                researchServerlessHttp?.Dispose();
-                researchObjectStorage?.Dispose();
-                researchServerlessHttp = null;
-                researchObjectStorage = null;
-                throw;
-            }
+            // CreateAfterDestinationPreflight owns failed preflight/provider attempts. Register
+            // only after it returns successfully and ownership has transferred to this factory.
+            researchObjectStorage = startupLease.Own(providers.ObjectStorage);
+            researchServerlessHttp = startupLease.Own(providers.ServerlessHttp);
+            var store = new JsonAgentJobStore(Path.Combine(researchDirectory, "research-jobs.json"));
+            IAuditTrail audit = new JsonLinesAuditTrail(Path.Combine(researchDirectory, "research-cloud-audit.jsonl"));
+            IRemoteResearchClientRuntime remote = NebiusResearchLiveRuntimeFactory.Create(
+                store,
+                providers.Serverless,
+                providers.Transport,
+                providers.Transport,
+                providers.Transport,
+                configuration.DispatchOptions,
+                configuration.ClientPrivateKeyPem,
+                audit);
+            remote = CreateObservedRemoteResearchRuntime(remote);
+            cloudResearch = new ResearchCloudExecutionCoordinator(researchDirectory, remote);
         }
 
         if (localResearch is not null || cloudResearch is not null)
@@ -174,7 +175,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
 
         var desktop = new DesktopInvocationService(inference, memory, researchEngine);
         var session = new DesktopSessionController(desktop);
-        return new NvideaCompositionRoot(
+        var root = new NvideaCompositionRoot(
             nebiusHttp,
             tavilyHttp,
             researchServerlessHttp,
@@ -187,6 +188,11 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
             session,
             research,
             dataDirectory);
+
+        // The root now has complete ownership and its DisposeAsync path mirrors these resources.
+        // Release only after construction succeeds so no partially assembled graph can escape.
+        startupLease.ReleaseAll();
+        return root;
     }
 
     internal static IRemoteResearchClientRuntime CreateObservedRemoteResearchRuntime(

@@ -21,6 +21,12 @@ public sealed record DesktopResearchEvidence(
 
 public static class DesktopResearchEvidenceProjector
 {
+    public static DesktopResearchEvidence? ResearchEvidence(this DesktopInvocationResult result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        return result.Research is null ? null : Project(result.Research);
+    }
+
     public static DesktopResearchEvidence Project(ResearchReport report)
     {
         ArgumentNullException.ThrowIfNull(report);

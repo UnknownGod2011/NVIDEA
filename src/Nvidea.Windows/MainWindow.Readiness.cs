@@ -14,19 +14,42 @@ public partial class MainWindow
         ResearchWindow_Loaded(sender, e);
     }
 
-    private void ResearchReadinessDetailsButton_Click(object sender, RoutedEventArgs e)
+    private async void ResearchReadinessDetailsButton_Click(object sender, RoutedEventArgs e)
     {
         RefreshResearchReadiness();
         var readiness = _researchReadiness;
         if (readiness is null) return;
 
-        // The dialog receives only the narrow ephemeral-evidence read/reset capabilities. It has
-        // no reference to durable memory, job, browser, download or audit stores, so "new demo
-        // session" cannot become a destructive product-state reset.
+        DesktopDurableResearchReceipt? durableReceipt = null;
+        var runtime = _root.Research;
+        if (runtime is not null && _activeResearchJobId is { } jobId)
+        {
+            try
+            {
+                var receipt = await runtime.ReadCompletedReceiptAsync(jobId);
+                durableReceipt = new DesktopDurableResearchReceipt(
+                    receipt.PlanSha256,
+                    receipt.EvidenceSha256,
+                    receipt.SynthesisSha256,
+                    receipt.PlannedQueryCount,
+                    receipt.EvidenceSourceCount,
+                    receipt.ValidatedCitationCount,
+                    receipt.PlannedQueryCount >= 2,
+                    receipt.HasMachineVerifiableCitations,
+                    RestartStable: true);
+            }
+            catch
+            {
+                // Incomplete, legacy, corrupt, or concurrently changing research must never become
+                // green judge evidence. The dialog remains usable and explicitly shows no receipt.
+            }
+        }
+
         var dialog = new JudgeEvidenceDialog(
             readiness,
             _root.Desktop.SessionEvidenceSnapshot,
-            _root.Desktop.ResetSessionEvidence) { Owner = this };
+            _root.Desktop.ResetSessionEvidence,
+            durableReceipt) { Owner = this };
         dialog.ShowDialog();
     }
 

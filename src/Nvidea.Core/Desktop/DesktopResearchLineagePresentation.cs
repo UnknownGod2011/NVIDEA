@@ -52,13 +52,17 @@ public static class DesktopResearchLineagePresentationProjector
         if (receipt.PlannedQueryCount <= 0 || receipt.EvidenceSourceCount <= 0 || receipt.ValidatedCitationCount <= 0)
             return false;
 
+        if (receipt.MultiQueryPlan != (receipt.PlannedQueryCount >= 2))
+            return false;
+
         // The commitments are deliberately never rendered, but malformed/missing commitments must
         // not produce a green judge surface even if a caller constructs this projection directly.
+        // Cryptographic lineage validation remains upstream in ResearchJobHandler.ReadCompletedReceipt.
         return IsSha256(receipt.PlanSha256)
             && IsSha256(receipt.EvidenceSha256)
             && IsSha256(receipt.SynthesisSha256);
     }
 
-    private static bool IsSha256(string value)
-        => value.Length == 64 && value.All(static c => char.IsAsciiHexDigit(c));
+    private static bool IsSha256(string? value)
+        => value is { Length: 64 } && value.All(static c => char.IsAsciiHexDigit(c));
 }

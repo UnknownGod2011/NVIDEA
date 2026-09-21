@@ -198,20 +198,25 @@ internal sealed class BrowserDurableActionRuntime
     }
 
     /// <summary>
-    /// Payload-free read surface for trusted desktop/judge UI. No receipt, publisher, approval
-    /// authority, browser payload, URL, locator, or typed value crosses this boundary.
+    /// Payload-free read surface for trusted desktop/judge UI. Reads are linearized with evidence
+    /// mutations so the UI cannot sample the receipt in the middle of a clear/execute/publish transition
+    /// and mistake that transient state for the settled result of the latest admitted action. No receipt,
+    /// publisher, approval authority, browser payload, URL, locator, or typed value crosses this boundary.
     /// </summary>
     internal Task<DesktopBrowserVerificationPresentation> ReadVerificationPresentationAsync(
         CancellationToken cancellationToken = default) =>
-        _verificationRuntime.ReadPresentationAsync(cancellationToken);
+        SerializeTransitionAsync(
+            token => _verificationRuntime.ReadPresentationAsync(token),
+            cancellationToken);
 
     /// <summary>
     /// The protected verification receipt represents the most recently admitted browser transition,
-    /// so all transitions that can clear or publish it must be linearized. Without this gate, two jobs
-    /// could interleave as A executes, B clears, A publishes, leaving A's stale green receipt visible
-    /// even though B is the newer admitted action. Cancellation while waiting for the gate never enters
-    /// the critical section; cancellation after entry is propagated to the underlying transition and
-    /// the semaphore is always released.
+    /// so all transitions that can clear or publish it must be linearized. Reads use the same gate so
+    /// judge presentation observes a settled transition rather than an intermediate clear/publish state.
+    /// Without this gate, two jobs could interleave as A executes, B clears, A publishes, leaving A's
+    /// stale green receipt visible even though B is the newer admitted action. Cancellation while waiting
+    /// for the gate never enters the critical section; cancellation after entry is propagated to the
+    /// underlying transition and the semaphore is always released.
     /// </summary>
     private async Task<T> SerializeTransitionAsync<T>(
         Func<CancellationToken, Task<T>> transition,

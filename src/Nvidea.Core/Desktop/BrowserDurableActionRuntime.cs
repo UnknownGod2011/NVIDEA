@@ -24,11 +24,6 @@ internal sealed class BrowserDurableActionRuntime
         _verification = new BrowserVerificationActionLifecycle(_verificationRuntime.Publication);
     }
 
-    /// <summary>
-    /// Production composition root for durable browser execution + protected judge evidence.
-    /// Windows CurrentUser DPAPI protection and the receipt path are created exactly once here,
-    /// beneath the browser's already single-owner state directory.
-    /// </summary>
     internal static BrowserDurableActionRuntime CreateWindows(
         ResumableJobOrchestrator jobs,
         string stateDirectory)
@@ -39,10 +34,6 @@ internal sealed class BrowserDurableActionRuntime
             BrowserVerificationRuntime.CreateWindows(stateDirectory));
     }
 
-    /// <summary>
-    /// Deterministic composition seam for tests. Callers still cannot obtain the publisher/store
-    /// through this facade; the supplied runtime is retained only so reads share execution state.
-    /// </summary>
     internal static BrowserDurableActionRuntime Create(
         ResumableJobOrchestrator jobs,
         BrowserVerificationRuntime verificationRuntime)
@@ -58,6 +49,8 @@ internal sealed class BrowserDurableActionRuntime
         AgentJobCheckpoint initialCheckpoint,
         CancellationToken cancellationToken = default)
     {
+        if (jobId == Guid.Empty)
+            throw new ArgumentException("Job id is required.", nameof(jobId));
         ArgumentNullException.ThrowIfNull(definition);
         ArgumentNullException.ThrowIfNull(initialCheckpoint);
 
@@ -70,6 +63,9 @@ internal sealed class BrowserDurableActionRuntime
         Guid jobId,
         CancellationToken cancellationToken = default)
     {
+        if (jobId == Guid.Empty)
+            throw new ArgumentException("Job id is required.", nameof(jobId));
+
         var publication = await _verification.AdvanceAsync(
             token => _jobs.RunNextStepAsync(jobId, token),
             cancellationToken).ConfigureAwait(false);
@@ -102,9 +98,39 @@ internal sealed class BrowserDurableActionRuntime
             },
             cancellationToken).ConfigureAwait(false);
 
-        // Resume is an authoritative state transition; evidence publication remains observational.
-        // A completed side effect therefore remains completed even if its judge receipt cannot persist.
         return publication.AuthoritativeJob;
+    }
+
+    /// <summary>
+    /// Non-execution approval rearm remains inside the least-authority facade so production host code
+    /// does not need the raw orchestrator merely to rotate an expired one-time approval scope.
+    /// Rearming cannot publish green evidence because no browser action executes here.
+    /// </summary>
+    internal Task<AgentJobRecord> RearmApprovalAsync(
+        Guid jobId,
+        string exactScope,
+        CancellationToken cancellationToken = default)
+    {
+        if (jobId == Guid.Empty)
+            throw new ArgumentException("Job id is required.", nameof(jobId));
+        if (string.IsNullOrWhiteSpace(exactScope))
+            throw new ArgumentException("Exact approval scope is required.", nameof(exactScope));
+
+        return _jobs.RearmApprovalAsync(jobId, exactScope, cancellationToken);
+    }
+
+    /// <summary>
+    /// Cancellation is a non-execution transition and intentionally does not publish verification.
+    /// Keeping it here lets the browser host shed raw orchestrator authority after composition lands.
+    /// </summary>
+    internal Task<AgentJobRecord> CancelAsync(
+        Guid jobId,
+        CancellationToken cancellationToken = default)
+    {
+        if (jobId == Guid.Empty)
+            throw new ArgumentException("Job id is required.", nameof(jobId));
+
+        return _jobs.CancelAsync(jobId, cancellationToken);
     }
 
     /// <summary>

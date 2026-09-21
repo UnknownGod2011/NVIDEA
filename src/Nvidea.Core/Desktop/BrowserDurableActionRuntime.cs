@@ -66,12 +66,47 @@ internal sealed class BrowserDurableActionRuntime
             cancellationToken);
     }
 
-    internal async Task<AgentJobRecord> RunNextStepAsync(
+    internal Task<AgentJobRecord> RunNextStepAsync(
         Guid jobId,
+        CancellationToken cancellationToken = default) =>
+        AdvanceAuthoritativelyAsync(
+            token => _jobs.RunNextStepAsync(jobId, token),
+            cancellationToken);
+
+    /// <summary>
+    /// Resumes an exact human-approved durable action and advances it through the same authoritative
+    /// verification boundary as ordinary execution. Keeping resume + execute in this facade prevents
+    /// the host from accidentally bypassing terminal evidence publication after approval.
+    /// The approval transition itself remains authoritative durable state; only the subsequent
+    /// execution result is observationally projected into judge evidence.
+    /// </summary>
+    internal Task<AgentJobRecord> ResumeAfterApprovalAndRunNextStepAsync(
+        Guid jobId,
+        string exactScope,
         CancellationToken cancellationToken = default)
     {
+        if (jobId == Guid.Empty)
+            throw new ArgumentException("Job id is required.", nameof(jobId));
+        if (string.IsNullOrWhiteSpace(exactScope))
+            throw new ArgumentException("Exact approval scope is required.", nameof(exactScope));
+
+        return AdvanceAuthoritativelyAsync(
+            async token =>
+            {
+                await _jobs.ResumeAfterApprovalAsync(jobId, exactScope, token).ConfigureAwait(false);
+                return await _jobs.RunNextStepAsync(jobId, token).ConfigureAwait(false);
+            },
+            cancellationToken);
+    }
+
+    private async Task<AgentJobRecord> AdvanceAuthoritativelyAsync(
+        Func<CancellationToken, Task<AgentJobRecord>> advance,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(advance);
+
         var publication = await _verification.AdvanceAsync(
-            token => _jobs.RunNextStepAsync(jobId, token),
+            advance,
             cancellationToken).ConfigureAwait(false);
 
         // The authoritative durable job is always returned, even when observational judge-evidence

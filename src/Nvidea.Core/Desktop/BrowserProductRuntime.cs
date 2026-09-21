@@ -14,6 +14,7 @@ public sealed class BrowserProductRuntime
     private readonly BrowserHostRuntime _host;
     private readonly BrowserSessionEvidenceRecorder _sessionEvidence;
     private readonly DurableBrowserVerificationPublisher? _verificationPublisher;
+    private readonly Func<CancellationToken, Task<DesktopBrowserVerificationPresentation>>? _verificationReader;
 
     internal BrowserProductRuntime(
         BrowserHostRuntime host,
@@ -23,6 +24,22 @@ public sealed class BrowserProductRuntime
         _host = host ?? throw new ArgumentNullException(nameof(host));
         _sessionEvidence = new BrowserSessionEvidenceRecorder(sessionEvidence ?? SessionEvidenceLedger.ProcessLocal);
         _verificationPublisher = verificationPublisher;
+    }
+
+    /// <summary>
+    /// Trusted composition path for production browser verification. Product code receives only a
+    /// payload-free read delegate owned by the durable browser runtime; it never receives the
+    /// publisher, protected receipt store, raw durable evidence, or approval authority.
+    /// </summary>
+    internal BrowserProductRuntime(
+        BrowserHostRuntime host,
+        BrowserDurableActionRuntime durableActions,
+        SessionEvidenceLedger? sessionEvidence = null)
+    {
+        _host = host ?? throw new ArgumentNullException(nameof(host));
+        ArgumentNullException.ThrowIfNull(durableActions);
+        _sessionEvidence = new BrowserSessionEvidenceRecorder(sessionEvidence ?? SessionEvidenceLedger.ProcessLocal);
+        _verificationReader = durableActions.ReadVerificationPresentationAsync;
     }
 
     public async Task<BrowserJobOutcome> StartActionAsync(
@@ -59,14 +76,21 @@ public sealed class BrowserProductRuntime
 
     /// <summary>
     /// Returns only the Core-owned, payload-free durable browser verification projection suitable for
-    /// judge-facing UI. Until the trusted host composes a publisher this fails closed rather than
-    /// deriving a green state from live milestones, provider readiness, or raw browser outcomes.
+    /// judge-facing UI. Production composition prefers the least-authority durable-runtime reader.
+    /// Legacy/internal publisher composition remains supported during migration; absent either source,
+    /// this fails closed rather than deriving a green state from live milestones or raw browser outcomes.
     /// </summary>
     public Task<DesktopBrowserVerificationPresentation> ReadVerificationPresentationAsync(
-        CancellationToken cancellationToken = default) =>
-        _verificationPublisher?.ReadPresentationAsync(cancellationToken)
-        ?? Task.FromResult(DesktopBrowserVerificationProjector.NotVerifiedDurable(
+        CancellationToken cancellationToken = default)
+    {
+        if (_verificationReader is not null)
+            return _verificationReader(cancellationToken);
+        if (_verificationPublisher is not null)
+            return _verificationPublisher.ReadPresentationAsync(cancellationToken);
+
+        return Task.FromResult(DesktopBrowserVerificationProjector.NotVerifiedDurable(
             "Durable browser verification evidence is not connected to this runtime."));
+    }
 
     public Task<IReadOnlyList<BrowserDownloadRecord>> ListDownloadsAsync(
         CancellationToken cancellationToken = default) =>

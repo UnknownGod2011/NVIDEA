@@ -37,7 +37,7 @@ public sealed class BrowserVerificationActionLifecycleTests : IDisposable
     {
         Directory.CreateDirectory(_root);
         var receiptPath = Path.Combine(_root, "receipt.protected");
-        Directory.CreateDirectory(receiptPath); // File.Delete must fail before admission.
+        Directory.CreateDirectory(receiptPath);
         var runtime = BrowserVerificationRuntime.Create(receiptPath, new ReversibleTestProtector());
         var lifecycle = new BrowserVerificationActionLifecycle(runtime.Publication);
         var createCalled = false;
@@ -81,7 +81,7 @@ public sealed class BrowserVerificationActionLifecycleTests : IDisposable
     {
         Directory.CreateDirectory(_root);
         var receiptPath = Path.Combine(_root, "receipt.protected");
-        Directory.CreateDirectory(receiptPath); // File.Delete must fail before execution.
+        Directory.CreateDirectory(receiptPath);
         var runtime = BrowserVerificationRuntime.Create(receiptPath, new ReversibleTestProtector());
         var lifecycle = new BrowserVerificationActionLifecycle(runtime.Publication);
         var executionCalled = false;
@@ -111,6 +111,65 @@ public sealed class BrowserVerificationActionLifecycleTests : IDisposable
         Assert.False(result.Published);
         Assert.False(result.PublicationFailed);
         Assert.False(result.EvidenceVerified);
+    }
+
+    [Fact]
+    public async Task AdvanceAsync_ObserverRunsAfterClearAndBeforeExecution_WithoutPayloadAuthority()
+    {
+        Directory.CreateDirectory(_root);
+        var receiptPath = Path.Combine(_root, "receipt.protected");
+        var runtime = BrowserVerificationRuntime.Create(receiptPath, new ReversibleTestProtector());
+        await File.WriteAllTextAsync(receiptPath, "stale-green-evidence");
+
+        var observerEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseObserver = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var observer = new PausingObserver(observerEntered, releaseObserver);
+        var lifecycle = new BrowserVerificationActionLifecycle(runtime.Publication, observer);
+        var executionCalled = false;
+
+        var advance = lifecycle.AdvanceAsync(_ =>
+        {
+            executionCalled = true;
+            return Task.FromResult(CreateJob(AgentJobState.WaitingForApproval));
+        });
+
+        await observerEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(BrowserVerificationLifecycleStage.ExecutionEvidenceCleared, observer.LastStage);
+        Assert.False(File.Exists(receiptPath));
+        Assert.False(executionCalled);
+        Assert.False(advance.IsCompleted);
+
+        releaseObserver.TrySetResult();
+        await advance.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(executionCalled);
+    }
+
+    [Fact]
+    public async Task AdvanceAsync_CancelWhileObserverPaused_NeverExecutesBrowserBoundary()
+    {
+        Directory.CreateDirectory(_root);
+        var runtime = BrowserVerificationRuntime.Create(
+            Path.Combine(_root, "receipt.protected"),
+            new ReversibleTestProtector());
+        var observerEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseObserver = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var observer = new PausingObserver(observerEntered, releaseObserver);
+        var lifecycle = new BrowserVerificationActionLifecycle(runtime.Publication, observer);
+        var executionCalled = false;
+        using var cancellation = new CancellationTokenSource();
+
+        var advance = lifecycle.AdvanceAsync(_ =>
+        {
+            executionCalled = true;
+            return Task.FromResult(CreateJob(AgentJobState.Completed));
+        }, cancellation.Token);
+
+        await observerEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => advance);
+        Assert.False(executionCalled);
     }
 
     private static AgentJobRecord CreateJob(AgentJobState state)
@@ -144,7 +203,29 @@ public sealed class BrowserVerificationActionLifecycleTests : IDisposable
         }
         catch
         {
-            // Best-effort test cleanup only.
+        }
+    }
+
+    private sealed class PausingObserver : IBrowserVerificationLifecycleObserver
+    {
+        private readonly TaskCompletionSource _entered;
+        private readonly TaskCompletionSource _release;
+
+        internal PausingObserver(TaskCompletionSource entered, TaskCompletionSource release)
+        {
+            _entered = entered;
+            _release = release;
+        }
+
+        internal BrowserVerificationLifecycleStage? LastStage { get; private set; }
+
+        public async ValueTask ObserveAsync(
+            BrowserVerificationLifecycleStage stage,
+            CancellationToken cancellationToken)
+        {
+            LastStage = stage;
+            _entered.TrySetResult();
+            await _release.Task.WaitAsync(cancellationToken);
         }
     }
 

@@ -14,6 +14,7 @@ internal sealed class BrowserDurableActionRuntime
     private readonly ResumableJobOrchestrator _jobs;
     private readonly BrowserVerificationActionLifecycle _verification;
     private readonly BrowserVerificationRuntime _verificationRuntime;
+    private readonly SemaphoreSlim _transitionGate = new(1, 1);
 
     private BrowserDurableActionRuntime(
         ResumableJobOrchestrator jobs,
@@ -54,25 +55,32 @@ internal sealed class BrowserDurableActionRuntime
         ArgumentNullException.ThrowIfNull(definition);
         ArgumentNullException.ThrowIfNull(initialCheckpoint);
 
-        return _verification.AdmitAsync(
-            token => _jobs.CreateAsync(jobId, definition, initialCheckpoint, token),
+        return SerializeTransitionAsync(
+            token => _verification.AdmitAsync(
+                innerToken => _jobs.CreateAsync(jobId, definition, initialCheckpoint, innerToken),
+                token),
             cancellationToken);
     }
 
-    internal async Task<AgentJobRecord> RunNextStepAsync(
+    internal Task<AgentJobRecord> RunNextStepAsync(
         Guid jobId,
         CancellationToken cancellationToken = default)
     {
         if (jobId == Guid.Empty)
             throw new ArgumentException("Job id is required.", nameof(jobId));
 
-        var publication = await _verification.AdvanceAsync(
-            token => _jobs.RunNextStepAsync(jobId, token),
-            cancellationToken).ConfigureAwait(false);
+        return SerializeTransitionAsync(
+            async token =>
+            {
+                var publication = await _verification.AdvanceAsync(
+                    innerToken => _jobs.RunNextStepAsync(jobId, innerToken),
+                    token).ConfigureAwait(false);
 
-        // The authoritative durable job is always returned, even when observational judge-evidence
-        // publication fails. This prevents a completed side effect from being mistaken as retryable.
-        return publication.AuthoritativeJob;
+                // The authoritative durable job is always returned, even when observational judge-evidence
+                // publication fails. This prevents a completed side effect from being mistaken as retryable.
+                return publication.AuthoritativeJob;
+            },
+            cancellationToken);
     }
 
     /// <summary>
@@ -80,7 +88,7 @@ internal sealed class BrowserDurableActionRuntime
     /// verification boundary as ordinary execution. Keeping resume + execute in this facade prevents
     /// the host from accidentally bypassing terminal evidence publication after approval.
     /// </summary>
-    internal async Task<AgentJobRecord> ResumeAfterApprovalAndRunNextStepAsync(
+    internal Task<AgentJobRecord> ResumeAfterApprovalAndRunNextStepAsync(
         Guid jobId,
         string exactScope,
         CancellationToken cancellationToken = default)
@@ -90,15 +98,20 @@ internal sealed class BrowserDurableActionRuntime
         if (string.IsNullOrWhiteSpace(exactScope))
             throw new ArgumentException("Exact approval scope is required.", nameof(exactScope));
 
-        var publication = await _verification.AdvanceAsync(
+        return SerializeTransitionAsync(
             async token =>
             {
-                await _jobs.ResumeAfterApprovalAsync(jobId, exactScope, token).ConfigureAwait(false);
-                return await _jobs.RunNextStepAsync(jobId, token).ConfigureAwait(false);
-            },
-            cancellationToken).ConfigureAwait(false);
+                var publication = await _verification.AdvanceAsync(
+                    async innerToken =>
+                    {
+                        await _jobs.ResumeAfterApprovalAsync(jobId, exactScope, innerToken).ConfigureAwait(false);
+                        return await _jobs.RunNextStepAsync(jobId, innerToken).ConfigureAwait(false);
+                    },
+                    token).ConfigureAwait(false);
 
-        return publication.AuthoritativeJob;
+                return publication.AuthoritativeJob;
+            },
+            cancellationToken);
     }
 
     /// <summary>
@@ -108,7 +121,7 @@ internal sealed class BrowserDurableActionRuntime
     /// any existing protected receipt first so migrated/pre-verification state cannot leave stale green
     /// evidence visible while the durable action is explicitly waiting for fresh human authorization.
     /// </summary>
-    internal async Task<AgentJobRecord> RearmApprovalAsync(
+    internal Task<AgentJobRecord> RearmApprovalAsync(
         Guid jobId,
         string exactScope,
         CancellationToken cancellationToken = default)
@@ -118,8 +131,13 @@ internal sealed class BrowserDurableActionRuntime
         if (string.IsNullOrWhiteSpace(exactScope))
             throw new ArgumentException("Exact approval scope is required.", nameof(exactScope));
 
-        await _verificationRuntime.Publication.BeginActionAsync(cancellationToken).ConfigureAwait(false);
-        return await _jobs.RearmApprovalAsync(jobId, exactScope, cancellationToken).ConfigureAwait(false);
+        return SerializeTransitionAsync(
+            async token =>
+            {
+                await _verificationRuntime.Publication.BeginActionAsync(token).ConfigureAwait(false);
+                return await _jobs.RearmApprovalAsync(jobId, exactScope, token).ConfigureAwait(false);
+            },
+            cancellationToken);
     }
 
     /// <summary>
@@ -128,15 +146,20 @@ internal sealed class BrowserDurableActionRuntime
     /// cancelled or migrated work cannot continue presenting a stale successful action to judge UI.
     /// If invalidation fails, cancellation is not committed and the caller receives the storage error.
     /// </summary>
-    internal async Task<AgentJobRecord> CancelAsync(
+    internal Task<AgentJobRecord> CancelAsync(
         Guid jobId,
         CancellationToken cancellationToken = default)
     {
         if (jobId == Guid.Empty)
             throw new ArgumentException("Job id is required.", nameof(jobId));
 
-        await _verificationRuntime.Publication.BeginActionAsync(cancellationToken).ConfigureAwait(false);
-        return await _jobs.CancelAsync(jobId, cancellationToken).ConfigureAwait(false);
+        return SerializeTransitionAsync(
+            async token =>
+            {
+                await _verificationRuntime.Publication.BeginActionAsync(token).ConfigureAwait(false);
+                return await _jobs.CancelAsync(jobId, token).ConfigureAwait(false);
+            },
+            cancellationToken);
     }
 
     /// <summary>
@@ -147,7 +170,7 @@ internal sealed class BrowserDurableActionRuntime
     /// stale green receipt can never survive a crash-reconciled completion. If that clear fails, the
     /// reconciliation is not committed and the job remains fail-closed for explicit recovery.
     /// </summary>
-    internal async Task<AgentJobRecord> CompleteAmbiguousRunningWithoutVerificationAsync(
+    internal Task<AgentJobRecord> CompleteAmbiguousRunningWithoutVerificationAsync(
         Guid jobId,
         AgentJobCheckpoint verifiedCheckpoint,
         string detail,
@@ -159,14 +182,19 @@ internal sealed class BrowserDurableActionRuntime
         if (string.IsNullOrWhiteSpace(detail))
             throw new ArgumentException("Reconciliation detail is required.", nameof(detail));
 
-        // Ambiguous recovery is deliberately not eligible for judge-green evidence. Clearing first is
-        // important for migrated/pre-verification jobs where a protected receipt may predate this job's
-        // admission lifecycle. Never complete durable reconciliation while stale green evidence remains.
-        await _verificationRuntime.Publication.BeginActionAsync(cancellationToken).ConfigureAwait(false);
+        return SerializeTransitionAsync(
+            async token =>
+            {
+                // Ambiguous recovery is deliberately not eligible for judge-green evidence. Clearing first is
+                // important for migrated/pre-verification jobs where a protected receipt may predate this job's
+                // admission lifecycle. Never complete durable reconciliation while stale green evidence remains.
+                await _verificationRuntime.Publication.BeginActionAsync(token).ConfigureAwait(false);
 
-        return await _jobs
-            .CompleteAmbiguousRunningAsync(jobId, verifiedCheckpoint, detail, cancellationToken)
-            .ConfigureAwait(false);
+                return await _jobs
+                    .CompleteAmbiguousRunningAsync(jobId, verifiedCheckpoint, detail, token)
+                    .ConfigureAwait(false);
+            },
+            cancellationToken);
     }
 
     /// <summary>
@@ -176,4 +204,28 @@ internal sealed class BrowserDurableActionRuntime
     internal Task<DesktopBrowserVerificationPresentation> ReadVerificationPresentationAsync(
         CancellationToken cancellationToken = default) =>
         _verificationRuntime.ReadPresentationAsync(cancellationToken);
+
+    /// <summary>
+    /// The protected verification receipt represents the most recently admitted browser transition,
+    /// so all transitions that can clear or publish it must be linearized. Without this gate, two jobs
+    /// could interleave as A executes, B clears, A publishes, leaving A's stale green receipt visible
+    /// even though B is the newer admitted action. Cancellation while waiting for the gate never enters
+    /// the critical section; cancellation after entry is propagated to the underlying transition and
+    /// the semaphore is always released.
+    /// </summary>
+    private async Task<T> SerializeTransitionAsync<T>(
+        Func<CancellationToken, Task<T>> transition,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(transition);
+        await _transitionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await transition(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _transitionGate.Release();
+        }
+    }
 }

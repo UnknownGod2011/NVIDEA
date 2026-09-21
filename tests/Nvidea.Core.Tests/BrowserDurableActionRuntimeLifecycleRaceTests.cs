@@ -1,3 +1,5 @@
+using System.Text.Json;
+using Nvidea.Core.Browser;
 using Nvidea.Core.Capabilities;
 using Nvidea.Core.Desktop;
 using Nvidea.Core.Jobs;
@@ -7,9 +9,8 @@ namespace Nvidea.Core.Tests;
 
 /// <summary>
 /// Behavioral coverage for the real BrowserDurableActionRuntime gate at the exact
-/// evidence-clear boundary. The fixture deliberately uses a non-browser handler so
-/// it cannot mint browser verification evidence; the test is about isolation of the
-/// transient clear/execute state, not about weakening publication validation.
+/// evidence-clear boundary. The fixture emits the same payload-free terminal evidence
+/// shape as BrowserActionJobHandler so publication validation remains production-real.
 /// </summary>
 public sealed class BrowserDurableActionRuntimeLifecycleRaceTests : IDisposable
 {
@@ -18,7 +19,7 @@ public sealed class BrowserDurableActionRuntimeLifecycleRaceTests : IDisposable
         "nvidea-browser-durable-race-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
-    public async Task ExecutionEvidenceClear_BlocksJudgeReadAndNewAdmission_UntilTransitionSettles()
+    public async Task ExecutionEvidenceClear_BlocksJudgeReadAndNewAdmission_ThenNewAdmissionInvalidatesPublishedGreen()
     {
         Directory.CreateDirectory(_root);
         var receiptPath = Path.Combine(_root, "receipt.protected");
@@ -26,7 +27,7 @@ public sealed class BrowserDurableActionRuntimeLifecycleRaceTests : IDisposable
 
         var store = new InMemoryStore();
         var audit = new InMemoryAudit();
-        var handler = new CompletingHandler();
+        var handler = new VerifiedBrowserCheckpointHandler();
         var jobs = new ResumableJobOrchestrator(
             store,
             new ConservativeJobExecutionPolicy(),
@@ -48,6 +49,8 @@ public sealed class BrowserDurableActionRuntimeLifecycleRaceTests : IDisposable
         Assert.Equal(0, handler.ExecutionCount);
         Assert.False(runA.IsCompleted);
 
+        // Queue the judge read before the newer admission. Once A settles, the read must observe
+        // A's newly published green receipt; B then enters the same gate and invalidates it.
         var judgeRead = runtime.ReadVerificationPresentationAsync();
         var jobBId = Guid.NewGuid();
         var admitB = runtime.CreateAsync(
@@ -55,8 +58,6 @@ public sealed class BrowserDurableActionRuntimeLifecycleRaceTests : IDisposable
             definition,
             new AgentJobCheckpoint("queued", null, DateTimeOffset.UtcNow));
 
-        // Both operations are queued behind the same transition gate while A is paused after
-        // evidence invalidation. Neither may observe or mutate the half-settled lifecycle.
         await Task.Delay(50);
         Assert.False(judgeRead.IsCompleted);
         Assert.False(admitB.IsCompleted);
@@ -67,15 +68,21 @@ public sealed class BrowserDurableActionRuntimeLifecycleRaceTests : IDisposable
 
         var completedA = await runA.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(AgentJobState.Completed, completedA.State);
+        Assert.Equal("browser.action.verified", completedA.Checkpoint?.Step);
         Assert.Equal(1, handler.ExecutionCount);
 
-        var presentation = await judgeRead.WaitAsync(TimeSpan.FromSeconds(5));
-        var admittedB = await admitB.WaitAsync(TimeSpan.FromSeconds(5));
+        var presentationAfterA = await judgeRead.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(presentationAfterA.Verified);
+        Assert.Equal(1, presentationAfterA.CompletedActionCount);
 
+        var admittedB = await admitB.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(jobBId, admittedB.JobId);
         Assert.NotNull(await store.GetAsync(jobBId));
         Assert.False(File.Exists(receiptPath));
-        Assert.False(presentation.Verified);
+
+        var finalPresentation = await runtime.ReadVerificationPresentationAsync();
+        Assert.False(finalPresentation.Verified);
+        Assert.Equal(0, finalPresentation.CompletedActionCount);
     }
 
     private static AgentJobDefinition Definition() =>
@@ -125,7 +132,7 @@ public sealed class BrowserDurableActionRuntimeLifecycleRaceTests : IDisposable
         }
     }
 
-    private sealed class CompletingHandler : IAgentJobHandler
+    private sealed class VerifiedBrowserCheckpointHandler : IAgentJobHandler
     {
         private int _executionCount;
         public string JobType => "race.fixture";
@@ -136,10 +143,28 @@ public sealed class BrowserDurableActionRuntimeLifecycleRaceTests : IDisposable
             CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref _executionCount);
+            var started = DateTimeOffset.UtcNow.AddMilliseconds(-1);
+            var completed = DateTimeOffset.UtcNow;
+            var evidence = new DurableBrowserActionEvidence(
+                job.JobId,
+                BrowserActionKind.Click,
+                BrowserRiskLevel.Low,
+                Allowed: true,
+                RequiredApproval: false,
+                ApprovalObserved: false,
+                DriverReportedSuccess: true,
+                PostStateVerified: true,
+                started,
+                completed);
+
+            var payload = JsonSerializer.Serialize(
+                new { durableEvidence = evidence },
+                new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
             return Task.FromResult(new JobStepResult(
                 Completed: true,
-                CheckpointStep: "completed",
-                CheckpointPayload: null));
+                CheckpointStep: "browser.action.verified",
+                CheckpointPayload: payload));
         }
     }
 

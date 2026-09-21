@@ -52,6 +52,50 @@ public sealed class BrowserVerificationActionLifecycleTests : IDisposable
     }
 
     [Fact]
+    public async Task AdvanceAsync_ClearsStaleEvidenceBeforeExecutionAttempt()
+    {
+        Directory.CreateDirectory(_root);
+        var receiptPath = Path.Combine(_root, "receipt.protected");
+        var runtime = BrowserVerificationRuntime.Create(receiptPath, new ReversibleTestProtector());
+        var lifecycle = new BrowserVerificationActionLifecycle(runtime.Publication);
+        await File.WriteAllTextAsync(receiptPath, "stale-green-evidence");
+
+        var executionObservedReceipt = true;
+        var authoritative = CreateJob(AgentJobState.WaitingForApproval);
+
+        var result = await lifecycle.AdvanceAsync(_ =>
+        {
+            executionObservedReceipt = File.Exists(receiptPath);
+            return Task.FromResult(authoritative);
+        });
+
+        Assert.Same(authoritative, result.AuthoritativeJob);
+        Assert.False(executionObservedReceipt);
+        Assert.False(File.Exists(receiptPath));
+        Assert.False(result.Published);
+        Assert.False(result.PublicationFailed);
+    }
+
+    [Fact]
+    public async Task AdvanceAsync_ClearFailure_PreventsExecutionAttempt()
+    {
+        Directory.CreateDirectory(_root);
+        var receiptPath = Path.Combine(_root, "receipt.protected");
+        Directory.CreateDirectory(receiptPath); // File.Delete must fail before execution.
+        var runtime = BrowserVerificationRuntime.Create(receiptPath, new ReversibleTestProtector());
+        var lifecycle = new BrowserVerificationActionLifecycle(runtime.Publication);
+        var executionCalled = false;
+
+        await Assert.ThrowsAnyAsync<Exception>(() => lifecycle.AdvanceAsync(_ =>
+        {
+            executionCalled = true;
+            return Task.FromResult(CreateJob(AgentJobState.Completed));
+        }));
+
+        Assert.False(executionCalled);
+    }
+
+    [Fact]
     public async Task AdvanceAsync_NonCompletedRecord_IsReturnedUnchangedWithoutPublication()
     {
         Directory.CreateDirectory(_root);

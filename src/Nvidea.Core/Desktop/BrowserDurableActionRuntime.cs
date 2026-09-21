@@ -104,9 +104,11 @@ internal sealed class BrowserDurableActionRuntime
     /// <summary>
     /// Non-execution approval rearm remains inside the least-authority facade so production host code
     /// does not need the raw orchestrator merely to rotate an expired one-time approval scope.
-    /// Rearming cannot publish green evidence because no browser action executes here.
+    /// Rearming cannot publish green evidence because no browser action executes here. It also clears
+    /// any existing protected receipt first so migrated/pre-verification state cannot leave stale green
+    /// evidence visible while the durable action is explicitly waiting for fresh human authorization.
     /// </summary>
-    internal Task<AgentJobRecord> RearmApprovalAsync(
+    internal async Task<AgentJobRecord> RearmApprovalAsync(
         Guid jobId,
         string exactScope,
         CancellationToken cancellationToken = default)
@@ -116,21 +118,25 @@ internal sealed class BrowserDurableActionRuntime
         if (string.IsNullOrWhiteSpace(exactScope))
             throw new ArgumentException("Exact approval scope is required.", nameof(exactScope));
 
-        return _jobs.RearmApprovalAsync(jobId, exactScope, cancellationToken);
+        await _verificationRuntime.Publication.BeginActionAsync(cancellationToken).ConfigureAwait(false);
+        return await _jobs.RearmApprovalAsync(jobId, exactScope, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
     /// Cancellation is a non-execution transition and intentionally does not publish verification.
-    /// Keeping it here lets the browser host shed raw orchestrator authority after composition lands.
+    /// Existing protected verification is invalidated before the durable cancellation transition so
+    /// cancelled or migrated work cannot continue presenting a stale successful action to judge UI.
+    /// If invalidation fails, cancellation is not committed and the caller receives the storage error.
     /// </summary>
-    internal Task<AgentJobRecord> CancelAsync(
+    internal async Task<AgentJobRecord> CancelAsync(
         Guid jobId,
         CancellationToken cancellationToken = default)
     {
         if (jobId == Guid.Empty)
             throw new ArgumentException("Job id is required.", nameof(jobId));
 
-        return _jobs.CancelAsync(jobId, cancellationToken);
+        await _verificationRuntime.Publication.BeginActionAsync(cancellationToken).ConfigureAwait(false);
+        return await _jobs.CancelAsync(jobId, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>

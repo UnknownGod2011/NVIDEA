@@ -6,7 +6,7 @@ namespace Nvidea.Core.Tests;
 public sealed class BrowserDurableActionRuntimeApiSurfaceTests
 {
     [Fact]
-    public void Runtime_IsInternal_AndExposesOnlyCreateAndAdvanceDurableOperations()
+    public void Runtime_IsInternal_AndExposesOnlyDurableOperationsFactoriesAndPayloadFreeRead()
     {
         var type = typeof(BrowserProductRuntime).Assembly.GetType(
             "Nvidea.Core.Desktop.BrowserDurableActionRuntime",
@@ -14,13 +14,22 @@ public sealed class BrowserDurableActionRuntimeApiSurfaceTests
 
         Assert.False(type.IsPublic);
 
-        var declared = type.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly)
+        var declared = type.GetMethods(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly)
             .Where(method => !method.IsSpecialName)
             .Select(method => method.Name)
             .OrderBy(name => name, StringComparer.Ordinal)
             .ToArray();
 
-        Assert.Equal(new[] { "CreateAsync", "RunNextStepAsync" }, declared);
+        Assert.Equal(
+            new[]
+            {
+                "Create",
+                "CreateAsync",
+                "CreateWindows",
+                "ReadVerificationPresentationAsync",
+                "RunNextStepAsync"
+            },
+            declared);
     }
 
     [Fact]
@@ -30,7 +39,27 @@ public sealed class BrowserDurableActionRuntimeApiSurfaceTests
             "Nvidea.Core.Desktop.BrowserDurableActionRuntime",
             throwOnError: true)!;
 
-        var publicMembers = type.GetMembers(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly);
-        Assert.Empty(publicMembers.Where(member => member.MemberType is MemberTypes.Field or MemberTypes.Property));
+        var exposedFieldsOrProperties = type
+            .GetMembers(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.DeclaredOnly)
+            .Where(member => member.MemberType is MemberTypes.Field or MemberTypes.Property)
+            .ToArray();
+
+        Assert.Empty(exposedFieldsOrProperties);
+    }
+
+    [Fact]
+    public void VerificationRead_ReturnsOnlyPayloadFreePresentation()
+    {
+        var type = typeof(BrowserProductRuntime).Assembly.GetType(
+            "Nvidea.Core.Desktop.BrowserDurableActionRuntime",
+            throwOnError: true)!;
+        var method = type.GetMethod(
+            "ReadVerificationPresentationAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+
+        Assert.NotNull(method);
+        Assert.Equal(
+            typeof(Task<DesktopBrowserVerificationPresentation>),
+            method!.ReturnType);
     }
 }

@@ -27,6 +27,7 @@ public sealed class BrowserDurableActionRuntimeApiSurfaceTests
                 "CompleteAmbiguousRunningWithoutVerificationAsync",
                 "Create",
                 "CreateAsync",
+                "CreateForTesting",
                 "CreateWindows",
                 "ReadVerificationPresentationAsync",
                 "RearmApprovalAsync",
@@ -34,6 +35,28 @@ public sealed class BrowserDurableActionRuntimeApiSurfaceTests
                 "RunNextStepAsync"
             },
             externallyCallable);
+    }
+
+    [Fact]
+    public void TestObserverFactory_RemainsInternal_AndRequiresPayloadFreeObserverContract()
+    {
+        var type = typeof(BrowserProductRuntime).Assembly.GetType(
+            "Nvidea.Core.Desktop.BrowserDurableActionRuntime",
+            throwOnError: true)!;
+        var factory = type.GetMethod(
+            "CreateForTesting",
+            BindingFlags.Static | BindingFlags.NonPublic);
+
+        Assert.NotNull(factory);
+        Assert.True(factory!.IsAssembly);
+        Assert.False(factory.IsPublic);
+
+        var parameters = factory.GetParameters();
+        Assert.Equal(3, parameters.Length);
+        Assert.Equal("ResumableJobOrchestrator", parameters[0].ParameterType.Name);
+        Assert.Equal("BrowserVerificationRuntime", parameters[1].ParameterType.Name);
+        Assert.Equal("IBrowserVerificationLifecycleObserver", parameters[2].ParameterType.Name);
+        Assert.False(parameters[2].ParameterType.IsPublic);
     }
 
     [Fact]

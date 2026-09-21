@@ -38,31 +38,35 @@ Added an internal optional `IBrowserVerificationLifecycleObserver` with only two
 ### 2026-09-22 — observer threaded through durable runtime test composition
 `BrowserDurableActionRuntime` now has a narrowly scoped internal `CreateForTesting` factory that injects the payload-free lifecycle observer into the exact verification lifecycle protected by the runtime transition gate. Production `Create` and `CreateWindows` remain observer-free. API-surface regression coverage requires the factory and observer contract to stay non-public and prevents the test seam from becoming product authority.
 
+### 2026-09-22 — exact durable clear/execute race coverage
+Added `BrowserDurableActionRuntimeLifecycleRaceTests` using the real durable runtime, real orchestrator, shared verification runtime and payload-free observer. The test pauses job A exactly after execution evidence is cleared, queues both a judge verification read and a newer job-B admission, and requires both to remain outside the critical section until A settles. It also requires job B to remain absent from durable storage while blocked and final evidence to remain NOT VERIFIED after the newer admission.
+
 ## Latest run
 Files changed:
-- `src/Nvidea.Core/Desktop/BrowserDurableActionRuntime.cs`
-- `tests/Nvidea.Core.Tests/BrowserDurableActionRuntimeApiSurfaceTests.cs`
+- `tests/Nvidea.Core.Tests/BrowserDurableActionRuntimeLifecycleRaceTests.cs`
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md` completely and inspected the current durable runtime, verification runtime, lifecycle observer, concurrency tests and API-surface tests before implementation.
-- Threaded the observer through the private runtime constructor and added only an internal `CreateForTesting(jobs, verificationRuntime, observer)` composition seam.
-- Production factories still call the constructor without an observer, so shipping behavior is unchanged.
-- Added reflection regression coverage requiring `CreateForTesting` to remain internal, to take exactly the orchestrator + shared verification runtime + internal payload-free observer, and requiring the observer type itself to remain non-public.
-- Existing private instance `SemaphoreSlim` remains the sole transition serialization authority; the observer is invoked from inside the lifecycle that is already executed under that gate.
+- Re-read `progress.md` completely and inspected the current durable runtime, verification runtime, lifecycle tests, concurrency tests, orchestrator behavior, and current repository tree before implementation.
+- Added a deterministic in-memory orchestrator fixture and exercised `BrowserDurableActionRuntime.CreateForTesting` rather than reflecting directly into its semaphore.
+- Seeded stale receipt bytes, paused at `ExecutionEvidenceCleared`, and asserted receipt invalidation happens before handler execution.
+- While A owns the transition gate, started both `ReadVerificationPresentationAsync` and a newer `CreateAsync` admission; asserted neither completes, job B is not persisted, and the handler has not executed.
+- After release, A must complete exactly once; queued operations then settle and B admission leaves the shared verification store clear/NOT VERIFIED.
+- The fixture deliberately uses a non-browser completing handler, so it cannot mint a browser verification receipt and does not weaken production publication validation merely to make the race test convenient.
 - Repository identity was explicitly reverified immediately before every GitHub mutation; writable target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 - Connector environment still cannot execute .NET 8, so compile/test PASS is not claimed. No live/paid Nebius, Tavily, browser, Object Storage, Serverless, or inference operation was triggered.
 
 ## Security / privacy / failure review
-- The new factory is internal and test-oriented; it does not expose the receipt store, publisher, browser, approval capability, transition semaphore, or any payload-bearing object.
-- The observer contract remains payload-free and internal. Production factories install no observer, avoiding accidental timing callbacks or side-channel expansion in shipping composition.
-- Observer failure/cancellation remains fail-closed after receipt invalidation and before execution; old green evidence cannot survive a failed observation callback.
-- Shared `BrowserVerificationRuntime` remains mandatory for the test seam, so publication and judge reads cannot be accidentally wired to different receipt stores during the forthcoming race test.
+- The new test uses only internal test composition and an in-memory job/audit fixture; production factories and runtime authority are unchanged.
+- The lifecycle observer remains payload-free and sees only the enum stage. It receives no URL, locator, typed value, job, approval, receipt, browser handle, publisher, or semaphore.
+- The test explicitly proves a judge read cannot inspect the transient cleared-but-unsettled state and a newer admission cannot overtake the active transition.
+- Job B is checked at the durable store boundary while blocked, guarding against future refactors that might move job persistence outside the verification serialization gate.
+- No test hook can manufacture VERIFIED evidence: the non-browser fixture intentionally exercises only serialization and invalidation semantics.
 
 ## Known blockers / risks
-- New Core/test changes require executable .NET 8 validation; accumulated Windows/Chromium suites remain pending environment validation.
-- The exact race can now be constructed, but the behavioral test still needs a deterministic in-memory/local orchestrator fixture capable of completing a verified browser-action record while paused at `ExecutionEvidenceCleared`.
+- The new Core race test and accumulated suite require executable .NET 8 validation; compile/test PASS remains unverified in this connector environment.
+- The strongest remaining variant is the same race with a genuine browser-action terminal checkpoint that successfully publishes a green receipt for A before B invalidates it; existing production Chromium tests separately cover genuine publication but not this exact interleaving.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-Use `CreateForTesting` to add the full durable-runtime race regression: seed prior verified evidence, pause job A at `ExecutionEvidenceCleared`, start a judge read and newer job-B admission, prove neither can enter while A owns the transition gate, release A and prove its verified receipt settles, then allow B admission and prove B invalidates A's just-published receipt so final judge presentation is NOT VERIFIED. Keep the fixture payload-free outside the trusted test composition and verify cancellation of either waiter cannot bypass the gate. Then execute the full .NET suite in the first capable environment and fix any compile/runtime findings without weakening the authority boundary.
+Upgrade the deterministic durable-runtime race fixture to use a genuine browser-action terminal checkpoint/evidence shape accepted by `DurableBrowserVerificationPublisher`: pause A after clear, prove judge read and B admission block, let A publish VERIFIED evidence, then prove B admission immediately invalidates A's newly published receipt and the final judge presentation is NOT VERIFIED. Reuse existing browser checkpoint/receipt test builders rather than weakening validation. Then run the full .NET suite in the first capable environment and fix any compile/runtime findings without weakening the authority boundary.

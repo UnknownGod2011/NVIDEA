@@ -14,8 +14,8 @@ public sealed class BrowserDurableActionRuntimeApiSurfaceTests
 
         Assert.False(type.IsPublic);
 
-        var declared = type.GetMethods(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly)
-            .Where(method => !method.IsSpecialName)
+        var externallyCallable = type.GetMethods(BindingFlags.Instance | BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.DeclaredOnly)
+            .Where(method => method.IsAssembly && !method.IsSpecialName)
             .Select(method => method.Name)
             .OrderBy(name => name, StringComparer.Ordinal)
             .ToArray();
@@ -33,7 +33,7 @@ public sealed class BrowserDurableActionRuntimeApiSurfaceTests
                 "ResumeAfterApprovalAndRunNextStepAsync",
                 "RunNextStepAsync"
             },
-            declared);
+            externallyCallable);
     }
 
     [Fact]
@@ -49,6 +49,21 @@ public sealed class BrowserDurableActionRuntimeApiSurfaceTests
             .ToArray();
 
         Assert.Empty(exposedFieldsOrProperties);
+    }
+
+    [Fact]
+    public void TransitionSerializationGate_IsPrivateImplementationDetail()
+    {
+        var type = typeof(BrowserProductRuntime).Assembly.GetType(
+            "Nvidea.Core.Desktop.BrowserDurableActionRuntime",
+            throwOnError: true)!;
+        var gate = type.GetMethod(
+            "SerializeTransitionAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+
+        Assert.NotNull(gate);
+        Assert.True(gate!.IsPrivate);
+        Assert.Null(type.GetProperty("TransitionGate", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic));
     }
 
     [Fact]

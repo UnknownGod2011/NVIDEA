@@ -24,6 +24,7 @@ public sealed class BrowserDurableActionRuntimeApiSurfaceTests
             new[]
             {
                 "CancelAsync",
+                "CompleteAmbiguousRunningWithoutVerificationAsync",
                 "Create",
                 "CreateAsync",
                 "CreateWindows",
@@ -64,5 +65,20 @@ public sealed class BrowserDurableActionRuntimeApiSurfaceTests
         Assert.Equal(
             typeof(Task<DesktopBrowserVerificationPresentation>),
             method!.ReturnType);
+    }
+
+    [Fact]
+    public void AmbiguousCompletion_IsExplicitlyNamedAsNonVerificationPath()
+    {
+        var type = typeof(BrowserProductRuntime).Assembly.GetType(
+            "Nvidea.Core.Desktop.BrowserDurableActionRuntime",
+            throwOnError: true)!;
+
+        Assert.NotNull(type.GetMethod(
+            "CompleteAmbiguousRunningWithoutVerificationAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic));
+        Assert.Null(type.GetMethod(
+            "CompleteAmbiguousRunningAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic));
     }
 }

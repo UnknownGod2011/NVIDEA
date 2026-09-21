@@ -57,7 +57,7 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
     private readonly BoundedSegmentedAuditTrail _audit;
     private readonly ScopedApprovalAuthorizer _approvals;
     private readonly IAgentJobStore _jobStore;
-    private readonly ResumableJobOrchestrator _jobs;
+    private readonly BrowserDurableActionRuntime _durableActions;
     private bool _disposed;
 
     private BrowserHostRuntime(
@@ -69,7 +69,7 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
         BoundedSegmentedAuditTrail audit,
         ScopedApprovalAuthorizer approvals,
         IAgentJobStore jobStore,
-        ResumableJobOrchestrator jobs)
+        BrowserDurableActionRuntime durableActions)
     {
         _playwright = playwright;
         _context = context;
@@ -80,23 +80,15 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
         _audit = audit;
         _approvals = approvals;
         _jobStore = jobStore;
-        _jobs = jobs;
+        _durableActions = durableActions ?? throw new ArgumentNullException(nameof(durableActions));
     }
 
     internal static Task<BrowserHostRuntime> CreateAsync(
         string stateDirectory,
         BrowserHostOptions? options = null,
         CancellationToken cancellationToken = default) =>
-        CreateAsync(
-            stateDirectory,
-            options,
-            static token => Playwright.CreateAsync().WaitAsync(token),
-            cancellationToken);
+        CreateAsync(stateDirectory, options, static token => Playwright.CreateAsync().WaitAsync(token), cancellationToken);
 
-    /// <summary>
-    /// Internal transport seam used to verify that durable-state contention fails before Playwright
-    /// transport startup. Trusted Core composition supplies Playwright.CreateAsync in production.
-    /// </summary>
     internal static async Task<BrowserHostRuntime> CreateAsync(
         string stateDirectory,
         BrowserHostOptions? options,
@@ -117,9 +109,6 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-
-            // Acquire single-owner durable state before creating the Playwright transport. A second
-            // NVIDEA instance therefore fails closed without starting browser infrastructure at all.
             stateLease = StateDirectoryLease.Acquire(fullStateDirectory);
             cancellationToken.ThrowIfCancellationRequested();
             playwright = await playwrightFactory(cancellationToken).ConfigureAwait(false);
@@ -130,8 +119,6 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
                 MaxObservedElements: 250,
                 ActionTimeoutMilliseconds: 15_000);
 
-            // Ownership transfers exactly once to the persistent-context boundary. It will release the
-            // same lease on context Close or any failed initialization path.
             var transferredLease = stateLease
                 ?? throw new InvalidOperationException("Browser state lease was unexpectedly unavailable before context launch.");
             stateLease = null;
@@ -151,9 +138,7 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
             var registry = new CapabilityRegistry(new[]
             {
                 new CapabilityDescriptor(
-                    BrowserCapabilityId,
-                    "1.0.0",
-                    "Browser agent",
+                    BrowserCapabilityId, "1.0.0", "Browser agent",
                     new HashSet<DataPermission>
                     {
                         DataPermission.BrowserRead,
@@ -161,40 +146,25 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
                         DataPermission.FilesRead,
                         DataPermission.FilesWrite
                     },
-                    CapabilityRiskLevel.Medium,
-                    RequiresConfirmation: false,
+                    CapabilityRiskLevel.Medium, RequiresConfirmation: false,
                     "Bounded local browser automation with exact approvals for consequential writes."),
                 new CapabilityDescriptor(
-                    BrowserDownloadHandoffService.CapabilityId,
-                    "1.0.0",
-                    "Browser download handoff",
+                    BrowserDownloadHandoffService.CapabilityId, "1.0.0", "Browser download handoff",
                     new HashSet<DataPermission> { DataPermission.FilesWrite },
-                    CapabilityRiskLevel.High,
-                    RequiresConfirmation: true,
+                    CapabilityRiskLevel.High, RequiresConfirmation: true,
                     "Release a verified quarantined browser download to a human-selected destination only after exact approval."),
                 new CapabilityDescriptor(
-                    BrowserDownloadDiscardService.CapabilityId,
-                    "1.0.0",
-                    "Browser download discard",
+                    BrowserDownloadDiscardService.CapabilityId, "1.0.0", "Browser download discard",
                     new HashSet<DataPermission> { DataPermission.FilesWrite },
-                    CapabilityRiskLevel.High,
-                    RequiresConfirmation: true,
+                    CapabilityRiskLevel.High, RequiresConfirmation: true,
                     "Delete one verified retained browser-download payload only after exact human approval.")
             });
             var capabilityPolicy = new CapabilityPermissionPolicy(registry);
             var approvals = new ScopedApprovalAuthorizer();
             var ephemeralApprovals = new EphemeralJobApprovalStore();
             var audit = new BoundedSegmentedAuditTrail(Path.Combine(fullStateDirectory, "audit.jsonl"));
-            var downloadHandoff = new BrowserDownloadHandoffService(
-                session.Downloads,
-                capabilityPolicy,
-                approvals,
-                audit);
-            var downloadDiscard = new BrowserDownloadDiscardService(
-                session.Downloads,
-                capabilityPolicy,
-                approvals,
-                audit);
+            var downloadHandoff = new BrowserDownloadHandoffService(session.Downloads, capabilityPolicy, approvals, audit);
+            var downloadDiscard = new BrowserDownloadDiscardService(session.Downloads, capabilityPolicy, approvals, audit);
             var backend = new BrowserCapabilityBackend(driver);
             var toolExecutor = new CapabilityToolExecutor(capabilityPolicy, approvals, audit, backend);
             var execution = new BrowserCapabilityExecutionService(
@@ -213,6 +183,7 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
                 new[] { handler },
                 approvals,
                 ephemeralApprovals);
+            var durableActions = BrowserDurableActionRuntime.CreateWindows(orchestrator, fullStateDirectory);
 
             return new BrowserHostRuntime(
                 playwright,
@@ -223,7 +194,7 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
                 audit,
                 approvals,
                 store,
-                orchestrator);
+                durableActions);
         }
         catch
         {
@@ -247,17 +218,12 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
         return _sessionDriver.GetSessionSnapshotAsync(cancellationToken);
     }
 
-    public Task<IReadOnlyList<BrowserDownloadRecord>> ListDownloadsAsync(
-        CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<BrowserDownloadRecord>> ListDownloadsAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         return _sessionDriver.ListDownloadsAsync(cancellationToken);
     }
 
-    /// <summary>
-    /// Returns payload-free audit retention/storage status suitable for trusted desktop UI.
-    /// This API never returns audit-event contents or tool/browser metadata.
-    /// </summary>
     public Task<AuditRetentionStatus> GetAuditRetentionStatusAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
@@ -289,10 +255,6 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
         return await _downloadHandoff.ExportAsync(approvedPlan, grant, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>
-    /// Prepares a non-authorizing, exact approval scope for deleting one retained quarantine payload.
-    /// The returned plan is safe to display to trusted UI; no ApprovalGrant is exposed.
-    /// </summary>
     public Task<BrowserDownloadDiscardPlan> PrepareDownloadDiscardAsync(
         Guid downloadId,
         CancellationToken cancellationToken = default)
@@ -301,10 +263,6 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
         return _downloadDiscard.PrepareAsync(downloadId, cancellationToken);
     }
 
-    /// <summary>
-    /// Trusted human-confirmation boundary for quota reclamation. The exact scope shown by the UI
-    /// must be echoed back before a short-lived single-use grant is created and immediately consumed.
-    /// </summary>
     public async Task<BrowserDownloadDiscardReceipt> ApproveAndDiscardDownloadAsync(
         BrowserDownloadDiscardPlan approvedPlan,
         string exactScope,
@@ -342,7 +300,7 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
             BenefitsFromBackgroundExecution: false,
             MaxAttempts: 2);
 
-        var created = await _jobs.CreateAsync(
+        var created = await _durableActions.CreateAsync(
             jobId,
             definition,
             BrowserActionJobHandler.CreateCheckpoint(action),
@@ -358,7 +316,7 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
         if (jobId == Guid.Empty)
             throw new ArgumentException("Job id is required.", nameof(jobId));
 
-        var advanced = await _jobs.RunNextStepAsync(jobId, cancellationToken).ConfigureAwait(false);
+        var advanced = await _durableActions.RunNextStepAsync(jobId, cancellationToken).ConfigureAwait(false);
         return Describe(advanced, TryReadAction(advanced));
     }
 
@@ -385,8 +343,9 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
         if (string.IsNullOrWhiteSpace(exactScope))
             throw new ArgumentException("Exact approval scope is required.", nameof(exactScope));
 
-        await _jobs.ResumeAfterApprovalAsync(jobId, exactScope, cancellationToken).ConfigureAwait(false);
-        var advanced = await _jobs.RunNextStepAsync(jobId, cancellationToken).ConfigureAwait(false);
+        var advanced = await _durableActions
+            .ResumeAfterApprovalAndRunNextStepAsync(jobId, exactScope, cancellationToken)
+            .ConfigureAwait(false);
         return Describe(advanced, TryReadAction(advanced));
     }
 
@@ -401,7 +360,7 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
         if (string.IsNullOrWhiteSpace(exactScope))
             throw new ArgumentException("Exact approval scope is required.", nameof(exactScope));
 
-        var rearmed = await _jobs.RearmApprovalAsync(jobId, exactScope, cancellationToken).ConfigureAwait(false);
+        var rearmed = await _durableActions.RearmApprovalAsync(jobId, exactScope, cancellationToken).ConfigureAwait(false);
         return Describe(rearmed, TryReadAction(rearmed));
     }
 
@@ -450,8 +409,8 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
                 proof.Detail,
                 DateTimeOffset.UtcNow), JsonOptions),
             DateTimeOffset.UtcNow);
-        var reconciled = await _jobs
-            .CompleteAmbiguousRunningAsync(jobId, checkpoint, proof.Detail, cancellationToken)
+        var reconciled = await _durableActions
+            .CompleteAmbiguousRunningWithoutVerificationAsync(jobId, checkpoint, proof.Detail, cancellationToken)
             .ConfigureAwait(false);
         var outcome = Describe(reconciled, action);
         if (outcome.VerifiedStep is null)
@@ -468,7 +427,7 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
     public async Task<BrowserJobOutcome> CancelAsync(Guid jobId, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        var cancelled = await _jobs.CancelAsync(jobId, cancellationToken).ConfigureAwait(false);
+        var cancelled = await _durableActions.CancelAsync(jobId, cancellationToken).ConfigureAwait(false);
         return Describe(cancelled, TryReadAction(cancelled));
     }
 
@@ -477,6 +436,16 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
         ThrowIfDisposed();
         var job = await _jobStore.GetAsync(jobId, cancellationToken).ConfigureAwait(false);
         return job is null ? null : Describe(job, TryReadAction(job));
+    }
+
+    /// <summary>
+    /// Trusted assembly-internal product composition. The exact execution-owned durable runtime is
+    /// retained here so judge verification cannot accidentally bind to a different receipt store.
+    /// </summary>
+    internal BrowserProductRuntime CreateProductRuntime(SessionEvidenceLedger? sessionEvidence = null)
+    {
+        ThrowIfDisposed();
+        return new BrowserProductRuntime(this, _durableActions, sessionEvidence);
     }
 
     public async ValueTask DisposeAsync()
@@ -532,9 +501,7 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
             || job.Checkpoint is null
             || !string.Equals(job.Checkpoint.Step, "browser.action.verified", StringComparison.Ordinal)
             || string.IsNullOrWhiteSpace(job.Checkpoint.Payload))
-        {
             return null;
-        }
 
         try
         {
@@ -543,9 +510,7 @@ public sealed class BrowserHostRuntime : IAsyncDisposable, IBrowserAmbiguousReco
                 || !Enum.TryParse<BrowserActionKind>(checkpoint.Kind, ignoreCase: true, out var kind)
                 || checkpoint.UrlBefore is null
                 || checkpoint.UrlAfter is null)
-            {
                 return null;
-            }
 
             return new BrowserGoalVerifiedStep(
                 job.JobId,

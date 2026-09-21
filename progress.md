@@ -26,24 +26,24 @@ Added internal `BrowserDurableActionRuntime`, pairing durable orchestration with
 
 Production `BrowserHostRuntime` now owns one `BrowserDurableActionRuntime.CreateWindows(orchestrator, fullStateDirectory)` and routes durable create, ordinary execution, approval-resume execution, rearm, cancellation, and ambiguous completion through that facade instead of retaining raw orchestrator authority. The host has an assembly-internal `CreateProductRuntime` factory that binds product verification reads to the exact execution-owned durable runtime.
 
-Production `NvideaCompositionRoot.GetBrowserProductAsync` now uses `host.CreateProductRuntime()` instead of the legacy host-only `new BrowserProductRuntime(host)` path. WPF/product browser verification therefore resolves through the same protected receipt lifecycle used by production browser execution rather than failing closed because it was bound to no verification source.
+Production `NvideaCompositionRoot.GetBrowserProductAsync` now uses `host.CreateProductRuntime()`. WPF/product browser verification therefore resolves through the same protected receipt lifecycle used by production browser execution. `BrowserProductRuntime` now has only the trusted constructor requiring both the host and its execution-owned `BrowserDurableActionRuntime`; the legacy host-only and direct-publisher constructors were removed so future internal composition cannot silently create a verification-disconnected browser product runtime.
 
 ## Latest run
 Files changed:
-- `src/Nvidea.Core/Desktop/NvideaCompositionRoot.cs`
+- `src/Nvidea.Core/Desktop/BrowserProductRuntime.cs`
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md` completely and inspected recent commits, `NvideaCompositionRoot`, `BrowserHostRuntime`, and the current test tree before implementation.
-- Switched the sole production browser-product composition call site from `new BrowserProductRuntime(host)` to `host.CreateProductRuntime()`.
-- Re-fetched the mutated composition-root region and confirmed `GetBrowserProductAsync` now delegates to the host factory.
-- This closes the production composition gap recorded in the prior run: execution and judge-visible browser verification now share the exact host-owned `BrowserDurableActionRuntime` and protected DPAPI receipt lifecycle.
+- Re-read `progress.md` completely, inspected recent commits, current desktop composition files, the browser product runtime, and the Core test tree before implementation.
+- Removed the legacy constructor that accepted only `BrowserHostRuntime` plus an optional `DurableBrowserVerificationPublisher`.
+- Made the durable-runtime verification reader mandatory/non-null and simplified `ReadVerificationPresentationAsync` to always use that execution-owned reader.
+- Re-fetched the mutated file and confirmed the only remaining constructor requires `BrowserDurableActionRuntime` and no nullable publisher/read fallback remains.
 - Repository metadata was explicitly reverified immediately before every GitHub mutation; writable target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
-- Connector environment cannot execute .NET 8 or Windows/PowerShell/Chromium, so compile/test/runtime PASS is not claimed.
+- Connector environment cannot execute .NET 8 or Windows/PowerShell/Chromium, so compile/test/runtime PASS is not claimed. Removing the legacy constructor is intentionally compile-enforcing: any overlooked internal call site will fail the next executable build rather than silently weakening verification.
 - No live/paid Nebius, Object Storage, Serverless, Tavily, browser or inference operation was triggered.
 
 ## Security / privacy / failure review
-- Browser product composition no longer has a production path that silently omits the authoritative verification source.
+- Browser product composition can no longer omit authoritative durable verification or inject publisher authority directly.
 - Product/WPF code receives only `BrowserProductRuntime`; raw durable orchestration, receipt storage, publisher authority, approval authority and browser payloads remain behind trusted Core composition.
 - Browser execution continues through clear-before-admission/execution, serialized durable/evidence transitions, exact approval scope checks, and observational post-completion publication.
 - `ApprovalGranted`/`ApprovalObserved` remains historical evidence only; it contains no exact scope/token/reusable authority and is never accepted as authorization.
@@ -56,8 +56,8 @@ Validation/evidence:
 ## Known blockers / risks
 - New Core changes require executable .NET 8 validation; accumulated Windows/Chromium suites remain pending environment validation.
 - Production-host integration coverage is still needed to prove clear-before-admission/execution, completed-side-effect/no-replay behavior, cancellation/rearm invalidation, ambiguous-reconciliation stale-receipt invalidation, cross-job serialization, settled verification reads, and product composition end to end.
-- The legacy publisher/host-only constructors on `BrowserProductRuntime` should be removed only after call-site coverage proves no tests or internal composition paths still depend on them.
+- Because executable compilation is unavailable here, an overlooked test/internal caller of the removed constructor is possible; this is preferable to retaining an unsafe fallback and must be resolved by the next .NET-capable validation run.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-Add production-host/composition integration tests around the exact `BrowserHostRuntime` → `BrowserDurableActionRuntime` → `BrowserProductRuntime` graph, including completed verified actions, approval-resumed consequential actions, stale-evidence invalidation, cancellation/rearm, ambiguous reconciliation, and completed-side-effect/no-replay semantics. Once call-site coverage proves the old composition routes are unused, remove or narrow the legacy `BrowserProductRuntime` constructors so future code cannot regress to a verification-disconnected product runtime.
+Add production-host/composition integration tests around the exact `BrowserHostRuntime` → `BrowserDurableActionRuntime` → `BrowserProductRuntime` graph, especially verified completion, approval-resumed consequential actions, stale-evidence invalidation, cancellation/rearm, ambiguous reconciliation, cross-job serialization, settled reads, and completed-side-effect/no-replay semantics. Run the full .NET suite in the first capable environment and repair any compile-time callers exposed by removal of the unsafe legacy constructor rather than restoring it.

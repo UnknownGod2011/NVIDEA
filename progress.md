@@ -28,36 +28,38 @@ Production `BrowserHostRuntime` now owns one `BrowserDurableActionRuntime.Create
 
 Production `NvideaCompositionRoot.GetBrowserProductAsync` now uses `host.CreateProductRuntime()`. WPF/product browser verification therefore resolves through the same protected receipt lifecycle used by production browser execution. `BrowserProductRuntime` now has only the trusted constructor requiring both the host and its execution-owned `BrowserDurableActionRuntime`; the legacy host-only and direct-publisher constructors were removed so future internal composition cannot silently create a verification-disconnected browser product runtime.
 
+### 2026-09-21 — production browser evidence integration coverage
+Extended the real-Chromium `BrowserHostRuntimeIntegrationTests` consequential-action scenario through the actual host-created `BrowserProductRuntime`. Before approval/execution the product verification projection must be NOT VERIFIED with zero completed actions; after exact-scope approval, one real browser mutation, typed postcondition verification and durable completion, the same product runtime must expose VERIFIED evidence with one action and one explicit approval. The existing replay assertion remains immediately afterward and proves a second approval/resume cannot repeat the side effect.
+
 ## Latest run
 Files changed:
-- `src/Nvidea.Core/Desktop/BrowserProductRuntime.cs`
+- `tests/Nvidea.Core.Tests/BrowserHostRuntimeIntegrationTests.cs`
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md` completely, inspected recent commits, current desktop composition files, the browser product runtime, and the Core test tree before implementation.
-- Removed the legacy constructor that accepted only `BrowserHostRuntime` plus an optional `DurableBrowserVerificationPublisher`.
-- Made the durable-runtime verification reader mandatory/non-null and simplified `ReadVerificationPresentationAsync` to always use that execution-owned reader.
-- Re-fetched the mutated file and confirmed the only remaining constructor requires `BrowserDurableActionRuntime` and no nullable publisher/read fallback remains.
+- Re-read `progress.md` completely and inspected recent commits, `BrowserHostRuntime`, `BrowserDurableActionRuntime`, `BrowserProductRuntime`, durable verification publisher/receipt/presentation contracts, and existing real-Chromium integration coverage before implementation.
+- Added product composition to the existing consequential click integration test via `runtime.CreateProductRuntime()`, which is the same trusted factory used by production composition.
+- Added pre-execution assertions that the judge/product projection remains NOT VERIFIED while the consequential action is waiting for approval and the controlled site mutation count is zero.
+- Added post-completion assertions that the product projection becomes VERIFIED only after exact-scope approval, one browser mutation, durable completion and typed post-state verification; it reports one action and one approval and contains explicit approval evidence.
+- Preserved the existing immediate no-replay assertion and mutation-count proof after verification publication.
+- During implementation, inspected the actual `DesktopBrowserVerificationPresentation` contract and corrected initial test assertions to its real `Verified`, `ActionCount`, `ApprovalCount`, and `PermissionEvidence` API before finalizing. No production API was changed to accommodate the test.
 - Repository metadata was explicitly reverified immediately before every GitHub mutation; writable target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
-- Connector environment cannot execute .NET 8 or Windows/PowerShell/Chromium, so compile/test/runtime PASS is not claimed. Removing the legacy constructor is intentionally compile-enforcing: any overlooked internal call site will fail the next executable build rather than silently weakening verification.
+- Connector environment cannot execute .NET 8 or Windows/PowerShell/Chromium, so compile/test/runtime PASS is not claimed. The new test is opt-in under the repository's existing `BrowserIntegrationFact` gate and requires the matching Playwright Chromium installation on a capable Windows/.NET environment.
 - No live/paid Nebius, Object Storage, Serverless, Tavily, browser or inference operation was triggered.
 
 ## Security / privacy / failure review
-- Browser product composition can no longer omit authoritative durable verification or inject publisher authority directly.
-- Product/WPF code receives only `BrowserProductRuntime`; raw durable orchestration, receipt storage, publisher authority, approval authority and browser payloads remain behind trusted Core composition.
-- Browser execution continues through clear-before-admission/execution, serialized durable/evidence transitions, exact approval scope checks, and observational post-completion publication.
-- `ApprovalGranted`/`ApprovalObserved` remains historical evidence only; it contains no exact scope/token/reusable authority and is never accepted as authorization.
-- Old judge evidence is cleared before new admission and before every execution attempt. Clear failure prevents browser execution.
-- After authoritative durable completion, judge-evidence publication remains observational and must never encourage replay of a completed side effect.
-- Rearm, cancellation and ambiguous reconciliation cannot publish verification and invalidate protected evidence before their durable transition.
-- Ambiguous crash reconciliation remains deliberately NOT VERIFIED in the protected judge-evidence channel even when legacy goal-recovery state is reconciled.
-- Protected receipt authenticity inherits CurrentUser DPAPI protection with purpose-derived entropy; malformed/corrupt/wrong-context/missing evidence remains NOT VERIFIED.
+- The integration proof exercises the trusted host-created product boundary rather than injecting receipt/publisher authority into test product code.
+- Judge-facing evidence is asserted only through the payload-free `DesktopBrowserVerificationPresentation`; the test does not expose URL, locator, typed value, page text, approval scope/token, provider diagnostics, or raw receipt storage through the product API.
+- A consequential action remains NOT VERIFIED while waiting for approval and before any site mutation; VERIFIED is asserted only downstream of exact-scope approval, real side effect, typed postcondition verification, durable completion, and protected evidence publication.
+- The same scenario retains completed-side-effect/no-replay coverage after evidence publication, guarding against evidence failures or UI reads encouraging a repeated consequential action.
+- Product/WPF code continues to receive only `BrowserProductRuntime`; raw durable orchestration, receipt storage, publisher authority, approval authority and browser payloads remain behind trusted Core composition.
+- Old judge evidence is cleared before new admission and before every execution attempt; clear failure prevents browser execution. Rearm, cancellation and ambiguous reconciliation cannot publish verification and invalidate protected evidence before their durable transition.
+- `ApprovalGranted`/`ApprovalObserved` remains historical evidence only and is never accepted as reusable authorization.
 
 ## Known blockers / risks
-- New Core changes require executable .NET 8 validation; accumulated Windows/Chromium suites remain pending environment validation.
-- Production-host integration coverage is still needed to prove clear-before-admission/execution, completed-side-effect/no-replay behavior, cancellation/rearm invalidation, ambiguous-reconciliation stale-receipt invalidation, cross-job serialization, settled verification reads, and product composition end to end.
-- Because executable compilation is unavailable here, an overlooked test/internal caller of the removed constructor is possible; this is preferable to retaining an unsafe fallback and must be resolved by the next .NET-capable validation run.
+- New Core/test changes require executable .NET 8 validation; accumulated Windows/Chromium suites remain pending environment validation.
+- Production-host integration coverage is still needed for cancellation/rearm invalidation, ambiguous-reconciliation stale-receipt invalidation, cross-job serialization and settled verification reads. The core consequential approval → execution → durable verification → product read → no replay path is now covered structurally by the real-Chromium integration scenario but remains unexecuted here.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-Add production-host/composition integration tests around the exact `BrowserHostRuntime` → `BrowserDurableActionRuntime` → `BrowserProductRuntime` graph, especially verified completion, approval-resumed consequential actions, stale-evidence invalidation, cancellation/rearm, ambiguous reconciliation, cross-job serialization, settled reads, and completed-side-effect/no-replay semantics. Run the full .NET suite in the first capable environment and repair any compile-time callers exposed by removal of the unsafe legacy constructor rather than restoring it.
+Add focused production-host integration coverage for stale verified evidence invalidation across cancellation/rearm and ambiguous crash reconciliation, then add a cross-job concurrency/settled-read test proving the execution-owned `BrowserDurableActionRuntime` never exposes half-settled judge evidence. Run the full .NET suite in the first capable environment and fix any compile/runtime findings without restoring weaker composition paths.

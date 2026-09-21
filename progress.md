@@ -32,29 +32,34 @@ Crash-ambiguous reconciliation coverage establishes a genuine green receipt, rep
 ### 2026-09-21 — serialization boundary regression guard
 Added Core-level structural regression tests for `BrowserDurableActionRuntime`'s cross-job serialization boundary. The tests require the transition gate to remain private, instance-scoped `SemaphoreSlim` state; require every receipt-mutating durable operation plus the judge-facing verification read to remain on the same internal runtime surface; and forbid public instance methods declared by the runtime. This protects the least-authority composition and makes accidental exposure/removal of the serialization boundary fail loudly in the test suite.
 
+### 2026-09-22 — behavioral serialization regression coverage
+Added dependency-free behavioral coverage for the private transition serialization helper. A deliberately paused first transition must prevent a competing transition from entering until settlement, with deterministic ordering asserted after release. A second scenario cancels a waiter while the gate is held and requires that cancelled waiter never enter the critical section. The test seam constructs no orchestrator, browser, DPAPI, provider, receipt store, or approval authority; it invokes only the private synchronization helper and installs only its private semaphore on an uninitialized test instance.
+
 ## Latest run
 Files changed:
 - `tests/Nvidea.Core.Tests/BrowserDurableActionRuntimeConcurrencyTests.cs`
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md` completely, recent commits, repository tree, `BrowserDurableActionRuntime`, and existing verification lifecycle tests before implementation.
-- Confirmed the runtime's single private `_transitionGate` currently covers create/admission, ordinary execution, approval-resume execution, rearm, cancellation, ambiguous reconciliation, and payload-free verification reads.
-- Added deterministic structural tests that do not require Chromium or DPAPI and therefore complement the existing opt-in real-browser scenarios.
-- The new tests assert the gate is private/non-static, the serialization helper remains private generic instance state, all evidence-affecting/read operations remain non-public instance operations, and the durable runtime declares no public product-facing instance API.
+- Re-read `progress.md` completely, current repository tree, `BrowserDurableActionRuntime`, and existing concurrency regression tests before implementation.
+- Confirmed the runtime's single private `_transitionGate` still covers create/admission, ordinary execution, approval-resume execution, rearm, cancellation, ambiguous reconciliation, and payload-free verification reads.
+- Added a deterministic behavioral test that pauses one serialized transition, starts a competitor, proves the competitor has not entered, releases the first transition, then requires exact `first-enter -> first-exit -> second-enter` ordering.
+- Added cancellation coverage proving a waiter cancelled while another transition owns the gate never enters the critical section and does not disturb the current owner.
+- The behavioral seam intentionally avoids constructing browser/DPAPI/job/provider authority and therefore cannot mutate product state or leak payloads.
 - Repository metadata was explicitly reverified immediately before each GitHub mutation; writable target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 - Connector environment still cannot execute .NET 8, so compile/test PASS is not claimed. No live/paid Nebius, Tavily, browser, Object Storage, Serverless, or inference operation was triggered.
 
 ## Security / privacy / failure review
 - Serialization remains execution-owned rather than product-owned; UI receives only the narrower product runtime and payload-free presentation.
-- The regression guard deliberately tests architecture, not timing assumptions: it prevents a future refactor from making the semaphore static/public or exposing durable/evidence mutation authority as public product API.
+- Structural coverage prevents the semaphore from becoming static/public or durable/evidence mutation authority from becoming public product API; behavioral coverage now also guards mutual exclusion and cancelled-waiter semantics.
 - Existing clear-before-execution, completed-side-effect/no-replay behavior, fail-closed receipt handling, cancellation semantics, and ambiguous-recovery non-verification remain unchanged.
-- No URL, locator, typed value, approval token, page content, secret, or protected receipt material is added to the new test surface.
+- No URL, locator, typed value, approval token, page content, secret, or protected receipt material is introduced by the test seam.
+- The test uses reflection only inside the friend test assembly to invoke the private serialization helper on a dependency-free instance; production code and production authority surfaces are unchanged.
 
 ## Known blockers / risks
 - New Core/test changes require executable .NET 8 validation; accumulated Windows/Chromium suites remain pending environment validation.
-- A behavioral cross-job concurrency test is still desirable to prove a blocked judge read cannot sample the transient clear state while another transition is in-flight. The structural guard added here prevents architectural drift but does not itself execute the semaphore timing path.
+- The behavioral test proves the actual private semaphore helper blocks competitors and cancelled waiters, while the structural test proves all evidence-affecting/read operations remain on that runtime surface. A full behavioral production-path race test with a pause specifically between receipt clear and publication remains desirable once an injectable test-only lifecycle seam can be introduced without weakening authority.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-Add a deterministic behavioral concurrency seam/test around `BrowserDurableActionRuntime` that pauses a transition after protected-evidence clear but before settlement, starts a judge read plus a competing transition, and proves both remain blocked until the first transition settles and that the final presentation belongs to the latest admitted transition. Keep the seam internal/test-only and do not weaken receipt or browser authority. Then run the full .NET suite in the first capable environment and fix compile/runtime findings without restoring weaker composition paths.
+Introduce the narrowest internal/test-only verification-lifecycle observation hook that can pause after protected evidence is cleared but before execution/publication, then add a production-runtime behavioral race test proving a judge read and a newer competing admission both remain blocked until settlement and that final presentation belongs to the newest admitted transition. The hook must carry no receipt/browser payload and must be inert/absent in production composition. Then run the full .NET suite in the first capable environment and fix compile/runtime findings without restoring weaker composition paths.

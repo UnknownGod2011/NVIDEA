@@ -134,6 +134,42 @@ internal sealed class BrowserDurableActionRuntime
     }
 
     /// <summary>
+    /// Reads durable browser state without exposing the orchestrator. This is intentionally a
+    /// non-execution operation and therefore cannot create or refresh judge verification evidence.
+    /// </summary>
+    internal Task<AgentJobRecord?> GetAsync(
+        Guid jobId,
+        CancellationToken cancellationToken = default)
+    {
+        if (jobId == Guid.Empty)
+            throw new ArgumentException("Job id is required.", nameof(jobId));
+
+        return _jobs.GetAsync(jobId, cancellationToken);
+    }
+
+    /// <summary>
+    /// Completes a crash-ambiguous running job only after the trusted host independently verifies
+    /// post-state. Legacy ambiguous reconciliation intentionally does NOT publish judge verification:
+    /// its checkpoint lacks the normal structural durable evidence produced by last-mile execution.
+    /// Keeping this operation in the facade lets the host avoid retaining raw orchestrator authority
+    /// without weakening the fail-closed evidence model.
+    /// </summary>
+    internal Task<AgentJobRecord> CompleteAmbiguousRunningWithoutVerificationAsync(
+        Guid jobId,
+        AgentJobCheckpoint verifiedCheckpoint,
+        string detail,
+        CancellationToken cancellationToken = default)
+    {
+        if (jobId == Guid.Empty)
+            throw new ArgumentException("Job id is required.", nameof(jobId));
+        ArgumentNullException.ThrowIfNull(verifiedCheckpoint);
+        if (string.IsNullOrWhiteSpace(detail))
+            throw new ArgumentException("Reconciliation detail is required.", nameof(detail));
+
+        return _jobs.CompleteAmbiguousRunningAsync(jobId, verifiedCheckpoint, detail, cancellationToken);
+    }
+
+    /// <summary>
     /// Payload-free read surface for trusted desktop/judge UI. No receipt, publisher, approval
     /// authority, browser payload, URL, locator, or typed value crosses this boundary.
     /// </summary>

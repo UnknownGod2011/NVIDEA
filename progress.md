@@ -22,7 +22,9 @@ Added historical `ApprovalGranted` evidence, Core-owned `DesktopBrowserVerificat
 Added `DurableBrowserVerificationPublisher`, stale-evidence clearing, adversarial publisher tests, product-facing payload-free reads, `BrowserVerificationPublicationBoundary`, `BrowserVerificationRuntime`, and `BrowserVerificationActionLifecycle`. Publication accepts only authoritative Completed verified records, binds evidence to durable JobId, requires verified post-state and historical approval where required, and cannot convert post-commit evidence failure into a replayable browser-action failure. Lifecycle regression tests protect clear-before-admission and authoritative-record ordering.
 
 ### 2026-09-21 — durable browser host facade
-Added internal `BrowserDurableActionRuntime`, a narrow host-facing facade that owns the `ResumableJobOrchestrator` + verification lifecycle pairing. Its create path structurally clears stale evidence before durable admission; its advance path returns the authoritative durable job even when observational evidence publication fails, preventing evidence-store faults from encouraging replay of completed side effects. Added API-surface regression coverage so the facade exposes only create/advance operations and no raw orchestrator, publisher, receipt store, or approval authority.
+Added internal `BrowserDurableActionRuntime`, a narrow host-facing facade pairing durable orchestration with verification lifecycle. Its create path clears stale evidence before durable admission; its advance path returns the authoritative durable job even if observational evidence publication fails. API-surface regression coverage prevents exposure of raw orchestrator, publisher, receipt store, or approval authority.
+
+The facade now owns production verification composition through `CreateWindows(orchestrator, stateDirectory)`: exactly one Windows-DPAPI `BrowserVerificationRuntime` is paired with the durable orchestrator, and the same instance supplies a payload-free `ReadVerificationPresentationAsync` path. This removes a major wiring footgun where host execution and judge UI could accidentally use different protected receipt stores or publisher instances.
 
 ## Latest run
 Files changed:
@@ -31,9 +33,11 @@ Files changed:
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md` completely and inspected current repository tree, `BrowserHostRuntime`, `BrowserVerificationRuntime`, `BrowserVerificationActionLifecycle`, and `BrowserVerificationPublicationBoundary` before implementation.
-- Confirmed production `BrowserHostRuntime` still directly calls `_jobs.CreateAsync` and `_jobs.RunNextStepAsync`; the new facade is deliberately shaped as a drop-in durable create/advance boundary for those paths.
-- Added reflection-based least-authority API coverage: the facade is internal, exposes only `CreateAsync`/`RunNextStepAsync`, and has no public fields/properties carrying privileged internals.
+- Re-read `progress.md` completely and inspected current `BrowserHostRuntime`, `BrowserDurableActionRuntime`, `BrowserVerificationRuntime`, and `BrowserVerificationActionLifecycle` before implementation.
+- Confirmed production `BrowserHostRuntime` still directly calls `_jobs.CreateAsync` and `_jobs.RunNextStepAsync`; host integration remains the next production change.
+- Added a production `CreateWindows` composition root so the host no longer needs to independently construct verification runtime/lifecycle/facade pieces.
+- Added a payload-free verification presentation read directly on the facade so the exact execution-owned protected store can feed trusted judge UI without exposing publisher/store/receipt authority.
+- Updated reflection/API regression coverage to permit only the two factories, durable create/advance operations, and the payload-free presentation read; no public fields/properties expose privileged internals.
 - Repository metadata was explicitly reverified immediately before every GitHub mutation; writable target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 - Connector environment cannot execute .NET 8 or Windows/PowerShell/Chromium, so compile/test/runtime PASS is not claimed.
 - No live/paid Nebius, Object Storage, Serverless, Tavily, browser or inference operation was triggered.
@@ -42,20 +46,21 @@ Validation/evidence:
 - `ApprovalGranted`/`ApprovalObserved` remains historical evidence only; it contains no exact scope/token/reusable authority and is never accepted as authorization.
 - Old judge evidence must be cleared before a new action is admitted; clear failure must abort admission before browser side effects.
 - After authoritative durable completion, judge-evidence publication is observational. Publication failure/cancellation returns NOT VERIFIED semantics and must never encourage replay of a completed side effect.
-- The new durable facade returns `publication.AuthoritativeJob`, never a synthetic failure based on evidence persistence.
+- The durable facade returns the authoritative job, never a synthetic failure based on evidence persistence.
+- Host and judge reads can now share one verification runtime without exposing raw receipt/publisher authority.
 - Failed, denied, cancelled and ambiguous executions cannot create the normal structural terminal checkpoint.
-- Existing verified action checkpoints retain URL/verification detail for goal recovery; protected judge receipts are a separate least-authority artifact.
+- Existing verified action checkpoints retain URL/verification detail for goal recovery; protected judge receipts remain a separate least-authority artifact.
 - Receipt SHA-256 is tamper evidence, not authenticity by itself; authenticity inherits protected local state. Windows production uses CurrentUser DPAPI with purpose-derived entropy.
 - Missing, plaintext, corrupt, wrong-context, malformed or integrity-invalid protected judge evidence remains NOT VERIFIED.
 
 ## Known blockers / risks
 - New Core/test changes require executable .NET 8 validation; accumulated Windows/Chromium suites remain pending environment validation.
 - `BrowserDurableActionRuntime` is not yet injected into `BrowserHostRuntime`; production browser actions therefore still call the raw orchestrator and do not publish the protected receipt.
-- Host wiring must construct exactly one `BrowserVerificationRuntime.CreateWindows(fullStateDirectory)`, one lifecycle, and one durable facade, then route create and every run-next-step path through it.
-- `BrowserProductRuntime` must receive the exact publisher/read path owned by the same `BrowserVerificationRuntime`; WPF Judge Evidence still needs to consume that presentation.
+- Host wiring should now require only `BrowserDurableActionRuntime.CreateWindows(orchestrator, fullStateDirectory)`, then route create and every run-next-step execution path through it. Raw orchestrator access remains necessary only for non-execution operations such as approval resume/rearm/cancel/reconciliation.
+- `BrowserProductRuntime`/WPF Judge Evidence must consume the facade's exact payload-free presentation read path rather than constructing an independent verification runtime.
 - Ambiguous crash reconciliation intentionally uses a legacy verified checkpoint that lacks normal durable structural evidence; it must remain NOT VERIFIED unless a separately trustworthy evidence model is designed.
 - A production-host integration test is still needed after composition to prove clear-before-admission and completed-side-effect/no-replay behavior end to end.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-Replace `BrowserHostRuntime`'s direct durable create/run-next-step calls with one composed `BrowserDurableActionRuntime` backed by one `BrowserVerificationRuntime.CreateWindows(fullStateDirectory)`. Preserve raw orchestrator access only for non-execution operations such as approval resume/rearm/cancel/reconciliation. Then pass the same verification runtime read path into `BrowserProductRuntime`/WPF Judge Evidence and add production-host integration coverage proving stale-clear ordering and completed-side-effect/no-replay behavior.
+Inject one `BrowserDurableActionRuntime.CreateWindows(orchestrator, fullStateDirectory)` into `BrowserHostRuntime`; replace its direct durable create and every execution `RunNextStepAsync` call with the facade while retaining raw orchestrator access only for non-execution state transitions. Expose the facade's payload-free verification presentation through the trusted product/WPF Judge Evidence path, then add production-host integration coverage for stale-clear ordering and completed-side-effect/no-replay semantics.

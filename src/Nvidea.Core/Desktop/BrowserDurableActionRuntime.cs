@@ -137,10 +137,11 @@ internal sealed class BrowserDurableActionRuntime
     /// Completes a crash-ambiguous running job only after the trusted host independently verifies
     /// post-state. Legacy ambiguous reconciliation intentionally does NOT publish judge verification:
     /// its checkpoint lacks the normal structural durable evidence produced by last-mile execution.
-    /// Keeping this operation in the facade lets the host avoid retaining raw orchestrator authority
-    /// without weakening the fail-closed evidence model.
+    /// Before mutating durable state, this path clears any existing browser-verification receipt so a
+    /// stale green receipt can never survive a crash-reconciled completion. If that clear fails, the
+    /// reconciliation is not committed and the job remains fail-closed for explicit recovery.
     /// </summary>
-    internal Task<AgentJobRecord> CompleteAmbiguousRunningWithoutVerificationAsync(
+    internal async Task<AgentJobRecord> CompleteAmbiguousRunningWithoutVerificationAsync(
         Guid jobId,
         AgentJobCheckpoint verifiedCheckpoint,
         string detail,
@@ -152,7 +153,14 @@ internal sealed class BrowserDurableActionRuntime
         if (string.IsNullOrWhiteSpace(detail))
             throw new ArgumentException("Reconciliation detail is required.", nameof(detail));
 
-        return _jobs.CompleteAmbiguousRunningAsync(jobId, verifiedCheckpoint, detail, cancellationToken);
+        // Ambiguous recovery is deliberately not eligible for judge-green evidence. Clearing first is
+        // important for migrated/pre-verification jobs where a protected receipt may predate this job's
+        // admission lifecycle. Never complete durable reconciliation while stale green evidence remains.
+        await _verificationRuntime.Publication.BeginActionAsync(cancellationToken).ConfigureAwait(false);
+
+        return await _jobs
+            .CompleteAmbiguousRunningAsync(jobId, verifiedCheckpoint, detail, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     /// <summary>

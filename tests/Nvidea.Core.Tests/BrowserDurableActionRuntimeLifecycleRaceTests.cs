@@ -73,7 +73,7 @@ public sealed class BrowserDurableActionRuntimeLifecycleRaceTests : IDisposable
 
         var presentationAfterA = await judgeRead.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.True(presentationAfterA.Verified);
-        Assert.Equal(1, presentationAfterA.CompletedActionCount);
+        Assert.Equal(1, presentationAfterA.ActionCount);
 
         var admittedB = await admitB.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(jobBId, admittedB.JobId);
@@ -82,7 +82,7 @@ public sealed class BrowserDurableActionRuntimeLifecycleRaceTests : IDisposable
 
         var finalPresentation = await runtime.ReadVerificationPresentationAsync();
         Assert.False(finalPresentation.Verified);
-        Assert.Equal(0, finalPresentation.CompletedActionCount);
+        Assert.Equal(0, finalPresentation.ActionCount);
     }
 
     private static AgentJobDefinition Definition() =>

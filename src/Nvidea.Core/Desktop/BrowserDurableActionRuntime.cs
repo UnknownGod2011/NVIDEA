@@ -134,20 +134,6 @@ internal sealed class BrowserDurableActionRuntime
     }
 
     /// <summary>
-    /// Reads durable browser state without exposing the orchestrator. This is intentionally a
-    /// non-execution operation and therefore cannot create or refresh judge verification evidence.
-    /// </summary>
-    internal Task<AgentJobRecord?> GetAsync(
-        Guid jobId,
-        CancellationToken cancellationToken = default)
-    {
-        if (jobId == Guid.Empty)
-            throw new ArgumentException("Job id is required.", nameof(jobId));
-
-        return _jobs.GetAsync(jobId, cancellationToken);
-    }
-
-    /// <summary>
     /// Completes a crash-ambiguous running job only after the trusted host independently verifies
     /// post-state. Legacy ambiguous reconciliation intentionally does NOT publish judge verification:
     /// its checkpoint lacks the normal structural durable evidence produced by last-mile execution.

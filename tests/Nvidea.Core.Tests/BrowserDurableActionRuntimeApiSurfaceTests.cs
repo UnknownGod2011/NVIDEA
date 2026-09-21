@@ -23,10 +23,12 @@ public sealed class BrowserDurableActionRuntimeApiSurfaceTests
         Assert.Equal(
             new[]
             {
+                "CancelAsync",
                 "Create",
                 "CreateAsync",
                 "CreateWindows",
                 "ReadVerificationPresentationAsync",
+                "RearmApprovalAsync",
                 "ResumeAfterApprovalAndRunNextStepAsync",
                 "RunNextStepAsync"
             },

@@ -51,7 +51,8 @@ public sealed class BrowserHostRuntimeIntegrationTests
             Assert.False(string.IsNullOrWhiteSpace(paused.Approval!.ExactScope));
             Assert.Equal(0, site.MutationCount);
             var pausedVerification = await product.ReadVerificationPresentationAsync();
-            Assert.False(pausedVerification.IsVerified);
+            Assert.False(pausedVerification.Verified);
+            Assert.Equal(0, pausedVerification.ActionCount);
 
             var jobStore = new JsonAgentJobStore(Path.Combine(stateDirectory, "jobs.json"));
             var persistedWhilePaused = await jobStore.GetAsync(paused.JobId);
@@ -71,9 +72,10 @@ public sealed class BrowserHostRuntimeIntegrationTests
             Assert.NotNull(completed.VerifiedStep);
             Assert.Contains("typed browser postcondition", completed.VerifiedStep!.VerificationDetail ?? string.Empty, StringComparison.OrdinalIgnoreCase);
             var completedVerification = await product.ReadVerificationPresentationAsync();
-            Assert.True(completedVerification.IsVerified);
-            Assert.Equal(paused.JobId, completedVerification.JobId);
-            Assert.True(completedVerification.ApprovalObserved);
+            Assert.True(completedVerification.Verified);
+            Assert.Equal(1, completedVerification.ActionCount);
+            Assert.Equal(1, completedVerification.ApprovalCount);
+            Assert.Contains("explicit approval evidence", completedVerification.PermissionEvidence, StringComparison.OrdinalIgnoreCase);
 
             await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 runtime.ApproveAndResumeAsync(paused.JobId, paused.Approval.ExactScope));

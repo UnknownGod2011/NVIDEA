@@ -27,6 +27,7 @@ public sealed class BrowserDurableActionRuntimeApiSurfaceTests
                 "CreateAsync",
                 "CreateWindows",
                 "ReadVerificationPresentationAsync",
+                "ResumeAfterApprovalAndRunNextStepAsync",
                 "RunNextStepAsync"
             },
             declared);

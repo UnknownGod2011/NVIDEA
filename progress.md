@@ -24,21 +24,22 @@ Added `DurableBrowserVerificationPublisher`, stale-evidence clearing, adversaria
 ### 2026-09-21 — durable browser host/product facades
 Added internal `BrowserDurableActionRuntime`, a narrow host-facing facade pairing durable orchestration with verification lifecycle. Its create path clears stale evidence before durable admission; its advance path returns the authoritative durable job even if observational evidence publication fails. API-surface regression coverage prevents exposure of raw orchestrator, publisher, receipt store, or approval authority.
 
-The facade owns production verification composition through `CreateWindows(orchestrator, stateDirectory)`: exactly one Windows-DPAPI `BrowserVerificationRuntime` is paired with the durable orchestrator, and the same instance supplies a payload-free `ReadVerificationPresentationAsync` path.
+The facade owns production verification composition through `CreateWindows(orchestrator, stateDirectory)`: exactly one Windows-DPAPI `BrowserVerificationRuntime` is paired with the durable orchestrator, and the same instance supplies a payload-free `ReadVerificationPresentationAsync` path. `BrowserProductRuntime` has a trusted composition constructor accepting that facade and captures only its payload-free presentation read delegate.
 
-`BrowserProductRuntime` now has a dedicated trusted composition constructor accepting `BrowserDurableActionRuntime` and captures only its payload-free presentation read delegate. This lets the final product/WPF path consume the execution-owned verification store without receiving the publisher, receipt store, raw durable evidence, or approval authority. The legacy internal publisher constructor remains temporarily supported for migration; absent either source the product read still fails closed to NOT VERIFIED.
+The durable facade now also owns `ResumeAfterApprovalAndRunNextStepAsync`. Exact approval resume and the immediately following execution are kept inside the same authoritative verification lifecycle, so the host cannot accidentally bypass terminal evidence publication after a human-approved consequential action. Evidence persistence remains observational: failure after a completed side effect returns the authoritative completed record rather than creating replay pressure.
 
 ## Latest run
 Files changed:
-- `src/Nvidea.Core/Desktop/BrowserProductRuntime.cs`
+- `src/Nvidea.Core/Desktop/BrowserDurableActionRuntime.cs`
+- `tests/Nvidea.Core.Tests/BrowserDurableActionRuntimeApiSurfaceTests.cs`
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md` completely and inspected current `BrowserHostRuntime`, `BrowserDurableActionRuntime`, `BrowserProductRuntime`, and composition root before implementation.
-- Confirmed `BrowserHostRuntime` still directly calls `_jobs.CreateAsync` and `_jobs.RunNextStepAsync`; host execution integration remains the primary production gap.
-- Confirmed `NvideaCompositionRoot.GetBrowserProductAsync` currently constructs `BrowserProductRuntime(host)` and therefore still receives fail-closed NOT VERIFIED browser evidence until host durable-runtime wiring is completed.
-- Added a least-authority product composition path that can consume the exact execution-owned durable verification reader without exposing privileged verification internals.
-- Existing constructor behavior is preserved to avoid deleting working functionality during the migration.
+- Re-read `progress.md` completely and inspected the current repository tree, `BrowserHostRuntime`, durable facade and product composition before implementation.
+- Confirmed production `BrowserHostRuntime` still directly invokes `_jobs.CreateAsync`, `_jobs.RunNextStepAsync`, and the approval resume + execution sequence; production host integration remains the primary gap.
+- Added an exact-scope validated resume+advance operation to the durable facade so approved execution cannot bypass the verification publication boundary when host wiring lands.
+- Preserved least authority: no raw orchestrator, publisher, receipt store, approval grant or browser payload is exposed by the facade.
+- Updated API-surface regression coverage to lock the new operation into the intentionally narrow internal surface.
 - Repository metadata was explicitly reverified immediately before every GitHub mutation; writable target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 - Connector environment cannot execute .NET 8 or Windows/PowerShell/Chromium, so compile/test/runtime PASS is not claimed.
 - No live/paid Nebius, Object Storage, Serverless, Tavily, browser or inference operation was triggered.
@@ -48,7 +49,8 @@ Validation/evidence:
 - Old judge evidence must be cleared before a new action is admitted; clear failure must abort admission before browser side effects.
 - After authoritative durable completion, judge-evidence publication is observational. Publication failure/cancellation returns NOT VERIFIED semantics and must never encourage replay of a completed side effect.
 - The durable facade returns the authoritative job, never a synthetic failure based on evidence persistence.
-- Product verification reads can now be sourced from the execution-owned durable facade without exposing raw receipt/publisher authority.
+- Exact approval scope is validated before the facade resumes a waiting job; approval resume and subsequent execution share the same verification boundary.
+- Product verification reads can be sourced from the execution-owned durable facade without exposing raw receipt/publisher authority.
 - Failed, denied, cancelled and ambiguous executions cannot create the normal structural terminal checkpoint.
 - Existing verified action checkpoints retain URL/verification detail for goal recovery; protected judge receipts remain a separate least-authority artifact.
 - Receipt SHA-256 is tamper evidence, not authenticity by itself; authenticity inherits protected local state. Windows production uses CurrentUser DPAPI with purpose-derived entropy.
@@ -57,7 +59,7 @@ Validation/evidence:
 ## Known blockers / risks
 - New Core changes require executable .NET 8 validation; accumulated Windows/Chromium suites remain pending environment validation.
 - `BrowserDurableActionRuntime` is not yet injected into `BrowserHostRuntime`; production browser actions therefore still call the raw orchestrator and do not publish the protected receipt.
-- Host wiring should instantiate one `BrowserDurableActionRuntime.CreateWindows(orchestrator, fullStateDirectory)`, route create and every execution `RunNextStepAsync` path through it, and retain raw orchestrator access only for non-execution transitions such as approval resume/rearm/cancel/reconciliation.
+- Host wiring should instantiate one `BrowserDurableActionRuntime.CreateWindows(orchestrator, fullStateDirectory)`, route create, ordinary execution, and approval-resumed execution through it, and retain raw orchestrator access only for non-execution transitions such as rearm/cancel/reconciliation.
 - `NvideaCompositionRoot` must construct `BrowserProductRuntime` with the exact durable runtime owned by the host rather than the current host-only constructor.
 - The legacy publisher constructor on `BrowserProductRuntime` should be removed only after production composition and tests prove no caller depends on it.
 - Ambiguous crash reconciliation intentionally uses a legacy verified checkpoint lacking normal durable structural evidence; it must remain NOT VERIFIED unless a separately trustworthy evidence model is designed.
@@ -65,4 +67,4 @@ Validation/evidence:
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-Inject one `BrowserDurableActionRuntime.CreateWindows(orchestrator, fullStateDirectory)` into `BrowserHostRuntime`; replace direct durable create and every execution `RunNextStepAsync` call with the facade while retaining raw orchestrator access only for non-execution state transitions. Then expose that exact durable runtime to trusted composition so `NvideaCompositionRoot` constructs `BrowserProductRuntime(host, durableActions)`, and add production-host integration coverage for stale-clear ordering and completed-side-effect/no-replay semantics.
+Inject one `BrowserDurableActionRuntime.CreateWindows(orchestrator, fullStateDirectory)` into `BrowserHostRuntime`; replace direct durable create, ordinary `RunNextStepAsync`, and approval resume+execution with the facade while retaining raw orchestrator access only for non-execution state transitions. Then expose that exact durable runtime to trusted composition so `NvideaCompositionRoot` constructs `BrowserProductRuntime(host, durableActions)`, and add production-host integration coverage for stale-clear ordering and completed-side-effect/no-replay semantics.

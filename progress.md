@@ -24,7 +24,7 @@ Added `DurableBrowserVerificationPublisher`, stale-evidence clearing, adversaria
 ### 2026-09-21 — durable browser host/product facades
 Added internal `BrowserDurableActionRuntime`, pairing durable orchestration with the verification lifecycle. It owns Windows-DPAPI verification composition, clears stale evidence before create, publishes only after authoritative execution, returns authoritative completed jobs even if observational receipt persistence fails, and exposes only payload-free verification presentation to product composition.
 
-The facade owns exact approval resume + execution so consequential actions cannot bypass terminal evidence publication. It now also owns non-execution approval rearm and cancellation, reducing the authority `BrowserHostRuntime` will need once production composition lands. All action entry points reject empty JobIds; approval operations reject empty scopes before durable state mutation.
+The facade owns exact approval resume + execution so consequential actions cannot bypass terminal evidence publication. It also owns approval rearm and cancellation. This run added an explicitly named `CompleteAmbiguousRunningWithoutVerificationAsync` path: trusted host crash reconciliation can shed raw orchestrator authority without allowing a legacy ambiguous checkpoint to manufacture judge-visible green verification.
 
 ## Latest run
 Files changed:
@@ -33,11 +33,11 @@ Files changed:
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md` completely, inspected the current tree, latest commits, full `BrowserHostRuntime`, durable facade and its API-surface regression test before implementation.
-- Confirmed production `BrowserHostRuntime` still directly invokes `_jobs.CreateAsync`, `_jobs.RunNextStepAsync`, approval resume, rearm and cancellation; production composition remains the primary gap.
-- Added strict empty-JobId validation to durable create/advance, matching the host's existing public contract and preventing accidental mutation attempts with a sentinel identity.
-- Added `RearmApprovalAsync` and `CancelAsync` to the least-authority facade. These are explicitly non-execution transitions and never publish green verification evidence.
-- Updated API-surface regression coverage to lock the facade to the intentional create/advance/approved-execution/rearm/cancel/read operations plus factories; no raw orchestrator, publisher, receipt store, approval authority or browser payload is exposed.
+- Re-read `progress.md` completely, inspected the current repository tree, recent commits, full durable facade, and production `BrowserHostRuntime` before implementation.
+- Confirmed `BrowserHostRuntime` still directly uses `_jobs` for create, ordinary execution, approval resume, rearm, cancellation, and ambiguous reconciliation; host composition remains the highest-value production gap.
+- Added `CompleteAmbiguousRunningWithoutVerificationAsync` to the least-authority facade. It validates non-empty JobId, checkpoint and reconciliation detail, delegates only the authoritative ambiguous completion transition, and deliberately bypasses verification publication because this legacy checkpoint lacks normal structural durable browser evidence.
+- Updated API-surface regression coverage to lock the explicit non-verification method name and ensure no deceptively named `CompleteAmbiguousRunningAsync` facade method appears.
+- An intermediate attempted read facade used a nonexistent orchestrator API; it was immediately corrected before this progress update. Current source no longer contains that call. Executable compile validation remains required.
 - Repository metadata was explicitly reverified immediately before every GitHub mutation; writable target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 - Connector environment cannot execute .NET 8 or Windows/PowerShell/Chromium, so compile/test/runtime PASS is not claimed.
 - No live/paid Nebius, Object Storage, Serverless, Tavily, browser or inference operation was triggered.
@@ -48,6 +48,7 @@ Validation/evidence:
 - After authoritative durable completion, judge-evidence publication is observational. Publication failure/cancellation returns NOT VERIFIED semantics and must never encourage replay of a completed side effect.
 - Exact approval scope is validated before resume; approval resume and subsequent execution share the same verification boundary.
 - Rearm and cancellation cannot publish verification because they execute no browser side effect.
+- Ambiguous crash reconciliation is now explicitly modeled as a non-verification facade operation. A human/trusted-host post-state reconciliation can complete durable state, but its legacy checkpoint cannot become judge-green evidence.
 - Product verification reads can be sourced from the execution-owned durable facade without exposing raw receipt/publisher authority.
 - Failed, denied, cancelled and ambiguous executions cannot create the normal structural terminal checkpoint.
 - Existing verified action checkpoints retain URL/verification detail for goal recovery; protected judge receipts remain a separate least-authority artifact.
@@ -57,12 +58,11 @@ Validation/evidence:
 ## Known blockers / risks
 - New Core changes require executable .NET 8 validation; accumulated Windows/Chromium suites remain pending environment validation.
 - `BrowserDurableActionRuntime` is not yet injected into `BrowserHostRuntime`; production browser actions therefore still call the raw orchestrator and do not publish the protected receipt.
-- Host wiring should instantiate one `BrowserDurableActionRuntime.CreateWindows(orchestrator, fullStateDirectory)`, route create, ordinary execution, approval-resumed execution, rearm and cancellation through it, and retain raw orchestrator access only where no facade exists (currently ambiguous crash reconciliation).
+- Host wiring should instantiate one `BrowserDurableActionRuntime.CreateWindows(orchestrator, fullStateDirectory)`, route create, ordinary execution, approval-resumed execution, rearm, cancellation and ambiguous completion through it. Durable reads may continue through the existing `IAgentJobStore`; that read-only dependency does not confer execution authority.
 - `NvideaCompositionRoot` must construct `BrowserProductRuntime` with the exact durable runtime owned by the host rather than the current host-only constructor.
 - The legacy publisher constructor on `BrowserProductRuntime` should be removed only after production composition and tests prove no caller depends on it.
-- Ambiguous crash reconciliation intentionally uses a legacy verified checkpoint lacking normal durable structural evidence; it must remain NOT VERIFIED unless a separately trustworthy evidence model is designed.
 - A production-host integration test is still needed after composition to prove clear-before-admission and completed-side-effect/no-replay behavior end to end.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-Inject one `BrowserDurableActionRuntime.CreateWindows(orchestrator, fullStateDirectory)` into `BrowserHostRuntime`; replace direct durable create, ordinary `RunNextStepAsync`, approval resume+execution, rearm and cancellation with the facade while keeping ambiguous crash reconciliation explicitly NOT VERIFIED. Expose that exact durable runtime to trusted composition so `NvideaCompositionRoot` constructs `BrowserProductRuntime(host, durableActions)`, then add production-host integration coverage for stale-clear ordering and completed-side-effect/no-replay semantics.
+Inject one `BrowserDurableActionRuntime.CreateWindows(orchestrator, fullStateDirectory)` into `BrowserHostRuntime`; replace direct durable create, ordinary `RunNextStepAsync`, approval resume+execution, rearm, cancellation and ambiguous completion with the facade. Expose that exact durable runtime to trusted composition so `NvideaCompositionRoot` constructs `BrowserProductRuntime(host, durableActions)`, then add production-host integration coverage for stale-clear ordering, completed-side-effect/no-replay semantics, and ambiguous-reconciliation NOT VERIFIED behavior.

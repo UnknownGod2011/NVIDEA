@@ -31,6 +31,7 @@ public sealed class BrowserHostRuntimeIntegrationTests
                     site.StartUri,
                     new HashSet<string>(StringComparer.OrdinalIgnoreCase) { site.StartUri.IdnHost },
                     Headless: true));
+            var product = runtime.CreateProductRuntime();
 
             var action = new BrowserAction(
                 BrowserActionKind.Click,
@@ -49,6 +50,8 @@ public sealed class BrowserHostRuntimeIntegrationTests
             Assert.NotNull(paused.Approval);
             Assert.False(string.IsNullOrWhiteSpace(paused.Approval!.ExactScope));
             Assert.Equal(0, site.MutationCount);
+            var pausedVerification = await product.ReadVerificationPresentationAsync();
+            Assert.False(pausedVerification.IsVerified);
 
             var jobStore = new JsonAgentJobStore(Path.Combine(stateDirectory, "jobs.json"));
             var persistedWhilePaused = await jobStore.GetAsync(paused.JobId);
@@ -67,6 +70,10 @@ public sealed class BrowserHostRuntimeIntegrationTests
             Assert.Equal(1, site.MutationCount);
             Assert.NotNull(completed.VerifiedStep);
             Assert.Contains("typed browser postcondition", completed.VerifiedStep!.VerificationDetail ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+            var completedVerification = await product.ReadVerificationPresentationAsync();
+            Assert.True(completedVerification.IsVerified);
+            Assert.Equal(paused.JobId, completedVerification.JobId);
+            Assert.True(completedVerification.ApprovalObserved);
 
             await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 runtime.ApproveAndResumeAsync(paused.JobId, paused.Approval.ExactScope));
@@ -219,207 +226,98 @@ public sealed class BrowserHostRuntimeIntegrationTests
         }
     }
 
-    private sealed class SequenceInferenceClient(params string[] responses) : IAgentInferenceClient
+    private sealed class SequenceInferenceClient : IInferenceClient
     {
-        private readonly Queue<string> _responses = new(responses);
-        private readonly List<string> _responseSchemas = new();
+        private readonly Queue<string> _responses;
+
+        public SequenceInferenceClient(params string[] responses) => _responses = new Queue<string>(responses);
 
         public int RequestCount { get; private set; }
-        public IReadOnlyList<string> ResponseSchemas => _responseSchemas;
+        public List<string> ResponseSchemas { get; } = new();
 
-        public Task<AgentCompletion> CompleteAsync(AgentRequest request, CancellationToken cancellationToken = default)
+        public Task<InferenceResponse> CompleteAsync(InferenceRequest request, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (_responses.Count == 0)
-                throw new InvalidOperationException("The deterministic planner fixture has no response remaining.");
-
             RequestCount++;
-            _responseSchemas.Add(request.ResponseJsonSchema ?? string.Empty);
-            return Task.FromResult(new AgentCompletion(
-                _responses.Dequeue(),
-                Array.Empty<ToolCall>(),
-                "nemotron-browser-integration-fixture",
-                "stop"));
-        }
-    }
+            ResponseSchemas.Add(request.ResponseJsonSchema ?? string.Empty);
+            if (_responses.Count == 0)
+                throw new InvalidOperationException("No inference response remains for the integration test.");
 
-    private sealed class BrowserIntegrationFactAttribute : FactAttribute
-    {
-        public BrowserIntegrationFactAttribute()
-        {
-            if (!string.Equals(
-                    Environment.GetEnvironmentVariable("NVIDEA_RUN_BROWSER_INTEGRATION"),
-                    "1",
-                    StringComparison.Ordinal))
-            {
-                Skip = "Set NVIDEA_RUN_BROWSER_INTEGRATION=1 after installing Playwright Chromium to run the real-browser integration harness.";
-            }
+            return Task.FromResult(new InferenceResponse(_responses.Dequeue(), "test-nemotron", null));
         }
     }
 
     private sealed class LocalBrowserTestSite : IAsyncDisposable
     {
         private readonly TcpListener _listener;
-        private readonly CancellationTokenSource _stop = new();
-        private readonly Task _acceptLoop;
+        private readonly CancellationTokenSource _shutdown = new();
+        private readonly Task _server;
         private int _mutationCount;
 
-        private LocalBrowserTestSite(TcpListener listener, Uri startUri)
+        private LocalBrowserTestSite(TcpListener listener)
         {
             _listener = listener;
-            StartUri = startUri;
-            _acceptLoop = AcceptLoopAsync(_stop.Token);
+            var endpoint = (IPEndPoint)listener.LocalEndpoint;
+            StartUri = new Uri($"http://127.0.0.1:{endpoint.Port}/");
+            _server = Task.Run(() => ServeAsync(_shutdown.Token));
         }
 
         public Uri StartUri { get; }
-
         public int MutationCount => Volatile.Read(ref _mutationCount);
 
         public static Task<LocalBrowserTestSite> StartAsync()
         {
             var listener = new TcpListener(IPAddress.Loopback, 0);
             listener.Start();
-            var endpoint = (IPEndPoint)listener.LocalEndpoint;
-            var site = new LocalBrowserTestSite(listener, new Uri($"http://127.0.0.1:{endpoint.Port}/"));
-            return Task.FromResult(site);
+            return Task.FromResult(new LocalBrowserTestSite(listener));
         }
 
         public async ValueTask DisposeAsync()
         {
-            _stop.Cancel();
+            _shutdown.Cancel();
             _listener.Stop();
-            try
-            {
-                await _acceptLoop.ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-            }
-            catch (ObjectDisposedException)
-            {
-            }
-            finally
-            {
-                _stop.Dispose();
-            }
+            try { await _server.ConfigureAwait(false); }
+            catch (OperationCanceledException) { }
+            catch (SocketException) when (_shutdown.IsCancellationRequested) { }
+            _shutdown.Dispose();
         }
 
-        private async Task AcceptLoopAsync(CancellationToken cancellationToken)
+        private async Task ServeAsync(CancellationToken cancellationToken)
         {
             while (!cancellationToken.IsCancellationRequested)
             {
                 TcpClient client;
-                try
-                {
-                    client = await _listener.AcceptTcpClientAsync(cancellationToken).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    break;
-                }
-                catch (SocketException) when (cancellationToken.IsCancellationRequested)
-                {
-                    break;
-                }
+                try { client = await _listener.AcceptTcpClientAsync(cancellationToken).ConfigureAwait(false); }
+                catch (OperationCanceledException) { break; }
+                catch (SocketException) when (cancellationToken.IsCancellationRequested) { break; }
 
-                _ = HandleClientAsync(client, cancellationToken);
+                _ = Task.Run(() => HandleAsync(client, cancellationToken), CancellationToken.None);
             }
         }
 
-        private async Task HandleClientAsync(TcpClient client, CancellationToken cancellationToken)
+        private async Task HandleAsync(TcpClient client, CancellationToken cancellationToken)
         {
             using (client)
             using (var stream = client.GetStream())
-            using (var reader = new StreamReader(stream, Encoding.ASCII, detectEncodingFromByteOrderMarks: false, leaveOpen: true))
+            using (var reader = new StreamReader(stream, Encoding.ASCII, false, 4096, leaveOpen: true))
             {
-                var requestLine = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
-                if (string.IsNullOrWhiteSpace(requestLine))
-                    return;
+                var requestLine = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false) ?? string.Empty;
+                string? line;
+                while (!string.IsNullOrEmpty(line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false))) { }
 
-                while (true)
-                {
-                    var header = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
-                    if (string.IsNullOrEmpty(header))
-                        break;
-                }
-
-                var parts = requestLine.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                var method = parts.Length > 0 ? parts[0] : string.Empty;
-                var path = parts.Length > 1 ? parts[1] : string.Empty;
-
-                if (string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(path, "/mutate", StringComparison.Ordinal))
-                {
+                var isMutation = requestLine.StartsWith("GET /mutate", StringComparison.Ordinal);
+                if (isMutation)
                     Interlocked.Increment(ref _mutationCount);
-                    await WriteResponseAsync(
-                        stream,
-                        "200 OK",
-                        "text/html; charset=utf-8",
-                        CompletedHtml,
-                        cancellationToken).ConfigureAwait(false);
-                    return;
-                }
 
-                if (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(path, "/favicon.ico", StringComparison.Ordinal))
-                {
-                    await WriteResponseAsync(stream, "204 No Content", "text/plain", string.Empty, cancellationToken).ConfigureAwait(false);
-                    return;
-                }
-
-                await WriteResponseAsync(stream, "200 OK", "text/html; charset=utf-8", InitialHtml, cancellationToken).ConfigureAwait(false);
+                var body = isMutation
+                    ? "<html><body><p>approved mutation complete</p></body></html>"
+                    : "<html><body><button onclick=\"location.href='/mutate'\">Submit demo mutation</button></body></html>";
+                var bytes = Encoding.UTF8.GetBytes(body);
+                var headers = Encoding.ASCII.GetBytes(
+                    $"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {bytes.Length}\r\nConnection: close\r\n\r\n");
+                await stream.WriteAsync(headers, cancellationToken).ConfigureAwait(false);
+                await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
             }
         }
-
-        private static async Task WriteResponseAsync(
-            NetworkStream stream,
-            string status,
-            string contentType,
-            string body,
-            CancellationToken cancellationToken)
-        {
-            var bodyBytes = Encoding.UTF8.GetBytes(body);
-            var headers = Encoding.ASCII.GetBytes(
-                $"HTTP/1.1 {status}\r\nContent-Type: {contentType}\r\nContent-Length: {bodyBytes.Length}\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n");
-            await stream.WriteAsync(headers, cancellationToken).ConfigureAwait(false);
-            if (bodyBytes.Length > 0)
-                await stream.WriteAsync(bodyBytes, cancellationToken).ConfigureAwait(false);
-            await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-        }
-
-        private const string InitialHtml = """
-            <!doctype html>
-            <html lang="en">
-            <head>
-              <meta charset="utf-8">
-              <title>NVIDEA browser approval harness</title>
-            </head>
-            <body>
-              <main>
-                <h1>Controlled browser approval harness</h1>
-                <p id="state">no mutation yet</p>
-                <form method="post" action="/mutate">
-                  <button id="submit-demo" type="submit">Submit demo mutation</button>
-                </form>
-              </main>
-            </body>
-            </html>
-            """;
-
-        private const string CompletedHtml = """
-            <!doctype html>
-            <html lang="en">
-            <head>
-              <meta charset="utf-8">
-              <title>NVIDEA browser approval harness</title>
-            </head>
-            <body>
-              <main>
-                <h1>Controlled browser approval harness</h1>
-                <p id="state">approved mutation complete</p>
-              </main>
-            </body>
-            </html>
-            """;
     }
 }

@@ -74,10 +74,6 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     {
         var dataDirectory = ResolveStateDirectory(stateDirectory);
         Directory.CreateDirectory(dataDirectory);
-
-        // Until the completed root exists, every disposable acquired below belongs to this
-        // construction lease. Any exception (including cancellation) unwinds all successfully
-        // acquired resources in reverse order without replacing the authoritative startup error.
         using var startupLease = new StartupResourceLease();
 
         var nebiusOptions = NebiusOptions.FromEnvironment();
@@ -136,17 +132,12 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
                     }
                     catch
                     {
-                        // These resources have not escaped the provider factory yet, so this is
-                        // their sole failure owner. Once the factory succeeds the outer startup
-                        // lease assumes ownership, avoiding a double-disposal boundary.
                         serverlessHttp?.Dispose();
                         objectStorage?.Dispose();
                         throw;
                     }
                 });
 
-            // CreateAfterDestinationPreflight owns failed preflight/provider attempts. Register
-            // only after it returns successfully and ownership has transferred to this factory.
             researchObjectStorage = startupLease.Own(providers.ObjectStorage);
             researchServerlessHttp = startupLease.Own(providers.ServerlessHttp);
             var store = new JsonAgentJobStore(Path.Combine(researchDirectory, "research-jobs.json"));
@@ -189,8 +180,6 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
             research,
             dataDirectory);
 
-        // The root now has complete ownership and its DisposeAsync path mirrors these resources.
-        // Release only after construction succeeds so no partially assembled graph can escape.
         startupLease.ReleaseAll();
         return root;
     }
@@ -208,7 +197,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
             return _browserProduct;
 
         var host = await GetBrowserHostAsync(cancellationToken).ConfigureAwait(false);
-        return _browserProduct ??= new BrowserProductRuntime(host);
+        return _browserProduct ??= host.CreateProductRuntime();
     }
 
     private async Task<BrowserHostRuntime> GetBrowserHostAsync(CancellationToken cancellationToken = default)
@@ -246,11 +235,6 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         return new BrowserGoalAgent(observedHost, new NemotronBrowserPlanner(_inference), _browserGoalStore);
     }
 
-    /// <summary>
-    /// Centralizes the production evidence boundary while keeping the raw browser authority
-    /// private to the composition root. The interface overload keeps this seam testable without
-    /// starting Playwright or constructing a live browser host.
-    /// </summary>
     internal static ICrashConsistentBrowserGoalHost CreateObservedBrowserGoalHost(
         ICrashConsistentBrowserGoalHost host) =>
         new EvidenceObservingBrowserGoalHost(host);

@@ -76,6 +76,71 @@ public sealed class BrowserHostVerificationInvalidationIntegrationTests
         }
     }
 
+    [BrowserIntegrationFact]
+    public async Task AmbiguousRunningReconciliation_ClearsPriorGreenReceipt_WithoutPublishingReplacement()
+    {
+        await using var site = await LocalSite.StartAsync();
+        var stateDirectory = Path.Combine(Path.GetTempPath(), "nvidea-browser-ambiguous-invalidation-it", Guid.NewGuid().ToString("N"));
+
+        try
+        {
+            await using var runtime = await BrowserHostRuntime.CreateAsync(
+                stateDirectory,
+                new BrowserHostOptions(
+                    site.StartUri,
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase) { site.StartUri.IdnHost },
+                    Headless: true));
+            var product = runtime.CreateProductRuntime();
+
+            // Establish a genuine production green receipt first.
+            var firstPaused = await runtime.StartActionAsync(ConsequentialClick());
+            Assert.Equal(AgentJobState.WaitingForApproval, firstPaused.State);
+            Assert.NotNull(firstPaused.Approval);
+            var firstCompleted = await runtime.ApproveAndResumeAsync(firstPaused.JobId, firstPaused.Approval!.ExactScope);
+            Assert.Equal(AgentJobState.Completed, firstCompleted.State);
+            Assert.Equal(1, site.MutationCount);
+            Assert.True((await product.ReadVerificationPresentationAsync()).Verified);
+
+            // Model the durable state left by a process crash after a browser side effect but before
+            // the normal terminal checkpoint. The public host cannot manufacture Running state; this
+            // test intentionally uses the trusted store seam to reproduce the persisted crash shape.
+            var ambiguousAction = new BrowserAction(
+                BrowserActionKind.Click,
+                BrowserLocator.ByRole("button", "Submit demo mutation"),
+                ExpectedState: "approved mutation complete",
+                Rationale: "Reconcile a crash-ambiguous controlled mutation from observed post-state.");
+            var ambiguousId = Guid.NewGuid();
+            await runtime.CreateActionAsync(ambiguousId, ambiguousAction);
+
+            var store = new JsonAgentJobStore(Path.Combine(stateDirectory, "jobs.json"));
+            var created = await store.GetAsync(ambiguousId);
+            Assert.NotNull(created);
+            await store.SaveAsync(created! with
+            {
+                State = AgentJobState.Running,
+                UpdatedAt = DateTimeOffset.UtcNow
+            });
+
+            var reconciled = await runtime.TryReconcileAmbiguousAsync(ambiguousId);
+            Assert.Equal(BrowserAmbiguousRecoveryStatus.Reconciled, reconciled.Status);
+            Assert.Equal(AgentJobState.Completed, reconciled.Outcome.State);
+            Assert.NotNull(reconciled.Outcome.VerifiedStep);
+
+            // Crash reconciliation may restore durable workflow progress, but it is deliberately
+            // ineligible to mint judge-green evidence because it did not traverse normal last-mile
+            // execution evidence. The old receipt must also be gone.
+            var afterReconciliation = await product.ReadVerificationPresentationAsync();
+            Assert.False(afterReconciliation.Verified);
+            Assert.Equal(0, afterReconciliation.ActionCount);
+            Assert.Equal(0, afterReconciliation.ApprovalCount);
+            Assert.Equal(1, site.MutationCount);
+        }
+        finally
+        {
+            TryDeleteDirectory(stateDirectory);
+        }
+    }
+
     private static BrowserAction ConsequentialClick() => new(
         BrowserActionKind.Click,
         BrowserLocator.ByRole("button", "Submit demo mutation"),

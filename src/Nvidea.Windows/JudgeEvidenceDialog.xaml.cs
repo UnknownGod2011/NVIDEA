@@ -29,7 +29,12 @@ public partial class JudgeEvidenceDialog : Window
         RefreshSessionEvidence();
     }
 
-    private void RefreshSessionEvidence() => SessionEvidenceText.Text = BuildSessionEvidenceSummary(_snapshot());
+    private void RefreshSessionEvidence()
+    {
+        var snapshot = _snapshot();
+        SessionEvidenceText.Text = BuildSessionEvidenceSummary(snapshot);
+        RecordingGateText.Text = BuildRecordingGateSummary(DemoRecordingGate.Evaluate(snapshot, DemoRecordingContract.RequiredSequence));
+    }
 
     private static string BuildReadinessSummary(DesktopResearchReadiness readiness)
     {
@@ -57,6 +62,17 @@ public partial class JudgeEvidenceDialog : Window
             presentation.PermissionEvidence,
             presentation.PostStateEvidence
         });
+    }
+
+    internal static string BuildRecordingGateSummary(DemoRecordingGateResult result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        var status = result.CanRecord ? "READY TO RECORD" : "NOT READY TO RECORD";
+        if (result.MissingMilestones.Count == 0)
+            return $"{status}\n{result.Reason}";
+
+        var missing = string.Join(", ", result.MissingMilestones.Select(Label));
+        return $"{status}\n{result.Reason}\nMissing: {missing}";
     }
 
     private static string BuildSessionEvidenceSummary(SessionEvidenceSnapshot snapshot)

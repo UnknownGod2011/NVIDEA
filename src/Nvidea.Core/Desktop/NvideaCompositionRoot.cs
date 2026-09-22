@@ -171,7 +171,9 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     {
         await using var lease = await _lifetime.AcquireAsync(cancellationToken).ConfigureAwait(false);
         var browser = await GetBrowserHostUnderLeaseAsync(cancellationToken).ConfigureAwait(false);
-        return new BrowserAmbiguousRecoveryService(browser, _browserGoalStore);
+        var recovery = new BrowserAmbiguousRecoveryService(browser, _browserGoalStore);
+        recovery.BindCompositionLifetime(_lifetime);
+        return recovery;
     }
 
     public async ValueTask DisposeAsync()

@@ -45,7 +45,7 @@ If any live dependency fails preflight, do not improvise a stronger claim. Use t
 
 **Visible result:** The response uses the retrieved memory and the UI indicates memory influence/provenance without revealing unrelated stored data.
 
-**Judge proof:** `MemoryInfluencedResponse` should appear only when retrieved memory actually influenced the generated response.
+**Judge proof:** `MemoryInfluencedInvocation` should appear only when retrieved memory actually influenced the generated response.
 
 **Fallback:** If semantic retrieval misses, use a known deterministic demo memory already stored through the product. Do not inject evidence manually or restate the answer in the prompt.
 
@@ -55,7 +55,7 @@ If any live dependency fails preflight, do not improvise a stronger claim. Use t
 
 **Visible result:** Research shows source provenance/citations and explicit uncertainty where appropriate. Open at least one citation/source mapping so the judge sees that cited claims map to collected evidence.
 
-**Judge proof:** `TavilyValidatedCitationUsed` should be established only after a validated Tavily citation is actually used.
+**Judge proof:** `TavilyResearchCompletedWithCitations` should be established only after a validated Tavily-backed research result completes with citations.
 
 **Fallback:** If Tavily is unavailable, the live Tavily beat has failed. Synthetic evaluator output may be shown later only as synthetic engineering evidence; it does not satisfy this beat and must not be described as live Tavily execution.
 
@@ -65,7 +65,7 @@ If any live dependency fails preflight, do not improvise a stronger claim. Use t
 
 **Visible result:** The agent acts from DOM/accessibility observations, then visibly verifies post-action state rather than assuming a click succeeded. Keep the browser and NVIDEA status visible enough to make the act-observe-verify loop legible.
 
-**Judge proof:** `BrowserVerifiedGoalCompleted` requires terminal goal completion through the trusted verified browser path; failed verification must halt/recover rather than manufacture success.
+**Judge proof:** `BrowserPostStateVerified` requires trusted post-action verification through the browser path; failed verification must halt/recover rather than manufacture success.
 
 **Fallback:** If authenticated browser state has expired or trusted post-action verification cannot complete, stop the take and restore the session manually outside the recording. Never bypass login/CAPTCHA/MFA/site safeguards or manually complete the action and claim agent success.
 
@@ -75,7 +75,7 @@ If any live dependency fails preflight, do not improvise a stronger claim. Use t
 
 **Visible result:** NVIDEA pauses before the consequential mutation and presents the exact scope for approval. Briefly show that the action is still pending, then approve it deliberately.
 
-**Judge proof:** `ConsequentialApprovalGranted` is recorded only after the trusted-host approval boundary grants the exact requested scope; approval alone does not prove that the browser mutation later succeeded.
+**Judge proof:** `ConsequentialApprovalGateExercised` is recorded only after the trusted-host approval boundary grants the exact requested scope; approval alone does not prove that the browser mutation later succeeded.
 
 **Fallback:** If no approval dialog appears, stop the take. Never complete the consequential action manually and describe it as agent-gated.
 
@@ -109,6 +109,6 @@ Reject the recording and rerun if any of the following occurred: a required live
 
 For the six live product beats, the expected exact milestone sequence is:
 
-`NemotronInferenceCompleted` → `MemoryInfluencedResponse` → `TavilyValidatedCitationUsed` → `BrowserVerifiedGoalCompleted` → `ConsequentialApprovalGranted` → `NebiusBackgroundExecutionObserved`.
+`NemotronInferenceCompleted` → `MemoryInfluencedInvocation` → `TavilyResearchCompletedWithCitations` → `BrowserPostStateVerified` → `ConsequentialApprovalGateExercised` → `NebiusBackgroundExecutionObserved`.
 
 A valid take should make the product claim and the evidence boundary agree. The strongest close is not “everything passed”; it is that NVIDEA can show which capabilities were genuinely observed in this session and refuses to upgrade weaker evidence into a stronger claim.

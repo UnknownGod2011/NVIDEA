@@ -17,6 +17,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../../src/Nvidea.Core/Nvidea.Core.csproj" />
     <ProjectReference Include="../../tools/Nvidea.DemoPackageValidator/Nvidea.DemoPackageValidator.csproj" />
   </ItemGroup>
 </Project>

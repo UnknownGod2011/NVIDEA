@@ -17,38 +17,35 @@ Implemented Windows shell, Nebius/Nemotron inference, layered memory, Tavily res
 Hardened browser transport, redirects/WebSockets, Service Worker blocking, page admission, download quarantine, credential/prompt-injection/consequential-action gates, authenticated-state restart behavior, emergency stop and real-Chromium qualification tooling. Persisted memory embeddings are untrusted. Startup/shutdown gained cancellation-safe cleanup. Tavily research gained payload-free SHA-256 lineage and restart-stable durable receipts. Browser judge evidence gained historical approval evidence, canonical commitments, protected atomic receipts, durable host/product facades and production-host coverage for approval, mutation, post-state verification, stale-receipt invalidation, cancellation/rearm and crash-ambiguous reconciliation.
 
 ### 2026-09-21 to 2026-09-22 — browser serialization/race qualification
-`BrowserDurableActionRuntime` owns one private instance `SemaphoreSlim` covering evidence-affecting transitions and judge reads. Payload-free internal lifecycle observers permit deterministic tests without production authority. Race coverage pauses after receipt invalidation, proves judge reads/new admissions cannot overtake settlement, then proves a genuine VERIFIED receipt from job A is invalidated by newer job B admission. No stale green or half-settled judge state is allowed.
+`BrowserDurableActionRuntime` owns one private `SemaphoreSlim` covering evidence-affecting transitions and judge reads. Payload-free internal lifecycle observers permit deterministic tests without production authority. Race coverage pauses after receipt invalidation, proves judge reads/new admissions cannot overtake settlement, then proves a genuine VERIFIED receipt from job A is invalidated by newer job B admission. No stale green or half-settled judge state is allowed.
 
-### 2026-09-22 — demo evidence contract and recording gate
-Bound `Nvidea.DemoPackageValidator` and tests to production `SessionEvidenceKind`; manifest/runbook use the canonical six milestones. Added payload-free `DemoRecordingGate` and build-time `DemoRecordingContract.RequiredSequence`; WPF Judge Evidence renders explicit READY/NOT READY from the real session snapshot and resets fail closed. Provider-live readiness remains independently typed.
+### 2026-09-22 — demo evidence and judge integration
+Bound demo validation to production `SessionEvidenceKind`, aligned manifest/runbook to the canonical six milestones, and added payload-free `DemoRecordingGate` plus `DemoRecordingContract.RequiredSequence`. WPF Judge Evidence renders explicit READY/NOT READY from the real session snapshot and resets fail closed. Provider-live readiness remains independently typed. Windows obtains browser verification only through `BrowserProductRuntime.ReadVerificationPresentationAsync`, bound to the execution-owned durable runtime. Browser startup/read/protected-receipt failure fails closed without hiding independent provider/research/session evidence.
 
-### 2026-09-22 — authoritative browser evidence reaches Judge Evidence UI
-`MainWindow.Readiness` obtains browser verification only through `BrowserProductRuntime.ReadVerificationPresentationAsync`, the payload-free reader bound to the execution-owned `BrowserDurableActionRuntime`. The read participates in the same serialization boundary as evidence-affecting browser transitions. Browser startup/read/protected-receipt failure is caught and fails closed to NOT VERIFIED rather than preventing provider/research/session evidence from opening.
+### 2026-09-22 — validator/build and API contract cleanup
+Removed a stale duplicate demo-validator test type that was a likely C# compile blocker and encoded obsolete milestone names. Added manifest-to-production recording-contract alignment coverage. Repaired `NvideaCompositionRootBrowserApiSurfaceTests` after the sanctioned payload-free browser verification reader was added: the product API now explicitly allows that read while rejecting raw host/durable-runtime/receipt-store/publisher authority in its signature.
 
-### 2026-09-22 — validator/build contract cleanup
-Removed a stale duplicate demo-validator test type that was a likely C# compile blocker and still encoded obsolete milestone names. Added repository-artifact alignment coverage comparing the checked-in demo manifest directly to `DemoRecordingContract.RequiredSequence`.
-
-### 2026-09-22 — browser product API regression repaired
-Repository review found `NvideaCompositionRootBrowserApiSurfaceTests` had not been updated when `BrowserProductRuntime.ReadVerificationPresentationAsync` became the sanctioned judge-facing read. Its allow-list therefore rejected the new production method, creating a deterministic test failure in the Core suite. Updated the contract test to explicitly allow that method, require its return path to contain only `DesktopBrowserVerificationPresentation`, and reject raw `BrowserHostRuntime`, `BrowserDurableActionRuntime`, receipt-store, or publisher authority in its parameters. Existing real-Chromium host integration already exercises the product reader through verified publication, newer admission/rearm/cancellation invalidation, and ambiguous recovery.
+### 2026-09-22 — canonical browser product publication hardening
+Found a real first-call concurrency race in `NvideaCompositionRoot.GetBrowserProductAsync`: host creation was serialized, but `_browserProduct ??= host.CreateProductRuntime()` occurred after the host gate was released, so simultaneous first callers could construct and receive different product facade instances. Product publication is now serialized by the same composition `_browserGate`, rechecks disposal while holding the gate, and publishes exactly one canonical least-authority product facade. This also closes the race where disposal could occur between host acquisition and product publication.
 
 ## Latest run
 Files changed:
-- Updated `tests/Nvidea.Core.Tests/NvideaCompositionRootBrowserApiSurfaceTests.cs`.
+- Updated `src/Nvidea.Core/Desktop/NvideaCompositionRoot.cs`.
 - Updated `progress.md`.
 
 Validation/evidence:
-- Re-read `progress.md` completely and inspected the current repository tree, `BrowserProductRuntime`, composition API-surface tests, and real-Chromium verification-invalidation integration tests before mutation.
-- Found a concrete deterministic regression: `BrowserProductRuntime` publicly declares `ReadVerificationPresentationAsync`, while the API-surface test asserted every declared public method belonged to an allow-list that omitted it.
-- Repaired the test contract rather than weakening production: the authoritative payload-free read is now explicitly sanctioned, while raw host/durable-runtime/receipt-store/publisher authority remains prohibited from the product read signature.
-- Confirmed existing `BrowserHostVerificationInvalidationIntegrationTests` already read verification through `BrowserProductRuntime` and cover genuine VERIFIED publication followed by newer admission, rearm, cancellation, and ambiguous reconciliation invalidation, so no redundant second integration harness was added.
+- Re-read `progress.md` completely, inspected recent commits, the Core browser API-surface contract, `NvideaCompositionRoot`, `BrowserHostRuntime.CreateProductRuntime`, and the execution-owned durable verification binding before mutation.
+- Identified that `GetBrowserHostAsync` serialized only host creation; after it returned, concurrent first callers executed `_browserProduct ??= host.CreateProductRuntime()` without synchronization. `??=` is not an atomic singleton-publication primitive, so more than one caller could receive a distinct facade.
+- Hardened publication with `_browserGate`: after obtaining the canonical host, callers acquire the composition gate, recheck `_disposed`, and only then publish/read `_browserProduct`. The product still wraps the same execution-owned durable runtime and no raw browser authority is exposed.
+- The disposal interleaving is now fail-closed: if disposal wins the gate after host acquisition, the waiting product request observes `_disposed` and throws instead of constructing a facade over a disposed host.
 - Repository identity was explicitly reverified immediately before every GitHub mutation; writable target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 - Connector environment cannot execute .NET 8/WPF/Chromium, so compile/test PASS is not claimed. No live/paid Nebius, Tavily, browser, Object Storage, Serverless, or inference operation was triggered.
 
 ## Security / privacy / failure review
-- Production runtime code is unchanged. The test now documents the intended least-authority boundary instead of incorrectly rejecting it.
-- Judge-facing browser verification remains payload-free and cannot accept the raw host, durable action runtime, protected receipt store, or publisher as call-time authority.
+- The change narrows authority publication rather than expanding it: all Windows/judge callers converge on one product facade backed by the trusted host's exact durable runtime.
 - No credentials, prompts, browser URLs/locators/typed values, memory contents, protected receipts, or provider payloads were exposed.
-- Existing fail-closed behavior remains: newer browser work, cancellation/rearm, and ambiguous recovery cannot leave stale green verification visible through the product reader.
+- Cancellation while waiting for product publication propagates normally. Disposal racing publication fails closed under the same gate.
+- Browser evidence serialization inside `BrowserDurableActionRuntime` remains unchanged; this composition gate only protects host/product lifetime and canonical facade publication.
 
 ## Known blockers / risks
 - New Core/WPF code and accumulated suite still require executable .NET 8 + Windows validation; compile/test/validator PASS remains unverified in this connector environment.
@@ -57,4 +54,4 @@ Validation/evidence:
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-Inspect the complete Core test surface for other deterministic contract drift introduced by the recent judge-evidence APIs, then add a narrow composition-level regression proving `NvideaCompositionRoot.GetBrowserProductAsync()` returns the same least-authority product reader used by Windows without exposing raw browser authority. After that, execute the full .NET/Windows/Chromium qualification suite in the first capable environment and fix findings without weakening authority boundaries.
+Add deterministic composition-level concurrency coverage for canonical `GetBrowserProductAsync` publication without requiring real Chromium (likely via a narrow internal browser-host/product factory seam), including simultaneous first callers and disposal-vs-publication. Keep the seam assembly-internal and incapable of exposing raw browser authority. Then run the full .NET/Windows/Chromium qualification suite in the first capable environment and fix findings without weakening authority boundaries.

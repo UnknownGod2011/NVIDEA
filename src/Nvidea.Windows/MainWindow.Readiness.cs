@@ -1,4 +1,5 @@
 using System.Windows;
+using Nvidea.Core.Browser;
 using Nvidea.Core.Desktop;
 
 namespace Nvidea.Windows;
@@ -45,11 +46,29 @@ public partial class MainWindow
             }
         }
 
+        DesktopBrowserVerificationPresentation? browserVerification = null;
+        try
+        {
+            // The product runtime exposes only the payload-free presentation read owned by the
+            // durable browser runtime. Reading through it preserves the same serialized boundary
+            // used by evidence-affecting browser transitions, so the judge dialog cannot observe
+            // a half-settled or stale-green receipt.
+            var browser = await _root.GetBrowserProductAsync();
+            browserVerification = await browser.ReadVerificationPresentationAsync();
+        }
+        catch
+        {
+            // Browser startup/read failure, missing Playwright, corrupt protected evidence, or a
+            // concurrently invalidated receipt must fail closed. Judge evidence remains usable for
+            // provider/research/session proof while browser verification stays NOT VERIFIED.
+        }
+
         var dialog = new JudgeEvidenceDialog(
             readiness,
             _root.Desktop.SessionEvidenceSnapshot,
             _root.Desktop.ResetSessionEvidence,
-            durableReceipt) { Owner = this };
+            durableReceipt,
+            browserVerification) { Owner = this };
         dialog.ShowDialog();
     }
 

@@ -13,9 +13,10 @@ public sealed class NvideaCompositionRootBrowserLifetimeBoundaryTests
         var type = typeof(NvideaCompositionRoot);
         var fields = type.GetFields(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
 
-        var gate = Assert.Single(fields, static field => field.Name == "_browserGate");
-        Assert.Equal(typeof(SemaphoreSlim), gate.FieldType);
+        var gate = Assert.Single(fields, static field => field.Name == "_lifetime");
+        Assert.Equal(typeof(CompositionLifetimeGate), gate.FieldType);
         Assert.True(gate.IsPrivate);
+        Assert.DoesNotContain(fields, static field => field.Name == "_browserGate");
 
         var host = Assert.Single(fields, static field => field.Name == "_browser");
         Assert.Equal(typeof(BrowserHostRuntime), host.FieldType);
@@ -49,6 +50,16 @@ public sealed class NvideaCompositionRootBrowserLifetimeBoundaryTests
         var parameter = Assert.Single(method.GetParameters());
         Assert.Equal(typeof(CancellationToken), parameter.ParameterType);
         Assert.True(parameter.HasDefaultValue);
+    }
+
+    [Fact]
+    public void RawSemaphoreAndDisposedFlagCannotReintroduceSplitLifetimeAuthority()
+    {
+        var fields = typeof(NvideaCompositionRoot)
+            .GetFields(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+
+        Assert.DoesNotContain(fields, static field => field.FieldType == typeof(SemaphoreSlim));
+        Assert.DoesNotContain(fields, static field => field.Name == "_disposed");
     }
 
     private static bool IsRawBrowserAuthority(Type candidate)

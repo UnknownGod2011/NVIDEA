@@ -10,49 +10,40 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - Judge evidence projects real provider readiness, payload-free durable research lineage, authoritative serialized browser-verification state, production-observed session milestones, and a fail-closed recording gate.
 
 ## Persistent history
-### 2026-09-06 to 2026-09-17 — product foundation
-Implemented Windows shell, Nebius/Nemotron inference, layered memory, Tavily research, permission/audit engine, durable jobs, Playwright browser execution, DPAPI state protection, encrypted remote execution, local voice, deployment/evaluator tooling, crash-consistency hardening, judge-visible runtime evidence, deterministic demo/runbook, submission validation, independent receipts and live-demo readiness tooling.
+### 2026-09-06 to 2026-09-21 — product foundation and hardening
+Implemented Windows shell, Nebius/Nemotron inference, layered memory, Tavily research, permission/audit engine, durable jobs, Playwright browser execution, DPAPI state protection, encrypted remote execution, local voice, deployment/evaluator tooling, crash-consistency hardening, judge-visible runtime evidence, deterministic demo/runbook, submission validation, independent receipts and live-demo readiness tooling. Hardened browser transport, prompt-injection/consequential-action gates, emergency stop, protected browser receipts, durable research lineage and crash-ambiguous reconciliation.
 
-### 2026-09-17 to 2026-09-21 — security, browser and durable evidence hardening
-Hardened browser transport, redirects/WebSockets, Service Worker blocking, page admission, download quarantine, credential/prompt-injection/consequential-action gates, authenticated-state restart behavior, emergency stop and real-Chromium qualification tooling. Persisted memory embeddings are untrusted. Startup/shutdown gained cancellation-safe cleanup. Tavily research gained payload-free SHA-256 lineage and restart-stable durable receipts. Browser judge evidence gained historical approval evidence, canonical commitments, protected atomic receipts, durable host/product facades and production-host coverage for approval, mutation, post-state verification, stale-receipt invalidation, cancellation/rearm and crash-ambiguous reconciliation.
+### 2026-09-22 — evidence and composition lifetime hardening
+Serialized browser evidence transitions, bound demo validation to production session evidence, added a fail-closed recording gate, wired WPF Judge Evidence to authoritative browser/session evidence, repaired build/API contracts, serialized canonical browser product publication, and integrated `CompositionLifetimeGate` into `NvideaCompositionRoot` as the acquisition/disposal linearization authority. Deterministic qualification proved the same gate can safely protect already-issued facade operations.
 
-### 2026-09-21 to 2026-09-22 — browser serialization/race qualification
-`BrowserDurableActionRuntime` owns one private `SemaphoreSlim` covering evidence-affecting transitions and judge reads. Payload-free internal lifecycle observers permit deterministic tests without production authority. Race coverage proves judge reads/new admissions cannot overtake settlement and genuine VERIFIED evidence is invalidated by newer admission. No stale green or half-settled judge state is allowed.
-
-### 2026-09-22 — demo evidence, judge integration and build contracts
-Bound demo validation to production `SessionEvidenceKind`, aligned manifest/runbook to the canonical six milestones, added payload-free `DemoRecordingGate` plus `DemoRecordingContract.RequiredSequence`, and wired WPF Judge Evidence to real session/browser evidence. Removed a stale duplicate validator test type, aligned the manifest directly to the production recording contract, and repaired browser API-surface contracts for the sanctioned verification reader.
-
-### 2026-09-22 — composition lifetime hardening
-Serialized canonical browser product publication, added composition-boundary regressions, introduced deterministic `CompositionLifetimeGate`, and integrated it into `NvideaCompositionRoot` as the single acquisition/disposal linearization authority. Cached host/product acquisition no longer bypasses shutdown synchronization; lazy startup and product publication occur under one lifetime lease; disposal is non-cancellable after winning the gate.
-
-## Latest run — issued facade operation lifetime qualification
+## Latest run — browser product operation leasing
 Files changed:
-- Added `tests/Nvidea.Core.Tests/CompositionIssuedFacadeLifetimeTests.cs`.
-- Updated `progress.md`.
+- `src/Nvidea.Core/Desktop/BrowserProductRuntime.cs`
+- `progress.md`
+
+Completed:
+- Every public `BrowserProductRuntime` operation now acquires an async lifetime lease before touching host, durable-verification, download, approval, cancellation, or evidence authority and holds it through settlement.
+- Added an assembly-internal one-time `BindCompositionLifetime` hook so trusted composition can replace the facade's unpublished local compatibility gate with the root shutdown authority without exposing that authority publicly.
+- Consequential approval/session evidence remains downstream of successful host completion; cancellation and rejected exact scopes cannot create success evidence.
+- Re-read current root/host/product implementation and recent lifetime history before editing. Repository identity was explicitly reverified before every mutation as exactly `UnknownGod2011/NVIDEA`; no other repository was mutated.
 
 Validation/evidence:
-- Re-read `progress.md` completely, inspected current commits/tree, `NvideaCompositionRoot`, `BrowserProductRuntime`, `BrowserHostRuntime`, and existing lifetime tests before changing anything.
-- Qualified the exact shared-gate pattern needed for already-issued facades without launching Chromium: an operation that acquires a composition lifetime lease before touching host authority keeps disposal behind it; an operation attempted after disposal fails closed before invoking its body; cancellation while waiting does not invoke the operation.
-- This closes an important design uncertainty from the prior run: the existing `CompositionLifetimeGate` can safely protect operation lifetime as well as acquisition lifetime without a second semaphore or nested root acquisition.
-- I intentionally did not wire the pattern into `BrowserProductRuntime`/goal/recovery facades in this run because that requires coordinated constructor/composition changes across the privileged host boundary. A partial edit was immediately restored to the exact prior blobs before the qualification test was committed; the final default branch retains the original host/product production files and therefore does not contain the transient incomplete edit.
-- Repository identity was explicitly reverified immediately before every GitHub mutation; writable target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
-- Connector environment cannot execute .NET 8/WPF/Chromium, so compile/test PASS is not claimed. No live/paid Nebius, Tavily, browser, Object Storage, Serverless, or inference operation was triggered.
+- Static inspection confirms all nine public product operations now lease before authority access.
+- The existing qualified `CompositionLifetimeGate` semantics remain the basis: queued/new acquisition fails after disposal wins; in-flight lease holds disposal behind it; waiting cancellation does not invoke authority.
+- Connector environment cannot execute .NET 8/WPF/Chromium, so compile/test PASS is not claimed. No paid/live provider or browser operation was triggered.
 
 ## Security / privacy / failure review
-- The qualified operation lease contains no provider/browser payload and adds no new persisted state, credentials, URLs, locators, prompts, or evidence content.
-- The pattern fails closed before a stale facade can invoke its operation after root disposal has crossed the lifetime gate.
-- An already-running operation holds the lease until settlement, so root disposal cannot tear down browser/provider authority underneath that operation; cancellation while waiting remains honored.
-- The test deliberately uses a narrow fake issued facade over the real `CompositionLifetimeGate`, avoiding fake browser success claims and avoiding Chromium dependency.
-- Production browser product/goal/recovery facades are not yet wired to acquire operation leases, so the identified use-after-dispose race remains a known production risk rather than being falsely marked fixed.
+- The lease carries no browser/provider payload and persists no credentials, prompts, URLs, locators or receipts.
+- Product callers still cannot obtain `BrowserHostRuntime`, `BrowserDurableActionRuntime`, receipt publisher/store, or the composition lifetime authority.
+- Exact approval and evidence ordering are unchanged; only operation lifetime is wrapped.
+- IMPORTANT: trusted `NvideaCompositionRoot` does not yet call `BindCompositionLifetime(_lifetime)` before publishing the product. Until that final composition binding is made, product operations use their private compatibility gate and therefore do not yet block root disposal. This run intentionally does not falsely mark the production race closed.
 
 ## Known blockers / risks
-- New Core/WPF code and accumulated suite still require executable .NET 8 + Windows validation; compile/test/validator PASS remains unverified in this connector environment.
-- Already-issued `BrowserProductRuntime`, `BrowserGoalAgent`, and `BrowserAmbiguousRecoveryService` instances can currently outlive their root acquisition lease. Host `ThrowIfDisposed` rejects operations after host disposal, but disposal can still race an operation that passed that check and is awaiting Playwright/durable work.
-- Wiring operation leases must avoid double-acquiring the non-reentrant composition gate while root factory methods already hold acquisition leases.
-- Browser startup remains intentionally inside the lifetime lease, so shutdown waits for startup cancellation/completion; executable Windows timing qualification is still required.
-- `MainWindow.Readiness` initializes browser product authority when Judge Evidence is opened, which can incur Playwright startup latency.
-- Provider-live proof remains independently typed/freshness-checked; session milestone completion alone is insufficient to claim live provider readiness.
-- Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
+- New Core/WPF code and accumulated suite still require executable .NET 8 + Windows validation.
+- Final root-to-product lifetime binding remains required to close the actual operation-vs-root-disposal race.
+- Goal-agent and ambiguous-recovery issued facades still need the same least-authority operation lifetime treatment.
+- Browser startup remains intentionally inside the root lifetime lease; Windows timing qualification is required.
+- Judge Evidence browser initialization can incur Playwright startup latency; live Nebius/Tavily/Serverless/authenticated-browser validation remains pending.
 
 ## Single Best Next Task
-Integrate the now-qualified shared `CompositionLifetimeGate` into already-issued browser facades at the operation boundary. Start with `BrowserProductRuntime`: trusted composition should inject the root gate, every public product operation should acquire one lease before touching host/durable authority, and root disposal should wait for in-flight product work while stale product calls fail closed. Then extend the same least-authority lifetime wrapper to goal-agent and ambiguous-recovery operations without nested gate acquisition. Add deterministic post-disposal/in-flight regressions first; run the full .NET/Windows/Chromium qualification suite in the first capable environment and fix findings without weakening authority boundaries.
+Complete the production binding atomically in `NvideaCompositionRoot.GetBrowserProductAsync`: create the unpublished product, bind it exactly once to `_lifetime`, then publish it. Add a deterministic composition contract proving the returned product is root-bound and post-disposal calls fail before host authority. Then extend operation leasing to goal-agent and ambiguous-recovery facades without nested acquisition. Run the full .NET/Windows/Chromium suite in the first capable environment and fix findings without weakening authority boundaries.

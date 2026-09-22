@@ -23,35 +23,38 @@ Hardened browser transport, redirects/WebSockets, Service Worker blocking, page 
 Bound `Nvidea.DemoPackageValidator` and tests to production `SessionEvidenceKind`; manifest/runbook use the canonical six milestones. Added payload-free `DemoRecordingGate` and build-time `DemoRecordingContract.RequiredSequence`; WPF Judge Evidence renders explicit READY/NOT READY from the real session snapshot and resets fail closed. Provider-live readiness remains independently typed.
 
 ### 2026-09-22 — authoritative browser evidence reaches Judge Evidence UI
-`MainWindow.Readiness` now obtains browser verification only through `BrowserProductRuntime.ReadVerificationPresentationAsync`, the payload-free reader bound to the execution-owned `BrowserDurableActionRuntime`. The read therefore participates in the same serialization boundary as evidence-affecting browser transitions. Browser startup/read/protected-receipt failure is caught and fails closed to NOT VERIFIED rather than preventing provider/research/session evidence from opening. The dialog now receives this authoritative projection instead of silently omitting browser evidence.
+`MainWindow.Readiness` obtains browser verification only through `BrowserProductRuntime.ReadVerificationPresentationAsync`, the payload-free reader bound to the execution-owned `BrowserDurableActionRuntime`. The read participates in the same serialization boundary as evidence-affecting browser transitions. Browser startup/read/protected-receipt failure is caught and fails closed to NOT VERIFIED rather than preventing provider/research/session evidence from opening.
 
-### 2026-09-22 — validator compile blocker and manifest/production contract alignment
-Repository inspection found two source files in `tests/Nvidea.DemoPackageValidator.Tests` both declaring the same `DemoPackageValidatorTests` type in the same namespace. The stale copy also still encoded four obsolete session milestone names, so it was both a likely C# duplicate-type compile blocker and a source of contract drift. Removed only that obsolete duplicate source; retained the newer production-enum-aware suite. Added `DemoRecordingContractAlignmentTests`, which reads the checked-in `docs/demo-package.json` and compares its flattened milestone sequence directly to `DemoRecordingContract.RequiredSequence`, eliminating the last independent six-beat assertion as an authority for manifest alignment.
+### 2026-09-22 — validator/build contract cleanup
+Removed a stale duplicate demo-validator test type that was a likely C# compile blocker and still encoded obsolete milestone names. Added repository-artifact alignment coverage comparing the checked-in demo manifest directly to `DemoRecordingContract.RequiredSequence`.
+
+### 2026-09-22 — browser product API regression repaired
+Repository review found `NvideaCompositionRootBrowserApiSurfaceTests` had not been updated when `BrowserProductRuntime.ReadVerificationPresentationAsync` became the sanctioned judge-facing read. Its allow-list therefore rejected the new production method, creating a deterministic test failure in the Core suite. Updated the contract test to explicitly allow that method, require its return path to contain only `DesktopBrowserVerificationPresentation`, and reject raw `BrowserHostRuntime`, `BrowserDurableActionRuntime`, receipt-store, or publisher authority in its parameters. Existing real-Chromium host integration already exercises the product reader through verified publication, newer admission/rearm/cancellation invalidation, and ambiguous recovery.
 
 ## Latest run
 Files changed:
-- Removed stale `tests/Nvidea.DemoPackageValidator.Tests/DemoPackageValidatorTests.cs` (obsolete duplicate test type; newer test source retained).
-- Added `tests/Nvidea.DemoPackageValidator.Tests/DemoRecordingContractAlignmentTests.cs`.
+- Updated `tests/Nvidea.Core.Tests/NvideaCompositionRootBrowserApiSurfaceTests.cs`.
 - Updated `progress.md`.
 
 Validation/evidence:
-- Re-read `progress.md` completely and inspected current head, test project contents, production `DemoRecordingGate`, and `DemoRecordingContract` before mutation.
-- Confirmed the test directory contained two compile-included `.cs` files declaring the same fully-qualified `Nvidea.DemoPackageValidator.Tests.DemoPackageValidatorTests` class. The removed file used obsolete milestones (`MemoryInfluencedResponse`, `TavilyValidatedCitationUsed`, `BrowserVerifiedGoalCompleted`, `ConsequentialApprovalGranted`); the retained suite uses current production enum names and checks the checked-in manifest.
-- Added a narrow repository-artifact regression that derives expected names from `DemoRecordingContract.RequiredSequence` and compares them exactly, in order, to every checked-in manifest `expectedSessionMilestones` entry.
+- Re-read `progress.md` completely and inspected the current repository tree, `BrowserProductRuntime`, composition API-surface tests, and real-Chromium verification-invalidation integration tests before mutation.
+- Found a concrete deterministic regression: `BrowserProductRuntime` publicly declares `ReadVerificationPresentationAsync`, while the API-surface test asserted every declared public method belonged to an allow-list that omitted it.
+- Repaired the test contract rather than weakening production: the authoritative payload-free read is now explicitly sanctioned, while raw host/durable-runtime/receipt-store/publisher authority remains prohibited from the product read signature.
+- Confirmed existing `BrowserHostVerificationInvalidationIntegrationTests` already read verification through `BrowserProductRuntime` and cover genuine VERIFIED publication followed by newer admission, rearm, cancellation, and ambiguous reconciliation invalidation, so no redundant second integration harness was added.
 - Repository identity was explicitly reverified immediately before every GitHub mutation; writable target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
-- Connector environment cannot execute .NET 8/WPF, so compile/test PASS is not claimed. No live/paid Nebius, Tavily, browser, Object Storage, Serverless, or inference operation was triggered.
+- Connector environment cannot execute .NET 8/WPF/Chromium, so compile/test PASS is not claimed. No live/paid Nebius, Tavily, browser, Object Storage, Serverless, or inference operation was triggered.
 
 ## Security / privacy / failure review
-- This run changes tests/docs only; no runtime authority, credentials, prompts, memory contents, browser payloads, protected receipts, or provider calls were added or exposed.
-- The new alignment test reads only the checked-in public demo manifest and production enum contract; it cannot create evidence or grant recording readiness.
-- Removing the stale duplicate does not remove unique coverage: its scenarios are represented in the retained newer suite, which additionally uses production enum names and repository-artifact checks.
-- Manifest drift now fails the regression whenever its flattened production milestone sequence differs from the Windows recording gate's canonical contract.
+- Production runtime code is unchanged. The test now documents the intended least-authority boundary instead of incorrectly rejecting it.
+- Judge-facing browser verification remains payload-free and cannot accept the raw host, durable action runtime, protected receipt store, or publisher as call-time authority.
+- No credentials, prompts, browser URLs/locators/typed values, memory contents, protected receipts, or provider payloads were exposed.
+- Existing fail-closed behavior remains: newer browser work, cancellation/rearm, and ambiguous recovery cannot leave stale green verification visible through the product reader.
 
 ## Known blockers / risks
 - New Core/WPF code and accumulated suite still require executable .NET 8 + Windows validation; compile/test/validator PASS remains unverified in this connector environment.
-- `MainWindow.Readiness` initializes the browser product when Judge Evidence is opened. This is correct for authoritative browser evidence but can incur Playwright startup latency; failure is fail-closed and non-fatal. A future cached/non-starting authoritative reader could improve UX only if it preserves the same durable serialization boundary.
+- `MainWindow.Readiness` initializes the browser product when Judge Evidence is opened. This preserves authoritative browser evidence but can incur Playwright startup latency; failure is fail-closed and non-fatal. A cached/non-starting authoritative reader is only acceptable if it preserves the same durable serialization boundary.
 - Provider-live proof must remain independently typed and freshness-checked; session milestone completion alone is not sufficient to claim live provider readiness.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-Add a narrow product/composition regression proving the authoritative browser presentation path exposed to Windows is VERIFIED only for a protected durable receipt and returns NOT VERIFIED after newer admission, cancellation/rearm, and ambiguous reconciliation. Then execute the full .NET/Windows/Chromium qualification suite in the first capable environment and fix findings without weakening authority boundaries.
+Inspect the complete Core test surface for other deterministic contract drift introduced by the recent judge-evidence APIs, then add a narrow composition-level regression proving `NvideaCompositionRoot.GetBrowserProductAsync()` returns the same least-authority product reader used by Windows without exposing raw browser authority. After that, execute the full .NET/Windows/Chromium qualification suite in the first capable environment and fix findings without weakening authority boundaries.

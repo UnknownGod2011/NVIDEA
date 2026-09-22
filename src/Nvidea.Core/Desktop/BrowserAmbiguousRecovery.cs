@@ -84,6 +84,8 @@ public sealed class BrowserAmbiguousRecoveryService
     private readonly IBrowserGoalSessionStore _store;
     private readonly TimeProvider _timeProvider;
     private readonly BrowserSessionEvidenceRecorder _sessionEvidence;
+    private CompositionLifetimeGate _lifetime = new();
+    private bool _compositionLifetimeBound;
 
     public BrowserAmbiguousRecoveryService(
         IBrowserAmbiguousRecoveryHost host,
@@ -97,10 +99,22 @@ public sealed class BrowserAmbiguousRecoveryService
         _sessionEvidence = new BrowserSessionEvidenceRecorder(sessionEvidence ?? SessionEvidenceLedger.ProcessLocal);
     }
 
+    internal BrowserAmbiguousRecoveryService BindCompositionLifetime(CompositionLifetimeGate lifetime)
+    {
+        ArgumentNullException.ThrowIfNull(lifetime);
+        if (_compositionLifetimeBound)
+            throw new InvalidOperationException("Browser ambiguous-recovery lifetime authority is already bound.");
+        _lifetime = lifetime;
+        _compositionLifetimeBound = true;
+        return this;
+    }
+
     public async Task<(BrowserGoalSession Session, BrowserAmbiguousRecoveryResult Recovery)> RecoverAsync(
         Guid sessionId,
         CancellationToken cancellationToken = default)
     {
+        await using var lease = await _lifetime.AcquireAsync(cancellationToken).ConfigureAwait(false);
+
         if (sessionId == Guid.Empty)
             throw new ArgumentException("Browser goal session id is required.", nameof(sessionId));
 

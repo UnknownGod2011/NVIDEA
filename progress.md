@@ -37,28 +37,33 @@ Found a judging-readiness defect: `docs/demo-package.json` and `Nvidea.DemoPacka
 ### 2026-09-22 — operator runbook aligned to production evidence
 Aligned `docs/judge-demo-runbook.md` to the same six production `SessionEvidenceKind` values used by the machine-checkable manifest and validator. Removed the four stale friendly labels from per-beat judge proof and the final expected sequence. Reviewed `JudgeEvidenceDialog.xaml.cs`; its human-readable WPF labels already switch directly on the correct production enum values, so no WPF mutation was necessary.
 
+### 2026-09-22 — checked-in demo contract regression coverage
+Found that `Nvidea.DemoPackageValidator.Tests` itself still generated four obsolete friendly milestone names, so the test fixture had drifted behind the production-bound validator and would no longer represent a valid schema-v2 package. Bound the test project to `Nvidea.Core`, replaced all fixture milestone literals with `nameof(SessionEvidenceKind...)`, and added a checked-in-manifest regression test. It locates `docs/demo-package.json`, requires every declared milestone to parse case-sensitively as a defined production `SessionEvidenceKind`, requires canonical enum spelling, requires the exact six-beat order, and projects those values through a `SessionEvidenceSnapshot` with all six production milestones present. This closes the manifest/validator/test-fixture drift loop without introducing another friendly-name mapping.
+
 ## Latest run
 Files changed:
-- `docs/judge-demo-runbook.md`
+- `tests/Nvidea.DemoPackageValidator.Tests/DemoPackageValidatorTests.cs`
+- `tests/Nvidea.DemoPackageValidator.Tests/Nvidea.DemoPackageValidator.Tests.csproj`
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md` completely and inspected the latest repository commits before changing anything.
-- Confirmed the runbook still contradicted its own exact-production-name claim in four places plus the final sequence.
-- Replaced those names with `MemoryInfluencedInvocation`, `TavilyResearchCompletedWithCitations`, `BrowserPostStateVerified`, and `ConsequentialApprovalGateExercised`, preserving the existing fail-closed claim boundaries and clarifying the Tavily/browser wording to match what those production milestones actually prove.
-- Inspected `src/Nvidea.Windows/JudgeEvidenceDialog.xaml.cs`; its presentation labels already map directly from all six current production enum members and require no correction.
+- Re-read `progress.md` completely and inspected recent commits, the checked-in manifest, validator tests, test project, and production `SessionEvidenceLedger` before changing anything.
+- Found a concrete regression: the validator tests still used `MemoryInfluencedResponse`, `TavilyValidatedCitationUsed`, `BrowserVerifiedGoalCompleted`, and `ConsequentialApprovalGranted`; those names no longer match the production-bound validator.
+- Test fixture milestones now use `nameof(SessionEvidenceKind...)`, and the test project references `Nvidea.Core`, making enum renames compile-time-visible in both validator implementation and tests.
+- Added `Checked_in_manifest_uses_exact_production_session_evidence_sequence`, which reads the real checked-in manifest rather than a synthetic copy, case-sensitively parses each milestone to `SessionEvidenceKind`, rejects undefined/noncanonical names, checks exact order, and verifies a projected `SessionEvidenceSnapshot` contains all six expected kinds.
 - Repository identity was explicitly reverified immediately before every GitHub mutation; writable target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 - Connector environment still cannot execute .NET 8, so compile/test/validator PASS is not claimed. No live/paid Nebius, Tavily, browser, Object Storage, Serverless, or inference operation was triggered.
 
 ## Security / privacy / failure review
-- Documentation-only runbook changes add no runtime authority, provider calls, browser access, credentials, private payloads, persistence, or CI load.
-- The operator instructions remain fail-closed: missing live evidence means the beat failed, synthetic evidence cannot be upgraded to live proof, and login/CAPTCHA/MFA safeguards may not be bypassed.
-- The WPF evidence view remains payload-free and projects human-readable labels from the production enum rather than accepting arbitrary milestone strings.
+- Changes are test-only plus progress documentation. They add no production authority, provider calls, browser access, credentials, persistence, private payload handling, or CI artifact load.
+- The new regression consumes only checked-in judging metadata and the payload-free production enum/snapshot types.
+- Parsing is intentionally case-sensitive and canonical-name checked so typo/casing drift cannot be normalized into an apparently valid judge claim.
+- Repository-root discovery requires both the checked-in manifest and Core project marker, reducing the chance of silently testing an unrelated copied manifest.
 
 ## Known blockers / risks
-- The validator and accumulated suite require executable .NET 8 validation; compile/test/validator PASS remains unverified in this connector environment.
-- The manifest, validator and operator runbook are now name-aligned, but there is not yet a regression test that loads the checked-in `docs/demo-package.json` and proves every declared milestone parses as `SessionEvidenceKind` and matches a projected six-beat `SessionEvidenceSnapshot`.
+- The changed test project and accumulated suite require executable .NET 8 validation; compile/test/validator PASS remains unverified in this connector environment.
+- The checked-in manifest is now structurally tied to the production evidence enum through both validator code and tests, but the operator runbook remains documentation and is not machine-parsed against the enum.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-Add a regression test that loads the checked-in `docs/demo-package.json`, parses every declared milestone as a production `SessionEvidenceKind`, and proves the expected six-beat sequence can be projected from a `SessionEvidenceSnapshot` without duplicated friendly-name mappings. Then run the demo validator and full .NET/Windows/Chromium qualification suite in the first capable environment and fix any compile/runtime findings without weakening authority boundaries.
+Make the judge recording gate consume the validated `docs/demo-package.json` contract and a fresh session-evidence export so recording cannot start when any required production milestone is missing or out of order. Keep provider-live proof independently typed/freshness-checked and do not let synthetic evaluator evidence satisfy live session milestones. Then run the demo validator and full .NET/Windows/Chromium qualification suite in the first capable environment and fix any compile/runtime findings without weakening authority boundaries.

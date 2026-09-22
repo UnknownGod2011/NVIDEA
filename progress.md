@@ -31,31 +31,34 @@ Added structural and behavioral Core coverage for `BrowserDurableActionRuntime`'
 ### 2026-09-22 — exact clear/execute/publish/new-admission race qualification
 Upgraded `BrowserDurableActionRuntimeLifecycleRaceTests` from a non-browser completing fixture to a production-valid payload-free browser terminal checkpoint shape accepted by `DurableBrowserVerificationPublisher`. Job A pauses exactly after execution evidence clear while holding the runtime transition gate. A queued judge read and newer job-B admission must both remain blocked and B must remain absent from durable storage. After release, A completes exactly once and publishes VERIFIED evidence tied to A's durable JobId; the already-queued judge read observes that settled green receipt. B then enters the same gate, clears A's receipt before durable admission, and a final judge read is NOT VERIFIED with zero actions. This proves neither a half-settled read nor stale-green carryover across newer admission.
 
+### 2026-09-22 — demo evidence contract bound to production enum
+Found a judging-readiness defect: `docs/demo-package.json` and `Nvidea.DemoPackageValidator` used friendly milestone names that did not exist in production `SessionEvidenceKind`, despite the runbook claiming exact names. Bound the validator project directly to `Nvidea.Core` and changed its milestone table to `nameof(SessionEvidenceKind...)`, so future production enum renames become compile-time/demo-validation failures instead of silently validating fictional evidence names. Updated the machine-checkable manifest to the six actual production names: `NemotronInferenceCompleted`, `MemoryInfluencedInvocation`, `TavilyResearchCompletedWithCitations`, `BrowserPostStateVerified`, `ConsequentialApprovalGateExercised`, and `NebiusBackgroundExecutionObserved`.
+
 ## Latest run
 Files changed:
-- `tests/Nvidea.Core.Tests/BrowserDurableActionRuntimeLifecycleRaceTests.cs`
+- `tools/Nvidea.DemoPackageValidator/Nvidea.DemoPackageValidator.csproj`
+- `tools/Nvidea.DemoPackageValidator/Program.cs`
+- `docs/demo-package.json`
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md` completely and inspected recent commits, the durable runtime, lifecycle boundary, durable publisher, browser evidence receipt model, terminal checkpoint handler, and presentation projection before implementation.
-- Replaced the prior non-publishing race fixture with `VerifiedBrowserCheckpointHandler`, which emits the same `browser.action.verified` + `durableEvidence` structural checkpoint contract consumed by production publication validation.
-- Evidence is payload-free, uses the durable job ID as ActionId, and satisfies allowed/driver-success/post-state-verified invariants without weakening `DurableBrowserVerificationPublisher`.
-- The test proves stale evidence is absent while A is paused; judge read and B admission remain blocked; A publishes one VERIFIED action; B admission then clears that receipt; final presentation is NOT VERIFIED with zero actions.
-- During review, corrected the test to assert the actual `DesktopBrowserVerificationPresentation.ActionCount` contract rather than a nonexistent count property.
+- Re-read `progress.md` completely, inspected recent commits, the <=3-minute runbook, demo manifest, production `SessionEvidenceLedger`, composition root, browser evidence recorder, and demo validator before implementation.
+- Confirmed the previous manifest/validator accepted four non-production names (`MemoryInfluencedResponse`, `TavilyValidatedCitationUsed`, `BrowserVerifiedGoalCompleted`, `ConsequentialApprovalGranted`) while production records differently named enum values. This could make the machine validator green while the Judge Evidence UI could never show the names promised by the runbook.
+- Validator now references `Nvidea.Core` and uses compile-time `nameof(SessionEvidenceKind...)` values rather than duplicated string literals for every production milestone.
+- Machine-checkable `docs/demo-package.json` now uses the exact production enum names.
 - Repository identity was explicitly reverified immediately before every GitHub mutation; writable target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
-- Connector environment still cannot execute .NET 8, so compile/test PASS is not claimed. No live/paid Nebius, Tavily, browser, Object Storage, Serverless, or inference operation was triggered.
+- Connector environment still cannot execute .NET 8, so compile/validator PASS is not claimed. No live/paid Nebius, Tavily, browser, Object Storage, Serverless, or inference operation was triggered.
 
 ## Security / privacy / failure review
-- The race fixture cannot authorize or execute a browser action; it emits only the least-authority structural evidence shape already accepted after authoritative durable completion.
-- Publisher validation remains unchanged: evidence must belong to the durable job and be allowed, driver-successful, post-state-verified, with historical approval when required.
-- Lifecycle observer remains payload-free and test-only; production factories remain observer-free.
-- Serialization now has deterministic coverage for the strongest evidence race: stale clear, blocked read/admission, settled green publication, then newer-admission invalidation.
-- No URLs, locators, typed values, page text, approval scopes/tokens, credentials, provider secrets, or browser handles are introduced into durable judge evidence.
+- This change adds no runtime authority, provider calls, browser access, credentials, private payloads, or persistence; it only makes judging metadata depend on the production evidence type.
+- `SessionEvidenceKind` remains payload-free; the manifest exposes only enum names, not timestamps, prompts, memory contents, URLs, citations, approval scopes, or remote-job identifiers.
+- The validator's new Core project reference is intentionally one-way tooling → Core and introduces no production dependency on judging tooling.
+- Fail-closed behavior improves: drift between production evidence names and demo claims now breaks compilation/validation instead of allowing a false-positive demo package.
 
 ## Known blockers / risks
-- The upgraded Core race test and accumulated suite require executable .NET 8 validation; compile/test PASS remains unverified in this connector environment.
-- Queue acquisition order after A releases depends on `SemaphoreSlim` waiter scheduling; the test intentionally starts judge read before B admission, but runtime correctness does not depend on FIFO ordering because either operation sees a fully settled state. If executable testing exposes scheduling nondeterminism, assertions should be made order-independent without weakening the no-half-state/no-stale-final-state invariants.
+- The changed validator and accumulated suite require executable .NET 8 validation; compile/test/validator PASS remains unverified in this connector environment.
+- `docs/judge-demo-runbook.md` still contains the four former friendly milestone labels in prose and its final expected sequence. The machine-checkable manifest is now correct and compile-bound, but the operator-facing runbook must be aligned next to remove contradictory instructions.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-Shift from browser-race hardening to end-to-end hackathon readiness: inspect the deterministic demo path and judging evidence composition for the required <=3 minute story (Windows invocation/context → durable memory → Tavily research with citations → complex verified browser action + approval → Nebius background work). Add one production-composition integration/eval that asserts these judge-visible milestones derive from real subsystem evidence rather than static/demo claims, while keeping secrets and private payloads out of the presentation. Then run the full .NET/Windows/Chromium suite in the first capable environment and fix any compile/runtime findings without weakening authority boundaries.
+Align `docs/judge-demo-runbook.md` and any WPF Judge Evidence labels/tests with the exact production `SessionEvidenceKind` contract, then add a regression test that loads `docs/demo-package.json` and proves every declared milestone parses as a production enum and that the expected six-beat sequence can be projected from a `SessionEvidenceSnapshot`. After that, run the demo validator and full .NET/Windows/Chromium qualification suite in the first capable environment and fix any compile/runtime findings without weakening authority boundaries.

@@ -71,9 +71,9 @@ public sealed class LifetimeBoundBrowserGoalAgentTests
             => throw new NotSupportedException();
     }
 
-    private sealed class FakeInferenceClient : INebiusInferenceClient
+    private sealed class FakeInferenceClient : IAgentInferenceClient
     {
-        public Task<NebiusChatResponse> CompleteAsync(NebiusChatRequest request, CancellationToken cancellationToken = default)
+        public Task<AgentCompletion> CompleteAsync(AgentRequest request, CancellationToken cancellationToken = default)
             => throw new InvalidOperationException("Inference should not execute in lifetime-boundary tests.");
     }
 }

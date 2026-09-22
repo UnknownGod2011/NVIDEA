@@ -155,7 +155,8 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         await using var lease = await _lifetime.AcquireAsync(cancellationToken).ConfigureAwait(false);
         var browser = await GetBrowserHostUnderLeaseAsync(cancellationToken).ConfigureAwait(false);
         var observedHost = CreateObservedBrowserGoalHost(browser);
-        return new BrowserGoalAgent(observedHost, new NemotronBrowserPlanner(_inference), _browserGoalStore);
+        var lifetimeBoundHost = new LifetimeBoundBrowserGoalHost(observedHost, _lifetime);
+        return new BrowserGoalAgent(lifetimeBoundHost, new NemotronBrowserPlanner(_inference), _browserGoalStore);
     }
 
     internal static ICrashConsistentBrowserGoalHost CreateObservedBrowserGoalHost(ICrashConsistentBrowserGoalHost host) => new EvidenceObservingBrowserGoalHost(host);

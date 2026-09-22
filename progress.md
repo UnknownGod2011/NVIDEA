@@ -23,35 +23,35 @@ Hardened browser transport, redirects/WebSockets, Service Worker blocking, page 
 Bound demo validation to production `SessionEvidenceKind`, aligned manifest/runbook to the canonical six milestones, and added payload-free `DemoRecordingGate` plus `DemoRecordingContract.RequiredSequence`. WPF Judge Evidence renders explicit READY/NOT READY from the real session snapshot and resets fail closed. Provider-live readiness remains independently typed. Windows obtains browser verification only through `BrowserProductRuntime.ReadVerificationPresentationAsync`, bound to the execution-owned durable runtime. Browser startup/read/protected-receipt failure fails closed without hiding independent provider/research/session evidence.
 
 ### 2026-09-22 — validator/build and API contract cleanup
-Removed a stale duplicate demo-validator test type that was a likely C# compile blocker and encoded obsolete milestone names. Added manifest-to-production recording-contract alignment coverage. Repaired `NvideaCompositionRootBrowserApiSurfaceTests` after the sanctioned payload-free browser verification reader was added: the product API now explicitly allows that read while rejecting raw host/durable-runtime/receipt-store/publisher authority in its signature.
+Removed a stale duplicate demo-validator test type that was a likely C# compile blocker and encoded obsolete milestone names. Added manifest-to-production recording-contract alignment coverage. Repaired `NvideaCompositionRootBrowserApiSurfaceTests` after the sanctioned payload-free browser verification reader was added: the product API explicitly allows that read while rejecting raw host/durable-runtime/receipt-store/publisher authority in its signature.
 
 ### 2026-09-22 — canonical browser product publication hardening
-Found a real first-call concurrency race in `NvideaCompositionRoot.GetBrowserProductAsync`: host creation was serialized, but `_browserProduct ??= host.CreateProductRuntime()` occurred after the host gate was released, so simultaneous first callers could construct and receive different product facade instances. Product publication is now serialized by the same composition `_browserGate`, rechecks disposal while holding the gate, and publishes exactly one canonical least-authority product facade. This also closes the race where disposal could occur between host acquisition and product publication.
+Found a first-call concurrency race in `NvideaCompositionRoot.GetBrowserProductAsync`: host creation was serialized, but product publication occurred after the host gate was released, allowing simultaneous first callers to construct distinct product facade instances. Product publication is now serialized by the composition `_browserGate`, rechecks disposal while holding the gate, and publishes one canonical least-authority product facade backed by the execution-owned durable runtime.
 
-## Latest run
+## Latest run — browser composition lifetime contract coverage
 Files changed:
-- Updated `src/Nvidea.Core/Desktop/NvideaCompositionRoot.cs`.
+- Added `tests/Nvidea.Core.Tests/NvideaCompositionRootBrowserLifetimeBoundaryTests.cs`.
 - Updated `progress.md`.
 
 Validation/evidence:
-- Re-read `progress.md` completely, inspected recent commits, the Core browser API-surface contract, `NvideaCompositionRoot`, `BrowserHostRuntime.CreateProductRuntime`, and the execution-owned durable verification binding before mutation.
-- Identified that `GetBrowserHostAsync` serialized only host creation; after it returned, concurrent first callers executed `_browserProduct ??= host.CreateProductRuntime()` without synchronization. `??=` is not an atomic singleton-publication primitive, so more than one caller could receive a distinct facade.
-- Hardened publication with `_browserGate`: after obtaining the canonical host, callers acquire the composition gate, recheck `_disposed`, and only then publish/read `_browserProduct`. The product still wraps the same execution-owned durable runtime and no raw browser authority is exposed.
-- The disposal interleaving is now fail-closed: if disposal wins the gate after host acquisition, the waiting product request observes `_disposed` and throws instead of constructing a facade over a disposed host.
+- Re-read `progress.md` completely and inspected the latest commits, `NvideaCompositionRoot`, the existing browser API-surface regression suite, and the current test project layout before mutation.
+- Added a regression contract that locks the composition root's browser lifetime synchronization primitive, raw host, and canonical product facade as private implementation details.
+- Added a public-surface scan rejecting accidental exposure of `BrowserHostRuntime`, `BrowserDurableActionRuntime`, `DurableBrowserVerificationReceiptStore`, or `DurableBrowserVerificationPublisher` through public fields/properties/method signatures.
+- Added a contract for `GetBrowserProductAsync` requiring an asynchronous `Task<BrowserProductRuntime>` return and cancellation-aware `CancellationToken` input, protecting the cancellation/lifetime semantics needed by Windows judge reads.
 - Repository identity was explicitly reverified immediately before every GitHub mutation; writable target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 - Connector environment cannot execute .NET 8/WPF/Chromium, so compile/test PASS is not claimed. No live/paid Nebius, Tavily, browser, Object Storage, Serverless, or inference operation was triggered.
 
 ## Security / privacy / failure review
-- The change narrows authority publication rather than expanding it: all Windows/judge callers converge on one product facade backed by the trusted host's exact durable runtime.
-- No credentials, prompts, browser URLs/locators/typed values, memory contents, protected receipts, or provider payloads were exposed.
-- Cancellation while waiting for product publication propagates normally. Disposal racing publication fails closed under the same gate.
-- Browser evidence serialization inside `BrowserDurableActionRuntime` remains unchanged; this composition gate only protects host/product lifetime and canonical facade publication.
+- The new tests add no runtime authority and no provider/browser data path. They enforce that privileged browser host/runtime/receipt/publisher types stay behind the composition boundary.
+- No credentials, prompts, URLs, locators, typed values, memory contents, protected receipts, or provider payloads are captured by the tests.
+- Cancellation remains part of the product-acquisition contract; the test does not weaken fail-closed disposal or durable browser evidence serialization.
 
 ## Known blockers / risks
 - New Core/WPF code and accumulated suite still require executable .NET 8 + Windows validation; compile/test/validator PASS remains unverified in this connector environment.
-- `MainWindow.Readiness` initializes the browser product when Judge Evidence is opened. This preserves authoritative browser evidence but can incur Playwright startup latency; failure is fail-closed and non-fatal. A cached/non-starting authoritative reader is only acceptable if it preserves the same durable serialization boundary.
-- Provider-live proof must remain independently typed and freshness-checked; session milestone completion alone is not sufficient to claim live provider readiness.
+- A remaining lifetime edge deserves deterministic executable qualification: a caller that passes the initial `_disposed` check can race with disposal when a cached browser product/host already exists. The strongest fix should ensure acquisition and disposal linearize on the same gate without introducing nested-gate deadlock or Chromium-dependent tests.
+- `MainWindow.Readiness` initializes the browser product when Judge Evidence is opened; this can incur Playwright startup latency. Any future cached/non-starting reader must preserve the same durable serialization boundary.
+- Provider-live proof remains independently typed and freshness-checked; session milestone completion alone is insufficient to claim live provider readiness.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-Add deterministic composition-level concurrency coverage for canonical `GetBrowserProductAsync` publication without requiring real Chromium (likely via a narrow internal browser-host/product factory seam), including simultaneous first callers and disposal-vs-publication. Keep the seam assembly-internal and incapable of exposing raw browser authority. Then run the full .NET/Windows/Chromium qualification suite in the first capable environment and fix findings without weakening authority boundaries.
+Refactor browser host/product acquisition so cached fast paths and disposal linearize under one composition lifetime gate, then add deterministic concurrency coverage for simultaneous first callers and disposal-vs-cached-acquisition without launching Chromium. Keep any test seam assembly-internal and incapable of exposing raw browser authority. Then run the full .NET/Windows/Chromium qualification suite in the first capable environment and fix findings without weakening authority boundaries.

@@ -7,7 +7,7 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 - .NET 8 Core + WPF Windows host + deployable remote worker.
 - NVIDIA Nemotron through Nebius Token Factory; layered privacy-aware memory; Tavily research; safe Playwright browser automation; capability permissions/audit.
 - Encrypted Nebius remote research with atomic dispatch trust root, lifecycle/cancellation reconciliation, exact-once result ingestion and Object Storage/Serverless worker transport.
-- Judge evidence projects real provider readiness, payload-free durable research lineage, browser-verification state, production-observed session milestones, and a fail-closed recording gate.
+- Judge evidence projects real provider readiness, payload-free durable research lineage, authoritative serialized browser-verification state, production-observed session milestones, and a fail-closed recording gate.
 
 ## Persistent history
 ### 2026-09-06 to 2026-09-17 — product foundation
@@ -19,43 +19,37 @@ Hardened browser transport, redirects/WebSockets, Service Worker blocking, page 
 ### 2026-09-21 to 2026-09-22 — browser serialization/race qualification
 `BrowserDurableActionRuntime` owns one private instance `SemaphoreSlim` covering evidence-affecting transitions and judge reads. Payload-free internal lifecycle observers permit deterministic tests without production authority. Race coverage pauses after receipt invalidation, proves judge reads/new admissions cannot overtake settlement, then proves a genuine VERIFIED receipt from job A is invalidated by newer job B admission. No stale green or half-settled judge state is allowed.
 
-### 2026-09-22 — demo evidence contract alignment
-Bound `Nvidea.DemoPackageValidator` and its tests to production `SessionEvidenceKind`, replacing obsolete friendly names. `docs/demo-package.json` and the operator runbook use the six production milestones: `NemotronInferenceCompleted`, `MemoryInfluencedInvocation`, `TavilyResearchCompletedWithCitations`, `BrowserPostStateVerified`, `ConsequentialApprovalGateExercised`, and `NebiusBackgroundExecutionObserved`. Regression coverage reads the checked-in manifest, requires canonical case-sensitive enum names and exact six-beat ordering, and projects them through `SessionEvidenceSnapshot`.
+### 2026-09-22 — demo evidence contract and recording gate
+Bound `Nvidea.DemoPackageValidator` and tests to production `SessionEvidenceKind`; manifest/runbook use the canonical six milestones. Added payload-free `DemoRecordingGate` and build-time `DemoRecordingContract.RequiredSequence`; WPF Judge Evidence renders explicit READY/NOT READY from the real session snapshot and resets fail closed. Provider-live readiness remains independently typed.
 
-### 2026-09-22 — fail-closed recording evidence gate
-Added Core `DemoRecordingGate`, a payload-free production-evidence gate. It fails closed for an empty contract, undefined/duplicate contract kinds, missing production milestones, or milestones observed out of contract order; only the complete ordered production sequence opens the gate. Core tests cover success and failure cases. Synthetic evaluator metadata cannot satisfy the gate because it consumes only `SessionEvidenceSnapshot` entries.
-
-### 2026-09-22 — Windows recording gate integration
-Added `DemoRecordingContract.RequiredSequence` as the build-time canonical six-beat production contract, avoiding runtime trust in mutable documentation. Wired `JudgeEvidenceDialog` to evaluate the live `SessionEvidenceSnapshot` on open and after session reset and render explicit `READY TO RECORD` / `NOT READY TO RECORD` state, including payload-free missing milestone labels and out-of-order reason. Provider readiness remains visibly separate and the UI explicitly states that recording readiness does not imply provider-live readiness. Added Core regression coverage locking completeness, uniqueness and ordering of the canonical sequence.
+### 2026-09-22 — authoritative browser evidence reaches Judge Evidence UI
+`MainWindow.Readiness` now obtains browser verification only through `BrowserProductRuntime.ReadVerificationPresentationAsync`, the payload-free reader bound to the execution-owned `BrowserDurableActionRuntime`. The read therefore participates in the same serialization boundary as evidence-affecting browser transitions. Browser startup/read/protected-receipt failure is caught and fails closed to NOT VERIFIED rather than preventing provider/research/session evidence from opening. The dialog now receives this authoritative projection instead of silently omitting browser evidence.
 
 ## Latest run
 Files changed:
-- `src/Nvidea.Core/Desktop/DemoRecordingContract.cs`
-- `src/Nvidea.Windows/JudgeEvidenceDialog.xaml.cs`
-- `src/Nvidea.Windows/JudgeEvidenceDialog.xaml`
-- `tests/Nvidea.Core.Tests/DemoRecordingContractTests.cs`
+- `src/Nvidea.Windows/MainWindow.Readiness.cs`
 - `progress.md`
 
 Validation/evidence:
-- Re-read `progress.md` completely; inspected recent commits, `DemoRecordingGate`, WPF judge evidence UI, readiness composition, and current test layout before mutation.
-- Canonical contract uses the same six production enum values already enforced by the checked-in demo-package regression tests.
-- Judge UI now evaluates the real production snapshot through Core `DemoRecordingGate`; no synthetic evaluator evidence path was added.
-- New session reset immediately re-evaluates the gate, so cleared evidence cannot leave a stale green recording status.
+- Re-read `progress.md` completely and inspected repository tree/current head, `MainWindow.Readiness`, `NvideaCompositionRoot`, and `BrowserProductRuntime` before mutation.
+- Confirmed trusted composition exposes browser judge evidence through `BrowserProductRuntime.ReadVerificationPresentationAsync`; it does not expose the publisher, protected receipt store, durable evidence, raw browser host, approval authority, URL, locator, typed value, or browser payload.
+- The Judge Evidence click path now awaits that authoritative read before constructing the dialog. Failure leaves the optional presentation null, which preserves fail-closed NOT VERIFIED behavior while keeping the rest of the judge surface usable.
+- Existing durable-runtime race coverage remains the authority for serialization/invalidation behavior; this run did not weaken or bypass that boundary.
 - Repository identity was explicitly reverified immediately before every GitHub mutation; writable target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 - Connector environment cannot execute .NET 8/WPF, so compile/test PASS is not claimed. No live/paid Nebius, Tavily, browser, Object Storage, Serverless, or inference operation was triggered.
 
 ## Security / privacy / failure review
-- The canonical contract and gate are payload-free; the WPF projection sees only enum kinds, first-observed timestamps, and gate reasons/missing kinds. It adds no provider credentials, prompts, memory contents, sources, URLs, browser locators/typed values, persistence, or network authority.
-- Evaluation remains fail-closed. Session reset cannot preserve a stale READY state because both evidence text and gate result are rebuilt from the post-reset snapshot.
-- Runtime does not parse `docs/demo-package.json`; mutable documentation therefore cannot change production recording authority. Existing validator regression coverage is responsible for keeping the checked-in manifest aligned with production enum names/order.
-- Provider-live readiness remains independently displayed and is explicitly not implied by `READY TO RECORD`.
+- New WPF integration consumes only `DesktopBrowserVerificationPresentation`, a Core-owned payload-free projection. No provider credentials, prompts, memory contents, source bodies, URLs, browser locators/typed values, raw durable checkpoints, protected receipts, or mutation authority cross into the dialog.
+- Browser verification read is downstream of the product runtime's durable serialized reader; the UI does not read receipt files directly and cannot race around the transition gate.
+- Missing Playwright/browser startup, corrupt evidence, cancellation, or read failure cannot produce green state. They degrade to an absent presentation/NOT VERIFIED.
+- The judge dialog remains available when browser evidence is unavailable, avoiding a browser installation problem masking independent provider/research/session proof.
 
 ## Known blockers / risks
 - New Core/WPF code and accumulated suite still require executable .NET 8 + Windows validation; compile/test/validator PASS remains unverified in this connector environment.
-- The canonical Core contract and checked-in demo manifest are enforced by separate regression tests but are not yet compared to each other from one shared assertion; future drift should be made impossible with a validator test comparing manifest order directly to `DemoRecordingContract.RequiredSequence`.
-- The judge dialog receives browser verification only when its caller supplies it; current `MainWindow.Readiness` construction still omits that optional presentation, so browser receipt projection in this dialog can remain NOT VERIFIED even when separate browser evidence exists. This is now a higher-value integration gap than further gate UI work.
+- `MainWindow.Readiness` now initializes the browser product when Judge Evidence is opened. This is correct for authoritative browser evidence but can incur Playwright startup latency; failure is fail-closed and non-fatal. A future cached/non-starting authoritative reader could improve UX only if it preserves the same durable serialization boundary.
+- The canonical Core demo contract and checked-in demo manifest are enforced by separate regression tests but are not yet compared to each other from one shared assertion; future drift should be made impossible with a validator test comparing manifest order directly to `DemoRecordingContract.RequiredSequence`.
 - Provider-live proof must remain independently typed and freshness-checked; session milestone completion alone is not sufficient to claim live provider readiness.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-Wire the authoritative `DesktopBrowserVerificationPresentation` into the `JudgeEvidenceDialog` call path from the existing browser durable runtime without exposing browser payloads or bypassing its serialized judge-read boundary. Add integration/regression coverage proving the dialog gets VERIFIED only from the protected receipt projection and fails closed after newer admission/cancellation/rearm/ambiguous reconciliation. Also tighten the demo-package validator regression to compare manifest milestone order directly with `DemoRecordingContract.RequiredSequence`. Then execute the full .NET/Windows/Chromium qualification suite in the first capable environment and fix findings without weakening authority boundaries.
+Tighten the demo-package validator regression so the checked-in manifest milestone order is compared directly with `DemoRecordingContract.RequiredSequence`, eliminating the last duplicated six-beat contract. Then add a narrow product/composition regression proving the authoritative browser presentation path exposed to Windows is VERIFIED only for a protected durable receipt and returns NOT VERIFIED after newer admission/cancellation/rearm/ambiguous reconciliation. Execute the full .NET/Windows/Chromium qualification suite in the first capable environment and fix findings without weakening authority boundaries.

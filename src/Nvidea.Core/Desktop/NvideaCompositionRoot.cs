@@ -26,10 +26,9 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     private readonly LocalOllamaMemoryEmbeddingProvider? _memoryEmbeddingProvider;
     private readonly string _stateDirectory;
     private readonly JsonBrowserGoalSessionStore _browserGoalStore;
-    private readonly SemaphoreSlim _browserGate = new(1, 1);
+    private readonly CompositionLifetimeGate _lifetime = new();
     private BrowserHostRuntime? _browser;
     private BrowserProductRuntime? _browserProduct;
-    private bool _disposed;
 
     private NvideaCompositionRoot(
         HttpClient nebiusHttp,
@@ -64,7 +63,6 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     public DesktopInvocationService Desktop { get; }
     public DesktopSessionController Session { get; }
     public PersonalMemoryService Memory => _memory;
-
     public ResearchProductRuntime? Research { get; }
     public LocalStateRuntime LocalState { get; }
 
@@ -167,18 +165,8 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         var desktop = new DesktopInvocationService(inference, memory, researchEngine);
         var session = new DesktopSessionController(desktop);
         var root = new NvideaCompositionRoot(
-            nebiusHttp,
-            tavilyHttp,
-            researchServerlessHttp,
-            researchObjectStorage,
-            inference,
-            memoryStore,
-            memory,
-            memoryEmbeddingProvider,
-            desktop,
-            session,
-            research,
-            dataDirectory);
+            nebiusHttp, tavilyHttp, researchServerlessHttp, researchObjectStorage, inference,
+            memoryStore, memory, memoryEmbeddingProvider, desktop, session, research, dataDirectory);
 
         startupLease.ReleaseAll();
         return root;
@@ -192,59 +180,30 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     public async Task<BrowserProductRuntime> GetBrowserProductAsync(
         CancellationToken cancellationToken = default)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        if (_browserProduct is not null)
-            return _browserProduct;
-
-        var host = await GetBrowserHostAsync(cancellationToken).ConfigureAwait(false);
-
-        // Product publication is serialized with host creation/disposal. Without this second
-        // gate, concurrent first callers could each construct and receive a different product
-        // facade even though both facades point at the same privileged host. Keeping one
-        // canonical facade makes the least-authority boundary stable for Windows/judge readers.
-        await _browserGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            ObjectDisposedException.ThrowIf(_disposed, this);
-            return _browserProduct ??= host.CreateProductRuntime();
-        }
-        finally
-        {
-            _browserGate.Release();
-        }
+        await using var lease = await _lifetime.AcquireAsync(cancellationToken).ConfigureAwait(false);
+        var host = await GetBrowserHostUnderLeaseAsync(cancellationToken).ConfigureAwait(false);
+        return _browserProduct ??= host.CreateProductRuntime();
     }
 
-    private async Task<BrowserHostRuntime> GetBrowserHostAsync(CancellationToken cancellationToken = default)
+    private async Task<BrowserHostRuntime> GetBrowserHostUnderLeaseAsync(CancellationToken cancellationToken)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
         if (_browser is not null)
             return _browser;
 
-        await _browserGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (_browser is not null)
-                return _browser;
+        var browserDirectory = Path.Combine(_stateDirectory, "browser");
+        var browser = await BrowserHostRuntime.CreateAsync(
+            browserDirectory,
+            BrowserOptionsFromEnvironment(),
+            cancellationToken).ConfigureAwait(false);
 
-            var browserDirectory = Path.Combine(_stateDirectory, "browser");
-            var browser = await BrowserHostRuntime.CreateAsync(
-                browserDirectory,
-                BrowserOptionsFromEnvironment(),
-                cancellationToken).ConfigureAwait(false);
-
-            _browser = browser;
-            return _browser;
-        }
-        finally
-        {
-            _browserGate.Release();
-        }
+        _browser = browser;
+        return browser;
     }
 
     public async Task<BrowserGoalAgent> CreateBrowserGoalAgentAsync(CancellationToken cancellationToken = default)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        var browser = await GetBrowserHostAsync(cancellationToken).ConfigureAwait(false);
+        await using var lease = await _lifetime.AcquireAsync(cancellationToken).ConfigureAwait(false);
+        var browser = await GetBrowserHostUnderLeaseAsync(cancellationToken).ConfigureAwait(false);
         var observedHost = CreateObservedBrowserGoalHost(browser);
         return new BrowserGoalAgent(observedHost, new NemotronBrowserPlanner(_inference), _browserGoalStore);
     }
@@ -260,46 +219,40 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     public async Task<IReadOnlyList<BrowserGoalSession>> ListBrowserGoalSessionsAsync(
         CancellationToken cancellationToken = default)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        await using var lease = await _lifetime.AcquireAsync(cancellationToken).ConfigureAwait(false);
         return await _browserGoalStore.ListAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<BrowserAmbiguousRecoveryService> CreateBrowserAmbiguousRecoveryServiceAsync(
         CancellationToken cancellationToken = default)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        var browser = await GetBrowserHostAsync(cancellationToken).ConfigureAwait(false);
+        await using var lease = await _lifetime.AcquireAsync(cancellationToken).ConfigureAwait(false);
+        var browser = await GetBrowserHostUnderLeaseAsync(cancellationToken).ConfigureAwait(false);
         return new BrowserAmbiguousRecoveryService(browser, _browserGoalStore);
     }
 
     public async ValueTask DisposeAsync()
     {
-        if (_disposed)
+        var disposalLease = await _lifetime.BeginDisposeAsync().ConfigureAwait(false);
+        if (disposalLease is null)
             return;
-        _disposed = true;
 
-        await _browserGate.WaitAsync().ConfigureAwait(false);
-        try
+        await using (disposalLease)
         {
             if (_browser is not null)
                 await _browser.DisposeAsync().ConfigureAwait(false);
             _browser = null;
             _browserProduct = null;
-        }
-        finally
-        {
-            _browserGate.Release();
-        }
 
-        Session.Dispose();
-        _memory.Dispose();
-        _memoryEmbeddingProvider?.Dispose();
-        _memoryStore.Dispose();
-        _researchServerlessHttp?.Dispose();
-        _researchObjectStorage?.Dispose();
-        _tavilyHttp?.Dispose();
-        _nebiusHttp.Dispose();
-        _browserGate.Dispose();
+            Session.Dispose();
+            _memory.Dispose();
+            _memoryEmbeddingProvider?.Dispose();
+            _memoryStore.Dispose();
+            _researchServerlessHttp?.Dispose();
+            _researchObjectStorage?.Dispose();
+            _tavilyHttp?.Dispose();
+            _nebiusHttp.Dispose();
+        }
     }
 
     private static BrowserHostOptions BrowserOptionsFromEnvironment()
@@ -348,25 +301,18 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
 
         public Task<BrowserObservation> ObserveAsync(CancellationToken cancellationToken = default) =>
             _host.ObserveAsync(cancellationToken);
-
         public Task<BrowserJobOutcome> StartActionAsync(BrowserAction action, CancellationToken cancellationToken = default) =>
             _host.StartActionAsync(action, cancellationToken);
-
         public Task<BrowserJobOutcome> CreateActionAsync(Guid jobId, BrowserAction action, CancellationToken cancellationToken = default) =>
             _host.CreateActionAsync(jobId, action, cancellationToken);
-
         public Task<BrowserJobOutcome> AdvanceActionAsync(Guid jobId, CancellationToken cancellationToken = default) =>
             _host.AdvanceActionAsync(jobId, cancellationToken);
-
         public Task<BrowserJobOutcome?> GetAsync(Guid jobId, CancellationToken cancellationToken = default) =>
             _host.GetAsync(jobId, cancellationToken);
-
         public Task<BrowserJobOutcome> RearmApprovalAsync(Guid jobId, string exactScope, CancellationToken cancellationToken = default) =>
             _host.RearmApprovalAsync(jobId, exactScope, cancellationToken);
-
         public Task<BrowserJobOutcome> ApproveAndResumeAsync(Guid jobId, string exactScope, CancellationToken cancellationToken = default) =>
             _host.ApproveAndResumeAsync(jobId, exactScope, cancellationToken);
-
         public Task<BrowserJobOutcome> CancelAsync(Guid jobId, CancellationToken cancellationToken = default) =>
             _host.CancelAsync(jobId, cancellationToken);
     }

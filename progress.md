@@ -14,37 +14,37 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 Implemented Windows shell, Nebius/Nemotron inference, layered memory, Tavily research, permission/audit engine, durable jobs, Playwright browser execution, DPAPI state protection, encrypted remote execution, local voice, deployment/evaluator tooling, crash-consistency hardening, judge-visible runtime evidence, deterministic demo/runbook, submission validation, independent receipts and live-demo readiness tooling. Hardened browser transport, prompt-injection/consequential-action gates, emergency stop, protected browser receipts, durable research lineage and crash-ambiguous reconciliation.
 
 ### 2026-09-22 — evidence and composition lifetime hardening
-Serialized browser evidence transitions, bound demo validation to production session evidence, added a fail-closed recording gate, wired WPF Judge Evidence to authoritative browser/session evidence, repaired build/API contracts, serialized canonical browser product publication, integrated `CompositionLifetimeGate` into `NvideaCompositionRoot`, qualified issued-facade operation leasing, and wrapped every public `BrowserProductRuntime` operation in a lifetime lease.
+Serialized browser evidence transitions, bound demo validation to production session evidence, added a fail-closed recording gate, wired WPF Judge Evidence to authoritative browser/session evidence, repaired build/API contracts, serialized canonical browser product publication, integrated `CompositionLifetimeGate` into `NvideaCompositionRoot`, qualified issued-facade operation leasing, wrapped every public `BrowserProductRuntime` operation in a lifetime lease, and atomically bound the product facade to root shutdown authority before publication.
 
-## Latest run — atomic root-to-product lifetime binding
+## Latest run — ambiguous-recovery facade lifetime boundary
 Files changed:
-- `src/Nvidea.Core/Desktop/NvideaCompositionRoot.cs`
+- `src/Nvidea.Core/Desktop/BrowserAmbiguousRecovery.cs`
 - `progress.md`
 
 Completed:
-- `GetBrowserProductAsync` now creates the product while holding the root lifetime lease, binds the unpublished product exactly once to the root `_lifetime`, then publishes it to `_browserProduct`.
-- Cached product publication remains canonical and serialized; no product can be returned from the root while still using its compatibility-local lifetime gate.
-- Browser product operations and root disposal now share the same `CompositionLifetimeGate`: an in-flight product operation can hold disposal behind it, while operations beginning after disposal wins fail before touching host/evidence/download authority.
-- Preserved lazy browser startup and the existing least-authority public API. No raw host, durable runtime, receipt store/publisher, or lifetime authority was made public.
-- Re-read `progress.md`, the current root/product implementation, tree, and lifetime qualification before editing. Repository identity was explicitly reverified before every GitHub mutation as exactly `UnknownGod2011/NVIDEA`.
-- An intermediate malformed contents update during this run was immediately corrected in the next commit; current default-branch head contains the restored composition root plus the intended lifetime binding. No other repository was touched.
+- `BrowserAmbiguousRecoveryService` now has an assembly-internal one-time `BindCompositionLifetime` boundary matching the already-qualified browser-product pattern.
+- `RecoverAsync` acquires its facade lifetime before reading the durable goal session, inspecting/reconciling browser child state, persisting recovery state, or publishing session evidence. This also serializes concurrent recovery attempts on standalone/test-created service instances instead of allowing overlapping state reconciliation.
+- Binding is least-authority: no provider credentials, raw browser runtime, approval material, URLs, typed values, receipts, or other payload is added to the lifetime boundary.
+- Existing public constructor behavior is preserved with a private compatibility-local gate, so direct unit/integration construction remains source-compatible.
+- Re-read `progress.md`, current composition root, goal-agent public operation flow, recovery implementation, and product lifetime-binding pattern before editing. Repository identity was explicitly reverified before each GitHub mutation as exactly `UnknownGod2011/NVIDEA`; no other repository was touched.
 
 Validation/evidence:
-- Static inspection confirms publication order is now create -> `BindCompositionLifetime(_lifetime)` -> assign `_browserProduct` -> return, all under the root lifetime lease.
-- Existing deterministic `CompositionLifetimeGate` / issued-facade qualification establishes the required semantics without Chromium: in-flight leases delay disposal; post-disposal acquisition fails closed; waiting cancellation does not execute authority.
-- Connector environment cannot execute .NET 8/WPF/Chromium, so compile/test PASS is not claimed. No paid/live provider or browser operation was triggered.
+- Static inspection confirms the recovery lease is acquired before any store/host/evidence authority is touched and is held across the complete recovery transaction.
+- The one-time binding guard rejects accidental rebinding, mirroring the product facade's authority discipline.
+- The connector environment cannot execute .NET 8/WPF/Chromium, so compile/test PASS is not claimed. No paid/live provider or browser operation was triggered.
 
 ## Security / privacy / failure review
-- Lifetime binding carries no provider/browser payload and persists no credentials, prompts, URLs, locators, downloads, or receipts.
-- Binding occurs before publication, preventing callers from observing a product temporarily attached to the wrong shutdown authority.
-- Root disposal remains non-cancellable after its linearization point and product operations retain caller cancellation.
-- Exact consequential-action approval/evidence ordering is unchanged.
+- Recovery remains fail-closed for downloads/uploads and for ambiguous actions without deterministic proof; lifetime hardening does not weaken reconciliation rules.
+- Evidence remains downstream of trusted-host reconciliation and durable session persistence.
+- Caller cancellation still flows through lifetime acquisition and every recovery dependency.
+- Important limitation: `NvideaCompositionRoot.CreateBrowserAmbiguousRecoveryServiceAsync` still constructs the service without invoking the new root-lifetime binding. Therefore this run establishes the operation boundary and local serialization but does NOT yet claim recovery-vs-root-disposal is closed.
 
 ## Known blockers / risks
 - New Core/WPF code and accumulated suite still require executable .NET 8 + Windows validation.
-- Goal-agent and ambiguous-recovery issued facades still outlive their acquisition lease and need the same least-authority operation lifetime treatment.
+- Ambiguous recovery now supports root lifetime binding but the composition root must bind it before publication.
+- `BrowserGoalAgent` still outlives its acquisition lease; naively leasing all public methods would deadlock because `ResumeAsync` and `ApproveAndContinueAsync` call `RunUntilPauseAsync` internally. It needs public lease wrappers around private non-leasing cores (or an equivalent non-reentrant design).
 - Browser startup remains intentionally inside the root lifetime lease; Windows timing qualification is required.
 - Judge Evidence browser initialization can incur Playwright startup latency; live Nebius/Tavily/Serverless/authenticated-browser validation remains pending.
 
 ## Single Best Next Task
-Extend root lifetime authority to issued `BrowserGoalAgent` and `BrowserAmbiguousRecoveryService` operations without exposing the gate or creating nested-acquisition deadlocks. Add deterministic post-disposal and in-flight-disposal qualification for those facades, then run the full .NET/Windows/Chromium suite in the first capable environment and fix findings without weakening authority boundaries.
+Finish issued-facade shutdown linearization: bind `BrowserAmbiguousRecoveryService` to `_lifetime` inside `CreateBrowserAmbiguousRecoveryServiceAsync` before publication, then refactor `BrowserGoalAgent` so each external operation holds exactly one root lifetime lease without nested acquisition when Resume/Approve delegate into the run loop. Add deterministic post-disposal/in-flight-disposal qualification for both facades, then run the full .NET/Windows/Chromium suite in the first capable environment and fix findings without weakening authority boundaries.

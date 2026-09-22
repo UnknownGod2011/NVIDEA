@@ -82,7 +82,12 @@ public sealed class LifetimeBoundBrowserGoalHostTests
             Interlocked.Increment(ref _observeCalls);
             Entered.TrySetResult();
             await _release.Task.WaitAsync(cancellationToken);
-            return new BrowserObservation(new Uri("https://example.test/"), "Example", Array.Empty<BrowserElement>(), Array.Empty<string>());
+            return new BrowserObservation(
+                new Uri("https://example.test/"),
+                "Example",
+                Array.Empty<BrowserElement>(),
+                string.Empty,
+                DateTimeOffset.UtcNow);
         }
 
         public Task<BrowserJobOutcome> StartActionAsync(BrowserAction action, CancellationToken cancellationToken = default) => throw new NotSupportedException();

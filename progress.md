@@ -26,32 +26,35 @@ Bound demo validation to production `SessionEvidenceKind`, aligned manifest/runb
 Removed a stale duplicate demo-validator test type that was a likely C# compile blocker and encoded obsolete milestone names. Added manifest-to-production recording-contract alignment coverage. Repaired `NvideaCompositionRootBrowserApiSurfaceTests` after the sanctioned payload-free browser verification reader was added: the product API explicitly allows that read while rejecting raw host/durable-runtime/receipt-store/publisher authority in its signature.
 
 ### 2026-09-22 — canonical browser product publication hardening
-Found a first-call concurrency race in `NvideaCompositionRoot.GetBrowserProductAsync`: host creation was serialized, but product publication occurred after the host gate was released, allowing simultaneous first callers to construct distinct product facade instances. Product publication is now serialized by the composition `_browserGate`, rechecks disposal while holding the gate, and publishes one canonical least-authority product facade backed by the execution-owned durable runtime.
+Found a first-call concurrency race in `NvideaCompositionRoot.GetBrowserProductAsync`: host creation was serialized, but product publication occurred after the host gate was released, allowing simultaneous first callers to construct distinct product facade instances. Product publication is now serialized by the composition `_browserGate`, rechecks disposal while holding the gate, and publishes one canonical least-authority product facade backed by the execution-owned durable runtime. Added composition-boundary tests keeping browser lifetime synchronization, raw host and canonical product private and rejecting privileged browser authority from public composition APIs.
 
-## Latest run — browser composition lifetime contract coverage
+## Latest run — deterministic composition lifetime primitive
 Files changed:
-- Added `tests/Nvidea.Core.Tests/NvideaCompositionRootBrowserLifetimeBoundaryTests.cs`.
+- Added `src/Nvidea.Core/Desktop/CompositionLifetimeGate.cs`.
+- Added `tests/Nvidea.Core.Tests/CompositionLifetimeGateTests.cs`.
 - Updated `progress.md`.
 
 Validation/evidence:
-- Re-read `progress.md` completely and inspected the latest commits, `NvideaCompositionRoot`, the existing browser API-surface regression suite, and the current test project layout before mutation.
-- Added a regression contract that locks the composition root's browser lifetime synchronization primitive, raw host, and canonical product facade as private implementation details.
-- Added a public-surface scan rejecting accidental exposure of `BrowserHostRuntime`, `BrowserDurableActionRuntime`, `DurableBrowserVerificationReceiptStore`, or `DurableBrowserVerificationPublisher` through public fields/properties/method signatures.
-- Added a contract for `GetBrowserProductAsync` requiring an asynchronous `Task<BrowserProductRuntime>` return and cancellation-aware `CancellationToken` input, protecting the cancellation/lifetime semantics needed by Windows judge reads.
+- Re-read `progress.md` completely, inspected the current repository tree and `NvideaCompositionRoot`, and confirmed the remaining cached-acquisition/disposal race before implementation.
+- Added an assembly-internal async lifetime gate that gives acquisition and shutdown one explicit linearization point. Once disposal crosses the gate, new/waiting acquisitions fail closed with `ObjectDisposedException`; cancellation while waiting does not poison the gate; disposal is idempotent.
+- Added deterministic, Chromium-free concurrency coverage for disposal waiting behind an active acquisition, a waiting acquisition losing to disposal, cancellation cleanup, and idempotent disposal.
+- This run intentionally does not yet replace `_browserGate` in `NvideaCompositionRoot`: the new primitive is isolated and testable first so the next integration can avoid a speculative nested-gate/deadlock refactor. It is not represented as active protection until wired into the root.
 - Repository identity was explicitly reverified immediately before every GitHub mutation; writable target was exactly `UnknownGod2011/NVIDEA`. No other repository was mutated.
 - Connector environment cannot execute .NET 8/WPF/Chromium, so compile/test PASS is not claimed. No live/paid Nebius, Tavily, browser, Object Storage, Serverless, or inference operation was triggered.
 
 ## Security / privacy / failure review
-- The new tests add no runtime authority and no provider/browser data path. They enforce that privileged browser host/runtime/receipt/publisher types stay behind the composition boundary.
-- No credentials, prompts, URLs, locators, typed values, memory contents, protected receipts, or provider payloads are captured by the tests.
-- Cancellation remains part of the product-acquisition contract; the test does not weaken fail-closed disposal or durable browser evidence serialization.
+- `CompositionLifetimeGate` carries no browser/provider payloads or authority; it only serializes lifetime state. The type and its lease are assembly-internal.
+- Disposal has priority once it acquires the gate: `_disposing` is set before releasing the disposal lease, so queued/new acquisitions cannot reopen resource access.
+- Cancellation is honored only while waiting for acquisition. Disposal itself is deliberately non-cancellable so shutdown cannot abandon a half-disposed authority graph.
+- Lease release is idempotent via `Interlocked.Exchange`, preventing double-release if synchronous and asynchronous disposal paths meet.
 
 ## Known blockers / risks
 - New Core/WPF code and accumulated suite still require executable .NET 8 + Windows validation; compile/test/validator PASS remains unverified in this connector environment.
-- A remaining lifetime edge deserves deterministic executable qualification: a caller that passes the initial `_disposed` check can race with disposal when a cached browser product/host already exists. The strongest fix should ensure acquisition and disposal linearize on the same gate without introducing nested-gate deadlock or Chromium-dependent tests.
+- The lifetime primitive is not yet integrated into `NvideaCompositionRoot`; the existing cached `_browserProduct`/`_browser` fast paths can still race with root disposal until that integration is completed.
+- Integration must avoid holding the composition lifetime lease across long-running browser operations; it should protect acquisition/publication and transfer stable product authority without creating shutdown deadlocks.
 - `MainWindow.Readiness` initializes the browser product when Judge Evidence is opened; this can incur Playwright startup latency. Any future cached/non-starting reader must preserve the same durable serialization boundary.
 - Provider-live proof remains independently typed and freshness-checked; session milestone completion alone is insufficient to claim live provider readiness.
 - Live Nebius Serverless/Object Storage, Windows UX, authenticated Playwright, Tavily, semantic ranking and full readiness remain environment-validation items.
 
 ## Single Best Next Task
-Refactor browser host/product acquisition so cached fast paths and disposal linearize under one composition lifetime gate, then add deterministic concurrency coverage for simultaneous first callers and disposal-vs-cached-acquisition without launching Chromium. Keep any test seam assembly-internal and incapable of exposing raw browser authority. Then run the full .NET/Windows/Chromium qualification suite in the first capable environment and fix findings without weakening authority boundaries.
+Integrate `CompositionLifetimeGate` into `NvideaCompositionRoot` so cached host/product acquisition, first publication, and disposal share one lifetime linearization point; remove the superseded raw `_browserGate` only after preserving lazy browser startup and canonical product publication without nested acquisition. Add composition-level deterministic tests using an assembly-internal factory seam if needed, then run the full .NET/Windows/Chromium qualification suite in the first capable environment and fix findings without weakening authority boundaries.

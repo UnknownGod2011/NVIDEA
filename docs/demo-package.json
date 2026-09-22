@@ -15,7 +15,7 @@
     {
       "id": "durable-memory", "label": "Durable personal memory changes the later answer", "durationSeconds": 22,
       "judgeClaim": "Show a remembered preference/project fact influencing a later invocation while preserving sensitivity controls.", "requiresProviderLive": false,
-      "expectedSessionMilestones": ["MemoryInfluencedResponse"],
+      "expectedSessionMilestones": ["MemoryInfluencedInvocation"],
       "preflightDependencies": ["Durable memory store is readable", "A safe demo memory is present"],
       "fallbackPolicy": "Fail the take if memory influence is not visible and evidenced; never inject or reveal sensitive memory to rescue the demo.",
       "featurePaths": ["src/Nvidea.Core/Memory"],
@@ -24,7 +24,7 @@
     {
       "id": "tavily-research", "label": "Tavily research with visible sources and citation validation", "durationSeconds": 28,
       "judgeClaim": "Show multi-source research, provenance, explicit uncertainty, and citations that map back to collected evidence.", "requiresProviderLive": false,
-      "expectedSessionMilestones": ["TavilyValidatedCitationUsed"],
+      "expectedSessionMilestones": ["TavilyResearchCompletedWithCitations"],
       "preflightDependencies": ["Live Tavily readiness passes", "Network is available"],
       "fallbackPolicy": "Fail the live Tavily claim if validated citation evidence is absent; synthetic evaluator output may be shown only as synthetic engineering evidence.",
       "featurePaths": ["src/Nvidea.Core/Research"],
@@ -33,7 +33,7 @@
     {
       "id": "browser-verify", "label": "Complex browser task uses act-observe-verify rather than blind clicks", "durationSeconds": 28,
       "judgeClaim": "Show a multi-step browser action and visible post-action verification; failed verification must halt the plan.", "requiresProviderLive": false,
-      "expectedSessionMilestones": ["BrowserVerifiedGoalCompleted"],
+      "expectedSessionMilestones": ["BrowserPostStateVerified"],
       "preflightDependencies": ["Authenticated browser session is ready", "Demo target permits automation"],
       "fallbackPolicy": "Fail the take if trusted post-action verification is absent; never bypass login, CAPTCHA, MFA, site safeguards, or manually complete the action.",
       "featurePaths": ["src/Nvidea.Core/Browser"],
@@ -42,7 +42,7 @@
     {
       "id": "permission-gate", "label": "Consequential action pauses for explicit approval", "durationSeconds": 20,
       "judgeClaim": "Show send/submit-style authority remaining locked until an exact-scope user approval is granted.", "requiresProviderLive": false,
-      "expectedSessionMilestones": ["ConsequentialApprovalGranted"],
+      "expectedSessionMilestones": ["ConsequentialApprovalGateExercised"],
       "preflightDependencies": ["Consequential demo action reaches trusted approval boundary"],
       "fallbackPolicy": "Fail the take if the exact-scope approval UI does not appear; never pre-authorize, auto-approve, or manually bypass the gate.",
       "featurePaths": ["src/Nvidea.Core/Capabilities", "src/Nvidea.Core/Browser"],

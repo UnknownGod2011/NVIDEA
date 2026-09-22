@@ -2,40 +2,34 @@ using Nvidea.Core.Browser;
 
 namespace Nvidea.Core.Desktop;
 
-/// <summary>
-/// Product-facing browser authority boundary. UI/plugin callers receive only the browser operations
-/// that preserve NVIDEA's durable-job, exact-approval, download-quarantine and cancellation policy.
-/// The underlying <see cref="BrowserHostRuntime"/> remains trusted infrastructure and is never
-/// returned to product callers. Browser outcomes are projected again here so durable/provider/tool
-/// diagnostics and raw site-controlled presentation text never become product API output.
-/// </summary>
+/// <summary>Product-facing browser authority boundary.</summary>
 public sealed class BrowserProductRuntime
 {
     private readonly BrowserHostRuntime _host;
     private readonly BrowserSessionEvidenceRecorder _sessionEvidence;
     private readonly Func<CancellationToken, Task<DesktopBrowserVerificationPresentation>> _verificationReader;
-    private readonly CompositionLifetimeGate _lifetime;
+    private CompositionLifetimeGate _lifetime;
+    private bool _compositionLifetimeBound;
 
-    /// <summary>
-    /// Trusted composition path for production browser verification. Product code receives only a
-    /// payload-free read delegate owned by the durable browser runtime; it never receives the
-    /// publisher, protected receipt store, raw durable evidence, or approval authority.
-    /// Requiring <paramref name="durableActions"/> prevents construction of a product runtime that
-    /// can execute browser actions while being disconnected from their authoritative verification.
-    /// The shared composition lifetime prevents an already-issued facade from starting work after
-    /// root shutdown and makes root disposal wait for any product operation already in flight.
-    /// </summary>
-    internal BrowserProductRuntime(
-        BrowserHostRuntime host,
-        BrowserDurableActionRuntime durableActions,
-        CompositionLifetimeGate lifetime,
-        SessionEvidenceLedger? sessionEvidence = null)
+    internal BrowserProductRuntime(BrowserHostRuntime host, BrowserDurableActionRuntime durableActions, SessionEvidenceLedger? sessionEvidence = null)
     {
         _host = host ?? throw new ArgumentNullException(nameof(host));
         ArgumentNullException.ThrowIfNull(durableActions);
-        _lifetime = lifetime ?? throw new ArgumentNullException(nameof(lifetime));
         _sessionEvidence = new BrowserSessionEvidenceRecorder(sessionEvidence ?? SessionEvidenceLedger.ProcessLocal);
         _verificationReader = durableActions.ReadVerificationPresentationAsync;
+        // Keeps assembly-internal host/test composition functional. The trusted desktop root replaces
+        // this unpublished local gate exactly once with its shutdown authority before publication.
+        _lifetime = new CompositionLifetimeGate();
+    }
+
+    internal BrowserProductRuntime BindCompositionLifetime(CompositionLifetimeGate lifetime)
+    {
+        ArgumentNullException.ThrowIfNull(lifetime);
+        if (_compositionLifetimeBound)
+            throw new InvalidOperationException("Browser product lifetime authority is already bound.");
+        _lifetime = lifetime;
+        _compositionLifetimeBound = true;
+        return this;
     }
 
     public async Task<BrowserJobOutcome> StartActionAsync(BrowserAction action, CancellationToken cancellationToken = default)
@@ -60,11 +54,9 @@ public sealed class BrowserProductRuntime
     public async Task<BrowserJobOutcome> CancelAsync(Guid jobId, CancellationToken cancellationToken = default)
     {
         await using var lease = await _lifetime.AcquireAsync(cancellationToken).ConfigureAwait(false);
-        var outcome = await _host.CancelAsync(jobId, cancellationToken).ConfigureAwait(false);
-        return BrowserProductOutcomeTrust.Project(outcome);
+        return BrowserProductOutcomeTrust.Project(await _host.CancelAsync(jobId, cancellationToken).ConfigureAwait(false));
     }
 
-    /// <summary>Returns only the Core-owned, payload-free durable browser verification projection.</summary>
     public async Task<DesktopBrowserVerificationPresentation> ReadVerificationPresentationAsync(CancellationToken cancellationToken = default)
     {
         await using var lease = await _lifetime.AcquireAsync(cancellationToken).ConfigureAwait(false);

@@ -5,7 +5,7 @@ namespace Nvidea.Core.Desktop;
 /// The wrapped agent deliberately remains unaware of composition lifetime so its internal
 /// Resume/Approve -> Run delegation cannot re-enter the non-reentrant root gate.
 /// </summary>
-internal sealed class LifetimeBoundBrowserGoalAgent
+internal sealed class LifetimeBoundBrowserGoalAgent : IBrowserGoalAgent
 {
     private readonly BrowserGoalAgent _inner;
     private readonly BrowserGoalTransactionLifetime _transactions = new();
@@ -18,14 +18,14 @@ internal sealed class LifetimeBoundBrowserGoalAgent
     internal void BindCompositionLifetime(CompositionLifetimeGate lifetime)
         => _transactions.Bind(lifetime);
 
-    internal Task<BrowserGoalSession> ResumeAsync(
+    public Task<BrowserGoalSession> ResumeAsync(
         Guid sessionId,
         CancellationToken cancellationToken = default)
         => _transactions.ExecuteAsync(
             token => _inner.ResumeAsync(sessionId, token),
             cancellationToken);
 
-    internal Task<BrowserGoalSession> RunUntilPauseAsync(
+    public Task<BrowserGoalSession> RunUntilPauseAsync(
         BrowserGoalSession session,
         CancellationToken cancellationToken = default)
     {
@@ -35,7 +35,7 @@ internal sealed class LifetimeBoundBrowserGoalAgent
             cancellationToken);
     }
 
-    internal Task<BrowserGoalSession> ApproveAndContinueAsync(
+    public Task<BrowserGoalSession> ApproveAndContinueAsync(
         BrowserGoalSession session,
         string exactScope,
         CancellationToken cancellationToken = default)
@@ -46,7 +46,7 @@ internal sealed class LifetimeBoundBrowserGoalAgent
             cancellationToken);
     }
 
-    internal Task<BrowserGoalSession> CancelAsync(
+    public Task<BrowserGoalSession> CancelAsync(
         BrowserGoalSession session,
         CancellationToken cancellationToken = default)
     {

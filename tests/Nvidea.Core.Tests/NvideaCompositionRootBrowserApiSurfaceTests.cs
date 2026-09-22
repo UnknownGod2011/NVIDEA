@@ -1,4 +1,5 @@
 using System.Reflection;
+using Nvidea.Core.Browser;
 using Nvidea.Core.Desktop;
 using Xunit;
 
@@ -30,13 +31,14 @@ public sealed class NvideaCompositionRootBrowserApiSurfaceTests
     }
 
     [Fact]
-    public void ProductBrowserBoundaryKeepsLowLevelLifecycleAndObservationMethodsPrivate()
+    public void ProductBrowserBoundaryExposesOnlyProductOperationsAndPayloadFreeVerificationRead()
     {
         var allowed = new HashSet<string>(StringComparer.Ordinal)
         {
             nameof(BrowserProductRuntime.StartActionAsync),
             nameof(BrowserProductRuntime.ApproveAndResumeAsync),
             nameof(BrowserProductRuntime.CancelAsync),
+            nameof(BrowserProductRuntime.ReadVerificationPresentationAsync),
             nameof(BrowserProductRuntime.ListDownloadsAsync),
             nameof(BrowserProductRuntime.PrepareDownloadHandoffAsync),
             nameof(BrowserProductRuntime.ApproveAndExportDownloadAsync),
@@ -49,6 +51,17 @@ public sealed class NvideaCompositionRootBrowserApiSurfaceTests
 
         Assert.NotEmpty(declaredPublicMethods);
         Assert.All(declaredPublicMethods, method => Assert.Contains(method.Name, allowed));
+
+        var verificationRead = Assert.Single(
+            declaredPublicMethods,
+            static method => method.Name == nameof(BrowserProductRuntime.ReadVerificationPresentationAsync));
+        Assert.True(ContainsType(verificationRead.ReturnType, typeof(DesktopBrowserVerificationPresentation)));
+        Assert.DoesNotContain(
+            verificationRead.GetParameters(),
+            static parameter => ContainsType(parameter.ParameterType, typeof(BrowserHostRuntime))
+                || ContainsType(parameter.ParameterType, typeof(BrowserDurableActionRuntime))
+                || ContainsType(parameter.ParameterType, typeof(DurableBrowserVerificationReceiptStore))
+                || ContainsType(parameter.ParameterType, typeof(DurableBrowserVerificationPublisher)));
 
         Assert.DoesNotContain(declaredPublicMethods, static method => method.Name is
             "CreateActionAsync" or

@@ -197,7 +197,21 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
             return _browserProduct;
 
         var host = await GetBrowserHostAsync(cancellationToken).ConfigureAwait(false);
-        return _browserProduct ??= host.CreateProductRuntime();
+
+        // Product publication is serialized with host creation/disposal. Without this second
+        // gate, concurrent first callers could each construct and receive a different product
+        // facade even though both facades point at the same privileged host. Keeping one
+        // canonical facade makes the least-authority boundary stable for Windows/judge readers.
+        await _browserGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return _browserProduct ??= host.CreateProductRuntime();
+        }
+        finally
+        {
+            _browserGate.Release();
+        }
     }
 
     private async Task<BrowserHostRuntime> GetBrowserHostAsync(CancellationToken cancellationToken = default)

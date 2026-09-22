@@ -14,37 +14,37 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 Implemented Windows shell, Nebius/Nemotron inference, layered memory, Tavily research, permission/audit engine, durable jobs, Playwright browser execution, DPAPI state protection, encrypted remote execution, local voice, deployment/evaluator tooling, crash-consistency hardening, judge-visible runtime evidence, deterministic demo/runbook, submission validation, independent receipts and live-demo readiness tooling. Hardened browser transport, prompt-injection/consequential-action gates, emergency stop, protected browser receipts, durable research lineage and crash-ambiguous reconciliation.
 
 ### 2026-09-22 — evidence and composition lifetime hardening
-Serialized browser evidence transitions, bound demo validation to production session evidence, added a fail-closed recording gate, wired WPF Judge Evidence to authoritative browser/session evidence, repaired build/API contracts, serialized canonical browser product publication, integrated `CompositionLifetimeGate` into `NvideaCompositionRoot`, qualified issued-facade operation leasing, wrapped every public `BrowserProductRuntime` operation in a lifetime lease, atomically bound the product facade to root shutdown authority before publication, added operation leasing to ambiguous recovery, and bound ambiguous recovery to root lifetime before publication.
+Serialized browser evidence transitions, bound demo validation to production session evidence, added a fail-closed recording gate, wired WPF Judge Evidence to authoritative browser/session evidence, repaired build/API contracts, serialized canonical browser product publication, integrated `CompositionLifetimeGate` into `NvideaCompositionRoot`, qualified issued-facade operation leasing, wrapped every public `BrowserProductRuntime` operation in a lifetime lease, atomically bound the product facade to root shutdown authority before publication, added operation leasing to ambiguous recovery, bound ambiguous recovery to root lifetime before publication, and qualified a least-authority lifetime-bound goal-host decorator.
 
-## Latest run — browser goal host lifetime qualification
+## Latest run — browser goal-agent lifetime contract qualification
 Files changed:
-- `src/Nvidea.Core/Desktop/LifetimeBoundBrowserGoalHost.cs`
-- `tests/Nvidea.Core.Tests/LifetimeBoundBrowserGoalHostTests.cs`
+- `tests/Nvidea.Core.Tests/BrowserGoalAgentLifetimeDesignTests.cs`
 - `progress.md`
 
 Completed:
-- Added an internal least-authority `LifetimeBoundBrowserGoalHost` decorator that acquires `CompositionLifetimeGate` before every privileged `ICrashConsistentBrowserGoalHost` operation and releases it only after that operation completes.
-- Covered Observe, Start/Create/Advance/Get, approval rearm/consume, and cancellation authority. Exact approval scope validation remains fail-closed before authority invocation.
-- Added deterministic Chromium-free qualification for three shutdown invariants: in-flight host work holds disposal behind it; calls after disposal fail before inner browser authority runs; cancellation while waiting does not invoke inner authority or corrupt later gate use.
-- Kept the boundary internal so the lifetime gate is not exposed through the public goal API.
-- Re-read `progress.md`, `BrowserGoalAgent`, `NvideaCompositionRoot`, browser contracts, and recent commits before editing. Repository identity was explicitly reverified before every GitHub mutation as exactly `UnknownGod2011/NVIDEA`; no other repository was touched.
+- Re-read `progress.md`, the current `BrowserGoalAgent`, `NvideaCompositionRoot`, and repository tree before mutation.
+- Added Chromium-free reflection contract tests that lock the complete public goal transaction surface to `RunUntilPauseAsync`, `ResumeAsync`, `ApproveAndContinueAsync`, and `CancelAsync`.
+- Added a contract that every public goal transaction remains async and cancellation-aware, so the upcoming lifetime wrapper cannot accidentally turn shutdown-sensitive work into an uncancellable/synchronous boundary.
+- Added a least-authority contract preventing composition lifetime binding/gate authority from becoming public API.
+- Confirmed from current implementation that Resume and Approve delegate back into RunUntilPause, so independently leasing all public methods would deadlock on the non-reentrant `CompositionLifetimeGate`.
+- Repository identity was explicitly reverified immediately before every mutation as exactly `UnknownGod2011/NVIDEA`; no other repository was touched.
 
 Validation/evidence:
-- Static contract inspection confirms all eight `ICrashConsistentBrowserGoalHost` operations route through the same `ExecuteAsync` lease boundary.
-- Corrected the new test fixture after checking the current five-required-argument `BrowserObservation` contract; the final fixture matches the repository contract.
-- The connector environment cannot execute .NET 8/WPF/Chromium, so compile/test PASS is not claimed. No paid/live provider or browser operation was triggered.
+- Static inspection of the current default branch confirms exactly four public `Task<BrowserGoalSession>` transaction methods and confirms the current nested delegation that motivates private non-leasing cores.
+- The new tests are deterministic and do not require Chromium/provider credentials.
+- This connector environment cannot execute .NET 8/WPF/Chromium, so compile/test PASS is not claimed. No paid/live provider or browser operation was triggered.
 
 ## Security / privacy / failure review
-- The decorator carries only authority/lifetime references; it stores no URL, page content, typed value, approval grant, provider credential, browser receipt, or secret.
-- Shutdown cannot dispose BrowserHostRuntime during an individual decorated host call; post-disposal calls fail closed at the composition gate.
-- Caller cancellation propagates both while waiting for lifetime authority and into the inner browser operation.
-- This deliberately does not claim multi-call goal transactions are atomic. Disposal can still linearize between BrowserGoalAgent's planner/store/host phases until the agent itself receives one outer lease per public operation.
+- The new tests inspect only type metadata; they contain no URL, page content, typed value, approval material, provider credential, browser receipt, or secret.
+- The contract deliberately keeps lifetime authority internal rather than making shutdown control available to callers.
+- No production behavior was weakened or removed in this run.
+- The actual multi-phase goal transaction is still not atomic against root shutdown: disposal may linearize between planner/store/host phases until the agent itself owns one outer lease per public transaction.
 
 ## Known blockers / risks
 - New Core/WPF code and accumulated suite still require executable .NET 8 + Windows validation.
-- `LifetimeBoundBrowserGoalHost` is qualified but not yet wired into `CreateBrowserGoalAgentAsync`; wiring it alone would protect individual host calls but still would not make an entire Run/Resume/Approve/Cancel transaction atomic against root shutdown.
-- `BrowserGoalAgent` still needs public exactly-one-lease wrappers around private non-leasing cores. Naively leasing `ResumeAsync`, `ApproveAndContinueAsync`, and `RunUntilPauseAsync` independently would deadlock because the former methods delegate to the latter.
+- `LifetimeBoundBrowserGoalHost` is qualified but not wired into `CreateBrowserGoalAgentAsync`; wiring it under an outer agent lease would nest the same non-reentrant gate and deadlock, so it must not be composed that way without a distinct strategy.
+- `BrowserGoalAgent` still needs exactly-one-lease public wrappers over private non-leasing cores, followed by internal lifetime binding while `CreateBrowserGoalAgentAsync` holds the root lease.
 - Browser startup remains intentionally inside the root lifetime lease; Windows timing qualification is required. Live Nebius/Tavily/Serverless/authenticated-browser validation remains pending.
 
 ## Single Best Next Task
-Refactor `BrowserGoalAgent` into exactly-one-lifetime-lease public Run/Resume/Approve/Cancel wrappers over private non-leasing cores, bind that lifetime while `CreateBrowserGoalAgentAsync` still holds the root lease, and use the qualified host decorator only as defense-in-depth if it does not create nested-gate deadlock. Add deterministic in-flight-disposal and post-disposal tests without Chromium, then run the full .NET/Windows/Chromium suite in the first capable environment and fix findings without weakening authority boundaries.
+Refactor `BrowserGoalAgent` so each of the four now-contract-locked public transactions acquires exactly one composition-lifetime lease and delegates only to private non-leasing cores; bind the root lifetime before `CreateBrowserGoalAgentAsync` publishes/returns the agent. Do not wrap its host with the same lifetime gate under that outer lease. Add deterministic in-flight-disposal, post-disposal, and cancellation tests without Chromium, then run the full .NET/Windows/Chromium suite in the first capable environment and fix findings without weakening authority boundaries.

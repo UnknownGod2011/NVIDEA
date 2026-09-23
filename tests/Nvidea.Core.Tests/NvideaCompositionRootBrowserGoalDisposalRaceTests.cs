@@ -41,6 +41,41 @@ public sealed class NvideaCompositionRootBrowserGoalDisposalRaceTests
         }
     }
 
+    [Fact]
+    public async Task Issued_resume_holds_actual_root_disposal_until_complete_transaction_finishes()
+    {
+        var inference = new BlockingInferenceClient();
+        var host = new CountingCrashConsistentHost();
+        var fixture = await RootFixture.CreateAsync(inference, host);
+        try
+        {
+            var seeded = BrowserGoalSession.Create("resume durable browser goal");
+            await fixture.SeedGoalSessionAsync(seeded);
+            var agent = await fixture.Root.CreateBrowserGoalAgentAsync();
+
+            var resume = agent.ResumeAsync(seeded.SessionId);
+            await inference.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(1, host.ObserveCalls);
+            Assert.Equal(1, inference.Calls);
+
+            var disposal = fixture.Root.DisposeAsync().AsTask();
+            Assert.False(disposal.IsCompleted);
+
+            inference.Release.TrySetResult();
+            var result = await resume;
+            Assert.Equal(BrowserGoalStatus.Completed, result.Status);
+            await disposal;
+
+            Assert.Equal(1, host.ObserveCalls);
+            Assert.Equal(1, inference.Calls);
+        }
+        finally
+        {
+            inference.Release.TrySetResult();
+            await fixture.DisposeAsync();
+        }
+    }
+
     [Theory]
     [InlineData("run")]
     [InlineData("resume")]
@@ -107,6 +142,12 @@ public sealed class NvideaCompositionRootBrowserGoalDisposalRaceTests
                 try { Directory.Delete(directory, recursive: true); } catch { }
                 throw;
             }
+        }
+
+        public Task SeedGoalSessionAsync(BrowserGoalSession session, CancellationToken cancellationToken = default)
+        {
+            var store = new JsonBrowserGoalSessionStore(Path.Combine(_directory, "browser", "goal-sessions.json"));
+            return store.SaveAsync(session, cancellationToken);
         }
 
         public async ValueTask DisposeAsync()

@@ -13,44 +13,38 @@ Build a competition-grade open-source Personal AI operating layer for Windows fo
 ### 2026-09-06 to 2026-09-21 — product foundation and hardening
 Implemented Windows shell, Nebius/Nemotron inference, layered memory, Tavily research, permission/audit engine, durable jobs, Playwright browser execution, DPAPI state protection, encrypted remote execution, local voice, deployment/evaluator tooling, crash-consistency hardening, judge-visible runtime evidence, deterministic demo/runbook, submission validation, independent receipts and live-demo readiness tooling. Hardened browser transport, prompt-injection/consequential-action gates, emergency stop, protected browser receipts, durable research lineage and crash-ambiguous reconciliation.
 
-### 2026-09-22 — evidence and composition lifetime hardening
-Serialized browser evidence transitions, bound demo validation to production session evidence, added a fail-closed recording gate, wired WPF Judge Evidence to authoritative browser/session evidence, repaired build/API contracts, serialized canonical browser product publication, integrated `CompositionLifetimeGate` into `NvideaCompositionRoot`, qualified issued-facade operation leasing, wrapped every public `BrowserProductRuntime` operation in a lifetime lease, atomically bound the product facade to root shutdown authority before publication, added operation leasing to ambiguous recovery, bound ambiguous recovery to root lifetime before publication, qualified a least-authority lifetime-bound goal-host decorator, locked the goal-agent public lifetime refactor contract, composed the host decorator into issued goal agents as defense-in-depth, added `BrowserGoalTransactionLifetime`, added/qualified `LifetimeBoundBrowserGoalAgent` for exactly-one-lease transactions, introduced the least-authority `IBrowserGoalAgent` API seam, and moved issued goal agents to the full-transaction lifetime facade without same-gate host re-entry.
+### 2026-09-22 to 2026-09-23 — composition lifetime and browser-goal qualification
+Serialized browser evidence transitions, bound demo validation to production session evidence, added a fail-closed recording gate, integrated `CompositionLifetimeGate` into `NvideaCompositionRoot`, and moved browser product/recovery/goal facades behind root-lifetime authority. Added `IBrowserGoalAgent`, exactly-one-lease transaction semantics, a private least-authority browser-host seam, and an assembly-internal deterministic root factory. Locked public API boundaries and qualified actual-root shutdown behavior for Run, Resume, Approve-and-Continue, and Cancel, including stale-facade fail-closed behavior and authority counters.
 
-### 2026-09-23 — browser-goal composition qualification
-Added a private least-authority `ICrashConsistentBrowserGoalHost` factory seam so Chromium-free root qualification is possible without changing production Playwright ownership. `CreateBrowserGoalAgentAsync` resolves that host only under root lifetime authority, preserves evidence observation/Nemotron planning/durable sessions, and publishes only the lifetime-bound `IBrowserGoalAgent` facade. Added reflection guards for API privacy and seam ownership/immutability, deterministic post-disposal qualification for all four public browser-goal transactions, and actual-root concurrency qualification proving issued Run and Resume transactions hold `NvideaCompositionRoot.DisposeAsync` behind the full transaction lease. Replaced the temporary reflective test fixture with an assembly-internal deterministic root factory that accepts only fake inference, the least-authority browser-goal host factory, and an isolated state directory. Locked that factory with API-surface regression tests requiring it to remain non-public/static, return the real root, accept exactly the least-authority inference/host/state/cancellation inputs, and remain absent from the public composition API. Extended actual-root stale-facade qualification across Run, Resume, Approve-and-Continue and Cancel.
-
-## Latest run — complete actual-root browser-goal transaction shutdown qualification
+## Latest run — research citation provenance integrity
 Files changed:
-- `tests/Nvidea.Core.Tests/NvideaCompositionRootBrowserGoalDisposalRaceTests.cs`
+- `src/Nvidea.Core/Research/ResearchCitationIntegrity.cs`
+- `tests/Nvidea.Core.Tests/ResearchCitationIntegrityTests.cs`
 - `progress.md`
 
 Completed:
-- Re-read `progress.md`, the actual-root disposal fixture, `BrowserGoalAgent` transaction behavior, browser contracts, and `BrowserJobOutcome` before modifying qualification code.
-- Added an actual-root in-flight Approve-and-Continue race using a synthetic WaitingForApproval session with an exact scope and pending child id. A controllable least-authority host blocks inside `ApproveAndResumeAsync`; root disposal is started only after approval authority has been entered and is required to remain incomplete until that authority is released and the continuation completes.
-- The approval test then follows the real continuation path into observation + Nemotron planning and requires a Completed goal, exactly one approval call, one observation, and one inference call.
-- Added an actual-root in-flight Cancel race using a pending child id. A controllable host blocks inside `CancelAsync`; root disposal must remain incomplete until browser cancellation authority is released and the complete goal transaction persists its Cancelled state.
-- The cancellation test requires exactly one browser cancellation call and zero Nemotron inference calls, proving cancellation does not accidentally invoke planner authority.
-- Factored deterministic observation creation so both the existing counting host and the new authority-barrier host share the same bounded synthetic browser evidence.
-- Existing Run/Resume races and post-disposal fail-closed qualification for all four public transactions remain intact.
+- Re-read `progress.md` and the production `ResearchEngine`, Tavily research contracts, evidence-quality model, and Nemotron inference contract before selecting work.
+- Moved beyond lifetime-only qualification toward the judge-demo evidence chain by adding a deterministic `ResearchCitationIntegrity` verifier for model-emitted `[src:SOURCE_ID]` markers.
+- The verifier derives provenance only from the actual `ResearchCitation` collection supplied by Tavily-backed prepared evidence; model output cannot create a verified citation merely by formatting a marker.
+- Verification is case-insensitive for source identity, deduplicates repeated markers, returns only evidence-backed citations, explicitly reports fabricated/unknown source IDs, and treats an uncited answer as not fully verified.
+- Added provider/network-free tests covering valid markers, a mixed valid+fabricated answer, repeated case-variant markers, and uncited synthesis.
 - Repository identity was explicitly reverified immediately before every mutation as exactly `UnknownGod2011/NVIDEA`.
 
 Validation/evidence:
-- Static inspection confirms `ApproveAndContinueAsync` validates WaitingForApproval + exact scope, consumes browser approval authority, persists the resumed state, then delegates a completed child into `RunUntilPauseAsync`; the new barrier therefore exercises the consequential-action boundary before the nested planner continuation.
-- Static inspection confirms `CancelAsync` invokes child cancellation when a pending job id exists, then clears pending state and persists `BrowserGoalStatus.Cancelled`; the new barrier is placed on that real authority call.
-- The fixture remains provider/Chromium/network-free and uses the assembly-internal deterministic composition root plus real goal-session persistence.
+- Static inspection confirms the verifier accepts only the same marker grammar already used by `ResearchEngine` and maps markers solely against concrete `ResearchCitation.SourceId` values.
+- No API keys, provider calls, browser processes, workflow runs, or external writes were used.
 - Executable PASS is not claimed because this connector environment cannot run the .NET 8/Windows test suite.
 
 ## Security / privacy / failure review
-- Approval qualification uses a synthetic exact scope and no approval token, typed value, credential, secret, page body, or live browser state. The production host remains sole owner of ephemeral single-use grants.
-- All four public browser-goal transactions now have actual-root shutdown specifications: Run and Resume are blocked in planner authority; Approve-and-Continue and Cancel are blocked directly in consequential browser authority.
-- Root disposal is specified not to tear down composition resources while any complete transaction owns its outer lease, and stale facades remain specified to fail closed after disposal before browser/planner authority reacquisition.
-- Production ownership, prompt-injection boundaries, exact approval matching, crash consistency, durable verification and exactly-one-lease semantics are unchanged.
+- Citation verification is deterministic and local; no evidence content, URLs, credentials, or prompts are persisted or transmitted by the verifier.
+- Unknown source markers fail the `IsFullyVerified` signal and are never returned as verified citations.
+- This closes the reusable verification primitive but production `ResearchEngine.SynthesizeAsync` still has its older inline marker parsing/warning path; until the new verifier is wired there, the final report can still carry an unknown marker alongside a warning.
+- Existing prompt-injection defenses, Tavily evidence isolation, freshness/authority heuristics, browser approval boundaries, and composition shutdown semantics are unchanged.
 
 ## Known blockers / risks
 - New Core/WPF code and accumulated suite still require executable .NET 8 + Windows validation.
-- The new approval/cancel tests are statically reviewed but cannot be compiled in this connector-only environment; first capable environment must run the focused Core tests and fix any signature/fixture mismatch without weakening lifetime semantics.
-- Browser startup remains intentionally inside the root lifetime lease; Windows timing qualification is required. Live Nebius/Tavily/Serverless/authenticated-browser validation remains pending.
-- Reflection is used only by API-shape regression tests to inspect visibility/signatures; deterministic runtime qualification does not use constructor reflection.
+- The citation-integrity tests are statically reviewed but cannot be compiled here; first capable environment must run focused Core tests and fix any signature mismatch without weakening fail-closed semantics.
+- Live Nebius/Tavily/Serverless/authenticated-browser validation remains pending.
 
 ## Single Best Next Task
-Move beyond browser-goal lifetime qualification to the highest-value remaining release risk: run the full .NET 8/Windows test suite in the first capable environment and repair any compile/runtime findings, then perform a focused end-to-end judge-demo qualification across durable memory, Tavily citations, real browser approval/verification, and Nebius-backed long-running research. If executable Windows remains unavailable, strengthen deterministic integration coverage around the demo's cross-subsystem evidence chain rather than adding more lifetime-only tests.
+Wire `ResearchCitationIntegrity.Verify` into `ResearchEngine.SynthesizeAsync` so production reports derive `UsedCitations` and citation warnings from the deterministic verifier, then make fabricated markers fail closed in judge-visible evidence instead of merely relying on prompt compliance. Add integration tests proving a hallucinated source ID can never be presented as verified Tavily provenance. After that, continue the cross-subsystem deterministic demo qualification and run the full .NET 8/Windows suite in the first capable environment.

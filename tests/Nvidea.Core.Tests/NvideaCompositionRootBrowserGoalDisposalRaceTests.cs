@@ -41,8 +41,12 @@ public sealed class NvideaCompositionRootBrowserGoalDisposalRaceTests
         }
     }
 
-    [Fact]
-    public async Task Issued_agent_after_actual_root_disposal_fails_before_planner_or_browser_authority()
+    [Theory]
+    [InlineData("run")]
+    [InlineData("resume")]
+    [InlineData("approve")]
+    [InlineData("cancel")]
+    public async Task Issued_transactions_after_actual_root_disposal_fail_before_planner_or_browser_authority(string transaction)
     {
         var inference = new BlockingInferenceClient(releaseImmediately: true);
         var host = new CountingCrashConsistentHost();
@@ -50,11 +54,19 @@ public sealed class NvideaCompositionRootBrowserGoalDisposalRaceTests
         try
         {
             var agent = await fixture.Root.CreateBrowserGoalAgentAsync();
+            var session = BrowserGoalSession.Create("inspect page");
             await fixture.Root.DisposeAsync();
 
-            await Assert.ThrowsAsync<ObjectDisposedException>(() =>
-                agent.RunUntilPauseAsync(BrowserGoalSession.Create("inspect page")));
+            Task<BrowserGoalSession> operation = transaction switch
+            {
+                "run" => agent.RunUntilPauseAsync(session),
+                "resume" => agent.ResumeAsync(session.Id),
+                "approve" => agent.ApproveAndContinueAsync(session, "browser.click:#submit"),
+                "cancel" => agent.CancelAsync(session),
+                _ => throw new ArgumentOutOfRangeException(nameof(transaction))
+            };
 
+            await Assert.ThrowsAsync<ObjectDisposedException>(() => operation);
             Assert.Equal(0, host.TotalCalls);
             Assert.Equal(0, inference.Calls);
         }

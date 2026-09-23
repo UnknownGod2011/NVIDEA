@@ -16,35 +16,40 @@ Implemented Windows shell, Nebius/Nemotron inference, layered memory, Tavily res
 ### 2026-09-22 to 2026-09-23 — composition lifetime and browser-goal qualification
 Serialized browser evidence transitions, bound demo validation to production session evidence, added a fail-closed recording gate, integrated `CompositionLifetimeGate` into `NvideaCompositionRoot`, and moved browser product/recovery/goal facades behind root-lifetime authority. Added `IBrowserGoalAgent`, exactly-one-lease transaction semantics, a private least-authority browser-host seam, and an assembly-internal deterministic root factory. Locked public API boundaries and qualified actual-root shutdown behavior for Run, Resume, Approve-and-Continue, and Cancel, including stale-facade fail-closed behavior and authority counters.
 
-## Latest run — research citation provenance integrity
+### 2026-09-23 — research citation integrity
+Added deterministic `ResearchCitationIntegrity` verification for Nemotron-emitted `[src:SOURCE_ID]` markers. Verification is evidence-backed, case-insensitive, deduplicated, reports fabricated IDs, and treats uncited synthesis as unverified.
+
+## Latest run — fail-closed synthesis provenance projection
 Files changed:
-- `src/Nvidea.Core/Research/ResearchCitationIntegrity.cs`
-- `tests/Nvidea.Core.Tests/ResearchCitationIntegrityTests.cs`
+- `src/Nvidea.Core/Research/ResearchSynthesisProvenance.cs`
+- `tests/Nvidea.Core.Tests/ResearchSynthesisProvenanceTests.cs`
 - `progress.md`
 
 Completed:
-- Re-read `progress.md` and the production `ResearchEngine`, Tavily research contracts, evidence-quality model, and Nemotron inference contract before selecting work.
-- Moved beyond lifetime-only qualification toward the judge-demo evidence chain by adding a deterministic `ResearchCitationIntegrity` verifier for model-emitted `[src:SOURCE_ID]` markers.
-- The verifier derives provenance only from the actual `ResearchCitation` collection supplied by Tavily-backed prepared evidence; model output cannot create a verified citation merely by formatting a marker.
-- Verification is case-insensitive for source identity, deduplicates repeated markers, returns only evidence-backed citations, explicitly reports fabricated/unknown source IDs, and treats an uncited answer as not fully verified.
-- Added provider/network-free tests covering valid markers, a mixed valid+fabricated answer, repeated case-variant markers, and uncited synthesis.
-- Repository identity was explicitly reverified immediately before every mutation as exactly `UnknownGod2011/NVIDEA`.
+- Re-read `progress.md`, `ResearchEngine.SynthesizeAsync`, `ResearchCitationIntegrity`, and Tavily citation contracts before changing code.
+- Added `ResearchSynthesisProvenance.Project`, a deterministic boundary that converts untrusted model markers into the only citation collection allowed to be described as verified provenance.
+- Fabricated source IDs are excluded from `VerifiedCitations`, retained explicitly as `UnknownSourceIds`, and produce a durable warning saying they were excluded from verified Tavily provenance.
+- Uncited synthesis produces zero verified citations and an explicit warning; fully evidence-backed markers retain a positive `IsFullyVerified` signal.
+- Existing provider warnings are preserved rather than overwritten.
+- Added provider/network-free regression tests for mixed valid+fabricated markers, uncited synthesis, and case-insensitive fully verified synthesis.
+- Repository identity was explicitly reverified immediately before every GitHub mutation as exactly `UnknownGod2011/NVIDEA`.
 
 Validation/evidence:
-- Static inspection confirms the verifier accepts only the same marker grammar already used by `ResearchEngine` and maps markers solely against concrete `ResearchCitation.SourceId` values.
-- No API keys, provider calls, browser processes, workflow runs, or external writes were used.
-- Executable PASS is not claimed because this connector environment cannot run the .NET 8/Windows test suite.
+- Static inspection confirms projection delegates marker parsing and evidence matching solely to `ResearchCitationIntegrity`; it cannot manufacture citations from model text.
+- Tests construct real `ResearchCitation` records and assert fabricated IDs never enter verified provenance.
+- No API keys, provider calls, browser processes, workflow runs, or external repository writes were used.
+- Executable PASS is not claimed because this environment cannot run the .NET 8/Windows suite; direct git clone also failed because the container cannot resolve GitHub, so connector-backed static validation was used.
 
 ## Security / privacy / failure review
-- Citation verification is deterministic and local; no evidence content, URLs, credentials, or prompts are persisted or transmitted by the verifier.
-- Unknown source markers fail the `IsFullyVerified` signal and are never returned as verified citations.
-- This closes the reusable verification primitive but production `ResearchEngine.SynthesizeAsync` still has its older inline marker parsing/warning path; until the new verifier is wired there, the final report can still carry an unknown marker alongside a warning.
-- Existing prompt-injection defenses, Tavily evidence isolation, freshness/authority heuristics, browser approval boundaries, and composition shutdown semantics are unchanged.
+- Projection is deterministic/local and does not persist or transmit evidence bodies, URLs, credentials, or prompts.
+- Unknown model markers fail closed for provenance: they remain diagnostics only and never become verified citations.
+- Existing Tavily/Nemotron prompt-injection boundaries and browser approval semantics are unchanged.
+- Important remaining gap: `ResearchEngine.SynthesizeAsync` still uses its older inline marker/warning projection. The new production-quality projection exists and is tested, but must be wired into that return path before judge-visible `ResearchReport` provenance is guaranteed to use it.
 
 ## Known blockers / risks
 - New Core/WPF code and accumulated suite still require executable .NET 8 + Windows validation.
-- The citation-integrity tests are statically reviewed but cannot be compiled here; first capable environment must run focused Core tests and fix any signature mismatch without weakening fail-closed semantics.
+- New provenance tests are statically reviewed but cannot be compiled here; first capable environment must run focused Core tests and fix signature mismatches without weakening fail-closed semantics.
 - Live Nebius/Tavily/Serverless/authenticated-browser validation remains pending.
 
 ## Single Best Next Task
-Wire `ResearchCitationIntegrity.Verify` into `ResearchEngine.SynthesizeAsync` so production reports derive `UsedCitations` and citation warnings from the deterministic verifier, then make fabricated markers fail closed in judge-visible evidence instead of merely relying on prompt compliance. Add integration tests proving a hallucinated source ID can never be presented as verified Tavily provenance. After that, continue the cross-subsystem deterministic demo qualification and run the full .NET 8/Windows suite in the first capable environment.
+Replace the inline marker parsing in `ResearchEngine.SynthesizeAsync` with `ResearchSynthesisProvenance.Project`, making `ResearchReport.UsedCitations` derive exclusively from verified evidence-backed citations and its warnings from the fail-closed projection. Add/extend ResearchEngine integration tests proving a hallucinated source ID can never be presented as verified Tavily provenance, then continue cross-subsystem deterministic demo qualification.

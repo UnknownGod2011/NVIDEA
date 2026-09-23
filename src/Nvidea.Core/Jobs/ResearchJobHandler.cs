@@ -8,8 +8,8 @@ namespace Nvidea.Core.Jobs;
 
 /// <summary>
 /// Payload-free proof derived from durable research checkpoints. Fingerprints bind the persisted
-/// Nemotron plan, Tavily evidence and final synthesis without exposing the question, queries,
-/// source URLs/content or answer text.
+/// Nemotron plan, Tavily evidence, final report and judge-safe provenance without exposing the
+/// question, queries, source URLs/content or answer text.
 /// </summary>
 public sealed record DurableResearchReceipt(
     string PlanSha256,
@@ -18,7 +18,9 @@ public sealed record DurableResearchReceipt(
     int PlannedQueryCount,
     int EvidenceSourceCount,
     int ValidatedCitationCount,
-    bool HasMachineVerifiableCitations);
+    bool HasMachineVerifiableCitations,
+    string? ReportSha256 = null,
+    string? ProvenanceSha256 = null);
 
 /// <summary>
 /// Durable, side-effect-free research workflow. Each expensive remote boundary is separated by a
@@ -79,14 +81,25 @@ public sealed class ResearchJobHandler : IAgentJobHandler
     }
 
     /// <summary>
-    /// Projects canonical citation authority directly at the durable checkpoint boundary. Callers
-    /// receive no question, synthesis, source URL/title/query/body, provider identifier or desktop
-    /// context, and this path requires no configured Tavily/Nemotron runtime.
+    /// Projects canonical citation authority directly at the durable checkpoint boundary. The
+    /// completed report and the payload-free provenance projection must both match fingerprints
+    /// committed when the checkpoint was produced. Legacy receipts without these bindings fail
+    /// closed for judging rather than being upgraded optimistically.
     /// </summary>
     public static ResearchJudgeEvidence ReadCompletedJudgeEvidence(AgentJobRecord job)
     {
-        var report = ReadCompletedReport(job);
-        return ResearchJudgeEvidence.FromReport(report);
+        var completed = ReadCompletedCheckpoint(job);
+        var report = completed.Report ?? throw new InvalidOperationException("Completed research checkpoint did not contain a report.");
+        var receipt = completed.Receipt ?? throw new InvalidOperationException("Completed research checkpoint predates durable research receipts.");
+
+        if (string.IsNullOrWhiteSpace(receipt.ReportSha256) || !FixedEquals(receipt.ReportSha256, Fingerprint(report)))
+            throw new InvalidOperationException("Completed research report does not match its durable receipt.");
+
+        var evidence = ResearchJudgeEvidence.FromReport(report);
+        if (string.IsNullOrWhiteSpace(receipt.ProvenanceSha256) || !FixedEquals(receipt.ProvenanceSha256, FingerprintJudgeEvidence(evidence)))
+            throw new InvalidOperationException("Completed research provenance does not match its durable receipt.");
+
+        return evidence;
     }
 
     public static DurableResearchReceipt ReadCompletedReceipt(AgentJobRecord job)
@@ -147,6 +160,7 @@ public sealed class ResearchJobHandler : IAgentJobHandler
         }
 
         var report = await _engine.SynthesizeAsync(checkpoint.Question, prepared, cancellationToken).ConfigureAwait(false);
+        var judgeEvidence = ResearchJudgeEvidence.FromReport(report);
         var receipt = new DurableResearchReceipt(
             lineage?.PlanSha256 ?? "legacy-unavailable",
             evidenceFingerprint,
@@ -154,13 +168,33 @@ public sealed class ResearchJobHandler : IAgentJobHandler
             lineage?.PlannedQueryCount ?? prepared.Batch.Sources.Select(source => source.Query).Distinct(StringComparer.Ordinal).Count(),
             prepared.Batch.Sources.Count,
             report.UsedCitations.Count,
-            report.UsedCitations.Count > 0);
+            report.UsedCitations.Count > 0,
+            Fingerprint(report),
+            FingerprintJudgeEvidence(judgeEvidence));
         return new JobStepResult(true, CompletedStep, SerializeBounded(new CompletedCheckpoint(report, receipt)));
     }
 
     private static string Fingerprint<T>(T value) => Sha256(JsonSerializer.Serialize(value, JsonOptions));
     private static string FingerprintEvidenceBoundToPlan(string planSha256, ResearchPreparedEvidence prepared) => Sha256($"{planSha256}:{Fingerprint(prepared)}");
     private static string FingerprintSynthesis(ResearchReport report) => Sha256(report.AnswerMarkdown ?? string.Empty);
+
+    private static string FingerprintJudgeEvidence(ResearchJudgeEvidence evidence)
+    {
+        var unknownIds = evidence.UnknownSourceIds
+            .OrderBy(id => id, StringComparer.Ordinal)
+            .Select(id => id.Trim());
+        var canonical = string.Join("\n", new[]
+        {
+            "research-judge-evidence-v1",
+            evidence.Provenance,
+            evidence.Verified ? "true" : "false",
+            evidence.EvidenceSourceCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            evidence.VerifiedCitationCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            string.Join("\u001f", unknownIds)
+        });
+        return Sha256(canonical);
+    }
+
     private static string Sha256(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 
     private static bool FixedEquals(string? left, string? right)

@@ -1,7 +1,6 @@
 using System.Windows;
 using Nvidea.Core.Browser;
 using Nvidea.Core.Desktop;
-using Nvidea.Core.Research;
 
 namespace Nvidea.Windows;
 
@@ -39,15 +38,16 @@ public partial class MainWindow
 
             try
             {
-                // The report is read only through the completed-job boundary, then immediately
-                // collapsed into payload-free canonical judge evidence before reaching the dialog.
-                var report = await runtime.ReadCompletedReportAsync(jobId);
-                researchProvenance = DesktopResearchJudgePresentation.FromEvidence(ResearchJudgeEvidence.FromReport(report));
+                // Read canonical citation authority directly from the durable completed checkpoint.
+                // This path works for remotely ingested results without local Tavily/Nemotron
+                // execution availability and never returns raw report payload to WPF.
+                var evidence = await runtime.ReadCompletedJudgeEvidenceAsync(jobId);
+                researchProvenance = DesktopResearchJudgePresentation.FromEvidence(evidence);
             }
             catch
             {
-                // Missing local runtime, incomplete/corrupt state, or concurrent changes fail closed.
-                // The dialog receives no report payload and renders NOT VERIFIED.
+                // Incomplete/corrupt/concurrently changing state fails closed. The dialog receives
+                // no research payload and renders NOT VERIFIED.
             }
         }
 

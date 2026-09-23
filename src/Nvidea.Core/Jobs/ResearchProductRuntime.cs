@@ -53,11 +53,21 @@ public sealed class ResearchProductRuntime
 
     public async Task<ResearchJobStatus> GetStatusAsync(Guid jobId, CancellationToken cancellationToken = default) => ResearchJobStatus.FromRecord(await GetRequiredResearchAsync(jobId, cancellationToken).ConfigureAwait(false));
 
-    /// <summary>Returns only the payload-free integrity receipt for a completed durable research job.</summary>
     public async Task<DurableResearchReceipt> ReadCompletedReceiptAsync(Guid jobId, CancellationToken cancellationToken = default)
     {
         var job = await GetRequiredResearchAsync(jobId, cancellationToken).ConfigureAwait(false);
         return ResearchJobHandler.ReadCompletedReceipt(job);
+    }
+
+    /// <summary>
+    /// Reads only canonical, payload-free citation authority from the durable completed checkpoint.
+    /// This works for locally completed and remotely ingested results and deliberately does not
+    /// require a configured local Tavily/Nemotron execution runtime.
+    /// </summary>
+    public async Task<ResearchJudgeEvidence> ReadCompletedJudgeEvidenceAsync(Guid jobId, CancellationToken cancellationToken = default)
+    {
+        var job = await GetRequiredResearchAsync(jobId, cancellationToken).ConfigureAwait(false);
+        return ResearchJobHandler.ReadCompletedJudgeEvidence(job);
     }
 
     public async Task<ResearchJobStatus> RunNextLocalStepAsync(Guid jobId, CancellationToken cancellationToken = default)

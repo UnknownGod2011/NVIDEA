@@ -27,10 +27,11 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     private readonly string _stateDirectory;
     private readonly JsonBrowserGoalSessionStore _browserGoalStore;
     private readonly CompositionLifetimeGate _lifetime = new();
+    private readonly Func<CancellationToken, Task<ICrashConsistentBrowserGoalHost>>? _browserGoalHostFactory;
     private BrowserHostRuntime? _browser;
     private BrowserProductRuntime? _browserProduct;
 
-    private NvideaCompositionRoot(HttpClient nebiusHttp, HttpClient? tavilyHttp, HttpClient? researchServerlessHttp, NebiusObjectStorageClient? researchObjectStorage, IAgentInferenceClient inference, JsonFileMemoryStore memoryStore, PersonalMemoryService memory, LocalOllamaMemoryEmbeddingProvider? memoryEmbeddingProvider, DesktopInvocationService desktop, DesktopSessionController session, ResearchProductRuntime? research, string stateDirectory)
+    private NvideaCompositionRoot(HttpClient nebiusHttp, HttpClient? tavilyHttp, HttpClient? researchServerlessHttp, NebiusObjectStorageClient? researchObjectStorage, IAgentInferenceClient inference, JsonFileMemoryStore memoryStore, PersonalMemoryService memory, LocalOllamaMemoryEmbeddingProvider? memoryEmbeddingProvider, DesktopInvocationService desktop, DesktopSessionController session, ResearchProductRuntime? research, string stateDirectory, Func<CancellationToken, Task<ICrashConsistentBrowserGoalHost>>? browserGoalHostFactory = null)
     {
         _nebiusHttp = nebiusHttp;
         _tavilyHttp = tavilyHttp;
@@ -41,6 +42,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         _memory = memory;
         _memoryEmbeddingProvider = memoryEmbeddingProvider;
         _stateDirectory = stateDirectory;
+        _browserGoalHostFactory = browserGoalHostFactory;
         _browserGoalStore = new(Path.Combine(stateDirectory, "browser", "goal-sessions.json"));
         Desktop = desktop;
         Session = session;
@@ -150,11 +152,25 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         return browser;
     }
 
+    private async Task<ICrashConsistentBrowserGoalHost> GetBrowserGoalHostUnderLeaseAsync(CancellationToken cancellationToken)
+    {
+        // The optional factory is an internal composition seam only. Production construction
+        // never supplies it, so the normal path still owns and lazily starts BrowserHostRuntime.
+        // Keeping the seam at the least-authority goal-host contract lets deterministic tests
+        // qualify root lifetime behavior without granting access to Playwright or credentials.
+        if (_browserGoalHostFactory is not null)
+            return await _browserGoalHostFactory(cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("Browser goal host factory returned null.");
+
+        var browser = await GetBrowserHostUnderLeaseAsync(cancellationToken).ConfigureAwait(false);
+        return new BrowserHostGoalHostAdapter(browser);
+    }
+
     public async Task<IBrowserGoalAgent> CreateBrowserGoalAgentAsync(CancellationToken cancellationToken = default)
     {
         await using var lease = await _lifetime.AcquireAsync(cancellationToken).ConfigureAwait(false);
-        var browser = await GetBrowserHostUnderLeaseAsync(cancellationToken).ConfigureAwait(false);
-        var observedHost = CreateObservedBrowserGoalHost(browser);
+        var browserGoalHost = await GetBrowserGoalHostUnderLeaseAsync(cancellationToken).ConfigureAwait(false);
+        var observedHost = CreateObservedBrowserGoalHost(browserGoalHost);
         var inner = new BrowserGoalAgent(observedHost, new NemotronBrowserPlanner(_inference), _browserGoalStore);
         var agent = new LifetimeBoundBrowserGoalAgent(inner);
         agent.BindCompositionLifetime(_lifetime);
@@ -162,7 +178,6 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     }
 
     internal static ICrashConsistentBrowserGoalHost CreateObservedBrowserGoalHost(ICrashConsistentBrowserGoalHost host) => new EvidenceObservingBrowserGoalHost(host);
-    private static ICrashConsistentBrowserGoalHost CreateObservedBrowserGoalHost(BrowserHostRuntime host) => CreateObservedBrowserGoalHost((ICrashConsistentBrowserGoalHost)new BrowserHostGoalHostAdapter(host));
 
     public async Task<IReadOnlyList<BrowserGoalSession>> ListBrowserGoalSessionsAsync(CancellationToken cancellationToken = default)
     {

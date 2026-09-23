@@ -17,40 +17,38 @@ Implemented Windows shell, Nebius/Nemotron inference, layered memory, Tavily res
 Serialized browser evidence transitions, bound demo validation to production session evidence, added a fail-closed recording gate, integrated `CompositionLifetimeGate` into `NvideaCompositionRoot`, and moved browser product/recovery/goal facades behind root-lifetime authority. Added `IBrowserGoalAgent`, exactly-one-lease transaction semantics, a private least-authority browser-host seam, and an assembly-internal deterministic root factory. Locked public API boundaries and qualified actual-root shutdown behavior for Run, Resume, Approve-and-Continue, and Cancel, including stale-facade fail-closed behavior and authority counters.
 
 ### 2026-09-23 — research citation integrity
-Added deterministic `ResearchCitationIntegrity` verification for Nemotron-emitted `[src:SOURCE_ID]` markers. Verification is evidence-backed, case-insensitive, deduplicated, reports fabricated IDs, and treats uncited synthesis as unverified. Added `ResearchSynthesisProvenance.Project` as the fail-closed boundary that converts untrusted model markers into verified evidence-backed provenance, then wired it into production `ResearchEngine.SynthesizeAsync` so `UsedCitations` can only come from verified Tavily evidence. Added a production `ResearchAsync` regression covering legitimate plus hallucinated markers and preservation of upstream provider warnings. Added `ResearchReportProvenance` with explicit Verified/Partial/Unverified/NoSources states.
+Added deterministic `ResearchCitationIntegrity` verification for Nemotron-emitted `[src:SOURCE_ID]` markers. Verification is evidence-backed, case-insensitive, deduplicated, reports fabricated IDs, and treats uncited synthesis as unverified. Added `ResearchSynthesisProvenance.Project` as the fail-closed boundary that converts untrusted model markers into verified evidence-backed provenance, then wired it into production `ResearchEngine.SynthesizeAsync` so `UsedCitations` can only come from verified Tavily evidence. Added a production `ResearchAsync` regression covering legitimate plus hallucinated markers and preservation of upstream provider warnings. Added `ResearchReportProvenance` with explicit Verified/Partial/Unverified/NoSources states and a strict `IsVerifiedForJudging` gate.
 
-## Latest run — fail-closed judge provenance gate
+## Latest run — payload-safe research judge evidence
 Files changed:
-- `src/Nvidea.Core/Research/ResearchReportProvenance.cs`
-- `tests/Nvidea.Core.Tests/ResearchReportProvenanceTests.cs`
+- `src/Nvidea.Core/Research/ResearchJudgeEvidence.cs`
+- `tests/Nvidea.Core.Tests/ResearchJudgeEvidenceTests.cs`
 - `progress.md`
 
 Completed:
-- Re-read `progress.md`, the provenance projector, and the deterministic Personal AI demo evaluator before changing code.
-- Added `ResearchReportProvenance.IsVerifiedForJudging`, a deliberately strict boolean gate that is true only for `Verified`. Judge/demo code no longer needs to rely on enum ordering, warning text, or model-authored prose to decide whether research provenance may be presented as green/verified.
-- Added stable `JudgeLabel` values (`verified`, `partial`, `unverified`, `no-sources`) for evidence JSON/UI without exposing warning-string parsing as an authority boundary.
-- Extended provider-free regression coverage so mixed legitimate + fabricated source markers are explicitly `Partial`, preserve the fabricated source ID, and fail the judge gate.
-- Added a fail-closed theory proving every non-Verified state (`Partial`, `Unverified`, `NoSources`) is rejected by `IsVerifiedForJudging`.
+- Re-read `progress.md`, `ResearchReportProvenance`, and the deterministic Personal AI demo evaluator before changing code.
+- Added `ResearchJudgeEvidence`, a small payload-safe projection intended for evaluator JSON and Windows judge surfaces. It exposes only stable provenance label, strict verified boolean, evidence-source count, verified-citation count, and unknown/fabricated source IDs; it does not expose source bodies, prompts, credentials, or private context.
+- The projection delegates green/verified authority to `ResearchReportProvenance.IsVerifiedForJudging` and independently derives `VerifiedCitationCount` from `ResearchSynthesisProvenance.Project`, not from the report's supplied citation collection. This prevents an uncited answer from appearing stronger merely because citation metadata exists upstream.
+- Added provider-free regressions for fully verified, mixed legitimate+fabricated, and uncited-with-sources cases. The mixed case remains `partial`/not verified and preserves `fake`; the uncited case reports zero verified citations even when evidence/citation metadata exists.
 - Repository identity was explicitly reverified immediately before every GitHub mutation as exactly `UnknownGod2011/NVIDEA`.
 
 Validation/evidence:
-- Static inspection confirms the judge gate consumes only `ResearchProvenanceStatus`, whose status is derived through `ResearchSynthesisProvenance.Project` and `ResearchCitationIntegrity.Verify`.
-- Tests now make it structurally difficult for future evaluator/UI code to accidentally treat partial provenance as verified merely because at least one citation is legitimate.
+- Static inspection confirms the new judge projection obtains provenance authority only through the existing deterministic citation-integrity chain.
+- Regression fixtures explicitly separate available evidence from actually cited/verified evidence, reducing the risk of evaluator false-greens.
 - No live provider, network research request, browser, API key, paid service, or workflow was invoked.
 - Executable PASS is not claimed because this connector environment cannot run the .NET 8/Windows suite.
 
 ## Security / privacy / failure review
-- Fabricated source IDs remain diagnostics only and cannot make the judge gate green.
-- Partial provenance is explicitly fail-closed even when some citations are legitimate.
-- No-source and uncited-answer states remain distinct and both fail the judge gate.
-- Labels are deterministic local metadata; no evidence bodies, prompts, credentials, authorization material, or private browser state are added to persistence.
-- Prompt-injection boundaries, consequential-action approval semantics, cancellation, and browser lifetime behavior are unchanged.
+- Fabricated source IDs remain diagnostics only and cannot make judge evidence green.
+- Partial, uncited, and no-source states remain fail-closed.
+- Judge evidence contains identifiers/counts only; no research snippets/source bodies or private desktop context are projected.
+- Prompt-injection boundaries, consequential-action approval semantics, cancellation, browser lifetime behavior, and provider routing are unchanged.
 
 ## Known blockers / risks
 - Core/WPF code and accumulated suite still require executable .NET 8 + Windows validation.
 - Live Nebius/Tavily/Serverless/authenticated-browser validation remains pending.
-- The deterministic `Nvidea.PersonalAiDemoEval` still uses its older `cited-research` predicate and does not yet serialize `ResearchReportProvenance` into its evidence JSON; the new gate is ready for that wiring but is not yet judge-visible in the emitted artifact.
+- `Nvidea.PersonalAiDemoEval` still uses its older inline `cited-research` predicate; the new `ResearchJudgeEvidence` object is now the canonical ready-to-wire projection but is not yet serialized by that tool.
 - The Windows judge-evidence surface likewise does not yet display the machine-readable provenance label/unknown IDs.
 
 ## Single Best Next Task
-Wire `ResearchReportProvenance.FromReport(report)` into `Nvidea.PersonalAiDemoEval` evidence JSON and its `cited-research` pass/fail predicate, serializing the stable label plus unknown source IDs. Add evaluator-level regression coverage proving a deterministic synthesis containing one legitimate marker plus one fabricated marker cannot produce an overall green research check.
+Wire `ResearchJudgeEvidence.FromReport(report)` into `Nvidea.PersonalAiDemoEval`: serialize the projection into evidence JSON and make `cited-research` depend on its strict `Verified` gate. Add evaluator-level regression/fixture coverage proving a synthesis containing one legitimate marker plus one fabricated marker cannot produce an overall green research check.

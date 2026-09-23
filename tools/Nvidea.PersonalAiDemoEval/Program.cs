@@ -18,6 +18,7 @@ internal static class Program
         var outputPath = ParseOutputPath(args);
         var checks = new List<EvalCheck>();
         var metrics = new Dictionary<string, object>(StringComparer.Ordinal);
+        ResearchJudgeEvidence? researchEvidence = null;
 
         try
         {
@@ -69,15 +70,30 @@ internal static class Program
             var researchProvider = new FixtureResearchProvider(fixedNow);
             var research = new ResearchEngine(researchInference, researchProvider);
             var report = await research.ResearchAsync("What makes this demo architecture credible for a personal AI judge?").ConfigureAwait(false);
+            researchEvidence = ResearchJudgeEvidence.FromReport(report);
             AddCheck(checks,
                 "cited-research",
-                report.UsedCitations.Count == 2
-                && report.AnswerMarkdown.Contains("[src:nebius-doc]", StringComparison.Ordinal)
-                && report.AnswerMarkdown.Contains("[src:tavily-doc]", StringComparison.Ordinal)
-                && !report.Warnings.Any(w => w.Contains("unknown source", StringComparison.OrdinalIgnoreCase)),
-                "Research planning, fixture search, deterministic evidence preparation, and citation validation produced two machine-verifiable citations.");
-            metrics["researchSources"] = report.Evidence.Sources.Count;
-            metrics["usedCitations"] = report.UsedCitations.Count;
+                researchEvidence.Verified
+                && researchEvidence.VerifiedCitationCount == 2
+                && researchEvidence.EvidenceSourceCount == 2
+                && researchEvidence.UnknownSourceIds.Count == 0,
+                "Research planning, fixture search, deterministic evidence preparation, and fail-closed provenance validation produced two verified citations.");
+
+            var adversarialReport = report with
+            {
+                AnswerMarkdown = report.AnswerMarkdown + " Fabricated provenance must not be trusted [src:fabricated-demo-source]."
+            };
+            var adversarialResearchEvidence = ResearchJudgeEvidence.FromReport(adversarialReport);
+            AddCheck(checks,
+                "fabricated-research-citation-fails-closed",
+                !adversarialResearchEvidence.Verified
+                && string.Equals(adversarialResearchEvidence.Provenance, "partial", StringComparison.Ordinal)
+                && adversarialResearchEvidence.VerifiedCitationCount == 2
+                && adversarialResearchEvidence.UnknownSourceIds.Count == 1
+                && string.Equals(adversarialResearchEvidence.UnknownSourceIds[0], "fabricated-demo-source", StringComparison.Ordinal),
+                "A mixed legitimate-plus-fabricated citation fixture is explicitly partial and cannot satisfy the evaluator's verified research gate.");
+            metrics["researchSources"] = researchEvidence.EvidenceSourceCount;
+            metrics["usedCitations"] = researchEvidence.VerifiedCitationCount;
 
             var browserDriver = new FixtureBrowserDriver(fixedNow);
             var approvalGate = new RecordingApprovalGate(approve: true);
@@ -171,11 +187,12 @@ internal static class Program
         }
 
         var evidence = new EvalEvidence(
-            SchemaVersion: 1,
+            SchemaVersion: 2,
             GeneratedAt: DateTimeOffset.UtcNow,
             OverallPassed: checks.Count > 0 && checks.All(c => c.Passed),
             Checks: checks,
-            Metrics: metrics);
+            Metrics: metrics,
+            Research: researchEvidence);
         var json = JsonSerializer.Serialize(evidence, new JsonSerializerOptions(JsonSerializerDefaults.Web)
         {
             WriteIndented = true
@@ -217,7 +234,8 @@ internal static class Program
         DateTimeOffset GeneratedAt,
         bool OverallPassed,
         IReadOnlyList<EvalCheck> Checks,
-        IReadOnlyDictionary<string, object> Metrics);
+        IReadOnlyDictionary<string, object> Metrics,
+        ResearchJudgeEvidence? Research);
 
     private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider
     {

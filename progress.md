@@ -16,36 +16,40 @@ Implemented Windows shell, Nebius/Nemotron inference, layered memory, Tavily res
 ### 2026-09-22 — evidence and composition lifetime hardening
 Serialized browser evidence transitions, bound demo validation to production session evidence, added a fail-closed recording gate, wired WPF Judge Evidence to authoritative browser/session evidence, repaired build/API contracts, serialized canonical browser product publication, integrated `CompositionLifetimeGate` into `NvideaCompositionRoot`, qualified issued-facade operation leasing, wrapped every public `BrowserProductRuntime` operation in a lifetime lease, atomically bound the product facade to root shutdown authority before publication, added operation leasing to ambiguous recovery, bound ambiguous recovery to root lifetime before publication, qualified a least-authority lifetime-bound goal-host decorator, locked the goal-agent public lifetime refactor contract, composed the host decorator into issued goal agents as defense-in-depth, added `BrowserGoalTransactionLifetime`, added/qualified `LifetimeBoundBrowserGoalAgent` for exactly-one-lease transactions, introduced the least-authority `IBrowserGoalAgent` API seam, and moved issued goal agents to the full-transaction lifetime facade without same-gate host re-entry.
 
-## Latest run — browser-goal composition API regression qualification
+## Latest run — browser-goal composition seam
 Files changed:
-- `tests/Nvidea.Core.Tests/BrowserGoalCompositionApiSurfaceTests.cs`
+- `src/Nvidea.Core/Desktop/NvideaCompositionRoot.cs`
+- `tests/Nvidea.Core.Tests/BrowserGoalCompositionSeamTests.cs`
 - `progress.md`
 
 Completed:
-- Re-read `progress.md`, the current composition root, existing browser goal API tests, and current test tree before mutation.
-- Added deterministic provider/Chromium-free API regression coverage requiring `NvideaCompositionRoot.CreateBrowserGoalAgentAsync` to publish exactly `Task<IBrowserGoalAgent>` rather than raw `BrowserGoalAgent`.
-- Locked `IBrowserGoalAgent` to the four intended durable user transactions: Run, Resume, Approve-and-Continue, and Cancel; each must remain asynchronous and cancellation-aware.
-- Added a public-surface guard preventing `NvideaCompositionRoot` from exposing raw `BrowserGoalAgent` or `CompositionLifetimeGate` through method parameters/return types, including nested generic/array shapes.
-- This makes accidental future erosion of the least-authority composition boundary visible without starting Playwright or invoking Nebius.
+- Re-read `progress.md`, recent commits, the full current composition root, repository tree, and existing browser-goal lifetime/API qualification before mutation.
+- Added a narrow optional browser-goal host factory seam at the private composition-root constructor boundary. Production `CreateFromEnvironmentAsync` does not supply it, so production continues to lazily create and own `BrowserHostRuntime` exactly as before.
+- Added `GetBrowserGoalHostUnderLeaseAsync`, which resolves only the least-authority `ICrashConsistentBrowserGoalHost` contract and is called only after the root lifetime lease has been acquired.
+- Updated `CreateBrowserGoalAgentAsync` to consume that least-authority host, preserve evidence observation, Nemotron planning, durable goal storage, and the outer exactly-one-lease `LifetimeBoundBrowserGoalAgent` publication boundary.
+- Kept browser product and ambiguous-recovery construction on the canonical `BrowserHostRuntime` path; the seam cannot silently replace those broader privileged surfaces.
+- Added deterministic reflection guards requiring the seam field and resolver to stay private, cancellation-aware, and typed only to `ICrashConsistentBrowserGoalHost`; public composition APIs must not expose the seam or goal-host authority.
 - Repository identity was explicitly reverified immediately before every mutation as exactly `UnknownGod2011/NVIDEA`.
 
 Validation/evidence:
-- Static repository inspection confirms the production root currently returns `Task<IBrowserGoalAgent>`, creates an ordinary evidence-observing host, wraps the raw agent in `LifetimeBoundBrowserGoalAgent`, binds `_lifetime` before publication, and does not compose `LifetimeBoundBrowserGoalHost` on this path.
-- The new tests use reflection only and require no API key, browser, network, or provider call.
-- Existing `BrowserGoalTransactionLifetimeTests` / `LifetimeBoundBrowserGoalAgentTests` cover the underlying lease primitive and facade fail-closed behavior; this run adds the missing composition/API contract layer.
+- Static inspection confirms the production factory still invokes the private constructor without a host-factory argument; therefore normal application behavior remains the Playwright-backed path.
+- The new seam is nullable, private, constructor-injected, and immutable after root construction; there is no public setter, service locator, or runtime swapping mechanism.
+- `CreateBrowserGoalAgentAsync` still acquires `_lifetime` before resolving either production or injected host authority and binds the returned lifetime facade before publication.
+- The new regression tests are provider/Chromium/network-free and inspect only API/composition shape.
 - Executable PASS is not claimed because this connector environment cannot run the .NET 8/Windows test suite.
 - No paid/live provider call, browser action, workflow rerun, issue, PR, or repository-setting mutation was triggered.
 
 ## Security / privacy / failure review
-- Public composition remains least-authority: callers receive `IBrowserGoalAgent`, not the raw agent or root lifetime gate.
-- Regression coverage contains no browser payload, URL, typed value, approval material, credential, secret, or personal state.
-- The tests intentionally avoid browser/provider startup, keeping CI lean and deterministic.
-- Existing approval, prompt-injection, crash-consistency, durable verification and evidence-observation semantics are unchanged.
+- The seam deliberately accepts only `ICrashConsistentBrowserGoalHost`; it cannot inject raw Playwright objects, provider credentials, the root lifetime gate, or product-runtime authority.
+- Factory invocation occurs while the root lifetime lease is held, so disposal cannot complete while host construction is in progress.
+- A null factory result fails closed before agent publication.
+- No browser payload, URL, typed value, approval material, credential, secret, or personal state is retained by the seam itself.
+- Existing approval, prompt-injection, crash-consistency, durable verification, evidence-observation and exactly-one-lease transaction semantics are unchanged.
 
 ## Known blockers / risks
 - New Core/WPF code and accumulated suite still require executable .NET 8 + Windows validation.
-- The new reflection tests are strong API guards but do not themselves instantiate `NvideaCompositionRoot`; a composition-level concurrency harness still needs a browser-independent construction seam to prove an issued facade delays actual root disposal without Playwright startup.
+- The seam now makes Chromium-free root qualification architecturally possible, but a deterministic test root constructor/factory still needs to be added so tests can supply fake inference/memory/session dependencies without reflection-heavy setup or live provider configuration.
 - Browser startup remains intentionally inside the root lifetime lease; Windows timing qualification is required. Live Nebius/Tavily/Serverless/authenticated-browser validation remains pending.
 
 ## Single Best Next Task
-Introduce the narrowest test-only/internal browser-host factory seam in `NvideaCompositionRoot` (without weakening production authority) so deterministic tests can construct an issued goal facade without Playwright. Then prove end-to-end that an in-flight issued Run/Resume/Approve/Cancel transaction delays root disposal and that a post-disposal call fails before planner/store/browser authority executes. Run the full .NET/Windows/Chromium suite in the first capable environment and fix any compile/interface findings without weakening the exactly-one-lease boundary.
+Add an assembly-internal deterministic `NvideaCompositionRoot` test construction path that accepts fake inference plus the new least-authority browser-goal host factory while preserving production ownership semantics. Then add composition-level concurrency tests proving an issued Run/Resume/Approve/Cancel transaction delays actual root disposal and a post-disposal call fails before planner/store/browser authority executes. Run the full .NET/Windows/Chromium suite in the first capable environment and fix any compile/interface findings without weakening the exactly-one-lease boundary.

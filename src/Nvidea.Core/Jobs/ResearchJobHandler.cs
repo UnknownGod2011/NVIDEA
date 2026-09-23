@@ -78,6 +78,17 @@ public sealed class ResearchJobHandler : IAgentJobHandler
         return completed.Report ?? throw new InvalidOperationException("Completed research checkpoint did not contain a report.");
     }
 
+    /// <summary>
+    /// Projects canonical citation authority directly at the durable checkpoint boundary. Callers
+    /// receive no question, synthesis, source URL/title/query/body, provider identifier or desktop
+    /// context, and this path requires no configured Tavily/Nemotron runtime.
+    /// </summary>
+    public static ResearchJudgeEvidence ReadCompletedJudgeEvidence(AgentJobRecord job)
+    {
+        var report = ReadCompletedReport(job);
+        return ResearchJudgeEvidence.FromReport(report);
+    }
+
     public static DurableResearchReceipt ReadCompletedReceipt(AgentJobRecord job)
     {
         var completed = ReadCompletedCheckpoint(job);
@@ -126,7 +137,6 @@ public sealed class ResearchJobHandler : IAgentJobHandler
         string evidenceFingerprint;
         if (lineage is null)
         {
-            // Legacy evidence remains resumable, but cannot claim a plan-bound receipt.
             evidenceFingerprint = Fingerprint(prepared);
         }
         else
@@ -149,14 +159,9 @@ public sealed class ResearchJobHandler : IAgentJobHandler
     }
 
     private static string Fingerprint<T>(T value) => Sha256(JsonSerializer.Serialize(value, JsonOptions));
-
-    private static string FingerprintEvidenceBoundToPlan(string planSha256, ResearchPreparedEvidence prepared) =>
-        Sha256($"{planSha256}:{Fingerprint(prepared)}");
-
+    private static string FingerprintEvidenceBoundToPlan(string planSha256, ResearchPreparedEvidence prepared) => Sha256($"{planSha256}:{Fingerprint(prepared)}");
     private static string FingerprintSynthesis(ResearchReport report) => Sha256(report.AnswerMarkdown ?? string.Empty);
-
-    private static string Sha256(string value) =>
-        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
+    private static string Sha256(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 
     private static bool FixedEquals(string? left, string? right)
     {

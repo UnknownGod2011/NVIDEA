@@ -1,6 +1,7 @@
 using System.Windows;
 using Nvidea.Core.Browser;
 using Nvidea.Core.Desktop;
+using Nvidea.Core.Research;
 
 namespace Nvidea.Windows;
 
@@ -22,53 +23,46 @@ public partial class MainWindow
         if (readiness is null) return;
 
         DesktopDurableResearchReceipt? durableReceipt = null;
+        DesktopResearchJudgePresentation? researchProvenance = null;
         var runtime = _root.Research;
         if (runtime is not null && _activeResearchJobId is { } jobId)
         {
             try
             {
                 var receipt = await runtime.ReadCompletedReceiptAsync(jobId);
-                durableReceipt = new DesktopDurableResearchReceipt(
-                    receipt.PlanSha256,
-                    receipt.EvidenceSha256,
-                    receipt.SynthesisSha256,
-                    receipt.PlannedQueryCount,
-                    receipt.EvidenceSourceCount,
-                    receipt.ValidatedCitationCount,
-                    receipt.PlannedQueryCount >= 2,
-                    receipt.HasMachineVerifiableCitations,
-                    RestartStable: true);
+                durableReceipt = new DesktopDurableResearchReceipt(receipt.PlanSha256, receipt.EvidenceSha256, receipt.SynthesisSha256, receipt.PlannedQueryCount, receipt.EvidenceSourceCount, receipt.ValidatedCitationCount, receipt.PlannedQueryCount >= 2, receipt.HasMachineVerifiableCitations, RestartStable: true);
             }
             catch
             {
-                // Incomplete, legacy, corrupt, or concurrently changing research must never become
-                // green judge evidence. The dialog remains usable and explicitly shows no receipt.
+                // Incomplete, legacy, corrupt, or concurrently changing research must never become green judge evidence.
+            }
+
+            try
+            {
+                // The report is read only through the completed-job boundary, then immediately
+                // collapsed into payload-free canonical judge evidence before reaching the dialog.
+                var report = await runtime.ReadCompletedReportAsync(jobId);
+                researchProvenance = DesktopResearchJudgePresentation.FromEvidence(ResearchJudgeEvidence.FromReport(report));
+            }
+            catch
+            {
+                // Missing local runtime, incomplete/corrupt state, or concurrent changes fail closed.
+                // The dialog receives no report payload and renders NOT VERIFIED.
             }
         }
 
         DesktopBrowserVerificationPresentation? browserVerification = null;
         try
         {
-            // The product runtime exposes only the payload-free presentation read owned by the
-            // durable browser runtime. Reading through it preserves the same serialized boundary
-            // used by evidence-affecting browser transitions, so the judge dialog cannot observe
-            // a half-settled or stale-green receipt.
             var browser = await _root.GetBrowserProductAsync();
             browserVerification = await browser.ReadVerificationPresentationAsync();
         }
         catch
         {
-            // Browser startup/read failure, missing Playwright, corrupt protected evidence, or a
-            // concurrently invalidated receipt must fail closed. Judge evidence remains usable for
-            // provider/research/session proof while browser verification stays NOT VERIFIED.
+            // Browser evidence also fails closed without blocking the rest of the judge view.
         }
 
-        var dialog = new JudgeEvidenceDialog(
-            readiness,
-            _root.Desktop.SessionEvidenceSnapshot,
-            _root.Desktop.ResetSessionEvidence,
-            durableReceipt,
-            browserVerification) { Owner = this };
+        var dialog = new JudgeEvidenceDialog(readiness, _root.Desktop.SessionEvidenceSnapshot, _root.Desktop.ResetSessionEvidence, durableReceipt, browserVerification, researchProvenance) { Owner = this };
         dialog.ShowDialog();
     }
 
@@ -78,19 +72,11 @@ public partial class MainWindow
         try
         {
             var cloudMode = DesktopResearchCloudMode.FromEnvironment();
-            readiness = DesktopResearchReadiness.InspectEnvironment(cloudMode).WithRuntimeState(
-                lifecycleReady: _root.Research?.RemoteLifecycleAvailable == true,
-                dispatchReady: _root.Research?.RemoteDispatchEnabled == true);
+            readiness = DesktopResearchReadiness.InspectEnvironment(cloudMode).WithRuntimeState(lifecycleReady: _root.Research?.RemoteLifecycleAvailable == true, dispatchReady: _root.Research?.RemoteDispatchEnabled == true);
         }
         catch
         {
-            readiness = new DesktopResearchReadiness(
-                LocalResearchReady: _root.Research?.LocalExecutionAvailable == true,
-                NebiusLifecycleRequested: false,
-                NebiusLifecycleReady: _root.Research?.RemoteLifecycleAvailable == true,
-                NebiusDispatchRequested: false,
-                NebiusDispatchReady: _root.Research?.RemoteDispatchEnabled == true,
-                new[] { "Desktop research readiness could not re-read the current opt-in flags; restart NVIDEA after verifying the documented configuration names." });
+            readiness = new DesktopResearchReadiness(LocalResearchReady: _root.Research?.LocalExecutionAvailable == true, NebiusLifecycleRequested: false, NebiusLifecycleReady: _root.Research?.RemoteLifecycleAvailable == true, NebiusDispatchRequested: false, NebiusDispatchReady: _root.Research?.RemoteDispatchEnabled == true, new[] { "Desktop research readiness could not re-read the current opt-in flags; restart NVIDEA after verifying the documented configuration names." });
         }
 
         _researchReadiness = readiness;

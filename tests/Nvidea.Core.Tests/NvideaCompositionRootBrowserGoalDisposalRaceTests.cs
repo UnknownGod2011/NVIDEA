@@ -60,7 +60,7 @@ public sealed class NvideaCompositionRootBrowserGoalDisposalRaceTests
             Task<BrowserGoalSession> operation = transaction switch
             {
                 "run" => agent.RunUntilPauseAsync(session),
-                "resume" => agent.ResumeAsync(session.Id),
+                "resume" => agent.ResumeAsync(session.SessionId),
                 "approve" => agent.ApproveAndContinueAsync(session, "browser.click:#submit"),
                 "cancel" => agent.CancelAsync(session),
                 _ => throw new ArgumentOutOfRangeException(nameof(transaction))

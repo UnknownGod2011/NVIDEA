@@ -130,6 +130,35 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         return root;
     }
 
+    /// <summary>
+    /// Assembly-internal deterministic construction for concurrency and lifetime qualification.
+    /// It deliberately accepts only inference and the least-authority browser-goal host factory;
+    /// production provider credentials, Playwright ownership and cloud transports cannot be injected.
+    /// </summary>
+    internal static async Task<NvideaCompositionRoot> CreateDeterministicAsync(
+        IAgentInferenceClient inference,
+        Func<CancellationToken, Task<ICrashConsistentBrowserGoalHost>> browserGoalHostFactory,
+        string stateDirectory,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(inference);
+        ArgumentNullException.ThrowIfNull(browserGoalHostFactory);
+        if (string.IsNullOrWhiteSpace(stateDirectory)) throw new ArgumentException("State directory is required.", nameof(stateDirectory));
+
+        var dataDirectory = Path.GetFullPath(stateDirectory);
+        Directory.CreateDirectory(dataDirectory);
+        using var startupLease = new StartupResourceLease();
+        var nebiusHttp = startupLease.Own(ProviderHttpClientFactory.CreateNoRedirectClient());
+        var memoryStore = startupLease.Own(new JsonFileMemoryStore(Path.Combine(dataDirectory, "memory.json")));
+        var memory = startupLease.Own(new PersonalMemoryService(memoryStore));
+        await memory.InitializeAsync(cancellationToken).ConfigureAwait(false);
+        var desktop = new DesktopInvocationService(inference, memory);
+        var session = new DesktopSessionController(desktop);
+        var root = new NvideaCompositionRoot(nebiusHttp, null, null, null, inference, memoryStore, memory, null, desktop, session, null, dataDirectory, browserGoalHostFactory);
+        startupLease.ReleaseAll();
+        return root;
+    }
+
     internal static IRemoteResearchClientRuntime CreateObservedRemoteResearchRuntime(IRemoteResearchClientRuntime runtime, SessionEvidenceLedger? evidence = null) => new EvidenceObservingRemoteResearchClientRuntime(runtime, evidence);
 
     public async Task<BrowserProductRuntime> GetBrowserProductAsync(CancellationToken cancellationToken = default)
@@ -154,10 +183,6 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
 
     private async Task<ICrashConsistentBrowserGoalHost> GetBrowserGoalHostUnderLeaseAsync(CancellationToken cancellationToken)
     {
-        // The optional factory is an internal composition seam only. Production construction
-        // never supplies it, so the normal path still owns and lazily starts BrowserHostRuntime.
-        // Keeping the seam at the least-authority goal-host contract lets deterministic tests
-        // qualify root lifetime behavior without granting access to Playwright or credentials.
         if (_browserGoalHostFactory is not null)
             return await _browserGoalHostFactory(cancellationToken).ConfigureAwait(false)
                 ?? throw new InvalidOperationException("Browser goal host factory returned null.");

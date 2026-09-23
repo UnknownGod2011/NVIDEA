@@ -1,67 +1,21 @@
 <Window x:Class="Nvidea.Windows.JudgeEvidenceDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="NVIDEA · Live architecture evidence" Height="860" Width="720"
+        Title="NVIDEA · Live architecture evidence" Height="900" Width="720"
         MinHeight="700" MinWidth="620" WindowStartupLocation="CenterOwner" ResizeMode="CanResizeWithGrip">
     <Grid Margin="18">
-        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <StackPanel>
             <TextBlock Text="Live architecture evidence" FontSize="22" FontWeight="SemiBold"/>
             <TextBlock Text="Runtime-derived proof for the hackathon demo — never a simulated success screen." Margin="0,3,0,12" Opacity="0.68"/>
         </StackPanel>
-        <Border Grid.Row="1" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,0,0,10">
-            <StackPanel>
-                <TextBlock Text="Provider readiness" FontWeight="SemiBold"/>
-                <TextBlock x:Name="ProviderReadinessText" Margin="0,4,0,0" TextWrapping="Wrap"/>
-                <TextBlock Text="Projected from validated runtime/environment state. No secret values, provider IDs, payloads, URLs, or raw provider errors are shown." Margin="0,5,0,0" FontSize="11" Opacity="0.58" TextWrapping="Wrap"/>
-            </StackPanel>
-        </Border>
-        <Border Grid.Row="2" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,0,0,10">
-            <StackPanel>
-                <TextBlock Text="Durable research lineage" FontWeight="SemiBold"/>
-                <TextBlock x:Name="DurableResearchReceiptText" Margin="0,4,0,0" TextWrapping="Wrap"/>
-                <TextBlock Text="Derived from the completed durable checkpoint. Only structural counts and integrity state cross this boundary; questions, queries, URLs, titles, snippets, source text, answers and hashes are not rendered." Margin="0,5,0,0" FontSize="11" Opacity="0.58" TextWrapping="Wrap"/>
-            </StackPanel>
-        </Border>
-        <Border Grid.Row="3" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,0,0,10">
-            <StackPanel>
-                <TextBlock Text="Browser execution verification" FontWeight="SemiBold"/>
-                <TextBlock x:Name="BrowserVerificationText" Margin="0,4,0,0" TextWrapping="Wrap"/>
-                <TextBlock Text="This panel accepts only Core-projected receipt evidence. Missing evidence fails closed; URLs, locators, typed values, page text, verification details, errors and approval rationale are never rendered." Margin="0,5,0,0" FontSize="11" Opacity="0.58" TextWrapping="Wrap"/>
-            </StackPanel>
-        </Border>
-        <Border Grid.Row="4" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,0,0,10">
-            <StackPanel>
-                <TextBlock Text="Verified this session" FontWeight="SemiBold"/>
-                <TextBlock x:Name="SessionEvidenceText" Margin="0,4,0,0" TextWrapping="Wrap"/>
-                <TextBlock Text="Milestones appear only after production success boundaries. This projection contains only a closed milestone kind and first-observed timestamp; prompts, memory contents, sources, URLs, provider IDs and model output are structurally excluded." Margin="0,5,0,0" FontSize="11" Opacity="0.58" TextWrapping="Wrap"/>
-            </StackPanel>
-        </Border>
-        <Border Grid.Row="5" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,0,0,12">
-            <StackPanel>
-                <TextBlock Text="Recording gate" FontWeight="SemiBold"/>
-                <TextBlock x:Name="RecordingGateText" Margin="0,4,0,0" TextWrapping="Wrap" FontWeight="SemiBold"/>
-                <TextBlock Text="Fail-closed production-session check. READY requires every canonical demo milestone to have been observed in order; provider-live readiness remains separate and is not implied by this result." Margin="0,5,0,0" FontSize="11" Opacity="0.58" TextWrapping="Wrap"/>
-            </StackPanel>
-        </Border>
-        <ScrollViewer Grid.Row="6" VerticalScrollBarVisibility="Auto">
-            <StackPanel>
-                <TextBlock Text="What this build can prove" FontWeight="SemiBold" Margin="0,0,0,7"/>
-                <TextBlock Text="✓ Windows invocation: global Ctrl+Shift+Space capture with active-app/selection context and explicit clipboard disclosure." TextWrapping="Wrap" Margin="0,3"/>
-                <TextBlock Text="✓ Personal memory: privacy-aware durable memory is local-first and has explicit maintenance/privacy controls." TextWrapping="Wrap" Margin="0,3"/>
-                <TextBlock Text="✓ Research: Nemotron planning, Tavily evidence, validated synthesis and restart lineage are projected from completed durable state." TextWrapping="Wrap" Margin="0,3"/>
-                <TextBlock Text="✓ Browser safety: actions use durable execution, explicit approval when policy requires it, post-action verification, emergency stop, and ambiguous-side-effect recovery without blind replay." TextWrapping="Wrap" Margin="0,3"/>
-                <TextBlock Text="✓ Consequential actions: approval is one-shot and exact-scope; a modal gate pauses execution before the action." TextWrapping="Wrap" Margin="0,3"/>
-                <TextBlock Text="✓ Background work: research checkpoints persist across interruption; remote lifecycle reconciliation never silently falls back to local replay." TextWrapping="Wrap" Margin="0,3"/>
-                <Border BorderThickness="1" CornerRadius="5" Padding="9" Margin="0,13,0,0">
-                    <StackPanel><TextBlock Text="Evidence policy" FontWeight="SemiBold"/><TextBlock Text="Implemented architecture, provider readiness, durable receipts, and observed session milestones are distinct. Unconfigured, incomplete, legacy-unproven, or unexecuted capabilities never become green demo state." Margin="0,4,0,0" TextWrapping="Wrap" Opacity="0.72"/></StackPanel>
-                </Border>
-            </StackPanel>
-        </ScrollViewer>
-        <Grid Grid.Row="7" Margin="0,12,0,0">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-            <Button x:Name="NewDemoSessionButton" Content="New demo session" Padding="12,5" HorizontalAlignment="Left" Click="NewDemoSessionButton_Click" ToolTip="Clear only ephemeral session milestones after confirmation. Durable memory, jobs, browser state and audit history are preserved."/>
-            <Button Grid.Column="1" Content="Close" Width="90" Padding="12,5" HorizontalAlignment="Right" IsCancel="True"/>
-        </Grid>
+        <Border Grid.Row="1" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,0,0,10"><StackPanel><TextBlock Text="Provider readiness" FontWeight="SemiBold"/><TextBlock x:Name="ProviderReadinessText" Margin="0,4,0,0" TextWrapping="Wrap"/><TextBlock Text="Projected from validated runtime/environment state. No secret values, provider IDs, payloads, URLs, or raw provider errors are shown." Margin="0,5,0,0" FontSize="11" Opacity="0.58" TextWrapping="Wrap"/></StackPanel></Border>
+        <Border Grid.Row="2" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,0,0,10"><StackPanel><TextBlock Text="Research provenance" FontWeight="SemiBold"/><TextBlock x:Name="ResearchProvenanceText" Margin="0,4,0,0" TextWrapping="Wrap" FontWeight="SemiBold"/><TextBlock Text="Canonical fail-closed citation authority. Only fully evidence-backed provenance renders VERIFIED; fabricated source IDs are diagnostic and force NOT VERIFIED. No question, answer, source body, URL, title or query crosses this boundary." Margin="0,5,0,0" FontSize="11" Opacity="0.58" TextWrapping="Wrap"/></StackPanel></Border>
+        <Border Grid.Row="3" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,0,0,10"><StackPanel><TextBlock Text="Durable research lineage" FontWeight="SemiBold"/><TextBlock x:Name="DurableResearchReceiptText" Margin="0,4,0,0" TextWrapping="Wrap"/><TextBlock Text="Derived from the completed durable checkpoint. Only structural counts and integrity state cross this boundary; questions, queries, URLs, titles, snippets, source text, answers and hashes are not rendered." Margin="0,5,0,0" FontSize="11" Opacity="0.58" TextWrapping="Wrap"/></StackPanel></Border>
+        <Border Grid.Row="4" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,0,0,10"><StackPanel><TextBlock Text="Browser execution verification" FontWeight="SemiBold"/><TextBlock x:Name="BrowserVerificationText" Margin="0,4,0,0" TextWrapping="Wrap"/><TextBlock Text="This panel accepts only Core-projected receipt evidence. Missing evidence fails closed; URLs, locators, typed values, page text, verification details, errors and approval rationale are never rendered." Margin="0,5,0,0" FontSize="11" Opacity="0.58" TextWrapping="Wrap"/></StackPanel></Border>
+        <Border Grid.Row="5" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,0,0,10"><StackPanel><TextBlock Text="Verified this session" FontWeight="SemiBold"/><TextBlock x:Name="SessionEvidenceText" Margin="0,4,0,0" TextWrapping="Wrap"/><TextBlock Text="Milestones appear only after production success boundaries. This projection contains only a closed milestone kind and first-observed timestamp; prompts, memory contents, sources, URLs, provider IDs and model output are structurally excluded." Margin="0,5,0,0" FontSize="11" Opacity="0.58" TextWrapping="Wrap"/></StackPanel></Border>
+        <Border Grid.Row="6" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,0,0,12"><StackPanel><TextBlock Text="Recording gate" FontWeight="SemiBold"/><TextBlock x:Name="RecordingGateText" Margin="0,4,0,0" TextWrapping="Wrap" FontWeight="SemiBold"/><TextBlock Text="Fail-closed production-session check. READY requires every canonical demo milestone to have been observed in order; provider-live readiness remains separate and is not implied by this result." Margin="0,5,0,0" FontSize="11" Opacity="0.58" TextWrapping="Wrap"/></StackPanel></Border>
+        <ScrollViewer Grid.Row="7" VerticalScrollBarVisibility="Auto"><StackPanel><TextBlock Text="What this build can prove" FontWeight="SemiBold" Margin="0,0,0,7"/><TextBlock Text="✓ Windows invocation: global Ctrl+Shift+Space capture with active-app/selection context and explicit clipboard disclosure." TextWrapping="Wrap" Margin="0,3"/><TextBlock Text="✓ Personal memory: privacy-aware durable memory is local-first and has explicit maintenance/privacy controls." TextWrapping="Wrap" Margin="0,3"/><TextBlock Text="✓ Research: Nemotron planning, Tavily evidence, validated synthesis and restart lineage are projected from completed durable state." TextWrapping="Wrap" Margin="0,3"/><TextBlock Text="✓ Browser safety: actions use durable execution, explicit approval when policy requires it, post-action verification, emergency stop, and ambiguous-side-effect recovery without blind replay." TextWrapping="Wrap" Margin="0,3"/><TextBlock Text="✓ Consequential actions: approval is one-shot and exact-scope; a modal gate pauses execution before the action." TextWrapping="Wrap" Margin="0,3"/><TextBlock Text="✓ Background work: research checkpoints persist across interruption; remote lifecycle reconciliation never silently falls back to local replay." TextWrapping="Wrap" Margin="0,3"/><Border BorderThickness="1" CornerRadius="5" Padding="9" Margin="0,13,0,0"><StackPanel><TextBlock Text="Evidence policy" FontWeight="SemiBold"/><TextBlock Text="Implemented architecture, provider readiness, durable receipts, and observed session milestones are distinct. Unconfigured, incomplete, legacy-unproven, or unexecuted capabilities never become green demo state." Margin="0,4,0,0" TextWrapping="Wrap" Opacity="0.72"/></StackPanel></Border></StackPanel></ScrollViewer>
+        <Grid Grid.Row="8" Margin="0,12,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><Button x:Name="NewDemoSessionButton" Content="New demo session" Padding="12,5" HorizontalAlignment="Left" Click="NewDemoSessionButton_Click" ToolTip="Clear only ephemeral session milestones after confirmation. Durable memory, jobs, browser state and audit history are preserved."/><Button Grid.Column="1" Content="Close" Width="90" Padding="12,5" HorizontalAlignment="Right" IsCancel="True"/></Grid>
     </Grid>
 </Window>

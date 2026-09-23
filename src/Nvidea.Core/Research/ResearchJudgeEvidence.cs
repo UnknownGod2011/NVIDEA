@@ -18,11 +18,15 @@ public sealed record ResearchJudgeEvidence(
         ArgumentNullException.ThrowIfNull(report.Evidence);
 
         var provenance = ResearchReportProvenance.FromReport(report);
+        var synthesis = ResearchSynthesisProvenance.Project(
+            report.AnswerMarkdown,
+            report.Evidence.Citations);
+
         return new ResearchJudgeEvidence(
             provenance.JudgeLabel,
             provenance.IsVerifiedForJudging,
             report.Evidence.Sources.Count,
-            report.UsedCitations.Count,
+            synthesis.VerifiedCitations.Count,
             provenance.UnknownSourceIds.ToArray());
     }
 }

@@ -1,5 +1,6 @@
 using Nvidea.Core.Browser;
 using Nvidea.Core.Desktop;
+using Nvidea.Core.Jobs;
 using Nvidea.Core.Nebius;
 
 namespace Nvidea.Core.Tests;
@@ -72,6 +73,92 @@ public sealed class NvideaCompositionRootBrowserGoalDisposalRaceTests
         finally
         {
             inference.Release.TrySetResult();
+            await fixture.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task Issued_approval_holds_actual_root_disposal_until_browser_authority_and_continuation_finish()
+    {
+        var inference = new BlockingInferenceClient(releaseImmediately: true);
+        var host = new BlockingAuthorityHost(blockApproval: true);
+        var fixture = await RootFixture.CreateAsync(inference, host);
+        try
+        {
+            var jobId = Guid.NewGuid();
+            const string scope = "browser.click:#submit";
+            var waiting = BrowserGoalSession.Create("approve a consequential browser action") with
+            {
+                Status = BrowserGoalStatus.WaitingForApproval,
+                PendingJobId = jobId,
+                PendingExactScope = scope,
+                PendingAction = new BrowserAction(
+                    BrowserActionKind.Click,
+                    BrowserLocator.Accessibility("submit"),
+                    ExpectedState: "submitted")
+            };
+            await fixture.SeedGoalSessionAsync(waiting);
+            var agent = await fixture.Root.CreateBrowserGoalAgentAsync();
+
+            var approval = agent.ApproveAndContinueAsync(waiting, scope);
+            await host.ApprovalEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(1, host.ApproveCalls);
+            Assert.Equal(0, inference.Calls);
+
+            var disposal = fixture.Root.DisposeAsync().AsTask();
+            Assert.False(disposal.IsCompleted);
+
+            host.ReleaseApproval.TrySetResult();
+            var result = await approval;
+            Assert.Equal(BrowserGoalStatus.Completed, result.Status);
+            await disposal;
+
+            Assert.Equal(1, host.ApproveCalls);
+            Assert.Equal(1, host.ObserveCalls);
+            Assert.Equal(1, inference.Calls);
+        }
+        finally
+        {
+            host.ReleaseApproval.TrySetResult();
+            await fixture.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task Issued_cancel_holds_actual_root_disposal_until_browser_cancellation_finishes()
+    {
+        var inference = new BlockingInferenceClient(releaseImmediately: true);
+        var host = new BlockingAuthorityHost(blockCancel: true);
+        var fixture = await RootFixture.CreateAsync(inference, host);
+        try
+        {
+            var pending = BrowserGoalSession.Create("cancel a pending browser action") with
+            {
+                PendingJobId = Guid.NewGuid(),
+                PendingAction = new BrowserAction(BrowserActionKind.Click, BrowserLocator.Accessibility("submit"))
+            };
+            await fixture.SeedGoalSessionAsync(pending);
+            var agent = await fixture.Root.CreateBrowserGoalAgentAsync();
+
+            var cancellation = agent.CancelAsync(pending);
+            await host.CancelEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(1, host.CancelCalls);
+            Assert.Equal(0, inference.Calls);
+
+            var disposal = fixture.Root.DisposeAsync().AsTask();
+            Assert.False(disposal.IsCompleted);
+
+            host.ReleaseCancel.TrySetResult();
+            var result = await cancellation;
+            Assert.Equal(BrowserGoalStatus.Cancelled, result.Status);
+            await disposal;
+
+            Assert.Equal(1, host.CancelCalls);
+            Assert.Equal(0, inference.Calls);
+        }
+        finally
+        {
+            host.ReleaseCancel.TrySetResult();
             await fixture.DisposeAsync();
         }
     }
@@ -197,13 +284,7 @@ public sealed class NvideaCompositionRootBrowserGoalDisposalRaceTests
             cancellationToken.ThrowIfCancellationRequested();
             ObserveCalls++;
             TotalCalls++;
-            return Task.FromResult(new BrowserObservation(
-                new Uri("https://example.com/app"),
-                "Example",
-                Array.Empty<BrowserElement>(),
-                "Ready",
-                DateTimeOffset.UtcNow,
-                SnapshotId: $"snapshot-{ObserveCalls}"));
+            return Task.FromResult(CreateObservation(ObserveCalls));
         }
 
         public Task<BrowserJobOutcome> StartActionAsync(BrowserAction action, CancellationToken cancellationToken = default)
@@ -233,4 +314,72 @@ public sealed class NvideaCompositionRootBrowserGoalDisposalRaceTests
             throw new InvalidOperationException("Unexpected browser authority call in composition lifetime qualification.");
         }
     }
+
+    private sealed class BlockingAuthorityHost : ICrashConsistentBrowserGoalHost
+    {
+        private readonly bool _blockApproval;
+        private readonly bool _blockCancel;
+
+        public BlockingAuthorityHost(bool blockApproval = false, bool blockCancel = false)
+        {
+            _blockApproval = blockApproval;
+            _blockCancel = blockCancel;
+        }
+
+        public TaskCompletionSource ApprovalEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseApproval { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource CancelEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseCancel { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int ApproveCalls { get; private set; }
+        public int CancelCalls { get; private set; }
+        public int ObserveCalls { get; private set; }
+
+        public Task<BrowserObservation> ObserveAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ObserveCalls++;
+            return Task.FromResult(CreateObservation(ObserveCalls));
+        }
+
+        public Task<BrowserJobOutcome> StartActionAsync(BrowserAction action, CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException("Unexpected non-durable action start.");
+
+        public Task<BrowserJobOutcome> CreateActionAsync(Guid jobId, BrowserAction action, CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException("Unexpected child creation.");
+
+        public Task<BrowserJobOutcome> AdvanceActionAsync(Guid jobId, CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException("Unexpected child advancement.");
+
+        public Task<BrowserJobOutcome?> GetAsync(Guid jobId, CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException("Unexpected child lookup.");
+
+        public Task<BrowserJobOutcome> RearmApprovalAsync(Guid jobId, string exactScope, CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException("Unexpected approval rearm.");
+
+        public async Task<BrowserJobOutcome> ApproveAndResumeAsync(Guid jobId, string exactScope, CancellationToken cancellationToken = default)
+        {
+            ApproveCalls++;
+            ApprovalEntered.TrySetResult();
+            if (_blockApproval)
+                await ReleaseApproval.Task.WaitAsync(cancellationToken);
+            return new BrowserJobOutcome(jobId, AgentJobState.Completed, "Approved browser action completed.");
+        }
+
+        public async Task<BrowserJobOutcome> CancelAsync(Guid jobId, CancellationToken cancellationToken = default)
+        {
+            CancelCalls++;
+            CancelEntered.TrySetResult();
+            if (_blockCancel)
+                await ReleaseCancel.Task.WaitAsync(cancellationToken);
+            return new BrowserJobOutcome(jobId, AgentJobState.Cancelled, "Browser action cancelled.");
+        }
+    }
+
+    private static BrowserObservation CreateObservation(int sequence) => new(
+        new Uri("https://example.com/app"),
+        "Example",
+        Array.Empty<BrowserElement>(),
+        "Ready",
+        DateTimeOffset.UtcNow,
+        SnapshotId: $"snapshot-{sequence}");
 }

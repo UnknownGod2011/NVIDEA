@@ -19,36 +19,36 @@ Serialized browser evidence transitions, bound demo validation to production ses
 ### 2026-09-23 — browser-goal composition qualification
 Added a private least-authority `ICrashConsistentBrowserGoalHost` factory seam so Chromium-free root qualification is possible without changing production Playwright ownership. `CreateBrowserGoalAgentAsync` resolves that host only under root lifetime authority, preserves evidence observation/Nemotron planning/durable sessions, and publishes only the lifetime-bound `IBrowserGoalAgent` facade. Added reflection guards for API privacy and seam ownership/immutability, deterministic post-disposal qualification for all four public browser-goal transactions, and actual-root concurrency qualification proving an issued Run transaction holds `NvideaCompositionRoot.DisposeAsync` behind the full transaction lease. Replaced the temporary reflective test fixture with an assembly-internal deterministic root factory that accepts only fake inference, the least-authority browser-goal host factory, and an isolated state directory. Locked that factory with API-surface regression tests requiring it to remain non-public/static, return the real root, accept exactly the least-authority inference/host/state/cancellation inputs, and remain absent from the public composition API.
 
-## Latest run — deterministic factory authority regression
+## Latest run — actual-root stale-authority qualification for every goal transaction
 Files changed:
-- `tests/Nvidea.Core.Tests/NvideaCompositionRootDeterministicApiTests.cs`
+- `tests/Nvidea.Core.Tests/NvideaCompositionRootBrowserGoalDisposalRaceTests.cs`
 - `progress.md`
 
 Completed:
-- Re-read `progress.md`, current root-level disposal-race tests and the deterministic composition implementation before mutation.
-- Added API-surface regression coverage for `CreateDeterministicAsync`.
-- The tests require the seam to remain assembly-internal (`IsAssembly`), static, non-public and to return `Task<NvideaCompositionRoot>`.
-- Parameter-shape qualification requires exactly `IAgentInferenceClient`, `Func<CancellationToken, Task<ICrashConsistentBrowserGoalHost>>`, isolated state-directory string, and optional `CancellationToken` in that order.
-- Public API qualification rejects accidental publication of `CreateDeterministicAsync` and rejects public browser-goal host/factory injection parameters anywhere on `NvideaCompositionRoot`.
+- Re-read `progress.md`, the actual-root disposal fixture, `IBrowserGoalAgent`, and `BrowserGoalSession` before finalizing the change.
+- Expanded the actual `NvideaCompositionRoot.DisposeAsync` stale-facade regression from Run-only to all four public goal transactions: Run, Resume, Approve-and-Continue, and Cancel.
+- Every case obtains a real issued `IBrowserGoalAgent`, completes root disposal, then invokes the stale facade and requires fail-closed `ObjectDisposedException` behavior.
+- Browser-host and inference counters must both remain zero for every transaction, proving shutdown blocks reacquisition of both browser authority and Nemotron planner authority before session lookup/approval/cancellation work can escape the lifetime boundary.
+- Corrected the Resume fixture to use the canonical `BrowserGoalSession.SessionId` property after re-reading the production record contract.
 - Repository identity was explicitly reverified immediately before every mutation as exactly `UnknownGod2011/NVIDEA`.
 
 Validation/evidence:
-- Static inspection confirms the production implementation currently matches the locked contract: `CreateDeterministicAsync` is `internal static`, production `CreateFromEnvironmentAsync` remains separate, and deterministic construction reuses the real root/lifetime/store implementation.
-- The new suite is provider-, network- and Chromium-free and triggers no workflow or paid service.
-- No Playwright startup, provider key, live Nebius/Tavily request, workflow rerun, issue, PR or repository-setting mutation was triggered.
+- Static inspection confirms `IBrowserGoalAgent` exposes exactly Run, Resume, Approve-and-Continue, and Cancel and that `BrowserGoalSession` identifies durable sessions through `SessionId`.
+- The regression uses the assembly-internal deterministic root factory, fake inference, and fake least-authority browser host; it starts no Chromium process and performs no network/provider call.
+- Existing actual-root in-flight Run qualification remains intact and continues to specify that root disposal must wait behind the complete transaction lease.
 - Executable PASS is not claimed because this connector environment cannot run the .NET 8/Windows test suite.
 
 ## Security / privacy / failure review
-- The deterministic seam is now guarded against accidental promotion into a second production construction API.
-- Regression coverage prevents future addition of public `ICrashConsistentBrowserGoalHost` authority injection through the root surface without an explicit test failure/review.
-- No credentials, browser payloads, approval scopes, personal data or secrets are accepted or persisted by the deterministic factory.
+- Stale goal facades are now dynamically specified to fail closed at the actual root boundary for every public transaction, not only Run.
+- The authority counters specifically guard against future regressions where Resume/Approve/Cancel might touch persistent session state, browser authority, or inference after shutdown linearizes.
+- No credentials, browser payloads, approval material, personal data or secrets are introduced by the fixture.
 - Production ownership, exact approval gates, prompt-injection boundaries, crash consistency, durable verification and exactly-one-lease transaction semantics are unchanged.
 
 ## Known blockers / risks
 - New Core/WPF code and accumulated suite still require executable .NET 8 + Windows validation.
-- Actual-root in-flight concurrency is dynamically specified for Run; equivalent Resume/Approve/Cancel in-flight races remain to be qualified at root level. Post-disposal semantics for all four transactions are already qualified directly at the issued boundary.
+- Actual-root in-flight concurrency is dynamically specified for Run; equivalent Resume/Approve/Cancel in-flight races remain to be qualified at root level. Post-disposal semantics for all four transactions are now qualified both directly at the issued boundary and through the actual composition root.
 - Browser startup remains intentionally inside the root lifetime lease; Windows timing qualification is required. Live Nebius/Tavily/Serverless/authenticated-browser validation remains pending.
-- Reflection is used only by the API-shape regression test to inspect visibility/signatures; deterministic runtime qualification no longer uses constructor reflection.
+- Reflection is used only by API-shape regression tests to inspect visibility/signatures; deterministic runtime qualification does not use constructor reflection.
 
 ## Single Best Next Task
-Extend actual-root in-flight disposal qualification across Resume, Approve-and-Continue and Cancel using the deterministic root factory, including authority counters that prove disposal waits for the complete transaction and no planner/browser authority escapes after shutdown. Run the full .NET/Windows/Chromium suite in the first capable environment and fix any compile/interface findings without weakening the exactly-one-lease boundary.
+Extend actual-root in-flight disposal qualification across Resume, Approve-and-Continue and Cancel using pre-seeded durable goal sessions and controllable least-authority host/inference barriers. Prove `NvideaCompositionRoot.DisposeAsync` waits for each complete transaction, then prove no browser/planner authority executes after shutdown linearizes. Run the full .NET/Windows/Chromium suite in the first capable environment and fix any compile/interface findings without weakening the exactly-one-lease boundary.

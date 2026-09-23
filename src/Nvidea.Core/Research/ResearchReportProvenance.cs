@@ -18,6 +18,24 @@ public sealed record ResearchReportProvenance(
     IReadOnlyList<string> UnknownSourceIds)
 {
     /// <summary>
+    /// True only when every source marker emitted by synthesis resolves to supplied research
+    /// evidence and at least one evidence-backed citation was used. Judge/demo surfaces should
+    /// use this property rather than interpreting enum ordering, warnings, or model prose.
+    /// </summary>
+    public bool IsVerifiedForJudging => Status == ResearchProvenanceStatus.Verified;
+
+    /// <summary>
+    /// Stable, non-model-authored label suitable for evidence JSON and UI presentation.
+    /// </summary>
+    public string JudgeLabel => Status switch
+    {
+        ResearchProvenanceStatus.Verified => "verified",
+        ResearchProvenanceStatus.Partial => "partial",
+        ResearchProvenanceStatus.NoSources => "no-sources",
+        _ => "unverified"
+    };
+
+    /// <summary>
     /// Projects a completed report into a stable machine-readable status without parsing warning
     /// text. No-source reports are intentionally distinct from synthesized-but-uncited answers.
     /// </summary>

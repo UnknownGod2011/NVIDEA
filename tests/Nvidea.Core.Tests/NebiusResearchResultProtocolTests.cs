@@ -62,6 +62,54 @@ public sealed class NebiusResearchResultProtocolTests
     }
 
     [Fact]
+    public void ResultProtector_RejectsCiphertextMutationIncludingCheckpointReceiptPayload()
+    {
+        using var rsa = RSA.Create(2048);
+        var now = DateTimeOffset.UtcNow;
+        var result = ValidResult(now) with
+        {
+            StepResult = new JobStepResult(
+                Completed: true,
+                CheckpointStep: ResearchJobHandler.CompletedStep,
+                CheckpointPayload: "{\"report\":{\"answerMarkdown\":\"trusted\"},\"receipt\":{\"reportSha256\":\"abc\",\"provenanceSha256\":\"def\"}}")
+        };
+        var envelope = ResearchResultProtector.Protect(result, rsa.ExportSubjectPublicKeyInfoPem());
+        var ciphertext = Convert.FromBase64String(envelope.Ciphertext);
+        ciphertext[ciphertext.Length / 2] ^= 0x01;
+
+        Assert.Throws<CryptographicException>(() => ResearchResultProtector.Unprotect(
+            envelope with { Ciphertext = Convert.ToBase64String(ciphertext) },
+            rsa.ExportPkcs8PrivateKeyPem(),
+            now.AddMinutes(1)));
+    }
+
+    [Fact]
+    public void ResultProtector_RejectsCiphertextAndTagSubstitutionFromAnotherValidEnvelope()
+    {
+        using var rsa = RSA.Create(2048);
+        var now = DateTimeOffset.UtcNow;
+        var expected = ValidResult(now);
+        var substituted = expected with
+        {
+            StepResult = new JobStepResult(
+                Completed: true,
+                CheckpointStep: ResearchJobHandler.CompletedStep,
+                CheckpointPayload: "{\"report\":\"substituted\",\"receipt\":\"substituted\"}")
+        };
+        var first = ResearchResultProtector.Protect(expected, rsa.ExportSubjectPublicKeyInfoPem());
+        var second = ResearchResultProtector.Protect(substituted, rsa.ExportSubjectPublicKeyInfoPem());
+
+        Assert.Throws<CryptographicException>(() => ResearchResultProtector.Unprotect(
+            first with
+            {
+                Ciphertext = second.Ciphertext,
+                AuthenticationTag = second.AuthenticationTag
+            },
+            rsa.ExportPkcs8PrivateKeyPem(),
+            now.AddMinutes(1)));
+    }
+
+    [Fact]
     public void ResultProtector_RejectsExpiredResultBeforeDecrypting()
     {
         using var rsa = RSA.Create(2048);

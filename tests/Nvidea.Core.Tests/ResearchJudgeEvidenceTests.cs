@@ -44,7 +44,7 @@ public sealed class ResearchJudgeEvidenceTests
         Assert.Equal("unverified", evidence.Provenance);
         Assert.False(evidence.Verified);
         Assert.Equal(1, evidence.EvidenceSourceCount);
-        Assert.Equal(1, evidence.VerifiedCitationCount);
+        Assert.Equal(0, evidence.VerifiedCitationCount);
         Assert.Empty(evidence.UnknownSourceIds);
     }
 

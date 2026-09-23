@@ -17,41 +17,37 @@ Implemented Windows shell, Nebius/Nemotron inference, layered memory, Tavily res
 Serialized browser evidence transitions, bound demo validation to production session evidence, added a fail-closed recording gate, integrated `CompositionLifetimeGate` into `NvideaCompositionRoot`, and moved browser product/recovery/goal facades behind root-lifetime authority. Added `IBrowserGoalAgent`, exactly-one-lease transaction semantics, a private least-authority browser-host seam, and an assembly-internal deterministic root factory. Locked public API boundaries and qualified actual-root shutdown behavior for Run, Resume, Approve-and-Continue, and Cancel, including stale-facade fail-closed behavior and authority counters.
 
 ### 2026-09-23 — research citation integrity
-Added deterministic `ResearchCitationIntegrity` verification for Nemotron-emitted `[src:SOURCE_ID]` markers. Verification is evidence-backed, case-insensitive, deduplicated, reports fabricated IDs, and treats uncited synthesis as unverified. Added `ResearchSynthesisProvenance.Project` as the fail-closed boundary that converts untrusted model markers into verified evidence-backed provenance.
+Added deterministic `ResearchCitationIntegrity` verification for Nemotron-emitted `[src:SOURCE_ID]` markers. Verification is evidence-backed, case-insensitive, deduplicated, reports fabricated IDs, and treats uncited synthesis as unverified. Added `ResearchSynthesisProvenance.Project` as the fail-closed boundary that converts untrusted model markers into verified evidence-backed provenance, then wired it into production `ResearchEngine.SynthesizeAsync` so `UsedCitations` can only come from verified Tavily evidence.
 
-## Latest run — production research provenance integration
+## Latest run — production research provenance integration regression
 Files changed:
-- `src/Nvidea.Core/Research/ResearchEngine.cs`
+- `tests/Nvidea.Core.Tests/ResearchEngineTests.cs`
 - `progress.md`
 
 Completed:
-- Re-read `progress.md`, the full production `ResearchEngine.SynthesizeAsync` path, and `ResearchSynthesisProvenance` before changing code.
-- Removed the production engine's duplicated inline regex/source-id projection and its direct construction of `UsedCitations` from model-emitted markers.
-- Wired `ResearchSynthesisProvenance.Project(answer, batch.Citations, batch.Warnings)` directly into `SynthesizeAsync`.
-- `ResearchReport.UsedCitations` now derives exclusively from `provenance.VerifiedCitations`; fabricated/unknown model markers cannot be promoted into judge/user-visible verified Tavily provenance.
-- `ResearchReport.Warnings` now derives from the same fail-closed projection, preserving provider warnings while explicitly identifying unknown markers or uncited synthesis.
-- Removed the now-unused `System.Text.RegularExpressions` dependency from `ResearchEngine` so there is one canonical marker-validation implementation.
+- Re-read `progress.md`, production `ResearchEngine.SynthesizeAsync`, and the existing ResearchEngine regression before changing code.
+- Strengthened the full `ResearchAsync` integration regression so deterministic fake Nemotron synthesis emits both a legitimate `[src:s1]` marker and hallucinated `[src:fake]` marker while the prepared Tavily batch also carries an upstream provider/freshness warning.
+- The regression now requires exactly one verified citation (`s1`), explicitly forbids `fake` from `UsedCitations`, requires the hallucinated-id diagnostic, and independently requires the upstream warning to survive production provenance projection.
+- The test still drives the complete production plan -> provider evidence -> deterministic ranking -> synthesis path and verifies that deterministic quality metadata and the untrusted-web-evidence boundary are supplied to inference.
 - Repository identity was explicitly reverified immediately before every GitHub mutation as exactly `UnknownGod2011/NVIDEA`.
 
 Validation/evidence:
-- Static inspection confirms the production synthesis return path has a single provenance authority: `ResearchSynthesisProvenance.Project` -> `ResearchCitationIntegrity.Verify`.
-- The previously added provider/network-free provenance tests cover mixed valid+fabricated markers, uncited synthesis, and case-insensitive fully verified synthesis; production now consumes that tested projection.
-- GitHub reports no commit status checks for the implementation commit; no workflow was triggered manually and no expensive CI/artifact operation was requested.
-- No API keys, provider calls, browser processes, workflow reruns, or external repository writes were used.
-- Executable PASS is not claimed because this environment cannot run the .NET 8/Windows suite.
+- Static inspection confirms the exercised production path is `ResearchAsync` -> `PlanAsync` -> `GatherEvidenceAsync` -> `SynthesizeAsync` -> `ResearchSynthesisProvenance.Project`.
+- The regression uses no live provider, network, browser, API key, or paid service and deterministically distinguishes upstream provider warnings from model-hallucination warnings.
+- Executable PASS is not claimed because this connector environment cannot run the .NET 8/Windows suite.
 
 ## Security / privacy / failure review
-- Nemotron synthesis remains untrusted text; it cannot create a verified citation by formatting a plausible `[src:...]` marker.
-- Verified citations retain only citation objects already supplied by the Tavily-backed evidence batch; unknown IDs remain diagnostics only.
-- Existing upstream Tavily warnings are preserved through projection rather than overwritten.
+- Nemotron synthesis remains untrusted text; model-formatted source IDs cannot manufacture verified citations.
+- Provider warnings are preserved through provenance projection, preventing integrity diagnostics from masking Tavily freshness/provider warnings.
+- The regression explicitly guards against a future refactor accidentally reintroducing hallucinated IDs into `UsedCitations`.
 - No evidence bodies, credentials, prompts, authorization material, or browser state were newly persisted or transmitted.
 - Prompt-injection boundaries, consequential-action approval semantics, cancellation, and browser lifetime behavior are unchanged.
 
 ## Known blockers / risks
 - Core/WPF code and accumulated suite still require executable .NET 8 + Windows validation.
-- Production provenance wiring is statically reviewed but cannot be compiled here; first capable environment must run focused Research tests and fix any signature mismatch without weakening fail-closed semantics.
 - Live Nebius/Tavily/Serverless/authenticated-browser validation remains pending.
-- `ResearchReport` currently exposes verified citations and warnings but not a first-class `IsFullyVerified`/unknown-ID field; judge evidence may benefit from an explicit machine-readable provenance status instead of deriving it from warnings.
+- `ResearchReport` exposes verified citations and warnings but not a first-class machine-readable provenance status; judge evidence currently has to infer full verification from citations/warnings.
+- The no-source early return has intentionally different semantics from synthesis provenance and should remain explicit if report status is added.
 
 ## Single Best Next Task
-Add ResearchEngine-level integration regression coverage around `SynthesizeAsync` using deterministic fake inference/prepared Tavily evidence, proving a Nemotron answer containing one legitimate and one hallucinated source ID returns only the legitimate `UsedCitation`, preserves upstream warnings, and emits the unverified-ID warning. Then expose an explicit machine-readable provenance status in the report/judge-evidence path if it can be done compatibly, before continuing cross-subsystem deterministic demo qualification.
+Add a backward-compatible machine-readable provenance result to `ResearchReport` (for example verified/partial/unverified plus unknown source IDs) derived only from `ResearchSynthesisProvenance`, propagate it into judge-visible evidence, and add regression coverage for fully verified, partially verified/fabricated, uncited, and no-source reports. This will let the demo/evaluator prove citation integrity without parsing human warning strings.

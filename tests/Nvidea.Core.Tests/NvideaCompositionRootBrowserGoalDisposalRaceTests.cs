@@ -1,16 +1,13 @@
-using System.Reflection;
 using Nvidea.Core.Browser;
 using Nvidea.Core.Desktop;
-using Nvidea.Core.Jobs;
-using Nvidea.Core.Memory;
 using Nvidea.Core.Nebius;
 
 namespace Nvidea.Core.Tests;
 
 /// <summary>
 /// Exercises the issued goal facade against the actual composition root disposal path without
-/// starting Chromium or contacting a provider. Constructor reflection is deliberately isolated
-/// here until the production root exposes the planned assembly-internal deterministic factory.
+/// starting Chromium or contacting a provider. The root is constructed through the assembly-
+/// internal least-authority deterministic seam used only by qualification code.
 /// </summary>
 public sealed class NvideaCompositionRootBrowserGoalDisposalRaceTests
 {
@@ -27,7 +24,6 @@ public sealed class NvideaCompositionRootBrowserGoalDisposalRaceTests
 
             await inference.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             var disposal = fixture.Root.DisposeAsync().AsTask();
-
             Assert.False(disposal.IsCompleted);
 
             inference.Release.TrySetResult();
@@ -84,36 +80,14 @@ public sealed class NvideaCompositionRootBrowserGoalDisposalRaceTests
         public static async Task<RootFixture> CreateAsync(IAgentInferenceClient inference, ICrashConsistentBrowserGoalHost host)
         {
             var directory = Path.Combine(Path.GetTempPath(), "nvidea-root-goal-lifetime", Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(directory);
             try
             {
-                var nebiusHttp = new HttpClient();
-                var memoryStore = new JsonFileMemoryStore(Path.Combine(directory, "memory.json"));
-                var memory = new PersonalMemoryService(memoryStore);
-                await memory.InitializeAsync();
-                var desktop = new DesktopInvocationService(inference, memory);
-                var session = new DesktopSessionController(desktop);
-                Func<CancellationToken, Task<ICrashConsistentBrowserGoalHost>> hostFactory = _ => Task.FromResult(host);
-
-                var constructor = typeof(NvideaCompositionRoot).GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic)
-                    .Single(c => c.GetParameters().Any(p => p.ParameterType == typeof(Func<CancellationToken, Task<ICrashConsistentBrowserGoalHost>>)));
-
-                var root = (NvideaCompositionRoot)constructor.Invoke(new object?[]
+                Func<CancellationToken, Task<ICrashConsistentBrowserGoalHost>> hostFactory = cancellationToken =>
                 {
-                    nebiusHttp,
-                    null,
-                    null,
-                    null,
-                    inference,
-                    memoryStore,
-                    memory,
-                    null,
-                    desktop,
-                    session,
-                    null,
-                    directory,
-                    hostFactory
-                });
+                    cancellationToken.ThrowIfCancellationRequested();
+                    return Task.FromResult(host);
+                };
+                var root = await NvideaCompositionRoot.CreateDeterministicAsync(inference, hostFactory, directory);
                 return new RootFixture(root, directory);
             }
             catch

@@ -19,33 +19,35 @@ Serialized browser evidence transitions, bound demo validation to production ses
 ### 2026-09-23 — research citation integrity and evaluator authority
 Added deterministic citation verification, fail-closed synthesis provenance, Verified/Partial/Unverified/NoSources report state, strict judging authority, payload-safe `ResearchJudgeEvidence`, serialization privacy coverage, production synthesis integration, deterministic evaluator integration, Windows judge presentation, and provider-free durable evidence reads. Mixed legitimate/fabricated markers are explicitly Partial and cannot turn evaluator or Windows research evidence green.
 
-### 2026-09-24 — durable provenance and remote transport integrity
-Extended completed research receipts with SHA-256 commitments over the canonical full `ResearchReport` and payload-free `ResearchJudgeEvidence`; provider-free judge reads verify both commitments in fixed time and reject legacy/unbound or tampered checkpoints. Added remote-result AEAD adversarial qualification proving ciphertext mutation and ciphertext/tag substitution cannot alter a completed checkpoint (including its report/receipt payload) while retaining a different envelope's authenticated provenance.
+### 2026-09-24 — durable provenance, remote transport integrity, worker-auth foundation
+Extended completed research receipts with SHA-256 commitments over the canonical full `ResearchReport` and payload-free `ResearchJudgeEvidence`; provider-free judge reads verify both commitments in fixed time and reject legacy/unbound or tampered checkpoints. Added remote-result AEAD adversarial qualification proving ciphertext mutation and ciphertext/tag substitution cannot alter a completed checkpoint while retaining authenticated provenance. Added a canonical RSA-PSS/SHA-256 worker-origin signature primitive covering every authoritative encrypted-envelope/provenance field, with provider-free adversarial qualification for forged signatures, key mismatch, cross-job replay, and ciphertext/report-receipt substitution.
 
-## Latest run — remote-result payload substitution qualification
+## Latest run — worker-origin signature foundation
 Files changed:
-- `tests/Nvidea.Core.Tests/NebiusResearchResultProtocolTests.cs`
+- `src/Nvidea.Core/Jobs/RemoteResearchWorkerSignature.cs`
+- `tests/Nvidea.Core.Tests/RemoteResearchWorkerSignatureTests.cs`
 - `progress.md`
 
 Completed:
-- Re-read the remote-result protocol and ingestion boundary after the new completed-receipt commitments landed.
-- Confirmed the encrypted result envelope authenticates the entire serialized `RemoteResearchStageResult`, including `JobStepResult.CheckpointPayload`, while its AEAD associated data independently binds opaque work-item id, remote-job id, completion time and expiry.
-- Added an adversarial regression that flips one ciphertext bit in a completed research result carrying report/receipt-shaped checkpoint data; decryption must fail cryptographically before ingestion can observe substituted payload.
-- Added a second adversarial regression that takes ciphertext + authentication tag from another independently valid envelope and inserts them into the expected envelope; the different nonce/associated authenticated context must cause cryptographic rejection.
-- Preserved the existing remote-job-id and opaque-work-item substitution regressions, so metadata and payload substitution are now represented together.
+- Re-read the existing remote result protocol and live composition boundary before changing cryptographic authority.
+- Added `RemoteResearchWorkerSignature`, a domain-separated RSA-PSS/SHA-256 signing/verification primitive over protocol version, opaque work-item id, remote-job id, wrapped data key, nonce, ciphertext, AEAD tag, completion timestamp, and expiry.
+- Verification requires an explicitly supplied pinned worker public key; the verification key is not accepted from the result envelope, preventing attacker-selected identity from satisfying the trust check.
+- Added adversarial regressions for forged signature bytes, wrong pinned worker identity, cross-job replay, and ciphertext/report-receipt substitution.
+- During implementation review, deliberately reverted an initial direct v2 protocol rewrite because it would have changed constructor/call-site contracts before the live deployment/configuration boundary had been safely wired. The existing v1 transport therefore remains behaviorally unchanged and build-compatible while the independently qualified signature primitive lands first.
 - Repository identity was explicitly reverified as exactly `UnknownGod2011/NVIDEA` before every mutation.
 
 Validation/evidence:
-- Static inspection of `ResearchResultProtector` confirms AES-256-GCM authenticates the serialized stage result and binds result provenance as associated data; the checkpoint payload therefore cannot be modified in transit without invalidating the tag.
-- Static inspection of `RemoteResearchResultIngestor` confirms unprotection/provenance validation happens before the remote `JobStepResult` becomes the durable local output checkpoint.
-- The new regressions are provider-free and contain no credentials or live service calls.
+- Static inspection confirms the signature commitment covers all result-envelope fields that currently carry encrypted payload or provenance authority.
+- RSA keys below 2048 bits are rejected; signing requires private-key material; verification requires a separately supplied public key.
+- Regression fixtures are provider-free and contain no credentials/live calls.
+- Existing v1 result protocol and its call sites were preserved rather than leaving a partially wired breaking migration.
 - Executable PASS is not claimed because this connector environment cannot run the .NET 8/Windows suite.
 
 ## Security / privacy / failure review
-- Completed report/provenance commitments remain one-way SHA-256 values; no raw question, answer, source body, URL, query or desktop context is added to judge evidence.
-- Remote result confidentiality/integrity uses RSA-OAEP-SHA256 wrapped AES-256-GCM; ciphertext mutation or envelope-context substitution is fail-closed.
-- Important trust distinction: encryption to the client's public key authenticates ciphertext integrity but does NOT by itself prove worker identity, because possession of the client public key is not a signing authority. Do not describe the current result envelope as worker-signed.
-- The durable local receipt commitments protect report/provenance consistency after completion; remote authenticity still needs an explicit worker-signature verification boundary if worker identity must be cryptographically proven independent of transport/storage trust.
+- Signature commitment contains only already-encrypted/base64 envelope material and bounded provenance metadata; it does not add raw research payload to logs/judge evidence.
+- Domain separation prevents the signature from being reused as authority for another protocol purpose.
+- Existing AEAD still provides confidentiality/integrity to the client; the new primitive establishes the missing cryptographic mechanism for worker identity once wired to the result envelope and pinned deployment configuration.
+- The primitive alone does NOT yet authenticate production remote results: v1 `ResearchResultProtector`, worker publication, client ingestion, live configuration and secret-reference topology have intentionally not been migrated in this run.
 - Existing prompt-injection, consequential-action approval, cancellation, browser lifetime, provider routing and emergency-stop boundaries are unchanged.
 
 ## Known blockers / risks
@@ -53,7 +55,7 @@ Validation/evidence:
 - Live Nebius/Tavily/Serverless/authenticated-browser validation remains pending.
 - New regression source is not executable in this connector environment; compile/runtime compatibility must be confirmed on a .NET 8 runner before release qualification.
 - Existing completed checkpoints created before the bound-receipt version intentionally cannot claim judge-verified research provenance; rerunning research is required.
-- The remote result envelope currently provides authenticated encryption to the client but no explicit worker digital signature. A party that possesses the client's public encryption key could construct a fresh envelope; local dispatch provenance checks narrow substitution, but they are not equivalent to worker-origin authentication.
+- Production remote-result protocol remains v1 and is not worker-signed yet. Do not claim worker-origin authentication until v2 wiring is complete and pinned verification is enforced before decryption/ingestion.
 
 ## Single Best Next Task
-Add explicit worker-origin signatures to the protected remote-result protocol: have the worker sign a canonical commitment covering envelope provenance plus the encrypted result/report-receipt payload, pin the worker public verification key on the client, verify the signature before decryption/ingestion, and add adversarial regressions for forged signatures, report/receipt substitution, cross-job replay and key mismatch. This closes the remaining distinction between AEAD integrity and cryptographic worker authenticity.
+Safely wire `RemoteResearchWorkerSignature` into a v2 protected-result envelope end-to-end without breaking live composition: add the signature field/version, provision a distinct worker signing key through worker secret references, pin only its public verification key on the client via validated live configuration, sign after AEAD protection on the worker, verify before decryption/ingestion, update factory/composition/deployment preflight and all call sites, then qualify migration/fail-closed behavior plus forged signature, cross-job replay, key mismatch, and report/receipt substitution at the actual ingestor boundary.

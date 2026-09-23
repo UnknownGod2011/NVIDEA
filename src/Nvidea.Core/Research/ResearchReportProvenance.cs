@@ -17,6 +17,25 @@ public sealed record ResearchReportProvenance(
     ResearchProvenanceStatus Status,
     IReadOnlyList<string> UnknownSourceIds)
 {
+    /// <summary>
+    /// Projects a completed report into a stable machine-readable status without parsing warning
+    /// text. No-source reports are intentionally distinct from synthesized-but-uncited answers.
+    /// </summary>
+    public static ResearchReportProvenance FromReport(ResearchReport report)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        ArgumentNullException.ThrowIfNull(report.Evidence);
+
+        if (report.Evidence.Sources.Count == 0)
+            return NoSources;
+
+        var provenance = ResearchSynthesisProvenance.Project(
+            report.AnswerMarkdown,
+            report.Evidence.Citations);
+
+        return FromSynthesis(provenance);
+    }
+
     public static ResearchReportProvenance FromSynthesis(ResearchSynthesisProvenanceResult provenance)
     {
         ArgumentNullException.ThrowIfNull(provenance);

@@ -1,7 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Text.RegularExpressions;
 using Nvidea.Core.Nebius;
 
 namespace Nvidea.Core.Research;
@@ -187,25 +186,16 @@ public sealed class ResearchEngine
         if (string.IsNullOrWhiteSpace(answer))
             throw new InvalidOperationException("Nemotron returned an empty research synthesis.");
 
-        var validIds = batch.Citations.ToDictionary(c => c.SourceId, StringComparer.OrdinalIgnoreCase);
-        var referencedIds = Regex.Matches(answer, @"\[src:(?<id>[A-Za-z0-9._:-]+)\]", RegexOptions.CultureInvariant)
-            .Select(m => m.Groups["id"].Value)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        // Model output is untrusted. Only the deterministic provenance projection may promote
+        // model-emitted source markers into judge/user-visible verified Tavily citations.
+        var provenance = ResearchSynthesisProvenance.Project(answer, batch.Citations, batch.Warnings);
 
-        var warnings = new List<string>(batch.Warnings);
-        var unknown = referencedIds.Where(id => !validIds.ContainsKey(id)).ToArray();
-        if (unknown.Length > 0)
-            warnings.Add($"Synthesis referenced unknown source ids: {string.Join(", ", unknown)}.");
-        if (referencedIds.Length == 0)
-            warnings.Add("Synthesis contained no machine-verifiable source markers.");
-
-        var used = referencedIds
-            .Where(validIds.ContainsKey)
-            .Select(id => validIds[id])
-            .ToArray();
-
-        return new ResearchReport(question, answer, batch, used, warnings);
+        return new ResearchReport(
+            question,
+            answer,
+            batch,
+            provenance.VerifiedCitations,
+            provenance.Warnings);
     }
 
     public async Task<ResearchReport> ResearchAsync(string question, CancellationToken cancellationToken = default)

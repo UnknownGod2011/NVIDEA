@@ -14,11 +14,12 @@ public sealed class ResearchEngineTests
             new AgentCompletion("Nebius and NVIDIA are running the hackathon [src:s1]. Unknown marker [src:fake].", [], "model", "stop")
         ]);
         var sourceUrl = new Uri("https://example.com/source");
+        const string upstreamWarning = "Tavily evidence freshness could not be established.";
         var provider = new FakeProvider(new ResearchBatch(
             [new ResearchSource("s1", "Source", sourceUrl, sourceUrl.AbsoluteUri.TrimEnd('/'), "Evidence", 0.9, "Nebius NVIDIA hackathon", DateTimeOffset.UtcNow)],
             [new ResearchCitation("s1", "Source", sourceUrl, sourceUrl.AbsoluteUri.TrimEnd('/'), "Nebius NVIDIA hackathon", DateTimeOffset.UtcNow, null)],
             1,
-            []));
+            [upstreamWarning]));
 
         var engine = new ResearchEngine(inference, provider);
         var report = await engine.ResearchAsync("What is this hackathon?");
@@ -26,7 +27,10 @@ public sealed class ResearchEngineTests
         Assert.Single(provider.LastQueries!);
         Assert.Single(report.UsedCitations);
         Assert.Equal("s1", report.UsedCitations[0].SourceId);
+        Assert.Contains(upstreamWarning, report.Warnings);
         Assert.Contains(report.Warnings, w => w.Contains("fake", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(report.UsedCitations, citation =>
+            string.Equals(citation.SourceId, "fake", StringComparison.OrdinalIgnoreCase));
         Assert.Equal(2, inference.Requests.Count);
         var synthesisEvidence = inference.Requests[1].Messages.Last().Content;
         Assert.Contains("DETERMINISTIC EVIDENCE QUALITY METADATA", synthesisEvidence);

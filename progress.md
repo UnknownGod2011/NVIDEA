@@ -19,41 +19,41 @@ Serialized browser evidence transitions, bound demo validation to production ses
 ### 2026-09-23 — research citation integrity and evaluator authority
 Added deterministic citation verification, fail-closed synthesis provenance, Verified/Partial/Unverified/NoSources report state, strict judging authority, payload-safe `ResearchJudgeEvidence`, serialization privacy coverage, production synthesis integration, deterministic evaluator integration, Windows judge presentation, and provider-free durable evidence reads. Mixed legitimate/fabricated markers are explicitly Partial and cannot turn evaluator or Windows research evidence green.
 
-## Latest run — cryptographically bound durable research provenance
+### 2026-09-24 — durable provenance and remote transport integrity
+Extended completed research receipts with SHA-256 commitments over the canonical full `ResearchReport` and payload-free `ResearchJudgeEvidence`; provider-free judge reads verify both commitments in fixed time and reject legacy/unbound or tampered checkpoints. Added remote-result AEAD adversarial qualification proving ciphertext mutation and ciphertext/tag substitution cannot alter a completed checkpoint (including its report/receipt payload) while retaining a different envelope's authenticated provenance.
+
+## Latest run — remote-result payload substitution qualification
 Files changed:
-- `src/Nvidea.Core/Jobs/ResearchJobHandler.cs`
-- `tests/Nvidea.Core.Tests/ResearchProductJudgeEvidenceTests.cs`
+- `tests/Nvidea.Core.Tests/NebiusResearchResultProtocolTests.cs`
 - `progress.md`
 
 Completed:
-- Extended `DurableResearchReceipt` with optional `ReportSha256` and `ProvenanceSha256` commitments while retaining deserialization compatibility for older receipts.
-- New completed research checkpoints commit SHA-256 over the entire canonical serialized `ResearchReport`, covering answer/citation/evidence mutations, plus a separate deterministic payload-free digest over `ResearchJudgeEvidence`.
-- `ReadCompletedJudgeEvidence` now verifies both bindings in fixed-time before returning judge-visible provenance. Missing legacy bindings, report tampering, or provenance mismatch fail closed.
-- The provenance digest uses an explicit version domain, invariant numeric formatting, stable unknown-ID ordering and a separator-safe canonical representation rather than relying on presentation strings or JSON property ordering.
-- Reworked provider-free remote evidence regression to produce a real completed checkpoint through `ResearchJobHandler` before persisting it as `NebiusServerless`, so the test exercises the same receipt-generation path as production.
-- Added adversarial regressions for post-completion citation-marker tampering, source-body tampering, legacy receipts without the new bindings, and corrupt checkpoints.
+- Re-read the remote-result protocol and ingestion boundary after the new completed-receipt commitments landed.
+- Confirmed the encrypted result envelope authenticates the entire serialized `RemoteResearchStageResult`, including `JobStepResult.CheckpointPayload`, while its AEAD associated data independently binds opaque work-item id, remote-job id, completion time and expiry.
+- Added an adversarial regression that flips one ciphertext bit in a completed research result carrying report/receipt-shaped checkpoint data; decryption must fail cryptographically before ingestion can observe substituted payload.
+- Added a second adversarial regression that takes ciphertext + authentication tag from another independently valid envelope and inserts them into the expected envelope; the different nonce/associated authenticated context must cause cryptographic rejection.
+- Preserved the existing remote-job-id and opaque-work-item substitution regressions, so metadata and payload substitution are now represented together.
 - Repository identity was explicitly reverified as exactly `UnknownGod2011/NVIDEA` before every mutation.
 
 Validation/evidence:
-- Static inspection confirms judge evidence is returned only after full-report and canonical-provenance fingerprints match the receipt.
-- Tampering fixtures alter the completed payload while leaving the original receipt unchanged; the read boundary must reject before any evidence can be shown as verified.
-- Existing remote/provider-free behavior remains represented by constructing the completed checkpoint with real Core logic and then reading it with `ResearchProductRuntime(local: null)`.
-- No live provider, browser, workflow, API key, paid service, or other repository was touched.
+- Static inspection of `ResearchResultProtector` confirms AES-256-GCM authenticates the serialized stage result and binds result provenance as associated data; the checkpoint payload therefore cannot be modified in transit without invalidating the tag.
+- Static inspection of `RemoteResearchResultIngestor` confirms unprotection/provenance validation happens before the remote `JobStepResult` becomes the durable local output checkpoint.
+- The new regressions are provider-free and contain no credentials or live service calls.
 - Executable PASS is not claimed because this connector environment cannot run the .NET 8/Windows suite.
 
 ## Security / privacy / failure review
-- The added receipt fields are one-way SHA-256 commitments only; raw question, synthesis, source body, URL, title, query and desktop context are not added to judge evidence.
-- `ReadCompletedJudgeEvidence` fails closed for legacy receipts instead of silently trusting unbound provenance. Raw report access remains separately available for product display and is not upgraded to judge authority by this change.
-- Full-report commitment catches source-body, citation metadata and synthesis mutations; the separate provenance commitment prevents a future projection change or partial payload manipulation from silently changing judge authority.
-- Fixed-time digest comparison is retained through the existing `CryptographicOperations.FixedTimeEquals` path.
-- Existing prompt-injection, consequential-action approval, cancellation, browser lifetime, provider routing, remote signature/exact-once ingestion and emergency-stop boundaries are unchanged.
+- Completed report/provenance commitments remain one-way SHA-256 values; no raw question, answer, source body, URL, query or desktop context is added to judge evidence.
+- Remote result confidentiality/integrity uses RSA-OAEP-SHA256 wrapped AES-256-GCM; ciphertext mutation or envelope-context substitution is fail-closed.
+- Important trust distinction: encryption to the client's public key authenticates ciphertext integrity but does NOT by itself prove worker identity, because possession of the client public key is not a signing authority. Do not describe the current result envelope as worker-signed.
+- The durable local receipt commitments protect report/provenance consistency after completion; remote authenticity still needs an explicit worker-signature verification boundary if worker identity must be cryptographically proven independent of transport/storage trust.
+- Existing prompt-injection, consequential-action approval, cancellation, browser lifetime, provider routing and emergency-stop boundaries are unchanged.
 
 ## Known blockers / risks
 - Core/WPF code and accumulated suite still require executable .NET 8 + Windows validation.
 - Live Nebius/Tavily/Serverless/authenticated-browser validation remains pending.
 - New regression source is not executable in this connector environment; compile/runtime compatibility must be confirmed on a .NET 8 runner before release qualification.
-- Existing completed checkpoints created before this receipt version intentionally cannot claim judge-verified research provenance; rerunning research is required to produce bound evidence.
-- Receipt commitments are integrity bindings inside the completed checkpoint, not an independent signature. For remotely ingested results, authenticity still depends on the existing signed result-envelope/exact-once ingestion trust boundary.
+- Existing completed checkpoints created before the bound-receipt version intentionally cannot claim judge-verified research provenance; rerunning research is required.
+- The remote result envelope currently provides authenticated encryption to the client but no explicit worker digital signature. A party that possesses the client's public encryption key could construct a fresh envelope; local dispatch provenance checks narrow substitution, but they are not equivalent to worker-origin authentication.
 
 ## Single Best Next Task
-Bind the new `ReportSha256`/`ProvenanceSha256` commitments into the signed remote-result ingestion verification path and add a remote-envelope adversarial regression proving a worker/result payload cannot substitute a report or receipt independently. This will connect completed-checkpoint provenance integrity directly to the existing remote authenticity boundary rather than relying on post-ingestion co-location alone.
+Add explicit worker-origin signatures to the protected remote-result protocol: have the worker sign a canonical commitment covering envelope provenance plus the encrypted result/report-receipt payload, pin the worker public verification key on the client, verify the signature before decryption/ingestion, and add adversarial regressions for forged signatures, report/receipt substitution, cross-job replay and key mismatch. This closes the remaining distinction between AEAD integrity and cryptographic worker authenticity.

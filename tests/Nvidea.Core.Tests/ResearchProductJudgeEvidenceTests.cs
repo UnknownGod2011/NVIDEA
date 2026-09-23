@@ -19,7 +19,7 @@ public sealed class ResearchProductJudgeEvidenceTests
             await new JsonAgentJobStore(Path.Combine(directory, "research-jobs.json")).SaveAsync(record);
             var runtime = new ResearchProductRuntime(directory, local: null);
 
-            var evidence = await runtime.ReadCompletedJudgeEvidenceAsync(record.Id);
+            var evidence = await runtime.ReadCompletedJudgeEvidenceAsync(record.JobId);
 
             Assert.True(evidence.IsVerifiedForJudging);
             Assert.Equal("verified", evidence.Provenance);
@@ -106,11 +106,10 @@ public sealed class ResearchProductJudgeEvidenceTests
         var definition = new AgentJobDefinition(ResearchJobHandler.Type, ResearchJobRuntime.CapabilityId, new HashSet<DataPermission> { DataPermission.NetworkAccess }, CapabilityRiskLevel.Low, false, true, 3);
         var record = new AgentJobRecord(Guid.NewGuid(), definition, AgentJobState.Pending, JobExecutionLocation.Local, 0, ResearchJobHandler.CreateInitialCheckpoint("private question"), null, null, now, now, null);
 
-        foreach (var state in new[] { AgentJobState.Pending, AgentJobState.Running, AgentJobState.Running })
+        for (var i = 0; i < 3; i++)
         {
-            record = record with { State = state };
             var result = await handler.ExecuteStepAsync(record);
-            record = record with { Checkpoint = new AgentJobCheckpoint(result.CheckpointStep!, result.CheckpointPayload, DateTimeOffset.UtcNow) };
+            record = record with { State = AgentJobState.Running, Checkpoint = new AgentJobCheckpoint(result.CheckpointStep!, result.CheckpointPayload, DateTimeOffset.UtcNow) };
         }
 
         return record with { State = AgentJobState.Completed };

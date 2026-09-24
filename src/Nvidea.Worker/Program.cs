@@ -30,6 +30,11 @@ internal static class Program
             // are accessed, and the same path is directly regression-testable in Core.
             var runtime = NebiusResearchWorkerRuntimeConfiguration.Load();
 
+            // Result authentication is mandatory for the deployed worker. This is a distinct key
+            // role from work-item decryption: a worker must never publish an unsigned result merely
+            // because result-signing secret provisioning was omitted or malformed.
+            var workerResultSigningPrivateKey = WorkerResultSigningPrivateKeyTrust.LoadRequired();
+
             using var http = CreateProviderHttpClient();
             var inference = new NebiusTokenFactoryClient(http, runtime.Nebius);
             var tavily = new TavilyResearchClient(http, runtime.Tavily);
@@ -72,7 +77,8 @@ internal static class Program
                 transport,
                 handler,
                 runtime.WorkerPrivateKeyPem,
-                clientResultEncryptionPublicKey);
+                clientResultEncryptionPublicKey,
+                workerResultSigningPrivateKey);
 
             await worker.ExecuteOneStageAsync(
                 options.OpaqueWorkItemId,
@@ -148,7 +154,7 @@ internal static class Program
         private readonly CancellationTokenSource _watchdogCancellation;
         private int _disposed;
 
-        public CompositeDisposable(IDisposable registration, CancellationTokenSource watchdogCancellation)
+        public CompositeDisposable(PosixSignalRegistration registration, CancellationTokenSource watchdogCancellation)
         {
             _registration = registration;
             _watchdogCancellation = watchdogCancellation;

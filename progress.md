@@ -19,26 +19,28 @@ Serialized browser evidence transitions, bound demo validation to production ses
 ### 2026-09-24 — durable provenance and remote-result authentication migration
 Bound completed research reports and canonical judge evidence into durable SHA-256 receipts and reject tampered/legacy-unbound provenance. Qualified remote-result AEAD against mutation/substitution. Added RSA-PSS/SHA-256 worker-origin signatures over authoritative encrypted-envelope fields, adversarial forgery/key-mismatch/replay/substitution tests, verify-before-decrypt authentication, optional signed transport metadata, worker-side signing after AEAD protection, a dedicated worker-only signing-secret trust boundary, fail-closed deployed worker signing composition, a public-only pinned client worker-verification trust boundary, authenticated encrypted-result transport, production desktop authenticated-result composition, and MysteryBox-only live signing-key deployment preflight.
 
-## Latest run — wrong-worker production ingestion qualification
+## Latest run — production-ingestor ciphertext/report substitution qualification
 Files changed:
 - `tests/Nvidea.Core.Tests/AuthenticatedRemoteResearchIngestionBoundaryTests.cs`
 - `progress.md`
 
 Completed:
-- Re-read `progress.md` completely and inspected the existing production-ingestor adversarial tests before changing code.
-- Added a provider-free regression through the real `RemoteResearchResultIngestor` seam for a cryptographically valid result signed by an unpinned worker identity.
-- The test pins a different worker public key and deliberately supplies the wrong client result-decryption private key as an ordering sentinel: worker identity verification must fail before unwrap/decrypt can exercise the client key.
-- The regression asserts the durable job remains Running with remote provenance exactly Dispatched, `ResultAppliedAt` remains null, and no `research.remote_result_applied` audit authority is emitted.
+- Re-read `progress.md` completely and inspected the production-ingestor adversarial suite plus the remote-result envelope/protector contract before changing code.
+- Added a provider-free regression through the real `RemoteResearchResultIngestor` seam that signs a legitimate encrypted result, then substitutes ciphertext from an independently protected result after signing.
+- The substituted ciphertext models post-publication replacement of the encrypted report/receipt payload while preserving the original worker signature and authoritative envelope metadata.
+- The test deliberately supplies the wrong client result-decryption private key as an ordering sentinel: worker signature authentication must reject the splice before RSA unwrap, AEAD decryption, JSON parsing, or durable report/receipt application.
+- The regression asserts the job remains Running on NebiusServerless with remote provenance exactly Dispatched, `ResultAppliedAt` remains null, and no `research.remote_result_applied` audit authority is emitted.
 - Repository identity was explicitly reverified as exactly `UnknownGod2011/NVIDEA` before each mutation.
 
 Validation/evidence:
-- Static inspection plus the existing ingestion architecture show the authenticated result transport is invoked before `ResearchResultProtector.Unprotect`; the new wrong-client-key sentinel makes an accidental decrypt-before-auth reorder observable.
-- Actual-ingestor coverage now includes unsigned result, wrong pinned worker identity, and signed remote-job replay; lower-level signature/transport suites continue to cover ciphertext mutation and substitution.
+- Static contract inspection confirms `ProtectedResearchResultEnvelope.Ciphertext` is part of the signed canonical encrypted envelope, while `RemoteResearchResultIngestor` receives results through the authenticated transport before unprotect/decryption.
+- Actual-ingestor adversarial coverage now includes unsigned results, wrong pinned worker identity, signed remote-job replay, and post-signature ciphertext/report-payload substitution.
+- The substitution test uses a second real `ResearchResultProtector.Protect` output rather than malformed base64, so the attack remains structurally valid and fails because authenticated content changed, not because parsing is trivially invalid.
 - No live provider, browser, workflow, API key, paid service, secret, or other repository was touched.
 - Executable PASS is not claimed because this connector environment cannot run the .NET 8/Windows suite.
 
 ## Security / privacy / failure review
-- A valid signature from the wrong worker is insufficient: client trust is explicitly anchored to the configured public pin.
+- Signed ciphertext is now qualified as worker-authenticated at the actual ingestion boundary, not only at lower signature/transport primitives.
 - Authentication failure cannot advance durable research state or emit result-applied audit authority.
 - The worker verification identity remains public-only client-side; the signing private key remains worker-only and MysteryBox-backed in live deployment.
 - Verify-before-decrypt remains the production ordering; existing AEAD confidentiality, dispatch provenance, bound research receipts, prompt-injection gates, consequential-action approval, cancellation and emergency-stop boundaries remain unchanged.
@@ -47,8 +49,8 @@ Validation/evidence:
 - Core/WPF code and accumulated suite still require executable .NET 8 + Windows validation.
 - Live Nebius/Tavily/Serverless/authenticated-browser validation remains pending.
 - The actual Nebius account still needs a real MysteryBox secret/version containing the worker result-signing private PEM plus a matching client public verification pin; no secret was created or read in this run.
-- Actual-ingestor qualification still needs ciphertext/report-receipt substitution; those attacks are currently covered at lower transport/signature boundaries.
+- The production-ingestor worker-authentication adversarial matrix is now materially complete for unsigned, wrong-key, replay and ciphertext substitution paths, but executable qualification remains pending.
 - Existing completed checkpoints created before bound receipts cannot claim judge-verified research provenance; rerunning research is required.
 
 ## Single Best Next Task
-Complete ciphertext/report-receipt substitution qualification through the actual production ingestor boundary, then update the deployment/runbook docs with safe RSA signing-key generation, MysteryBox provisioning, rotation and public-pin distribution without ever copying private authority to the client.
+Document and qualify the operational worker-signing identity lifecycle: safe RSA key generation, MysteryBox private-key provisioning/version pinning, public-pin distribution to the Windows client, rotation sequencing without an authentication outage, and explicit rollback/revocation behavior; add provider-free configuration/runbook contract tests where practical.

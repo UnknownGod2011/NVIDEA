@@ -115,7 +115,25 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
             researchServerlessHttp = startupLease.Own(providers.ServerlessHttp);
             var store = new JsonAgentJobStore(Path.Combine(researchDirectory, "research-jobs.json"));
             IAuditTrail audit = new JsonLinesAuditTrail(Path.Combine(researchDirectory, "research-cloud-audit.jsonl"));
-            IRemoteResearchClientRuntime remote = NebiusResearchLiveRuntimeFactory.Create(store, providers.Serverless, providers.Transport, providers.Transport, providers.Transport, configuration.DispatchOptions, configuration.ClientPrivateKeyPem, audit);
+
+            // Fail closed before constructing the remote runtime: production result ingestion must
+            // authenticate the worker while the result is still encrypted. The verification key is
+            // public-only client trust material and is never sourced from the remote envelope.
+            var workerResultVerificationKey = WorkerResultVerificationPublicKeyTrust.LoadRequired();
+            IProtectedResearchResultTransport authenticatedResults = new AuthenticatedResearchResultTransport(
+                providers.Transport,
+                workerResultVerificationKey);
+
+            IRemoteResearchClientRuntime remote = NebiusResearchLiveRuntimeFactory.Create(
+                store,
+                providers.Serverless,
+                providers.Transport,
+                authenticatedResults,
+                providers.Transport,
+                configuration.DispatchOptions,
+                configuration.ClientPrivateKeyPem,
+                configuration.ClientResultPrivateKeyPem,
+                audit);
             remote = CreateObservedRemoteResearchRuntime(remote);
             cloudResearch = new ResearchCloudExecutionCoordinator(researchDirectory, remote);
         }
@@ -257,19 +275,5 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         if (string.IsNullOrWhiteSpace(localAppData)) throw new InvalidOperationException("Local application data directory is unavailable.");
         return Path.Combine(localAppData, "NVIDEA");
-    }
-
-    private sealed class BrowserHostGoalHostAdapter : ICrashConsistentBrowserGoalHost
-    {
-        private readonly BrowserHostRuntime _host;
-        public BrowserHostGoalHostAdapter(BrowserHostRuntime host) => _host = host ?? throw new ArgumentNullException(nameof(host));
-        public Task<BrowserObservation> ObserveAsync(CancellationToken cancellationToken = default) => _host.ObserveAsync(cancellationToken);
-        public Task<BrowserJobOutcome> StartActionAsync(BrowserAction action, CancellationToken cancellationToken = default) => _host.StartActionAsync(action, cancellationToken);
-        public Task<BrowserJobOutcome> CreateActionAsync(Guid jobId, BrowserAction action, CancellationToken cancellationToken = default) => _host.CreateActionAsync(jobId, action, cancellationToken);
-        public Task<BrowserJobOutcome> AdvanceActionAsync(Guid jobId, CancellationToken cancellationToken = default) => _host.AdvanceActionAsync(jobId, cancellationToken);
-        public Task<BrowserJobOutcome?> GetAsync(Guid jobId, CancellationToken cancellationToken = default) => _host.GetAsync(jobId, cancellationToken);
-        public Task<BrowserJobOutcome> RearmApprovalAsync(Guid jobId, string exactScope, CancellationToken cancellationToken = default) => _host.RearmApprovalAsync(jobId, exactScope, cancellationToken);
-        public Task<BrowserJobOutcome> ApproveAndResumeAsync(Guid jobId, string exactScope, CancellationToken cancellationToken = default) => _host.ApproveAndResumeAsync(jobId, exactScope, cancellationToken);
-        public Task<BrowserJobOutcome> CancelAsync(Guid jobId, CancellationToken cancellationToken = default) => _host.CancelAsync(jobId, cancellationToken);
     }
 }

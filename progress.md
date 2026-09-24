@@ -17,41 +17,41 @@ Implemented Windows shell, Nebius/Nemotron inference, layered memory, Tavily res
 Serialized browser evidence transitions, bound demo validation to production session evidence, added a fail-closed recording gate, integrated `CompositionLifetimeGate`, and moved browser facades behind root-lifetime authority. Added exactly-one-lease browser goal semantics and qualified shutdown behavior. Added deterministic research citation verification, Verified/Partial/Unverified/NoSources authority, payload-safe `ResearchJudgeEvidence`, evaluator/Windows presentation, and provider-free durable evidence reads.
 
 ### 2026-09-24 — durable provenance and remote-result authentication migration
-Bound completed research reports and canonical judge evidence into durable SHA-256 receipts and reject tampered/legacy-unbound provenance. Qualified remote-result AEAD against mutation/substitution. Added RSA-PSS/SHA-256 worker-origin signatures over authoritative encrypted-envelope fields, adversarial forgery/key-mismatch/replay/substitution tests, verify-before-decrypt authentication, optional signed transport metadata, and worker-side signing after AEAD protection.
+Bound completed research reports and canonical judge evidence into durable SHA-256 receipts and reject tampered/legacy-unbound provenance. Qualified remote-result AEAD against mutation/substitution. Added RSA-PSS/SHA-256 worker-origin signatures over authoritative encrypted-envelope fields, adversarial forgery/key-mismatch/replay/substitution tests, verify-before-decrypt authentication, optional signed transport metadata, worker-side signing after AEAD protection, and a dedicated worker-only signing-secret trust boundary.
 
-## Latest run — dedicated worker result-signing secret trust
+## Latest run — deployed worker signing is fail-closed
 Files changed:
-- `src/Nvidea.Core/Jobs/WorkerResultSigningPrivateKeyTrust.cs`
-- `tests/Nvidea.Core.Tests/WorkerResultSigningPrivateKeyTrustTests.cs`
+- `src/Nvidea.Worker/Program.cs`
 - `progress.md`
 
 Completed:
-- Re-read `progress.md`, recent commits, worker result protocol/signature code, actual `RemoteResearchResultIngestor`, worker runtime configuration, and worker process composition before changing code.
-- Added a dedicated worker-only secret boundary for `NVIDEA_WORKER_RESULT_SIGNING_PRIVATE_KEY_PEM`; it requires an RSA private identity of at least 2048 bits and canonicalizes it before use.
-- Kept the result-signing secret role explicitly separate from `NVIDEA_WORKER_PRIVATE_KEY_PEM`, preventing accidental reuse of the work-item decryption identity.
-- Added provider-free regressions proving the loader reads only the dedicated signing secret and rejects missing, public-only, and undersized RSA identities.
+- Re-read `progress.md`, recent commits, worker process composition, signing-secret trust code, and the worker-side signing implementation before changing code.
+- Wired `WorkerResultSigningPrivateKeyTrust.LoadRequired()` into the real `Nvidea.Worker` process before provider clients or remote work execution are constructed.
+- Passed the validated, canonicalized signing private key into `NebiusResearchWorker` as its distinct result-signing identity.
+- Deployed worker composition now fails closed when `NVIDEA_WORKER_RESULT_SIGNING_PRIVATE_KEY_PEM` is absent or invalid instead of silently publishing unsigned remote research results.
+- Preserved key-role separation: `runtime.WorkerPrivateKeyPem` remains the work-item decryption identity; the new signing key is loaded independently and used only for result authentication.
 - Repository identity was explicitly reverified as exactly `UnknownGod2011/NVIDEA` before every mutation.
 
 Validation/evidence:
-- Static inspection confirms the new trust boundary has no provider/network dependency and returns only validated private-key material.
-- Tests exercise secret-name isolation and key-role validity without real credentials.
-- Existing worker signing occurs after AEAD protection; existing signature tests cover pinned identity, forgery, cross-job replay, ciphertext substitution, JSON transport, and verify-before-decrypt ordering.
+- Static inspection confirms `NebiusResearchWorker` accepts the signing key as its appended sixth constructor parameter and signs the already-AEAD-protected envelope before `_results.PutAsync`.
+- The signing secret loader already has provider-free regressions for dedicated-secret isolation, missing secret, public-only material, and undersized RSA identities.
+- The process loads the required signing identity before creating provider HTTP clients, so secret/configuration failure occurs before any Nebius/Tavily request or paid work.
 - No live provider, browser, workflow, API key, or paid service was invoked.
 - Executable PASS is not claimed because this connector environment cannot run the .NET 8/Windows suite.
 
 ## Security / privacy / failure review
-- Result signing now has a concrete dedicated secret contract instead of relying on an arbitrary optional PEM supplied by callers.
-- The signing private key is worker-only; no design requires placing it in client configuration or result metadata.
-- The new loader is not yet wired into `Nvidea.Worker/Program.cs`, so deployed workers still do not automatically require this secret.
-- Production client ingestion still calls legacy `ResearchResultProtector.Unprotect` and therefore does NOT yet enforce worker origin. Do not claim end-to-end worker authentication yet.
+- A production worker process can no longer accidentally downgrade to unsigned result publication because signing-secret provisioning was omitted.
+- Result signing and work-item decryption remain distinct cryptographic roles, enabling independent rotation/revocation and limiting key-purpose confusion.
+- Signing happens over the protected result, so the signature authenticates encrypted payload/provenance without exposing research content.
+- Production client ingestion still calls legacy `ResearchResultProtector.Unprotect` and therefore does NOT yet enforce worker origin. End-to-end worker authentication must not be claimed yet.
 - Existing AEAD confidentiality/integrity, dispatch provenance, bound research receipts, prompt-injection gates, consequential-action approval, cancellation and emergency-stop boundaries remain unchanged.
 
 ## Known blockers / risks
 - Core/WPF code and accumulated suite still require executable .NET 8 + Windows validation.
 - Live Nebius/Tavily/Serverless/authenticated-browser validation remains pending.
-- Worker process composition must call `WorkerResultSigningPrivateKeyTrust.LoadRequired()` and pass the result to `NebiusResearchWorker`; until then authenticated result production is not deployment-enforced.
+- Deployment manifests/secret provisioning must actually supply `NVIDEA_WORKER_RESULT_SIGNING_PRIVATE_KEY_PEM`; otherwise the worker now correctly refuses to start remote work.
 - Client configuration still needs a separately pinned worker result-verification public key; ingestion still uses the legacy decrypt path.
 - Existing completed checkpoints created before bound receipts cannot claim judge-verified research provenance; rerunning research is required.
 
 ## Single Best Next Task
-Wire `WorkerResultSigningPrivateKeyTrust.LoadRequired()` into `Nvidea.Worker/Program.cs` and pass it to `NebiusResearchWorker`, making deployed worker result signing fail closed. Then add trusted client configuration for only the worker verification public key and migrate `RemoteResearchResultIngestor` to `AuthenticatedResearchResultProtector.Unprotect` before decryption/parsing, with actual-ingestor regressions for missing/forged signatures, wrong pinned key, cross-job replay, and ciphertext/report-receipt substitution. Retain unsigned ingestion only behind an explicit migration mode, never as authenticated authority.
+Add a trusted client-side worker result-verification public-key boundary (public key only, never the worker signing private key), then migrate `RemoteResearchResultIngestor` to fail closed on missing/forged signatures and call `AuthenticatedResearchResultProtector.Unprotect` before any decryption/parsing. Qualify the actual ingestor boundary for missing/forged signatures, wrong pinned key, cross-job replay, and ciphertext/report-receipt substitution. Keep any legacy unsigned ingestion behind an explicit migration mode and never allow it to produce authenticated/judge authority.

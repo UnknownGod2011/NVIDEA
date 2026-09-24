@@ -6,7 +6,8 @@ using Nvidea.Core.Capabilities;
 namespace Nvidea.Core.Jobs;
 
 public sealed record RemoteResearchStageResult(Guid LocalJobId,string InputCheckpointStep,string OpaqueWorkItemId,string RemoteJobId,JobStepResult StepResult,DateTimeOffset CompletedAt,DateTimeOffset ExpiresAt);
-public sealed record ProtectedResearchResultEnvelope(string ProtocolVersion,string OpaqueWorkItemId,string RemoteJobId,string WrappedDataKey,string Nonce,string Ciphertext,string AuthenticationTag,DateTimeOffset CompletedAt,DateTimeOffset ExpiresAt);
+/// <summary>Encrypted remote result. WorkerSignature is transport metadata over the canonical encrypted envelope; null is retained only for v1 migration compatibility and must never be accepted by an authenticated ingestor.</summary>
+public sealed record ProtectedResearchResultEnvelope(string ProtocolVersion,string OpaqueWorkItemId,string RemoteJobId,string WrappedDataKey,string Nonce,string Ciphertext,string AuthenticationTag,DateTimeOffset CompletedAt,DateTimeOffset ExpiresAt,string? WorkerSignature=null);
 public interface IProtectedResearchResultTransport { Task PutAsync(ProtectedResearchResultEnvelope envelope,CancellationToken cancellationToken=default); Task<ProtectedResearchResultEnvelope?> GetAsync(string opaqueWorkItemId,CancellationToken cancellationToken=default); Task DeleteAsync(string opaqueWorkItemId,CancellationToken cancellationToken=default); }
 
 public static class ResearchResultProtector

@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text.Json;
 using Nvidea.Core.Jobs;
 
 namespace Nvidea.Core.Tests;
@@ -33,6 +34,18 @@ public sealed class RemoteResearchWorkerSignatureTests
     {
         using var worker = RSA.Create(2048); var envelope = Envelope("job-a"); var signature = RemoteResearchWorkerSignature.Sign(envelope, worker.ExportPkcs8PrivateKeyPem());
         Assert.Throws<CryptographicException>(() => RemoteResearchWorkerSignature.Verify(envelope with { Ciphertext = Convert.ToBase64String(new byte[] { 9, 9, 9 }) }, signature, worker.ExportSubjectPublicKeyInfoPem()));
+    }
+
+    [Fact]
+    public void SignedEnvelope_RoundTripsWorkerSignatureWithoutSelfReferentialCommitment()
+    {
+        using var worker = RSA.Create(2048); var unsigned = Envelope("job-a");
+        var signature = RemoteResearchWorkerSignature.Sign(unsigned, worker.ExportPkcs8PrivateKeyPem());
+        var signed = unsigned with { WorkerSignature = signature };
+        var json = JsonSerializer.Serialize(signed, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var roundTrip = JsonSerializer.Deserialize<ProtectedResearchResultEnvelope>(json, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.NotNull(roundTrip); Assert.Equal(signature, roundTrip!.WorkerSignature);
+        RemoteResearchWorkerSignature.Verify(roundTrip, roundTrip.WorkerSignature!, worker.ExportSubjectPublicKeyInfoPem());
     }
 
     [Fact]

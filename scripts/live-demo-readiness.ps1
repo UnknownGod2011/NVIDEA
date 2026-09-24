@@ -31,6 +31,42 @@ function Test-ConfiguredFile([string]$Name) {
     catch { $script:failures.Add("Configured file for $Name does not exist or is inaccessible.") }
 }
 
+function Test-WorkerResultSigningReadiness {
+    # The recording machine must possess only the worker's public verification pin.
+    # The worker private key is deliberately represented here only by opaque MysteryBox
+    # secret/version references. Never resolve or print those references' secret values.
+    Test-ConfigPresence 'NVIDEA_LIVE_SECRET_WORKER_RESULT_SIGNING_PRIVATE_KEY_ID'
+    Test-ConfigPresence 'NVIDEA_LIVE_SECRET_WORKER_RESULT_SIGNING_PRIVATE_KEY_VERSION_ID'
+
+    $pem = [Environment]::GetEnvironmentVariable('NVIDEA_WORKER_RESULT_VERIFICATION_PUBLIC_KEY_PEM')
+    if ([string]::IsNullOrWhiteSpace($pem)) {
+        $script:failures.Add('Missing required worker result-verification public pin: NVIDEA_WORKER_RESULT_VERIFICATION_PUBLIC_KEY_PEM')
+        return
+    }
+    if ($pem -match '-----BEGIN (?:RSA )?PRIVATE KEY-----') {
+        $script:failures.Add('Worker result-verification configuration contains private-key material. Recording is blocked; distribute public-only SubjectPublicKeyInfo.')
+        return
+    }
+
+    $rsa = $null
+    try {
+        $rsa = [Security.Cryptography.RSA]::Create()
+        $rsa.ImportFromPem($pem)
+        if ($rsa.KeySize -lt 2048) {
+            $script:failures.Add("Worker result-verification public key is only $($rsa.KeySize) bits; RSA >= 2048 is required.")
+            return
+        }
+        $spki = $rsa.ExportSubjectPublicKeyInfo()
+        $digest = [Security.Cryptography.SHA256]::HashData($spki)
+        $fingerprint = [Convert]::ToHexString($digest).ToLowerInvariant()
+        Write-Host "Worker result-signing readiness: MysteryBox secret/version reference present; public pin SHA-256=$fingerprint"
+    } catch {
+        $script:failures.Add('Worker result-verification public pin is not a valid RSA public identity.')
+    } finally {
+        if ($null -ne $rsa) { $rsa.Dispose() }
+    }
+}
+
 function Test-RepositoryPath([string]$RelativePath, [string]$Description, [switch]$Leaf) {
     if ([string]::IsNullOrWhiteSpace($RelativePath) -or [IO.Path]::IsPathRooted($RelativePath)) { $script:failures.Add("$Description must be a non-empty repository-relative path."); return $false }
     try { $candidate = [IO.Path]::GetFullPath((Join-Path $repoRoot $RelativePath)) } catch { $script:failures.Add("$Description is not a valid repository-relative path."); return $false }
@@ -86,6 +122,7 @@ if ($RequireCloudResearch) {
     @('NVIDEA_LIVE_OBJECT_STORAGE_ENDPOINT','NVIDEA_LIVE_OBJECT_STORAGE_REGION','NVIDEA_LIVE_SERVERLESS_PROJECT_ID','NVIDEA_LIVE_WORKER_IMAGE','NVIDEA_LIVE_SUBNET_ID','NVIDEA_LIVE_PLATFORM','NVIDEA_LIVE_PRESET','NVIDEA_LIVE_TIMEOUT','NVIDEA_LIVE_DISK_TYPE','NVIDEA_LIVE_DISK_SIZE_BYTES','NVIDEA_LIVE_TRANSPORT_SOURCE','NVIDEA_LIVE_OBJECT_STORAGE_BUCKET','NVIDEA_LIVE_SECRET_NEBIUS_API_KEY_ID','NVIDEA_LIVE_SECRET_NEBIUS_API_KEY_VERSION_ID','NVIDEA_LIVE_SECRET_TAVILY_API_KEY_ID','NVIDEA_LIVE_SECRET_TAVILY_API_KEY_VERSION_ID','NVIDEA_LIVE_SECRET_WORKER_PRIVATE_KEY_ID','NVIDEA_LIVE_SECRET_WORKER_PRIVATE_KEY_VERSION_ID') | ForEach-Object { Test-ConfigPresence $_ }
     @('NVIDEA_LIVE_WORKER_PUBLIC_KEY_PEM_FILE','NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE','NVIDEA_LIVE_CLIENT_RESULT_PRIVATE_KEY_PEM_FILE') | ForEach-Object { Test-ConfiguredFile $_ }
     @('NVIDEA_LIVE_SERVERLESS_ACCESS_TOKEN','NVIDEA_LIVE_OBJECT_STORAGE_ACCESS_KEY_ID','NVIDEA_LIVE_OBJECT_STORAGE_SECRET_ACCESS_KEY') | ForEach-Object { Test-SecretPresence $_ }
+    Test-WorkerResultSigningReadiness
 }
 if ($ValidateBuild -and $dotnetAvailable -and (Test-Path -LiteralPath $solution -PathType Leaf)) { Write-Host 'Validating existing restored solution with dotnet build --no-restore...'; & dotnet build $solution --no-restore --nologo --verbosity minimal; if ($LASTEXITCODE -ne 0) { $failures.Add('dotnet build --no-restore failed. Restore dependencies explicitly before recording, then rerun readiness.') } }
 Test-BrowserReleaseQualification

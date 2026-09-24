@@ -17,42 +17,42 @@ Implemented Windows shell, Nebius/Nemotron inference, layered memory, Tavily res
 Serialized browser evidence transitions, bound demo validation to production session evidence, added a fail-closed recording gate, integrated `CompositionLifetimeGate`, and moved browser facades behind root-lifetime authority. Added exactly-one-lease browser goal semantics and qualified shutdown behavior. Added deterministic research citation verification, Verified/Partial/Unverified/NoSources authority, payload-safe `ResearchJudgeEvidence`, evaluator/Windows presentation, and provider-free durable evidence reads.
 
 ### 2026-09-24 — durable provenance and remote-result authentication migration
-Bound completed research reports and canonical judge evidence into durable SHA-256 receipts and reject tampered/legacy-unbound provenance. Qualified remote-result AEAD against mutation/substitution. Added RSA-PSS/SHA-256 worker-origin signatures over authoritative encrypted-envelope fields, adversarial forgery/key-mismatch/replay/substitution tests, verify-before-decrypt authentication, optional signed transport metadata, worker-side signing after AEAD protection, a dedicated worker-only signing-secret trust boundary, fail-closed deployed worker signing composition, and a public-only pinned client worker-verification trust boundary.
+Bound completed research reports and canonical judge evidence into durable SHA-256 receipts and reject tampered/legacy-unbound provenance. Qualified remote-result AEAD against mutation/substitution. Added RSA-PSS/SHA-256 worker-origin signatures over authoritative encrypted-envelope fields, adversarial forgery/key-mismatch/replay/substitution tests, verify-before-decrypt authentication, optional signed transport metadata, worker-side signing after AEAD protection, a dedicated worker-only signing-secret trust boundary, fail-closed deployed worker signing composition, a public-only pinned client worker-verification trust boundary, and authenticated encrypted-result transport.
 
-## Latest run — authenticated encrypted-result transport boundary
+## Latest run — production desktop result-authentication composition
 Files changed:
-- `src/Nvidea.Core/Jobs/AuthenticatedResearchResultTransport.cs`
-- `tests/Nvidea.Core.Tests/AuthenticatedResearchResultTransportTests.cs`
+- `src/Nvidea.Core/Desktop/NvideaCompositionRoot.cs`
 - `progress.md`
 
 Completed:
-- Re-read `progress.md`, recent commits, the actual `RemoteResearchResultIngestor`, worker-signature primitive, client verification-key trust boundary, and current ingestor tests before changing code.
-- Added `AuthenticatedResearchResultTransport`, a client-side decorator around `IProtectedResearchResultTransport` that verifies the pinned worker RSA-PSS signature while the remote result is still encrypted and before the envelope is returned to ingestion.
-- The decorator canonicalizes the configured verification identity through `WorkerResultVerificationPublicKeyTrust`, never trusts a key from the remote envelope, fails closed on a missing signature, and rejects a transport response whose opaque work-item id differs from the requested id.
-- This creates a composition seam that can protect the existing `RemoteResearchResultIngestor` before its legacy decrypt call: unauthenticated bytes can be rejected at transport retrieval without first giving them access to client-key unwrap or result JSON parsing.
-- Added provider-free adversarial regressions for a valid pinned worker, missing signatures, wrong pinned worker identity, post-signature ciphertext/report-payload mutation, and transport-level work-item substitution.
+- Re-read `progress.md`, recent commits, the live desktop composition root, live-runtime factory, live configuration, worker signing/verification trust boundaries, and authenticated result transport before changing code.
+- Wired `WorkerResultVerificationPublicKeyTrust.LoadRequired()` into the production cloud-research branch of `NvideaCompositionRoot.CreateFromEnvironmentAsync`.
+- Wrapped the concrete S3/Object Storage result transport with `AuthenticatedResearchResultTransport` before passing it to `NebiusResearchLiveRuntimeFactory`; the work-item and dispatch-binding roles retain the underlying transport, so only remote-result reads acquire worker-origin authentication.
+- Production cloud-research startup now fails closed if the pinned worker result-verification key is absent or invalid instead of silently composing legacy unsigned ingestion.
+- Fixed the live composition call to pass the already-supported distinct `ClientResultPrivateKeyPem` into `NebiusResearchLiveRuntimeFactory`, preserving dispatch-signing/result-decryption key separation at the actual desktop root.
 - Repository identity was explicitly reverified as exactly `UnknownGod2011/NVIDEA` before every mutation.
 
 Validation/evidence:
-- Static inspection confirms `RemoteResearchWorkerSignature.Verify` authenticates the encrypted envelope commitment with RSA-PSS/SHA-256 and the new transport invokes it before returning any envelope to its consumer.
-- Static inspection confirms `RemoteResearchResultIngestor` obtains the envelope through its injected `IProtectedResearchResultTransport` before invoking `ResearchResultProtector.Unprotect`; wrapping that injected transport therefore establishes a verify-before-decrypt composition boundary without changing cryptographic payload semantics.
-- The new tests are provider-free and exercise local RSA/transport behavior only; no live provider, browser, workflow, API key, or paid service was invoked.
+- Static inspection confirms `AuthenticatedResearchResultTransport.GetAsync` verifies the worker RSA-PSS signature on the encrypted envelope and rejects work-item substitution before returning bytes to `RemoteResearchResultIngestor`.
+- Static inspection confirms the production composition now injects that authenticated decorator as the live runtime's result transport while leaving provider storage semantics unchanged.
+- Static inspection also found and corrected a stale production factory invocation that omitted `ClientResultPrivateKeyPem`; the factory requires distinct dispatch-signing and result-decryption identities.
+- No live provider, browser, workflow, API key, or paid service was invoked.
 - Executable PASS is not claimed because this connector environment cannot run the .NET 8/Windows suite.
 
 ## Security / privacy / failure review
-- Worker signing private authority and client verification authority remain explicitly separated.
-- Client composition retains only canonical public verification material, reducing blast radius if desktop configuration/state is disclosed.
-- Worker signatures cover the encrypted result and authoritative remote provenance; ciphertext mutation and wrong-worker substitution are rejected before the result reaches decryption when the authenticated transport is composed.
-- The decorator deliberately delegates `PutAsync`/`DeleteAsync`; it is an authentication boundary for remote reads, not a second storage implementation or signing authority.
-- Production client composition has not yet been statically proven to wrap its concrete result transport with `AuthenticatedResearchResultTransport`; end-to-end worker-origin enforcement must therefore still not be claimed.
+- Worker signing private authority and client verification authority remain explicitly separated; the desktop retains only canonical public verification material.
+- Remote result authentication now occurs in production composition while ciphertext is still encrypted, before client private-key unwrap and result JSON parsing.
+- Missing/invalid worker verification configuration fails cloud-research startup closed rather than allowing an unsigned fallback.
 - Existing AEAD confidentiality/integrity, dispatch provenance, bound research receipts, prompt-injection gates, consequential-action approval, cancellation and emergency-stop boundaries remain unchanged.
+- There is still no migration-only unsigned path in production composition; this is intentional so authenticated/judge authority cannot be produced from legacy unsigned remote results.
 
 ## Known blockers / risks
 - Core/WPF code and accumulated suite still require executable .NET 8 + Windows validation.
 - Live Nebius/Tavily/Serverless/authenticated-browser validation remains pending.
 - Deployment manifests/secret provisioning must supply the worker signing private key and matching client verification public key through their distinct configuration boundaries.
-- The actual desktop/client composition still needs to load `NVIDEA_WORKER_RESULT_VERIFICATION_PUBLIC_KEY_PEM` and wrap the concrete remote result transport with `AuthenticatedResearchResultTransport`; until then existing composition may still reach the legacy decrypt path without worker-origin authentication.
+- The live deployment configuration currently needs an explicit audit to ensure the new worker result-signing secret reference is actually injected into Serverless jobs; worker process composition fails closed if it is absent, so omission would cause availability failure rather than an authentication downgrade.
+- Production composition boundary still needs provider-free qualification proving missing/forged signatures, wrong pinned keys, cross-job replay and ciphertext/report-receipt substitution fail through the actual runtime/ingestor path, not only through the transport primitive tests.
 - Existing completed checkpoints created before bound receipts cannot claim judge-verified research provenance; rerunning research is required.
 
 ## Single Best Next Task
-Wire `WorkerResultVerificationPublicKeyTrust.LoadRequired()` and `AuthenticatedResearchResultTransport` into the actual desktop/remote-research composition root so production `RemoteResearchResultIngestor` can only receive worker-authenticated encrypted envelopes. Then qualify the real ingestor/composition boundary for missing/forged signatures, wrong pinned keys, cross-job replay, ciphertext/report-receipt substitution, and startup failure when the verification pin is absent. Keep any legacy unsigned ingestion behind an explicit migration-only mode and never allow it to produce authenticated/judge authority.
+Audit and complete deployment provisioning for `NVIDEA_WORKER_RESULT_SIGNING_PRIVATE_KEY_PEM`: add its dedicated Nebius MysteryBox secret reference to the validated live deployment topology/preflight without ever exposing it to the client. Then add production-composition/ingestor regressions proving the desktop path rejects missing/forged signatures, wrong worker keys, cross-job replay and ciphertext/report-receipt substitution before decryption, and fails startup when the verification pin is absent.

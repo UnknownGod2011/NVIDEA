@@ -35,6 +35,25 @@ public sealed class RemoteResearchWorkerSignatureTests
         Assert.Throws<CryptographicException>(() => RemoteResearchWorkerSignature.Verify(envelope with { Ciphertext = Convert.ToBase64String(new byte[] { 9, 9, 9 }) }, signature, worker.ExportSubjectPublicKeyInfoPem()));
     }
 
+    [Fact]
+    public void AuthenticatedBoundary_RejectsForgedWorkerBeforeClientKeyDecryption()
+    {
+        using var worker = RSA.Create(2048); using var wrongClient = RSA.Create(2048); var envelope = Envelope("job-a");
+        var signature = Convert.FromBase64String(RemoteResearchWorkerSignature.Sign(envelope, worker.ExportPkcs8PrivateKeyPem())); signature[0] ^= 1;
+        var ex = Assert.Throws<CryptographicException>(() => AuthenticatedResearchResultProtector.Unprotect(envelope, Convert.ToBase64String(signature), worker.ExportSubjectPublicKeyInfoPem(), wrongClient.ExportPkcs8PrivateKeyPem()));
+        Assert.Contains("worker signature", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void AuthenticatedBoundary_RejectsWrongPinnedWorkerBeforeMalformedCiphertextIsParsed()
+    {
+        using var worker = RSA.Create(2048); using var other = RSA.Create(2048); using var client = RSA.Create(2048); var envelope = Envelope("job-a");
+        var signature = RemoteResearchWorkerSignature.Sign(envelope, worker.ExportPkcs8PrivateKeyPem());
+        var malformed = envelope with { Ciphertext = "not-base64" };
+        var ex = Assert.Throws<CryptographicException>(() => AuthenticatedResearchResultProtector.Unprotect(malformed, signature, other.ExportSubjectPublicKeyInfoPem(), client.ExportPkcs8PrivateKeyPem()));
+        Assert.Contains("worker signature", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static ProtectedResearchResultEnvelope Envelope(string remoteJobId)
     {
         var now = DateTimeOffset.Parse("2026-09-24T00:00:00Z");

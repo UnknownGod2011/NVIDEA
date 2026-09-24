@@ -25,6 +25,7 @@ public static class NebiusResearchLiveRuntimeFactory
     {
         ArgumentNullException.ThrowIfNull(options);
         NebiusResearchDeploymentPreflight.Validate(options);
+        NebiusResearchDeploymentPreflight.ValidateWorkerResultSigningSecretProvisioning(options);
 
         var signingPublicKey = NebiusResearchLiveDryRunPreflight
             .ValidateAndDeriveClientPublicKey(clientPrivateKeyPem);

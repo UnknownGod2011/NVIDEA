@@ -45,3 +45,24 @@ public static class RemoteResearchWorkerSignature
         catch { rsa.Dispose(); throw; }
     }
 }
+
+/// <summary>
+/// Narrow authenticated result boundary for the v2 migration. Worker identity is verified over the
+/// still-encrypted envelope before client-key decryption is attempted, so unauthenticated remote data
+/// never reaches JSON parsing or result provenance validation. The pinned worker key is supplied by
+/// trusted client configuration and is never selected from the remote result.
+/// </summary>
+public static class AuthenticatedResearchResultProtector
+{
+    public static RemoteResearchStageResult Unprotect(
+        ProtectedResearchResultEnvelope envelope,
+        string workerSignatureBase64,
+        string pinnedWorkerPublicKeyPem,
+        string clientPrivateKeyPem,
+        DateTimeOffset? now = null)
+    {
+        ArgumentNullException.ThrowIfNull(envelope);
+        RemoteResearchWorkerSignature.Verify(envelope, workerSignatureBase64, pinnedWorkerPublicKeyPem);
+        return ResearchResultProtector.Unprotect(envelope, clientPrivateKeyPem, now);
+    }
+}

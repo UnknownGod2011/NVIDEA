@@ -21,6 +21,22 @@ public static class WorkerResultVerificationPublicKeyTrust
         return ValidateAndCanonicalize(pem);
     }
 
+    /// <summary>
+    /// Returns the non-secret SHA-256 fingerprint of the canonical SubjectPublicKeyInfo bytes.
+    /// This is the only worker-signing identity material suitable for judge/readiness evidence.
+    /// </summary>
+    public static string GetSha256Fingerprint(string pem)
+    {
+        var canonicalPem = ValidateAndCanonicalize(pem);
+        using var rsa = RSA.Create();
+        rsa.ImportFromPem(canonicalPem);
+        var subjectPublicKeyInfo = rsa.ExportSubjectPublicKeyInfo();
+        return Convert.ToHexString(SHA256.HashData(subjectPublicKeyInfo));
+    }
+
+    public static string LoadRequiredSha256Fingerprint(Func<string, string?>? environmentReader = null) =>
+        GetSha256Fingerprint(LoadRequired(environmentReader));
+
     public static string ValidateAndCanonicalize(string pem)
     {
         if (string.IsNullOrWhiteSpace(pem))

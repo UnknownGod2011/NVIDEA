@@ -17,43 +17,40 @@ Implemented Windows shell, Nebius/Nemotron inference, layered memory, Tavily res
 Serialized browser evidence transitions, bound demo validation to production session evidence, added a fail-closed recording gate, integrated `CompositionLifetimeGate`, and moved browser facades behind root-lifetime authority. Added exactly-one-lease browser goal semantics and qualified shutdown behavior. Added deterministic research citation verification, Verified/Partial/Unverified/NoSources authority, payload-safe `ResearchJudgeEvidence`, evaluator/Windows presentation, and provider-free durable evidence reads.
 
 ### 2026-09-24 — durable provenance and remote-result authentication migration
-Bound completed research reports and canonical judge evidence into durable SHA-256 receipts and reject tampered/legacy-unbound provenance. Qualified remote-result AEAD against mutation/substitution. Added RSA-PSS/SHA-256 worker-origin signatures over authoritative encrypted-envelope fields, adversarial forgery/key-mismatch/replay/substitution tests, verify-before-decrypt authentication, optional signed transport metadata, worker-side signing after AEAD protection, a dedicated worker-only signing-secret trust boundary, fail-closed deployed worker signing composition, a public-only pinned client worker-verification trust boundary, authenticated encrypted-result transport, and production desktop authenticated-result composition.
+Bound completed research reports and canonical judge evidence into durable SHA-256 receipts and reject tampered/legacy-unbound provenance. Qualified remote-result AEAD against mutation/substitution. Added RSA-PSS/SHA-256 worker-origin signatures over authoritative encrypted-envelope fields, adversarial forgery/key-mismatch/replay/substitution tests, verify-before-decrypt authentication, optional signed transport metadata, worker-side signing after AEAD protection, a dedicated worker-only signing-secret trust boundary, fail-closed deployed worker signing composition, a public-only pinned client worker-verification trust boundary, authenticated encrypted-result transport, production desktop authenticated-result composition, and MysteryBox-only live signing-key deployment preflight.
 
-## Latest run — live worker result-signing deployment provisioning
+## Latest run — authenticated production ingestion boundary qualification
 Files changed:
-- `src/Nvidea.Core/Jobs/NebiusResearchDeploymentPreflight.cs`
-- `src/Nvidea.Core/Jobs/NebiusResearchLiveRuntimeFactory.cs`
-- `tests/Nvidea.Core.Tests/WorkerResultSigningDeploymentPreflightTests.cs`
+- `tests/Nvidea.Core.Tests/AuthenticatedRemoteResearchIngestionBoundaryTests.cs`
 - `progress.md`
 
 Completed:
-- Re-read `progress.md`, recent commits, deployment preflight, live runtime factory, worker deployment documentation and existing deployment tests before changing code.
-- Added the canonical deployment variable `NVIDEA_WORKER_RESULT_SIGNING_PRIVATE_KEY_PEM` to `NebiusResearchDeploymentPreflight`.
-- Added a dedicated live-only provisioning gate that rejects plaintext result-signing private authority, requires a Nebius MysteryBox secret reference, and validates secret/version resource IDs without resolving secret contents.
-- Wired that gate into `NebiusResearchLiveRuntimeFactory.Create`, so the production remote runtime cannot be constructed if the deployed worker would lack its result-signing identity.
-- Kept the new gate separate from fixture-oriented generic topology validation so existing lower-level contract fixtures are not silently redefined as production deployment fixtures.
-- Added provider-free regressions for missing signing secret, plaintext leakage, and explicitly version-pinned MysteryBox provisioning.
+- Re-read `progress.md`, recent commits, the actual `RemoteResearchResultIngestor`, authenticated result transport, existing transport tests, and ingestor tests before changing code.
+- Added provider-free tests through the real `RemoteResearchResultIngestor` seam rather than stopping at the transport primitive.
+- Qualified that an unsigned encrypted remote result is rejected by worker-origin authentication while the durable job remains Running/NebiusServerless/Dispatched and no result-applied audit authority is emitted.
+- Qualified a cross-job/remote-job replay by signing the original envelope and then substituting its remote job id. The test deliberately supplies a wrong client result-decryption private key; rejection must therefore occur at worker-signature verification before the decryption key can become relevant.
+- Both regressions assert durable state remains unapplied after authentication failure.
 - Repository identity was explicitly reverified as exactly `UnknownGod2011/NVIDEA` before every mutation.
 
 Validation/evidence:
-- Static inspection confirms the live factory now runs both generic deployment preflight and the dedicated worker-result-signing provisioning gate before constructing any remote runtime.
-- Static inspection confirms the gate validates references only and never loads/logs the worker private key.
-- Existing worker bootstrap already fails closed when the actual signing private key value is absent/invalid; this run closes the earlier deployment-reference omission before Serverless submission.
+- Static inspection confirms `RemoteResearchResultIngestor` obtains the envelope from its injected result transport before calling `ResearchResultProtector.Unprotect`; production desktop composition injects `AuthenticatedResearchResultTransport`.
+- The new replay test uses an intentionally incorrect result-decryption key as an ordering sentinel, strengthening evidence that signature failure occurs before decrypt/parser authority.
+- Existing transport/signature suites already cover wrong pinned worker keys and ciphertext mutation; this run moves missing-signature and replay qualification to the actual ingestion boundary.
 - No live provider, browser, workflow, API key, paid service, or other repository was touched.
 - Executable PASS is not claimed because this connector environment cannot run the .NET 8/Windows suite.
 
 ## Security / privacy / failure review
-- Worker result-signing private authority is MysteryBox-backed and remains worker-only; client composition retains only the matching public verification identity.
-- Plaintext deployment of the result-signing private key is rejected before live runtime construction.
-- Remote result authentication remains verify-before-decrypt in desktop production composition; existing AEAD confidentiality, dispatch provenance, bound research receipts, prompt-injection gates, consequential-action approval, cancellation and emergency-stop boundaries remain unchanged.
-- Version-pinned MysteryBox references are supported for deterministic demo deployment/rotation.
+- Failed worker authentication leaves the durable research stage in its exact Dispatched state and cannot emit a result-applied audit event.
+- The worker verification identity remains public-only client-side; the signing private key remains worker-only and MysteryBox-backed in live deployment.
+- Verify-before-decrypt remains the production ordering: unauthenticated result bytes are rejected before client private-key unwrap/result JSON parsing.
+- Existing AEAD confidentiality, dispatch provenance, bound research receipts, prompt-injection gates, consequential-action approval, cancellation and emergency-stop boundaries remain unchanged.
 
 ## Known blockers / risks
 - Core/WPF code and accumulated suite still require executable .NET 8 + Windows validation.
 - Live Nebius/Tavily/Serverless/authenticated-browser validation remains pending.
 - The actual Nebius account still needs a real MysteryBox secret/version containing the worker result-signing private PEM plus a matching client public verification pin; no secret was created or read in this run.
-- Production composition boundary still needs provider-free qualification proving missing/forged signatures, wrong pinned keys, cross-job replay and ciphertext/report-receipt substitution fail through the actual runtime/ingestor path, not only through transport primitives.
+- Actual-ingestor qualification still needs wrong-pinned-worker and ciphertext/report-receipt substitution cases; those attacks are currently covered at lower transport/signature boundaries.
 - Existing completed checkpoints created before bound receipts cannot claim judge-verified research provenance; rerunning research is required.
 
 ## Single Best Next Task
-Add production-composition/ingestor regressions that exercise a signed remote result end-to-end through the real desktop/runtime seam and prove missing/forged signatures, wrong worker keys, cross-job replay and ciphertext/report-receipt substitution are rejected before result decryption. Then update the deployment/runbook docs to show generation, MysteryBox provisioning, rotation and public-pin distribution for the fourth RSA identity without ever copying private authority to the client.
+Complete the production-ingestor adversarial matrix for wrong pinned worker identity and ciphertext/report-receipt substitution, then update the deployment/runbook docs with safe generation, MysteryBox provisioning, rotation and public-pin distribution for the worker result-signing RSA identity without ever copying private authority to the client.

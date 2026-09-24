@@ -17,42 +17,39 @@ Implemented Windows shell, Nebius/Nemotron inference, layered memory, Tavily res
 Serialized browser evidence transitions, bound demo validation to production session evidence, added a fail-closed recording gate, integrated `CompositionLifetimeGate`, and moved browser facades behind root-lifetime authority. Added exactly-one-lease browser goal semantics and qualified shutdown behavior. Added deterministic research citation verification, Verified/Partial/Unverified/NoSources authority, payload-safe `ResearchJudgeEvidence`, evaluator/Windows presentation, and provider-free durable evidence reads.
 
 ### 2026-09-24 — durable provenance and remote-result authentication migration
-Bound completed research reports and canonical judge evidence into durable SHA-256 receipts and reject tampered/legacy-unbound provenance. Qualified remote-result AEAD against mutation/substitution. Added RSA-PSS/SHA-256 worker-origin signatures over authoritative encrypted-envelope fields, adversarial forgery/key-mismatch/replay/substitution tests, verify-before-decrypt authentication, optional signed transport metadata, worker-side signing after AEAD protection, a dedicated worker-only signing-secret trust boundary, fail-closed deployed worker signing composition, a public-only pinned client worker-verification trust boundary, authenticated encrypted-result transport, production desktop authenticated-result composition, and MysteryBox-only live signing-key deployment preflight. Actual-ingestor adversarial coverage includes unsigned results, wrong pinned worker identity, signed remote-job replay, and post-signature ciphertext/report-payload substitution. Added an operator-grade worker result-signing lifecycle runbook covering RSA-3072 generation, public fingerprinting, version-pinned MysteryBox provisioning, coordinated single-pin rotation, rollback, compromise revocation, and release checks. Added recording-day worker-signing readiness: cloud demo recording fails closed without version-pinned MysteryBox signing configuration and a valid public-only RSA client pin, while exposing only the canonical public SHA-256 fingerprint.
+Bound completed research reports and canonical judge evidence into durable SHA-256 receipts and reject tampered/legacy-unbound provenance. Qualified remote-result AEAD against mutation/substitution. Added RSA-PSS/SHA-256 worker-origin signatures over authoritative encrypted-envelope fields, adversarial forgery/key-mismatch/replay/substitution tests, verify-before-decrypt authentication, optional signed transport metadata, worker-side signing after AEAD protection, a dedicated worker-only signing-secret trust boundary, fail-closed deployed worker signing composition, a public-only pinned client worker-verification trust boundary, authenticated encrypted-result transport, production desktop authenticated-result composition, and MysteryBox-only live signing-key deployment preflight. Actual-ingestor adversarial coverage includes unsigned results, wrong pinned worker identity, signed remote-job replay, and post-signature ciphertext/report-payload substitution. Added an operator-grade worker result-signing lifecycle runbook, recording-day signing readiness, and provider-free source-contract guards.
 
-## Latest run — worker-signing readiness regression guard
+## Latest run — canonical public worker identity projection
 Files changed:
-- `scripts/tests/live-demo-worker-signing-readiness.contract.ps1`
+- `src/Nvidea.Core/Jobs/WorkerResultVerificationPublicKeyTrust.cs`
+- `tests/Nvidea.Core.Tests/WorkerResultVerificationFingerprintTests.cs`
 - `progress.md`
 
 Completed:
-- Re-read `progress.md` completely, inspected the current live-demo readiness implementation, recent commits, and the repository's existing provider-free PowerShell contract-test conventions before changing anything.
-- Added a network/provider-free regression contract for the recording-day worker-origin trust boundary.
-- The contract locks in mandatory MysteryBox signing secret ID + immutable version-reference checks, explicit client public-pin loading, private-PEM rejection, RSA parsing, RSA >= 2048 enforcement, canonical SubjectPublicKeyInfo export, and SHA-256 public fingerprint derivation.
-- The contract verifies `Test-WorkerResultSigningReadiness` remains inside the `RequireCloudResearch` fail-closed recording path rather than becoming an optional/dead helper.
-- Added disclosure guards over readiness `Write-Host` output: source regressions that interpolate the PEM, signing secret ID, or signing secret version into operator output fail the contract; the only intended identity evidence is the derived public fingerprint.
-- Repository identity was explicitly reverified as exactly `UnknownGod2011/NVIDEA` before each mutation.
+- Re-read `progress.md` completely and inspected the current repository tree and worker verification trust boundary before implementation.
+- Added a single canonical .NET fingerprint primitive for the pinned worker result-verification identity: SHA-256 over canonical SubjectPublicKeyInfo bytes, rendered as 64 uppercase hexadecimal characters.
+- Added `LoadRequiredSha256Fingerprint` so Windows/judge composition can obtain only the non-secret identity projection from the existing fail-closed environment trust boundary.
+- Fingerprinting first canonicalizes through `ValidateAndCanonicalize`; even if a caller accidentally supplies private PEM, the projected value is derived from public SPKI only and cannot retain signing authority.
+- Added provider-free tests proving stable fingerprints across equivalent public/private representations, fingerprint changes across worker identities, fixed fingerprint shape, and absence of PEM/private/MysteryBox material in the projection.
+- Repository identity was explicitly reverified as exactly `UnknownGod2011/NVIDEA` before every mutation.
 
 Validation/evidence:
-- Static inspection confirms the new test follows the repository's existing network-free PowerShell contract-test style and does not invoke providers, dotnet, workflows, or paid services.
-- The contract targets the exact production readiness source and asserts the security-critical fragments and cloud-path invocation order directly.
-- No secret values are embedded in the test; it checks configuration variable names and output source only.
-- Executable PASS is not claimed because this connector environment cannot execute PowerShell 7/.NET 8/Windows. The test must be run on the Windows qualification machine before recording.
+- Static inspection confirms the implementation uses platform `RSA`, `ExportSubjectPublicKeyInfo`, `SHA256.HashData`, and `Convert.ToHexString` only; no provider/network/API dependency was introduced.
+- Tests are deterministic except for generating ephemeral RSA identities and contain no production key material or secret references.
+- Executable .NET/Windows PASS is not claimed in this connector environment; the new tests require execution on the qualification machine.
 
 ## Security / privacy / failure review
-- The recording machine is required to carry only the worker public verification identity; the worker signing private key remains represented by opaque MysteryBox deployment references.
-- Public fingerprint output is intentionally non-secret and useful for out-of-band release/deployment comparison; the PEM itself is not logged by the readiness script.
-- Missing secret/version references, missing public pin, private-key leakage into the public-pin variable, malformed RSA, and RSA < 2048 all block readiness; the new source contract guards these requirements against accidental removal.
+- The new projection contains only a one-way public-key fingerprint; PEM, private-key bytes, MysteryBox secret ID/version, credentials, research payloads, and user data are not accepted as output fields.
+- Existing RSA >= 2048 validation remains authoritative and runs before fingerprint derivation.
 - Existing AEAD confidentiality, verify-before-decrypt worker authentication, dispatch provenance, bound research receipts, prompt-injection gates, consequential-action approval, cancellation and emergency-stop boundaries remain unchanged.
 
 ## Known blockers / risks
 - Core/WPF code and accumulated suite still require executable .NET 8 + Windows validation.
 - Live Nebius/Tavily/Serverless/authenticated-browser validation remains pending.
-- The actual Nebius account still needs a real MysteryBox secret/version containing the worker result-signing private PEM plus a matching client public verification pin; no secret was created or read in this run.
-- The readiness gate can prove that a version-pinned signing-secret reference and a strong client public pin are configured, but without resolving the private secret it cannot cryptographically prove those two identities match. The required end-to-end canary remains the authoritative match proof.
-- Rotation currently requires a coordinated dispatch maintenance window because the verifier intentionally pins one worker identity; a multi-key grace ring is not implemented and must not be assumed.
-- Exact current Nebius MysteryBox UI/CLI provisioning syntax still needs live official-account verification; documentation deliberately avoids invented commands.
-- The new regression is static/provider-free by design; malformed/weak/private/valid RSA runtime behavior still needs executable PowerShell qualification on Windows.
-- Existing completed checkpoints created before bound receipts cannot claim judge-verified research provenance; rerunning research is required.
+- The actual Nebius account still needs a real MysteryBox secret/version containing the worker result-signing private PEM plus a matching client public verification pin.
+- The readiness gate still cannot cryptographically prove the opaque deployed private signer matches the client public pin without an end-to-end signed-result canary.
+- The new canonical .NET fingerprint is not yet rendered in the Windows Judge Evidence dialog or persisted in a dedicated public-only evidence model; this run intentionally established and tested the reusable trust primitive first.
+- Rotation remains single-pin and therefore requires coordinated dispatch maintenance; no multi-key grace ring is assumed.
 
 ## Single Best Next Task
-Wire the canonical worker result-signing public fingerprint into the Windows judge-readiness/evidence surface using a public-only projection shared with the recording gate, with tests proving PEM/private material and opaque MysteryBox references can never enter durable judge evidence. Then use that identity in an end-to-end signed-result canary so recording readiness can prove the deployed worker signer actually matches the pinned Windows verifier rather than merely proving both are configured.
+Add a dedicated public-only worker-authentication evidence record to the Windows Judge Evidence surface using `LoadRequiredSha256Fingerprint`, with serialization/privacy tests that reject or structurally exclude PEM and MysteryBox references. Then bind that fingerprint to an end-to-end signed-result canary so recording readiness can prove the deployed Nebius signer matches the pinned Windows verifier.

@@ -132,6 +132,63 @@ public sealed class AuthenticatedRemoteResearchIngestionBoundaryTests
         }
     }
 
+    [Fact]
+    public async Task IngestAsync_RejectsSignedEnvelopeWhenCiphertextIsSubstitutedBeforeDecryption()
+    {
+        using var client = RSA.Create(2048);
+        using var wrongClient = RSA.Create(2048);
+        using var worker = RSA.Create(2048);
+        var root = CreateTempDirectory();
+        try
+        {
+            var now = DateTimeOffset.UtcNow;
+            var job = CreateDispatchedJob(now);
+            var store = new JsonAgentJobStore(Path.Combine(root, "jobs.json"), new PassThroughProtector());
+            await store.SaveAsync(job);
+            var inner = new MemoryResultTransport();
+            var legitimate = Protect(job, client, now);
+            var signed = legitimate with
+            {
+                WorkerSignature = RemoteResearchWorkerSignature.Sign(
+                    legitimate,
+                    worker.ExportPkcs8PrivateKeyPem())
+            };
+
+            // A second encryption of the same authoritative result has different random key/nonce/ciphertext.
+            // Splicing that ciphertext into the signed envelope models replacement of the encrypted report/
+            // receipt payload after the worker has authenticated the original publication.
+            var substitute = Protect(job, client, now);
+            Assert.NotEqual(signed.Ciphertext, substitute.Ciphertext);
+            await inner.PutAsync(signed with { Ciphertext = substitute.Ciphertext });
+
+            var authenticated = new AuthenticatedResearchResultTransport(
+                inner,
+                worker.ExportSubjectPublicKeyInfoPem());
+            var audit = new MemoryAuditTrail();
+            // Wrong key is an ordering sentinel: signature authentication must reject the splice before
+            // result-key unwrap, AEAD decryption, JSON parsing, or durable report/receipt application.
+            var ingestor = new RemoteResearchResultIngestor(
+                store,
+                authenticated,
+                wrongClient.ExportPkcs8PrivateKeyPem(),
+                audit);
+
+            await Assert.ThrowsAsync<CryptographicException>(() => ingestor.IngestAsync(job.JobId, now.AddMinutes(2)));
+
+            var persisted = await store.GetAsync(job.JobId);
+            Assert.NotNull(persisted);
+            Assert.Equal(AgentJobState.Running, persisted!.State);
+            Assert.Equal(JobExecutionLocation.NebiusServerless, persisted.ExecutionLocation);
+            Assert.Equal(RemoteResearchProvenanceState.Dispatched, persisted.RemoteResearch!.State);
+            Assert.Null(persisted.RemoteResearch.ResultAppliedAt);
+            Assert.DoesNotContain(audit.Events, e => e.EventType == "research.remote_result_applied");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     private static AgentJobRecord CreateDispatchedJob(DateTimeOffset now)
     {
         const string opaqueId = "mY7FhPlAdtPz9xL4b8gU1cKqN3sW6vRt";

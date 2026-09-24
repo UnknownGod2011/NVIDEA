@@ -41,6 +41,55 @@ public sealed class AuthenticatedRemoteResearchIngestionBoundaryTests
     }
 
     [Fact]
+    public async Task IngestAsync_RejectsResultSignedByUnpinnedWorkerBeforeDecryption()
+    {
+        using var client = RSA.Create(2048);
+        using var wrongClient = RSA.Create(2048);
+        using var legitimateWorker = RSA.Create(2048);
+        using var pinnedWorker = RSA.Create(2048);
+        var root = CreateTempDirectory();
+        try
+        {
+            var now = DateTimeOffset.UtcNow;
+            var job = CreateDispatchedJob(now);
+            var store = new JsonAgentJobStore(Path.Combine(root, "jobs.json"), new PassThroughProtector());
+            await store.SaveAsync(job);
+            var inner = new MemoryResultTransport();
+            var envelope = Protect(job, client, now);
+            await inner.PutAsync(envelope with
+            {
+                WorkerSignature = RemoteResearchWorkerSignature.Sign(
+                    envelope,
+                    legitimateWorker.ExportPkcs8PrivateKeyPem())
+            });
+            var authenticated = new AuthenticatedResearchResultTransport(
+                inner,
+                pinnedWorker.ExportSubjectPublicKeyInfoPem());
+            var audit = new MemoryAuditTrail();
+            // The deliberately wrong decryption key is an ordering sentinel: the worker pin must reject
+            // the envelope before result-key unwrap/decryption can exercise this private key.
+            var ingestor = new RemoteResearchResultIngestor(
+                store,
+                authenticated,
+                wrongClient.ExportPkcs8PrivateKeyPem(),
+                audit);
+
+            await Assert.ThrowsAsync<CryptographicException>(() => ingestor.IngestAsync(job.JobId, now.AddMinutes(2)));
+
+            var persisted = await store.GetAsync(job.JobId);
+            Assert.NotNull(persisted);
+            Assert.Equal(AgentJobState.Running, persisted!.State);
+            Assert.Equal(RemoteResearchProvenanceState.Dispatched, persisted.RemoteResearch!.State);
+            Assert.Null(persisted.RemoteResearch.ResultAppliedAt);
+            Assert.DoesNotContain(audit.Events, e => e.EventType == "research.remote_result_applied");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task IngestAsync_RejectsCrossJobReplaySignedForDifferentRemoteJobBeforeDecryption()
     {
         using var client = RSA.Create(2048);

@@ -19,37 +19,40 @@ Serialized browser evidence transitions, bound demo validation to production ses
 ### 2026-09-24 — durable provenance and remote-result authentication migration
 Bound completed research reports and canonical judge evidence into durable SHA-256 receipts and reject tampered/legacy-unbound provenance. Qualified remote-result AEAD against mutation/substitution. Added RSA-PSS/SHA-256 worker-origin signatures over authoritative encrypted-envelope fields, adversarial forgery/key-mismatch/replay/substitution tests, verify-before-decrypt authentication, optional signed transport metadata, worker-side signing after AEAD protection, a dedicated worker-only signing-secret trust boundary, fail-closed deployed worker signing composition, a public-only pinned client worker-verification trust boundary, authenticated encrypted-result transport, production desktop authenticated-result composition, and MysteryBox-only live signing-key deployment preflight. Actual-ingestor adversarial coverage includes unsigned results, wrong pinned worker identity, signed remote-job replay, and post-signature ciphertext/report-payload substitution. Added an operator-grade worker result-signing lifecycle runbook, recording-day signing readiness, and provider-free source-contract guards.
 
-## Latest run — canonical public worker identity projection
-Files changed:
-- `src/Nvidea.Core/Jobs/WorkerResultVerificationPublicKeyTrust.cs`
-- `tests/Nvidea.Core.Tests/WorkerResultVerificationFingerprintTests.cs`
-- `progress.md`
+### 2026-10-14 — public worker authentication evidence model
+Added `WorkerAuthenticationJudgeEvidence` with validated uppercase SHA-256 SPKI fingerprint and fixed RSA-PSS/SHA-256 scheme, plus provider-free privacy and malformed-input tests. This work was initially persisted on `automation/worker-auth-evidence`; `main` was not altered.
 
-Completed:
-- Re-read `progress.md` completely and inspected the current repository tree and worker verification trust boundary before implementation.
-- Added a single canonical .NET fingerprint primitive for the pinned worker result-verification identity: SHA-256 over canonical SubjectPublicKeyInfo bytes, rendered as 64 uppercase hexadecimal characters.
-- Added `LoadRequiredSha256Fingerprint` so Windows/judge composition can obtain only the non-secret identity projection from the existing fail-closed environment trust boundary.
-- Fingerprinting first canonicalizes through `ValidateAndCanonicalize`; even if a caller accidentally supplies private PEM, the projected value is derived from public SPKI only and cannot retain signing authority.
-- Added provider-free tests proving stable fingerprints across equivalent public/private representations, fingerprint changes across worker identities, fixed fingerprint shape, and absence of PEM/private/MysteryBox material in the projection.
-- Repository identity was explicitly reverified as exactly `UnknownGod2011/NVIDEA` before every mutation.
+## Latest run — Windows worker-authentication judge evidence integration (2026-10-14)
+Repository/branch:
+- Mutation target checked before every GitHub write: exactly `UnknownGod2011/NVIDEA`.
+- Code branch: `automation/worker-auth-evidence`, proposed to `main` in draft PR #1 (https://github.com/UnknownGod2011/NVIDEA/pull/1). No other repository changed.
+
+Files changed:
+- `src/Nvidea.Windows/JudgeEvidenceDialog.xaml` — added a first-class Remote worker authentication panel, adjusted grid row layout.
+- `src/Nvidea.Windows/JudgeEvidenceDialog.xaml.cs` — receives a Core public-only projection, renders it, and fails closed when missing.
+- `src/Nvidea.Windows/MainWindow.Readiness.cs` — reads validated public-key fingerprint via `WorkerAuthenticationJudgeEvidence.FromPinnedEnvironment()`, catches invalid/missing configuration without exposing exception contents, passes projection to judge view.
+- `tests/Nvidea.DemoPackageValidator.Tests/WorkerAuthenticationJudgeWiringTests.cs` — provider-free source/XAML contract guarding exactly one panel, production factory wiring, null fail-closed status, non-attestation wording, and absence of raw environment access in dialog.
+- `progress.md` — this persistent run record.
+- Prior branch files (retained): `src/Nvidea.Core/Desktop/WorkerAuthenticationJudgeEvidence.cs`, `tests/Nvidea.Core.Tests/WorkerAuthenticationJudgeEvidenceTests.cs`.
+
+Engineering result:
+- The Windows judge view shows a locally PINNED worker public-key SHA-256 fingerprint and RSA-PSS/SHA-256 scheme, or NOT VERIFIED if the projection cannot be constructed.
+- A public pin is configuration readiness only: the panel explicitly says the deployed worker identity is NOT VERIFIED by this view. No cloud/worker attestation is fabricated.
+- No PEM, private-key material, deployment secret name/ID/version, research prompt/source/answer, provider exception, or URL is rendered in this panel.
+- Existing receipt/provenance/permissions/emergency-stop and remote authentication paths remain unchanged.
 
 Validation/evidence:
-- Static inspection confirms the implementation uses platform `RSA`, `ExportSubjectPublicKeyInfo`, `SHA256.HashData`, and `Convert.ToHexString` only; no provider/network/API dependency was introduced.
-- Tests are deterministic except for generating ephemeral RSA identities and contain no production key material or secret references.
-- Executable .NET/Windows PASS is not claimed in this connector environment; the new tests require execution on the qualification machine.
+- GitHub connector accepted four production-file commits plus the regression-test commit (latest code/test commit `9c9f43524599e6150976e9c3fc063e6a06159251`).
+- Ten repository-content static checks passed: correct row count/index range, unique UI field, dialog binding, null fail-closed, no claimed deployed-worker verification, valid C# newline escape, factory + constructor wiring, no raw exception display, xUnit project present.
+- `main...automation/worker-auth-evidence`: branch ahead by 6 commits before this progress update, behind by 0.
+- `.NET`, PowerShell and Windows/WPF runtime are not installed here. Executable compile/test PASS is NOT claimed. New xUnit source contract is added but unexecuted.
+- No Nebius/Tavily/Serverless calls, paid providers, live signed-result canary, or GitHub Actions reruns occurred.
 
-## Security / privacy / failure review
-- The new projection contains only a one-way public-key fingerprint; PEM, private-key bytes, MysteryBox secret ID/version, credentials, research payloads, and user data are not accepted as output fields.
-- Existing RSA >= 2048 validation remains authoritative and runs before fingerprint derivation.
-- Existing AEAD confidentiality, verify-before-decrypt worker authentication, dispatch provenance, bound research receipts, prompt-injection gates, consequential-action approval, cancellation and emergency-stop boundaries remain unchanged.
-
-## Known blockers / risks
-- Core/WPF code and accumulated suite still require executable .NET 8 + Windows validation.
-- Live Nebius/Tavily/Serverless/authenticated-browser validation remains pending.
-- The actual Nebius account still needs a real MysteryBox secret/version containing the worker result-signing private PEM plus a matching client public verification pin.
-- The readiness gate still cannot cryptographically prove the opaque deployed private signer matches the client public pin without an end-to-end signed-result canary.
-- The new canonical .NET fingerprint is not yet rendered in the Windows Judge Evidence dialog or persisted in a dedicated public-only evidence model; this run intentionally established and tested the reusable trust primitive first.
-- Rotation remains single-pin and therefore requires coordinated dispatch maintenance; no multi-key grace ring is assumed.
+Risks and blockers:
+- Execute `dotnet test` (including Core + DemoPackageValidator projects), WPF Windows build, and interactive Judge Evidence smoke test on an appropriate Windows/.NET 8 host.
+- Draft PR #1 requires review and CI/Windows qualification before merge; changes are currently branch-only.
+- Public-pin presence is not proof the deployed MysteryBox signing private key corresponds to the Windows public pin.
+- Single-key rotation still requires coordinated dispatch pause/drain; auth must never downgrade to unsigned results.
 
 ## Single Best Next Task
-Add a dedicated public-only worker-authentication evidence record to the Windows Judge Evidence surface using `LoadRequiredSha256Fingerprint`, with serialization/privacy tests that reject or structurally exclude PEM and MysteryBox references. Then bind that fingerprint to an end-to-end signed-result canary so recording readiness can prove the deployed Nebius signer matches the pinned Windows verifier.
+Implement a real end-to-end **signed-result canary** across deployed Nebius Worker and Windows pinned-key verifier that proves signer/pin matching without exposing research data, with negative cases for wrong key, replay and signing-version drift. Integrate its verified outcome into fail-closed recording readiness; run .NET 8 + WPF qualification and update draft PR #1 based on results.

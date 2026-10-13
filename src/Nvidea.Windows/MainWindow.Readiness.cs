@@ -62,7 +62,20 @@ public partial class MainWindow
             // Browser evidence also fails closed without blocking the rest of the judge view.
         }
 
-        var dialog = new JudgeEvidenceDialog(readiness, _root.Desktop.SessionEvidenceSnapshot, _root.Desktop.ResetSessionEvidence, durableReceipt, browserVerification, researchProvenance) { Owner = this };
+        WorkerAuthenticationJudgeEvidence? workerAuthentication = null;
+        try
+        {
+            // This public-only projection demonstrates the locally trusted verifier identity,
+            // NOT proof that a deployed Nebius worker signed a result with the matching key.
+            workerAuthentication = WorkerAuthenticationJudgeEvidence.FromPinnedEnvironment();
+        }
+        catch
+        {
+            // A missing/invalid/rotating pin fails closed without disclosing PEM,
+            // secret-reference metadata, or raw cryptographic configuration errors.
+        }
+
+        var dialog = new JudgeEvidenceDialog(readiness, _root.Desktop.SessionEvidenceSnapshot, _root.Desktop.ResetSessionEvidence, durableReceipt, browserVerification, researchProvenance, workerAuthentication) { Owner = this };
         dialog.ShowDialog();
     }
 

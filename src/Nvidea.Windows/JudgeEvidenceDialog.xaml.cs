@@ -9,13 +9,14 @@ public partial class JudgeEvidenceDialog : Window
     private readonly Func<SessionEvidenceSnapshot> _snapshot;
     private readonly Action _resetSessionEvidence;
 
-    public JudgeEvidenceDialog(DesktopResearchReadiness readiness, Func<SessionEvidenceSnapshot> snapshot, Action resetSessionEvidence, DesktopDurableResearchReceipt? durableResearchReceipt = null, DesktopBrowserVerificationPresentation? browserVerification = null, DesktopResearchJudgePresentation? researchProvenance = null)
+    public JudgeEvidenceDialog(DesktopResearchReadiness readiness, Func<SessionEvidenceSnapshot> snapshot, Action resetSessionEvidence, DesktopDurableResearchReceipt? durableResearchReceipt = null, DesktopBrowserVerificationPresentation? browserVerification = null, DesktopResearchJudgePresentation? researchProvenance = null, WorkerAuthenticationJudgeEvidence? workerAuthentication = null)
     {
         ArgumentNullException.ThrowIfNull(readiness);
         _snapshot = snapshot ?? throw new ArgumentNullException(nameof(snapshot));
         _resetSessionEvidence = resetSessionEvidence ?? throw new ArgumentNullException(nameof(resetSessionEvidence));
         InitializeComponent();
         ProviderReadinessText.Text = BuildReadinessSummary(readiness);
+        WorkerAuthenticationText.Text = BuildWorkerAuthenticationSummary(workerAuthentication);
         ResearchProvenanceText.Text = BuildResearchProvenanceSummary(researchProvenance);
         DurableResearchReceiptText.Text = BuildDurableResearchSummary(durableResearchReceipt);
         BrowserVerificationText.Text = BuildBrowserVerificationSummary(browserVerification);
@@ -44,6 +45,11 @@ public partial class JudgeEvidenceDialog : Window
         var dispatch = readiness.NebiusDispatchReady ? "Nebius Serverless dispatch: READY" : readiness.NebiusDispatchRequested ? "Nebius Serverless dispatch: REQUESTED, NOT READY" : "Nebius Serverless dispatch: NOT ENABLED";
         return $"{local}\n{lifecycle}\n{dispatch}";
     }
+
+    internal static string BuildWorkerAuthenticationSummary(WorkerAuthenticationJudgeEvidence? evidence) =>
+        evidence is null
+            ? "NOT VERIFIED — no valid pinned worker verification identity is available."
+            : "PUBLIC KEY PINNED — deployed worker identity NOT VERIFIED by this view.\n" + evidence.ToStatusText();
 
     internal static string BuildResearchProvenanceSummary(DesktopResearchJudgePresentation? presentation)
     {

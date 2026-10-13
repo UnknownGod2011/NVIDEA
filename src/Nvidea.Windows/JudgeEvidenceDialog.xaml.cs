@@ -49,7 +49,7 @@ public partial class JudgeEvidenceDialog : Window
     internal static string BuildWorkerAuthenticationSummary(WorkerAuthenticationJudgeEvidence? evidence) =>
         evidence is null
             ? "NOT VERIFIED — no valid pinned worker verification identity is available."
-            : "PUBLIC KEY PINNED — deployed worker identity NOT VERIFIED by this view.\\n" + evidence.ToStatusText();
+            : "PUBLIC KEY PINNED — deployed worker identity NOT VERIFIED by this view.\n" + evidence.ToStatusText();
 
     internal static string BuildResearchProvenanceSummary(DesktopResearchJudgePresentation? presentation)
     {

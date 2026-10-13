@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using Nvidea.Core.Jobs;
 using Nvidea.Core.Nebius;
 using Nvidea.Core.Research;
@@ -23,6 +24,21 @@ internal static class Program
         try
         {
             var cancellationToken = shutdown.Token;
+
+            // Payload-free worker-signing canary. Only the public challenge travels in command
+            // arguments; the dedicated worker private key is loaded from the worker secret
+            // boundary and never printed. This command deliberately does not initialize providers.
+            if (args.Length == 2
+                && string.Equals(args[0], "signing-canary", StringComparison.Ordinal)
+                && args[1].StartsWith("--challenge=", StringComparison.Ordinal))
+            {
+                var challenge = WorkerSigningCanary.DecodeChallenge(args[1]["--challenge=".Length..]);
+                var privateKey = WorkerResultSigningPrivateKeyTrust.LoadRequired();
+                var proof = WorkerSigningCanary.Sign(challenge, privateKey);
+                Console.WriteLine(JsonSerializer.Serialize(proof));
+                return 0;
+            }
+
             var options = WorkerCommandLine.Parse(args);
 
             // Load the entire runtime through one trust-ordered environment boundary. Public

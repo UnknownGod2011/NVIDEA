@@ -115,7 +115,7 @@ public sealed class NebiusResearchLifecycleAuditOrderingTests
             {
                 GetResponse = new NebiusServerlessResponse(
                     HttpStatusCode.OK,
-                    $$"""{"metadata":{"id":"job-123","name":"{{expectedName}}"},"status":{"state":"FAILED"}}""")
+                    $$$"""{"metadata":{"id":"job-123","name":"{{{expectedName}}}"},"status":{"state":"FAILED"}}""")
             };
             var reconciler = new NebiusResearchLifecycleReconciler(store, client, ingestor, audit);
 

@@ -118,8 +118,8 @@ public sealed class BrowserGoalImmediateEvidenceTrustTests
         Assert.DoesNotContain('\n', projected.VerificationDetail!);
     }
 
-    private static string CompleteDecision(string reason) => $$"""
-        {"decision":"complete","reason":"{{reason}}","action":null}
+    private static string CompleteDecision(string reason) => $$$"""
+        {"decision":"complete","reason":"{{{reason}}}","action":null}
         """;
 
     private static string ClickDecision() => """

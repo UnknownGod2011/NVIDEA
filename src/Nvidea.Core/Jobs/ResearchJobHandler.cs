@@ -111,9 +111,10 @@ public sealed class ResearchJobHandler : IAgentJobHandler
     private static CompletedCheckpoint ReadCompletedCheckpoint(AgentJobRecord job)
     {
         ArgumentNullException.ThrowIfNull(job);
-        if (job.State != AgentJobState.Completed || !string.Equals(job.Checkpoint?.Step, CompletedStep, StringComparison.Ordinal))
+        var checkpoint = job.Checkpoint;
+        if (job.State != AgentJobState.Completed || !string.Equals(checkpoint?.Step, CompletedStep, StringComparison.Ordinal))
             throw new InvalidOperationException("The research job does not contain a completed report.");
-        return DeserializeBounded<CompletedCheckpoint>(job.Checkpoint.Payload);
+        return DeserializeBounded<CompletedCheckpoint>(checkpoint!.Payload);
     }
 
     private async Task<JobStepResult> PlanAsync(string? payload, CancellationToken cancellationToken)
@@ -122,7 +123,7 @@ public sealed class ResearchJobHandler : IAgentJobHandler
         ValidateQuestion(requested.Question);
         var plan = await _engine.PlanAsync(requested.Question, cancellationToken).ConfigureAwait(false);
         var lineage = new ResearchReceiptLineage(Fingerprint(plan), plan.Queries.Count, null, 0);
-        return new JobStepResult(false, PlannedStep, SerializeBounded(new PlannedCheckpoint(requested.Question, plan, lineage)));
+        return new JobStepResult(Completed: false, CheckpointStep: PlannedStep, CheckpointPayload: SerializeBounded(new PlannedCheckpoint(requested.Question, plan, lineage)));
     }
 
     private async Task<JobStepResult> GatherAsync(string? payload, CancellationToken cancellationToken)
@@ -137,7 +138,7 @@ public sealed class ResearchJobHandler : IAgentJobHandler
         var prepared = await _engine.GatherEvidenceAsync(planned.Question, plan, cancellationToken).ConfigureAwait(false);
         var evidenceFingerprint = FingerprintEvidenceBoundToPlan(planFingerprint, prepared);
         var lineage = new ResearchReceiptLineage(planFingerprint, plan.Queries.Count, evidenceFingerprint, prepared.Batch.Sources.Count);
-        return new JobStepResult(false, EvidenceStep, SerializeBounded(new EvidenceCheckpoint(planned.Question, prepared, lineage)));
+        return new JobStepResult(Completed: false, CheckpointStep: EvidenceStep, CheckpointPayload: SerializeBounded(new EvidenceCheckpoint(planned.Question, prepared, lineage)));
     }
 
     private async Task<JobStepResult> SynthesizeAsync(string? payload, CancellationToken cancellationToken)
@@ -171,7 +172,7 @@ public sealed class ResearchJobHandler : IAgentJobHandler
             report.UsedCitations.Count > 0,
             Fingerprint(report),
             FingerprintJudgeEvidence(judgeEvidence));
-        return new JobStepResult(true, CompletedStep, SerializeBounded(new CompletedCheckpoint(report, receipt)));
+        return new JobStepResult(Completed: true, CheckpointStep: CompletedStep, CheckpointPayload: SerializeBounded(new CompletedCheckpoint(report, receipt)));
     }
 
     private static string Fingerprint<T>(T value) => Sha256(JsonSerializer.Serialize(value, JsonOptions));

@@ -2,11 +2,11 @@
 
 `Nvidea.NebiusModelCatalogCheck` is a zero-inference readiness check for the Nemotron model IDs configured by NVIDEA. It exists to catch provider catalog drift before a demo or release without spending tokens on a chat completion.
 
-Nebius Token Factory exposes an OpenAI-compatible API and its public model catalog changes over time. NVIDEA therefore treats model availability as a runtime dependency rather than assuming that a model ID verified during development will remain available forever.
+Nebius Token Factory exposes a compatible chat-completions API and its public model catalog changes over time. NVIDEA therefore treats model availability as a runtime dependency rather than assuming that a model ID verified during development will remain available forever.
 
 ## What it checks
 
-The checker reads an OpenAI-compatible model-list payload (`{ "data": [{ "id": "..." }] }`) and verifies the exact configured IDs for all three routing tiers:
+The checker reads the documented model-list payload (`{ "data": [{ "id": "..." }] }`) and verifies the exact configured IDs for all three routing tiers:
 
 - Fast: `NVIDEA_MODEL_FAST`, defaulting to `NebiusOptions.VerifiedNemotronNanoModel`.
 - Standard: `NVIDEA_MODEL_STANDARD`, defaulting to `NebiusOptions.VerifiedNemotronSuperModel`.

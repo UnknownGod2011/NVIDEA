@@ -9,6 +9,30 @@ NVIDEA is an open-source, Windows-first **Personal AI operating layer** for the 
 - Bonus target: **Best Use of Tavily**
 - Core reasoning runtime: **NVIDIA Nemotron on Nebius Token Factory / Nebius AI Cloud**
 
+Every cloud reasoning request is sent through the NVIDIA Nemotron / Nebius Token Factory adapter. Local speech recognition stays on Windows; optional Ollama is used only for local memory embeddings, never for the reasoning runtime.
+
+## Quick start for judges
+
+The normal judge path is a local source build; no website download is required.
+
+1. Install **Windows 10/11** and the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0).
+2. Clone this repository and open PowerShell in its root.
+3. Create a Nebius Token Factory API key and a Tavily API key, then set them for the current PowerShell session:
+
+   ```powershell
+   $env:NEBIUS_API_KEY = "your-nebius-token-factory-key"
+   $env:TAVILY_API_KEY = "your-tavily-key"
+   ```
+
+4. Restore, build, and run the Windows app:
+
+   ```powershell
+   dotnet restore .\src\Nvidea.Windows\Nvidea.Windows.csproj
+   dotnet run --project .\src\Nvidea.Windows\Nvidea.Windows.csproj -c Release
+   ```
+
+The app fails safely with a configuration-only message if either key is missing. A complete, copy/paste-friendly guide—including optional local memory and the opt-in Serverless path—is in [`docs/judge-setup.md`](docs/judge-setup.md).
+
 ## What is implemented
 
 ### NVIDIA / Nebius reasoning
@@ -106,7 +130,7 @@ Protected local state uses Windows CurrentUser DPAPI by default where applicable
 - non-root worker image;
 - deployment preflight for mount alignment, MysteryBox-backed credentials, resource bounds, separated RSA identities and digest-pinned images.
 
-The remote protocol separates three RSA purposes: worker work-item decryption, client dispatch signing, and client result decryption. The two client identities are required to be distinct; Serverless receives only their public halves.
+The remote protocol separates four RSA purposes: worker work-item decryption, client dispatch signing, client result decryption, and the worker remote-result signing identity. The two client identities are required to be distinct; Serverless receives only their public halves and a version-pinned worker signing secret.
 
 The repository also includes `Nvidea.NebiusContractProbe` and evidence verification tooling for zero-cost preflight, explicit paid live research, redacted deployment fingerprints and offline validation.
 
@@ -177,9 +201,16 @@ $env:NVIDEA_MODEL_DEEP = "nvidia/Nemotron-3-Ultra-550b-a55b"
 
 Local semantic memory embeddings are deliberately opt-in. See [`docs/local-memory-embeddings.md`](docs/local-memory-embeddings.md) for the Ollama endpoint/model settings and privacy behavior.
 
+To persist the two normal runtime keys for future PowerShell sessions, use `setx` and open a new terminal afterward. Do not commit keys into `.env`, source, screenshots, or a GitHub issue.
+
+```powershell
+setx NEBIUS_API_KEY "your-nebius-token-factory-key"
+setx TAVILY_API_KEY "your-tavily-key"
+```
+
 ### Live Nebius research keys
 
-The Serverless research contract uses three independent RSA keypairs. Production validation requires RSA-2048 or stronger and rejects reuse of the same client keypair for dispatch signing and result encryption/decryption.
+The Serverless research contract uses four independent RSA keypairs. Production validation requires RSA-2048 or stronger and rejects reuse of identities across roles.
 
 ```bash
 # Worker work-item encryption/decryption
@@ -193,6 +224,10 @@ openssl pkey -in client-signing-private.pem -pubout -out client-signing-public.p
 # Client result encryption/decryption — MUST be a different keypair
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out client-result-private.pem
 openssl pkey -in client-result-private.pem -pubout -out client-result-public.pem
+
+# Worker remote-result signing — distinct from every identity above
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out worker-result-signing-private.pem
+openssl pkey -in worker-result-signing-private.pem -pubout -out worker-result-signing-public.pem
 ```
 
 For live client composition:
@@ -212,6 +247,8 @@ The client dispatch-signing private key and client result-decryption private key
 
 The explicit Serverless contract uses additional `NVIDEA_LIVE_*` configuration for Object Storage, deployment shape, MysteryBox references and immutable worker images. See [`docs/nebius-contract-probe.md`](docs/nebius-contract-probe.md) and [`docs/nebius-research-worker.md`](docs/nebius-research-worker.md).
 
+For remote worker-origin verification, configure only the matching public pin on Windows as `NVIDEA_WORKER_RESULT_VERIFICATION_PUBLIC_KEY_PEM`. The private result-signing PEM belongs only in the immutable Nebius SecretStash/MysteryBox reference `NVIDEA_LIVE_SECRET_WORKER_RESULT_SIGNING_PRIVATE_KEY_ID` plus `NVIDEA_LIVE_SECRET_WORKER_RESULT_SIGNING_PRIVATE_KEY_VERSION_ID`.
+
 ## Build and validation
 
 Prerequisite: **.NET 8 SDK**. Windows/WPF validation requires Windows.
@@ -220,9 +257,10 @@ Prerequisite: **.NET 8 SDK**. Windows/WPF validation requires Windows.
 dotnet build .\src\Nvidea.Core\Nvidea.Core.csproj
 dotnet build .\src\Nvidea.Windows\Nvidea.Windows.csproj
 dotnet build .\src\Nvidea.Worker\Nvidea.Worker.csproj
-dotnet test .\tests\Nvidea.Core.Tests\Nvidea.Core.Tests.csproj
-dotnet test .\tests\Nvidea.DemoPackageValidator.Tests\Nvidea.DemoPackageValidator.Tests.csproj
+dotnet test .\tests\Nvidea.WorkerAuth.Tests\Nvidea.WorkerAuth.Tests.csproj
 ```
+
+The focused worker-authentication suite is the validated security regression path for this branch. The broader historical `Nvidea.Core.Tests` and `Nvidea.DemoPackageValidator.Tests` projects are retained but presently have unrelated old-source/API-drift compile failures; their failure is documented in [`progress.md`](progress.md) and is not required to launch the app or evaluate the signed-worker path.
 
 Credential-free evaluators can then be run locally:
 
@@ -249,17 +287,21 @@ NVIDEA is designed around least privilege:
 - keep private OS-local actions on-device;
 - do not bypass CAPTCHA/login/site/OS safeguards.
 
+## Packaging and GitHub Releases
+
+Maintainers can create a portable Windows build without changing source or needing a website deployment:
+
+```powershell
+.\scripts\publish-windows.ps1 -OutputDirectory .\artifacts\NVIDEA-win-x64
+```
+
+Upload the resulting directory as a GitHub Release asset after performing the documented Windows validation. This repository does not claim a binary is a signed public release merely because it was built locally.
+
 ## Current verification gaps
 
-Meaningful implementation remains, but the project is **not declared finished**. The most important outstanding verification is a real .NET 8 Windows restore/build/test pass covering Core, WPF/XAML, Worker, voice, local embeddings, browser integration and evaluator tooling. Live Nebius Object Storage/Serverless infrastructure and production provider behavior also require credential-backed validation before being represented as live evidence.
+The Windows Core, Worker, WPF/XAML, focused signed-worker contract suite, and recording-receipt verifier have Release build evidence recorded in [`progress.md`](progress.md). The broad legacy Core and DemoPackageValidator test projects still contain pre-existing unrelated source/API-drift failures, which are documented rather than hidden. Live Nebius Object Storage/Serverless infrastructure and production provider behavior require credential-backed validation before being represented as live evidence.
 
 Other ongoing work includes memory compaction/summarization quality, broader reusable skills, browser UX polish, packaging/onboarding, local embedding quality calibration, and final judge-facing demo execution.
-
-## Relationship to keyboard.wtf
-
-keyboard.wtf is read-only reference material for useful interaction patterns such as Windows hotkeys, voice UI, local speech, workflows and permission concepts. NVIDEA is a separate repository and materially changes the backend architecture around NVIDIA/Nebius reasoning, memory, research, browser automation, durable work and safety.
-
-Automation working on NVIDEA is not permitted to mutate the keyboard.wtf repository.
 
 ## Development ledger
 

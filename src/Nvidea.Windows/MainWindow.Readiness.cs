@@ -1,6 +1,7 @@
 using System.Windows;
 using Nvidea.Core.Browser;
 using Nvidea.Core.Desktop;
+using Nvidea.Core.Jobs;
 
 namespace Nvidea.Windows;
 
@@ -62,7 +63,35 @@ public partial class MainWindow
             // Browser evidence also fails closed without blocking the rest of the judge view.
         }
 
-        var dialog = new JudgeEvidenceDialog(readiness, _root.Desktop.SessionEvidenceSnapshot, _root.Desktop.ResetSessionEvidence, durableReceipt, browserVerification, researchProvenance) { Owner = this };
+        WorkerAuthenticationJudgeEvidence? workerAuthentication = null;
+        Func<CancellationToken, Task<WorkerAuthenticationJudgeEvidence>>? runWorkerCanary = null;
+        try
+        {
+            var canary = _root.WorkerSigningCanary;
+            if (canary is null)
+            {
+                // This public-only projection demonstrates the locally trusted verifier identity,
+                // NOT proof that a deployed Nebius worker signed a result with the matching key.
+                workerAuthentication = WorkerAuthenticationJudgeEvidence.FromPinnedEnvironment();
+            }
+            else
+            {
+                workerAuthentication = WorkerAuthenticationJudgeEvidence.FromCanarySnapshot(
+                    await canary.GetEvidenceAsync());
+                runWorkerCanary = async cancellationToken =>
+                {
+                    var result = await canary.RunAsync(cancellationToken);
+                    return WorkerAuthenticationJudgeEvidence.FromCanarySnapshot(result);
+                };
+            }
+        }
+        catch
+        {
+            // A missing/invalid/rotating pin fails closed without disclosing PEM,
+            // secret-reference metadata, or raw cryptographic configuration errors.
+        }
+
+        var dialog = new JudgeEvidenceDialog(readiness, _root.Desktop.SessionEvidenceSnapshot, _root.Desktop.ResetSessionEvidence, durableReceipt, browserVerification, researchProvenance, workerAuthentication, runWorkerCanary) { Owner = this };
         dialog.ShowDialog();
     }
 

@@ -142,7 +142,7 @@ public sealed class NebiusResearchCancellationAuditOutboxTests
 
     private static NebiusServerlessResponse RunningResponse(string expectedName) =>
         new(HttpStatusCode.OK,
-            $$"""{"metadata":{"id":"job-123","name":"{{expectedName}}"},"status":{"state":"RUNNING"}}""");
+            $$$"""{"metadata":{"id":"job-123","name":"{{{expectedName}}}"},"status":{"state":"RUNNING"}}""");
 
     private static AgentJobRecord CreatePendingJob(DateTimeOffset now) => new(
         Guid.NewGuid(),

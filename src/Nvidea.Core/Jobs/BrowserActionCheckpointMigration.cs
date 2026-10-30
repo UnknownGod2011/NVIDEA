@@ -193,14 +193,15 @@ public sealed class BrowserActionCheckpointMigrationService
 
         if (!string.Equals(job.Definition.JobType, BrowserActionJobHandler.Type, StringComparison.Ordinal)
             || !string.Equals(job.Checkpoint?.Step, BrowserActionJobHandler.CheckpointStep, StringComparison.Ordinal)
-            || string.IsNullOrWhiteSpace(job.Checkpoint.Payload))
+            || string.IsNullOrWhiteSpace(job.Checkpoint?.Payload))
         {
             return new BrowserActionCheckpointRecordMigration(
                 BrowserActionCheckpointRecordMigrationStatus.Ignored,
                 job);
         }
 
-        if (BrowserActionCheckpointCodec.IsCurrent(job.Checkpoint.Payload))
+        var checkpointPayload = job.Checkpoint!.Payload;
+        if (BrowserActionCheckpointCodec.IsCurrent(checkpointPayload))
         {
             return new BrowserActionCheckpointRecordMigration(
                 BrowserActionCheckpointRecordMigrationStatus.AlreadyCurrent,
@@ -210,7 +211,7 @@ public sealed class BrowserActionCheckpointMigrationService
         BrowserAction legacyAction;
         try
         {
-            legacyAction = BrowserActionCheckpointCodec.DeserializeLegacyUnversioned(job.Checkpoint.Payload);
+            legacyAction = BrowserActionCheckpointCodec.DeserializeLegacyUnversioned(checkpointPayload);
         }
         catch (InvalidOperationException ex)
         {

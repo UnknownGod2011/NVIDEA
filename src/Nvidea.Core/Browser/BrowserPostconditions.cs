@@ -94,10 +94,10 @@ public static class BrowserPostconditionEvaluator
                     return (false, "Expected element was not present in the fresh observation.");
                 if (postcondition.ExpectedBoolean is null)
                     return (false, "Boolean element postcondition is missing its expected value.");
-                var actual = postcondition.Kind == BrowserPostconditionKind.ElementCheckedEquals
+                var observedBoolean = postcondition.Kind == BrowserPostconditionKind.ElementCheckedEquals
                     ? element.IsChecked
                     : element.IsEnabled;
-                return actual == postcondition.ExpectedBoolean.Value
+                return observedBoolean == postcondition.ExpectedBoolean.Value
                     ? (true, $"Element {postcondition.Kind} postcondition verified.")
                     : (false, $"Element {postcondition.Kind} postcondition did not match fresh browser state.");
             }

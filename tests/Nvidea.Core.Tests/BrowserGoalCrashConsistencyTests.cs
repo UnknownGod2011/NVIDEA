@@ -243,8 +243,8 @@ public sealed class BrowserGoalCrashConsistencyTests
         "approval required",
         new BrowserApprovalPrompt(jobId, scope, BrowserActionKind.Click, "Submit", "Submit", DateTimeOffset.UtcNow));
 
-    private static string CompleteDecision(string reason) => $$"""
-        {"decision":"complete","reason":"{{reason}}","action":null}
+    private static string CompleteDecision(string reason) => $$$"""
+        {"decision":"complete","reason":"{{{reason}}}","action":null}
         """;
 
     private sealed class CrashHost : ICrashConsistentBrowserGoalHost

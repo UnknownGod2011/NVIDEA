@@ -64,7 +64,7 @@ public sealed class DesktopResearchReadinessTests
     }
 
     private static string[] RequiredConfiguration() =>
-    {
+    [
         "NVIDEA_LIVE_SERVERLESS_ACCESS_TOKEN",
         "NVIDEA_LIVE_SERVERLESS_PROJECT_ID",
         "NVIDEA_LIVE_WORKER_IMAGE",
@@ -85,5 +85,5 @@ public sealed class DesktopResearchReadinessTests
         "NVIDEA_LIVE_SECRET_NEBIUS_API_KEY_ID",
         "NVIDEA_LIVE_SECRET_TAVILY_API_KEY_ID",
         "NVIDEA_LIVE_SECRET_WORKER_PRIVATE_KEY_ID"
-    };
+    ];
 }

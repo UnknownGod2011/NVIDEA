@@ -293,7 +293,13 @@ public sealed class NebiusServerlessJobClient : INebiusServerlessJobClient
 
     private static bool IsTransient(HttpStatusCode statusCode) => statusCode == HttpStatusCode.TooManyRequests || (int)statusCode >= 500;
     private static Task DelayAsync(int attempt, CancellationToken cancellationToken) => Task.Delay(TimeSpan.FromMilliseconds(Math.Min(1000, 100 * Math.Pow(2, attempt))), cancellationToken);
-    private static void EnsureJsonIfPresent(string body) { if (!string.IsNullOrWhiteSpace(body)) using var _ = JsonDocument.Parse(body); }
+    private static void EnsureJsonIfPresent(string body)
+    {
+        if (!string.IsNullOrWhiteSpace(body))
+        {
+            using var document = JsonDocument.Parse(body);
+        }
+    }
     private sealed record NebiusEnvironmentVariablePayload(string Name, string? Value, NebiusMysteryBoxSecretPayload? MysteryboxSecret);
     private sealed record NebiusMysteryBoxSecretPayload(string? SecretId, string? VersionId);
     private sealed record NebiusVolumeMountPayload(string Source, string? SourcePath, string ContainerPath, string Mode);

@@ -12,7 +12,7 @@ internal sealed class BrowserPageAdmissionPolicy
 
     public BrowserPageAdmissionPolicy(IReadOnlySet<string>? allowedHosts = null)
     {
-        _allowedHosts = new HashSet<string>(allowedHosts ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+        _allowedHosts = new HashSet<string>(allowedHosts is null ? Array.Empty<string>() : allowedHosts, StringComparer.OrdinalIgnoreCase);
     }
 
     public bool IsAllowed(string rawUrl)

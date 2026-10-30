@@ -23,7 +23,7 @@ public sealed record DesktopResearchJudgePresentation(
                 false);
         }
 
-        var verified = evidence.IsVerifiedForJudging &&
+        var verified = evidence.Verified &&
                        string.Equals(evidence.Provenance, "verified", StringComparison.Ordinal) &&
                        evidence.UnknownSourceIds.Count == 0;
         var status = verified

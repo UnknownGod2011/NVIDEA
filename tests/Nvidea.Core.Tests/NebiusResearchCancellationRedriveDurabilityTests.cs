@@ -171,11 +171,11 @@ public sealed class NebiusResearchCancellationRedriveDurabilityTests
 
     private static NebiusServerlessResponse RunningResponse(string expectedName) =>
         new(HttpStatusCode.OK,
-            $$"""{"metadata":{"id":"job-123","name":"{{expectedName}}"},"status":{"state":"RUNNING"}}""");
+            $$$"""{"metadata":{"id":"job-123","name":"{{{expectedName}}}"},"status":{"state":"RUNNING"}}""");
 
     private static NebiusServerlessResponse CancellingResponse(string expectedName) =>
         new(HttpStatusCode.OK,
-            $$"""{"metadata":{"id":"job-123","name":"{{expectedName}}"},"status":{"state":"CANCELLING"}}""");
+            $$$"""{"metadata":{"id":"job-123","name":"{{{expectedName}}}"},"status":{"state":"CANCELLING"}}""");
 
     private static AgentJobRecord CreatePendingJob(DateTimeOffset now) => new(
         Guid.NewGuid(),

@@ -67,6 +67,16 @@ function Test-WorkerResultSigningReadiness {
     }
 }
 
+function Test-WorkerSigningCanaryEvidence {
+    Test-ConfigPresence 'NVIDEA_WORKER_SIGNING_CANARY_EVIDENCE_PATH'
+    if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable('NVIDEA_WORKER_SIGNING_CANARY_EVIDENCE_PATH'))) { return }
+    $verifier = Join-Path $repoRoot 'tools/Nvidea.WorkerSigningCanaryVerifier/Nvidea.WorkerSigningCanaryVerifier.csproj'
+    if (-not (Test-Path -LiteralPath $verifier -PathType Leaf)) { $script:failures.Add('Worker signing-canary evidence verifier is missing.'); return }
+    Write-Host 'Cryptographically validating the locally protected signed-worker canary receipt...'
+    & dotnet run --project $verifier -c Release --no-restore --no-launch-profile
+    if ($LASTEXITCODE -ne 0) { $script:failures.Add('No fresh valid signed-worker canary receipt matches the active image, immutable signing-secret version, and public pin. Recording is blocked.') }
+}
+
 function Test-RepositoryPath([string]$RelativePath, [string]$Description, [switch]$Leaf) {
     if ([string]::IsNullOrWhiteSpace($RelativePath) -or [IO.Path]::IsPathRooted($RelativePath)) { $script:failures.Add("$Description must be a non-empty repository-relative path."); return $false }
     try { $candidate = [IO.Path]::GetFullPath((Join-Path $repoRoot $RelativePath)) } catch { $script:failures.Add("$Description is not a valid repository-relative path."); return $false }
@@ -123,6 +133,7 @@ if ($RequireCloudResearch) {
     @('NVIDEA_LIVE_WORKER_PUBLIC_KEY_PEM_FILE','NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE','NVIDEA_LIVE_CLIENT_RESULT_PRIVATE_KEY_PEM_FILE') | ForEach-Object { Test-ConfiguredFile $_ }
     @('NVIDEA_LIVE_SERVERLESS_ACCESS_TOKEN','NVIDEA_LIVE_OBJECT_STORAGE_ACCESS_KEY_ID','NVIDEA_LIVE_OBJECT_STORAGE_SECRET_ACCESS_KEY') | ForEach-Object { Test-SecretPresence $_ }
     Test-WorkerResultSigningReadiness
+    Test-WorkerSigningCanaryEvidence
 }
 if ($ValidateBuild -and $dotnetAvailable -and (Test-Path -LiteralPath $solution -PathType Leaf)) { Write-Host 'Validating existing restored solution with dotnet build --no-restore...'; & dotnet build $solution --no-restore --nologo --verbosity minimal; if ($LASTEXITCODE -ne 0) { $failures.Add('dotnet build --no-restore failed. Restore dependencies explicitly before recording, then rerun readiness.') } }
 Test-BrowserReleaseQualification

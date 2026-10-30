@@ -23,6 +23,34 @@ internal static class Program
         try
         {
             var cancellationToken = shutdown.Token;
+
+            // Payload-free worker-signing canary. Only the public challenge travels in command
+            // arguments. The returned Nebius job identity arrives over the mounted, create-once
+            // transport and is committed only as a SHA-256 binding in the signed proof. The
+            // dedicated worker private key is never printed, returned or written to ordinary logs.
+            if (args.Length == 3
+                && string.Equals(args[0], "signing-canary", StringComparison.Ordinal)
+                && args[1].StartsWith("--challenge=", StringComparison.Ordinal)
+                && args[2].StartsWith("--input-id=", StringComparison.Ordinal))
+            {
+                var challenge = WorkerSigningCanary.DecodeChallenge(args[1]["--challenge=".Length..]);
+                var inputId = args[2]["--input-id=".Length..];
+                if (!string.Equals(inputId, challenge.Nonce, StringComparison.Ordinal))
+                    throw new ArgumentException("Signing canary input id must equal the challenge nonce.");
+                var root = Environment.GetEnvironmentVariable(NebiusResearchDeploymentPreflight.TransportRootEnvironmentVariable)
+                    ?? throw new InvalidOperationException("Signing canary transport root is missing.");
+                var invocation = await WorkerSigningCanaryMountedArtifactTransport
+                    .WaitForInvocationAsync(root, challenge, cancellationToken)
+                    .ConfigureAwait(false);
+                var privateKey = WorkerResultSigningPrivateKeyTrust.LoadRequired();
+                var proof = WorkerSigningCanary.Sign(challenge, privateKey, invocation.JobBindingSha256);
+                await WorkerSigningCanaryMountedArtifactTransport
+                    .PublishProofAsync(root, proof, cancellationToken)
+                    .ConfigureAwait(false);
+                Console.WriteLine("nvidea_worker_completed stage=signing_canary");
+                return 0;
+            }
+
             var options = WorkerCommandLine.Parse(args);
 
             // Load the entire runtime through one trust-ordered environment boundary. Public

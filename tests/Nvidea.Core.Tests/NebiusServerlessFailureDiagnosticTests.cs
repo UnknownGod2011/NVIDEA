@@ -14,12 +14,12 @@ public sealed class NebiusServerlessFailureDiagnosticTests
     [InlineData("state_details")]
     public void ParseGet_ReadsBoundedDiagnosticFromSupportedProviderShapes(string detailsProperty)
     {
-        var json = $$"""
+        var json = $$$"""
             {
               "metadata": { "id": "job-1", "name": "research-job" },
               "status": {
                 "state": "FAILED",
-                "{{detailsProperty}}": {
+                "{{{detailsProperty}}}": {
                   "code": "ContainerFailed",
                   "message": "Worker container exited before producing a result."
                 }
@@ -195,7 +195,7 @@ public sealed class NebiusServerlessFailureDiagnosticTests
             {
                 GetResponse = new NebiusServerlessResponse(
                     HttpStatusCode.OK,
-                    $$"""
+                    $$$"""
                     {
                       "metadata": { "id": "job-123", "name": "{{harness.ExpectedName}}" },
                       "status": {
@@ -243,7 +243,7 @@ public sealed class NebiusServerlessFailureDiagnosticTests
             {
                 GetResponse = new NebiusServerlessResponse(
                     HttpStatusCode.OK,
-                    $$"""
+                    $$$"""
                     {
                       "metadata": { "id": "job-123", "name": "{{harness.ExpectedName}}" },
                       "status": {
@@ -338,7 +338,7 @@ public sealed class NebiusServerlessFailureDiagnosticTests
             {
                 GetResponse = new NebiusServerlessResponse(
                     HttpStatusCode.OK,
-                    $$"""
+                    $$$"""
                     {
                       "metadata": { "id": "job-123", "name": "{{harness.ExpectedName}}" },
                       "status": {

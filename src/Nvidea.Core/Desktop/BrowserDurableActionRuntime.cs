@@ -1,4 +1,5 @@
 using Nvidea.Core.Jobs;
+using Nvidea.Core.Browser;
 
 namespace Nvidea.Core.Desktop;
 

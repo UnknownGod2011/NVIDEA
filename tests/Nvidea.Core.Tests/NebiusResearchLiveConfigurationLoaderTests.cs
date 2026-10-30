@@ -20,6 +20,10 @@ public sealed class NebiusResearchLiveConfigurationLoaderTests
         Assert.Equal(25, configuration.TotalTimeoutMinutes);
         Assert.Equal("Verify current Nemotron research capabilities.", configuration.ResearchQuestion);
         Assert.Equal("mbsecver-tavily-v4", configuration.DispatchOptions.SecretEnvironmentVariables!["TAVILY_API_KEY"].VersionId);
+        var signingSecret = configuration.DispatchOptions.SecretEnvironmentVariables[WorkerResultSigningPrivateKeyTrust.EnvironmentVariable];
+        Assert.Equal("mbsec-worker-result-signing", signingSecret.SecretId);
+        Assert.Equal("mbsecver-worker-result-signing-v7", signingSecret.VersionId);
+        Assert.DoesNotContain(WorkerResultSigningPrivateKeyTrust.EnvironmentVariable, configuration.DispatchOptions.EnvironmentVariables!.Keys);
         Assert.Equal(configuration.ObjectStorageOptions.Prefix, configuration.DispatchOptions.Volumes!.Single().SourcePath);
         Assert.Equal(64, configuration.Report.Manifest.DeploymentFingerprintSha256.Length);
         Assert.NotEqual(
@@ -142,6 +146,29 @@ public sealed class NebiusResearchLiveConfigurationLoaderTests
 
         Assert.Contains("NVIDEA_LIVE_SECRET_WORKER_PRIVATE_KEY_ID", error.Message, StringComparison.Ordinal);
         Assert.Contains("version id", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("NVIDEA_LIVE_SECRET_WORKER_RESULT_SIGNING_PRIVATE_KEY_ID")]
+    [InlineData("NVIDEA_LIVE_SECRET_WORKER_RESULT_SIGNING_PRIVATE_KEY_VERSION_ID")]
+    public void Load_RejectsMissingDedicatedWorkerResultSigningSecretReference(string name)
+    {
+        using var fixture = LiveConfigurationFixture.Create();
+        fixture.Environment.Remove(name);
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            NebiusResearchLiveConfigurationLoader.Load(fixture.Read));
+
+        Assert.Contains(name, error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Load_RejectsMalformedDedicatedWorkerResultSigningSecretVersion()
+    {
+        using var fixture = LiveConfigurationFixture.Create();
+        fixture.Environment["NVIDEA_LIVE_SECRET_WORKER_RESULT_SIGNING_PRIVATE_KEY_VERSION_ID"] = "latest";
+
+        Assert.Throws<InvalidOperationException>(() => NebiusResearchLiveConfigurationLoader.Load(fixture.Read));
     }
 
     [Fact]
@@ -297,7 +324,9 @@ public sealed class NebiusResearchLiveConfigurationLoaderTests
                 ["NVIDEA_LIVE_OBJECT_STORAGE_SECRET_ACCESS_KEY"] = "object-storage-secret-key-test",
                 ["NVIDEA_LIVE_SECRET_NEBIUS_API_KEY_ID"] = "mbsec-nebius-api-key",
                 ["NVIDEA_LIVE_SECRET_TAVILY_API_KEY_ID"] = "mbsec-tavily-api-key",
-                ["NVIDEA_LIVE_SECRET_WORKER_PRIVATE_KEY_ID"] = "mbsec-worker-private-key"
+                ["NVIDEA_LIVE_SECRET_WORKER_PRIVATE_KEY_ID"] = "mbsec-worker-private-key",
+                ["NVIDEA_LIVE_SECRET_WORKER_RESULT_SIGNING_PRIVATE_KEY_ID"] = "mbsec-worker-result-signing",
+                ["NVIDEA_LIVE_SECRET_WORKER_RESULT_SIGNING_PRIVATE_KEY_VERSION_ID"] = "mbsecver-worker-result-signing-v7"
             };
 
             return new LiveConfigurationFixture(root, environment);

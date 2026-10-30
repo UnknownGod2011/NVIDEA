@@ -81,7 +81,7 @@ public sealed record ResearchJobStatus(
                 && (record.NextAttemptAt is null || record.NextAttemptAt <= DateTimeOffset.UtcNow),
             _ => false
         };
-        var canRecoverInterrupted = CanRecoverInterrupted(record, DateTimeOffset.UtcNow);
+        var canRecoverInterrupted = CanRecoverInterruptedRecord(record, DateTimeOffset.UtcNow);
 
         var stage = ResolveStage(record);
         var failureRecoveryGuidance = record.State == AgentJobState.Failed
@@ -113,7 +113,7 @@ public sealed record ResearchJobStatus(
         };
     }
 
-    internal static bool CanRecoverInterrupted(AgentJobRecord record, DateTimeOffset now)
+    internal static bool CanRecoverInterruptedRecord(AgentJobRecord record, DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(record);
         return record.State == AgentJobState.Running

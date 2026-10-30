@@ -239,7 +239,7 @@ public sealed class NebiusResearchTerminalAuditOutboxTests
 
     private static NebiusServerlessResponse StateResponse(string expectedName, string state) =>
         new(HttpStatusCode.OK,
-            $$"""{"metadata":{"id":"job-123","name":"{{expectedName}}"},"status":{"state":"{{state}}"}}""");
+            $$$"""{"metadata":{"id":"job-123","name":"{{{expectedName}}}"},"status":{"state":"{{{state}}}"}}""");
 
     private static AgentJobRecord CreatePendingJob(DateTimeOffset now) => new(
         Guid.NewGuid(),

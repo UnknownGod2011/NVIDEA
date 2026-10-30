@@ -71,7 +71,8 @@ public sealed class StateDirectoryLease : IDisposable
 
             try
             {
-                stream.Lock(0, 1);
+                if (!OperatingSystem.IsMacOS())
+                    stream.Lock(0, 1);
             }
             catch (IOException ex)
             {
@@ -117,7 +118,8 @@ public sealed class StateDirectoryLease : IDisposable
         {
             try
             {
-                _stream.Unlock(0, 1);
+                if (!OperatingSystem.IsMacOS())
+                    _stream.Unlock(0, 1);
             }
             catch (IOException)
             {

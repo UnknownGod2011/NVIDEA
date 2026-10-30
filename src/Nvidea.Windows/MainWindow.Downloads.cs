@@ -164,7 +164,7 @@ public partial class MainWindow
 
         var picker = new OpenFolderDialog
         {
-            Title = "Choose where NVIDEA may export this verified download",
+            Title = "Choose where keyboard-wtf may export this verified download",
             Multiselect = false
         };
         if (picker.ShowDialog(this) != true)
@@ -232,7 +232,7 @@ public partial class MainWindow
                 $"Source: {source}\n" +
                 $"Size: {size}\n" +
                 $"SHA-256: {hash}\n\n" +
-                "This removes only NVIDEA's retained quarantine payload. Any file you already exported remains untouched. " +
+                "This removes only keyboard-wtf's retained quarantine payload. Any file you already exported remains untouched. " +
                 "The approval is single-use and bound to this exact download.",
                 "Discard quarantined download",
                 MessageBoxButton.YesNo,

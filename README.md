@@ -67,11 +67,11 @@ All three remain overrideable through environment variables so a provider catalo
 
 Voice modes are deliberately distinct:
 
-- **Local Dictation** transcribes locally and inserts the exact final transcript only after restoring the foreground window captured before invocation; a changed target fails closed.
-- **Smart Dictation** sends transcript text—not raw microphone audio—to NVIDIA Nemotron on Nebius, requests grammar/formatting cleanup while preserving meaning, then requires approval before safe insertion.
+- **Local Dictation** transcribes locally and inserts the exact final transcript only after restoring the foreground window captured before invocation; a changed target fails closed. When started from the main window without an external target, it leaves the transcript in the prompt for review.
+- **Smart Dictation** sends transcript text—not raw microphone audio—to NVIDIA Nemotron on Nebius, requests grammar/formatting cleanup while preserving meaning, then requires approval before safe insertion. When started from the main window without an external target, the result stays in the prompt for review.
 - **Jarvis** keeps a bounded multi-turn conversation, retrieves relevant personal memory, uses the same NVIDIA Nemotron client, speaks through local Windows SAPI, and accepts only schema-validated typed tools. The initial supported local tools are approved application launch, approved HTTPS website launch, and approved insertion into the captured application. It never accepts model-generated shell commands.
 
-The baseline speech path depends on the installed Windows recognizer/SAPI voice. NVIDIA Riva / Speech NIM is intentionally an optional future speech-provider adapter; a Nebius Token Factory key alone is not represented as a speech-service credential.
+The baseline speech path depends on the installed Windows recognizer/SAPI voice. Jarvis is turn-taking rather than full-duplex: local speech recognition produces a transcript, Nemotron reasons over text through Nebius, and Windows SAPI speaks the response. NVIDIA Nemotron VoiceChat full-duplex inference is not bundled or claimed as a feature; its hosted endpoint is currently early-access gated, and NVIDIA's documented local runtime requires a separate model and suitable GPU.
 
 ### Personal memory
 

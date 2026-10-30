@@ -132,7 +132,14 @@ public partial class MainWindow
         var text = transcript.PreparePrompt();
         if (mode == VoiceAssistantMode.LocalDictation)
         {
-            if (_voiceFocusTarget is null) throw new InvalidOperationException("Use the global voice shortcut from the target application for safe text insertion.");
+            if (_voiceFocusTarget is null)
+            {
+                PromptBox.Text = text;
+                OutputBox.Text = "Local Dictation transcribed your speech on this PC. Review or edit the exact transcript above, then run it or copy it where needed.";
+                StatusText.Text = "Local Dictation — transcript ready for review";
+                return;
+            }
+
             await WindowsTextInsertion.InsertIntoCapturedTargetAsync(_voiceFocusTarget, text, cancellationToken);
             PromptBox.Text = text;
             OutputBox.Text = "Local Dictation inserted the exact local transcript into the captured application.";
@@ -149,7 +156,12 @@ public partial class MainWindow
         var polished = response.Answer.Trim();
         if (string.IsNullOrWhiteSpace(polished)) throw new InvalidOperationException("Nemotron returned no Smart Dictation text.");
         PromptBox.Text = polished;
-        if (_voiceFocusTarget is null) throw new InvalidOperationException("Use the global voice shortcut from the target application for safe text insertion.");
+        if (_voiceFocusTarget is null)
+        {
+            OutputBox.Text = "Smart Dictation result is ready above for review. It has not been inserted into another application.";
+            StatusText.Text = "Smart Dictation — reviewed text ready";
+            return;
+        }
         if (MessageBox.Show(this, "Insert the reviewed Smart Dictation result into the captured application?", "Smart Dictation approval", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
         {
             OutputBox.Text = polished; StatusText.Text = "Smart Dictation — result kept for review"; return;

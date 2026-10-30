@@ -105,7 +105,7 @@ public partial class MainWindow
         }
         catch
         {
-            readiness = new DesktopResearchReadiness(LocalResearchReady: _root.Research?.LocalExecutionAvailable == true, NebiusLifecycleRequested: false, NebiusLifecycleReady: _root.Research?.RemoteLifecycleAvailable == true, NebiusDispatchRequested: false, NebiusDispatchReady: _root.Research?.RemoteDispatchEnabled == true, new[] { "Desktop research readiness could not re-read the current opt-in flags; restart NVIDEA after verifying the documented configuration names." });
+            readiness = new DesktopResearchReadiness(LocalResearchReady: _root.Research?.LocalExecutionAvailable == true, NebiusLifecycleRequested: false, NebiusLifecycleReady: _root.Research?.RemoteLifecycleAvailable == true, NebiusDispatchRequested: false, NebiusDispatchReady: _root.Research?.RemoteDispatchEnabled == true, new[] { "Desktop research readiness could not re-read the current opt-in flags; restart keyboard-wtf after verifying the documented configuration names." });
         }
 
         _researchReadiness = readiness;

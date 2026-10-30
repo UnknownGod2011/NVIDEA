@@ -132,3 +132,23 @@ Recording-gate completion follow-up:
 - Draft PR #1 security qualification: GitGuardian Security Checks PASS on the canary branch; PR remains OPEN/DRAFT and mergeable. No merge was performed.
 
 No provider credentials were loaded, no Nebius job was launched, and no paid/live deployment or live canary is claimed. Remaining live blockers are an operator-provisioned Nebius Serverless/Object Storage/SecretStash deployment, the result-signing secret ID/version, matching public pin, and explicit authorization to create the paid canary job. The single best next task after repairing the unrelated test-suite source drift is to run that operator-confirmed canary and record the Windows dialog state/evidence for the submission video.
+
+## Current goal continuation — voice controls, accurate branding, and full-duplex audit (2026-10-30)
+
+Repository checked before this continuation: `UnknownGod2011/NVIDEA`, branch `main`, HEAD `e644493d5503375e370482324d5fd1e6cbd1c2be`, origin `https://github.com/UnknownGod2011/NVIDEA.git`. The remote `main` matched that commit. `keyboard.wtf` remains read-only.
+
+Completed the shortcut-settings follow-up already pushed in `e644493` and continued product polish in this run:
+- Local Dictation started from the app now leaves its exact transcript in the prompt for review when no external target was captured.
+- Smart Dictation started from the app now leaves the polished result for review when no external target was captured. It no longer reports a failed insertion after successfully producing a result.
+- Updated the voice docs and remaining Windows dialog/status copy to the visible `keyboard-wtf` product name. The tracked source/docs scan found no Gemini or Google AI adapter, credential, or user-facing references.
+- The settings UI continues to expose independently configurable global shortcuts for app invocation, Local Dictation, Smart Dictation, Jarvis, Emergency Stop, and Settings, with duplicate detection, restore-defaults, and per-user persistence.
+
+Voice capability was re-audited against the running code and current official NVIDIA documentation. The implemented default Jarvis path is turn-taking, not full-duplex: Windows `System.Speech` performs local recognition, a pause ends each utterance, the transcript is sent through the existing Nebius Token Factory Nemotron text adapter, and Windows SAPI speaks the completed response. It does not stream microphone audio to NVIDIA or begin speech while the user is still talking. NVIDIA Nemotron VoiceChat is currently described by NVIDIA as early-access evaluation; NVIDIA's official `NeMo-Speech.cpp` documents a full-duplex WebSocket API, but its model/runtime is separate from this app and the documented local setup requires an NVIDIA GPU with at least 16 GB accessible memory. The current Windows host exposes Intel UHD integrated graphics and has no `nvidia-smi`; a live VoiceChat endpoint or NVIDIA API credential is not configured. No API route was guessed, no GPU service was launched, and full-duplex operation is not claimed. A question about an operator-provided VoiceChat endpoint is pending.
+
+Validation actually executed during this continuation:
+- `dotnet build src/Nvidea.Windows/Nvidea.Windows.csproj -c Release -p:BaseOutputPath=C:\Users\Admin\AppData\Local\Temp\keyboard-wtf-build\` — PASS (WPF/XAML compile, 0 warnings, 0 errors). A prior app process held the normal output DLL open, so this qualification build used an isolated temporary output path.
+- `dotnet test tests/Nvidea.WorkerAuth.Tests/Nvidea.WorkerAuth.Tests.csproj -c Release` — PASS (8/8, provider-free).
+- `git diff --check` — PASS.
+- No microphone, speaker, NVIDIA GPU, NVIDIA speech endpoint, or live Nebius inference was exercised. The broader legacy Core and DemoPackageValidator test projects were not rerun in this continuation; their last recorded attempts fail at test-source compilation for unrelated API drift/analyzer errors and malformed raw-string syntax respectively.
+
+Next best task: if an operator endpoint is provided, implement and test an optional standards-documented Nemotron VoiceChat client with the existing approval-bounded Windows tools; otherwise keep the honest Nebius text-turn path as the judge-ready default and qualify it with an actual microphone/speaker session. Do not call the current Jarvis path full-duplex.

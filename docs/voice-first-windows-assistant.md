@@ -12,16 +12,16 @@ These are product capabilities, not decorative mode labels. A mode may be descri
 
 ## Reference-to-implementation map
 
-The read-only `keyboard.wtf` reference established the interaction pattern. NVIDEA adapts it without importing its legacy cloud runtime:
+The read-only `keyboard.wtf` reference established the interaction pattern. This implementation adapts it around NVIDIA Nemotron and Nebius:
 
-| Reference pattern | NVIDEA implementation |
+| Reference pattern | keyboard-wtf implementation |
 | --- | --- |
 | microphone lifecycle, partial transcript, pause detection | `SystemSpeechStreamingRecognizer` with local continuous Windows recognition and a 900 ms turn boundary |
 | dictation into previous app | `WindowsFocusTarget` + `WindowsTextInsertion`; a target mismatch aborts insertion |
-| assistant conversation | `JarvisConversation`, backed by NVIDEA's `IAgentInferenceClient`, Nebius Token Factory and privacy-aware memory |
+| assistant conversation | `JarvisConversation`, backed by keyboard-wtf's `IAgentInferenceClient`, Nebius Token Factory and privacy-aware memory |
 | local spoken response and interruption | `LocalSpeechOutput` using Windows SAPI and cancellable playback |
 | tool calling | bounded JSON-schema tool definitions, `IJarvisToolExecutor`, visible approvals, no shell capability |
-| assistant safety / browser execution | existing NVIDEA permissions, audit, emergency-stop and verified Playwright browser subsystems remain the authority |
+| assistant safety / browser execution | existing keyboard-wtf permissions, audit, emergency-stop and verified Playwright browser subsystems remain the authority |
 
 ## Runtime behavior
 

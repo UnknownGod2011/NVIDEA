@@ -125,7 +125,7 @@ public partial class App : Application
         catch
         {
             MessageBox.Show(
-                "Memory recovery failed safely. The previous generation could not be validated with this Windows protection context, so NVIDEA did not intentionally replace the current memory file. No memory content or protector error details are displayed.",
+                "Memory recovery failed safely. The previous generation could not be validated with this Windows protection context, so keyboard-wtf did not intentionally replace the current memory file. No memory content or protector error details are displayed.",
                 "Memory recovery failed",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
@@ -160,7 +160,7 @@ public partial class App : Application
         catch
         {
             return "keyboard-wtf could not start. No secret or provider exception text is displayed.\n\n" +
-                   "Desktop research configuration is invalid or incomplete. Verify the documented NVIDEA_DESKTOP_REMOTE_RESEARCH_* flags and Nebius live configuration, run the Nebius contract probe for redacted diagnostics, then restart.";
+                   "Desktop research configuration is invalid or incomplete. Verify the documented NVIDEA_DESKTOP_REMOTE_RESEARCH_* flags and Nebius live configuration, run the Nebius contract probe for redacted diagnostics, then restart keyboard-wtf.";
         }
     }
 }

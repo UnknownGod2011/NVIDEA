@@ -47,7 +47,7 @@ public partial class MainWindow
         if (!MigrationPlansMatch(_memoryMigrationPreview, freshPlan))
         {
             ApplyMemoryMigrationPreview(freshPlan, options);
-            OutputBox.Text = "Memory changed after the previous preview. NVIDEA did not start re-indexing. Review the refreshed counts, then choose Re-index again.";
+            OutputBox.Text = "Memory changed after the previous preview. keyboard-wtf did not start re-indexing. Review the refreshed counts, then choose Re-index again.";
             return;
         }
 
@@ -245,6 +245,6 @@ public partial class MainWindow
 
         return $"Re-index {plan.TotalCandidates} durable memory record(s) with the local {plan.Target.Provider} / {plan.Target.Model} embedding target?\n\n" +
                $"{elevated}\n\n" +
-               "Memory content will be sent only to the configured local embedding runtime. NVIDEA will update embedding vectors/provenance only, persist completed batches, and leave concurrently changed records untouched.";
+               "Memory content will be sent only to the configured local embedding runtime. keyboard-wtf will update embedding vectors/provenance only, persist completed batches, and leave concurrently changed records untouched.";
     }
 }

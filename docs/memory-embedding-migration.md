@@ -4,7 +4,7 @@ NVIDEA can re-index durable personal-memory records when local semantic embeddin
 
 ## Safety model
 
-Migration is intentionally local-only. `PersonalMemoryService` requires an `IMemoryEmbeddingMigrationProvider` whose target declares `IsLocal=true`; the production Ollama adapter satisfies this contract and remains restricted to loopback HTTP(S). There is no automatic Nebius, Tavily, OpenAI, Gemini, Claude, or other cloud fallback for memory re-indexing.
+Migration is intentionally local-only. `PersonalMemoryService` requires an `IMemoryEmbeddingMigrationProvider` whose target declares `IsLocal=true`; the production Ollama adapter satisfies this contract and remains restricted to loopback HTTP(S). There is no automatic cloud fallback for memory re-indexing.
 
 Before any embedding request, callers can run `PreviewEmbeddingMigrationAsync`. The preview returns only record IDs, layer, coarse sensitivity, reason, and target metadata; it does not expose memory content.
 

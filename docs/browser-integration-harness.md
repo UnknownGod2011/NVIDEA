@@ -108,4 +108,4 @@ Normal `dotnet test` runs must stay fast, credential-free, and free of large bro
 - **Throttled server sends the complete oversized fixture:** browser-side cancellation did not terminate the live transfer promptly enough.
 - **Replay causes a second mutation:** critical single-use approval regression.
 
-The harness never bypasses login, CAPTCHA, browser security, or site safeguards and does not require Nebius, NVIDIA, Tavily, OpenAI, Gemini, or Claude credentials.
+The harness never bypasses login, CAPTCHA, browser security, or site safeguards and does not require any cloud-provider credential.

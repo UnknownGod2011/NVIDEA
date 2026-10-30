@@ -57,6 +57,22 @@ Risks and blockers:
 ## Single Best Next Task
 Implement a real end-to-end **signed-result canary** across deployed Nebius Worker and Windows pinned-key verifier that proves signer/pin matching without exposing research data, with negative cases for wrong key, replay and signing-version drift. Integrate its verified outcome into fail-closed recording readiness; run .NET 8 + WPF qualification and update draft PR #1 based on results.
 
+## Judge onboarding and NVIDIA-only provider audit (2026-10-30)
+
+Preserved the existing keyboard.wtf-inspired Windows interaction model; no `keyboard.wtf` files were accessed or changed. NVIDEA has no legacy-provider adapter or credential path: cloud reasoning remains NVIDIA Nemotron through Nebius Token Factory, local voice remains Windows-native, and optional Ollama remains local-memory-only.
+
+Updated judge-facing onboarding:
+- `README.md` now has a Windows source-build quick start, current-session and persisted Token Factory/Tavily key setup, four RSA role documentation, remote signing-pin instructions, focused worker-auth test command, and portable GitHub Release artifact guidance.
+- `docs/judge-setup.md` gives a clean judge setup for normal desktop use, optional local voice/memory, and explicit paid Serverless boundaries.
+- `scripts/publish-windows.ps1` creates a self-contained `win-x64` publish directory inside the repository for later GitHub Release upload; it does not create a release or claim release qualification.
+- Removed legacy-provider wording from tracked judge-facing documentation. A tracked-source scan for legacy provider names passed.
+
+Validation actually executed:
+- `dotnet build src/Nvidea.Windows/Nvidea.Windows.csproj -c Release` — PASS.
+- `dotnet test tests/Nvidea.WorkerAuth.Tests/Nvidea.WorkerAuth.Tests.csproj -c Release` — PASS (4/4).
+- `scripts/publish-windows.ps1 -OutputDirectory .\\artifacts\\NVIDEA-win-x64` — PASS; output contained `Nvidea.Windows.exe`.
+- `git diff --check` — PASS.
+
 ## Current run — remote signed-worker canary completion attempt (2026-10-30)
 
 Repository/branch inspected before work: `UnknownGod2011/NVIDEA`, `automation/worker-auth-evidence`, starting HEAD `d1e22c77bbe2b1921a0adb6765b7f2a4b6977a9e`; origin remains `https://github.com/UnknownGod2011/NVIDEA.git`. `keyboard.wtf` was not accessed or changed.

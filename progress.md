@@ -79,6 +79,6 @@ Validation actually executed on this Windows .NET 8 host:
 
 Follow-up validation added after the baseline-suite audit:
 - `tests/Nvidea.WorkerAuth.Tests/Nvidea.WorkerAuth.Tests.csproj` is a focused provider-free regression project so worker-authentication coverage remains executable while the unrelated legacy Core suite is repaired.
-- `dotnet test tests/Nvidea.WorkerAuth.Tests/Nvidea.WorkerAuth.Tests.csproj -c Release --no-restore` — PASS (2/2): fresh one-use proof verification, pin/deployment/job binding, immutable secret requirement, and plaintext-secret exclusion.
+- `dotnet test tests/Nvidea.WorkerAuth.Tests/Nvidea.WorkerAuth.Tests.csproj -c Release` — PASS (3/3): fresh one-use proof verification, pin/deployment/job binding, immutable secret requirement, plaintext-secret exclusion, and a provider-free Serverless orchestration contract that verifies use of the configured digest-pinned image and immutable signing-secret version before accepting a returned-job-bound proof.
 
 No provider credentials were loaded, no Nebius job was launched, and no paid/live deployment or live canary is claimed. Remaining live blockers are an operator-provisioned Nebius Serverless/Object Storage/SecretStash deployment, the result-signing secret ID/version, matching public pin, and explicit authorization to create the paid canary job. The single best next task after repairing the unrelated test-suite source drift is to run that operator-confirmed canary and record the Windows dialog state/evidence for the submission video.

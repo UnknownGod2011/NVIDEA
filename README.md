@@ -303,12 +303,6 @@ The Windows Core, Worker, WPF/XAML, focused signed-worker contract suite, and re
 
 Other ongoing work includes memory compaction/summarization quality, broader reusable skills, browser UX polish, packaging/onboarding, local embedding quality calibration, and final judge-facing demo execution.
 
-## Relationship to keyboard.wtf
-
-keyboard.wtf is read-only reference material for useful interaction patterns such as Windows hotkeys, voice UI, local speech, workflows and permission concepts. NVIDEA is a separate repository and materially changes the backend architecture around NVIDIA/Nebius reasoning, memory, research, browser automation, durable work and safety.
-
-Automation working on NVIDEA is not permitted to mutate the keyboard.wtf repository.
-
 ## Development ledger
 
 See [`progress.md`](progress.md) for current architecture decisions, exact completed work, evidence, known blockers, risks and the next engineering priority.

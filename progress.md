@@ -397,4 +397,8 @@ Current remaining evidence gap: no operator API key has been entered; no microph
 
 Files changed in this continuation: `README.md`, `docs/judge-setup.md`, `docs/local-voice.md`, `docs/voice-first-windows-assistant.md`, `src/Nvidea.Core/Desktop/DesktopInvocation.cs`, `src/Nvidea.Windows/KeyboardSettingsDialog.xaml`, `src/Nvidea.Windows/MainWindow.Voice.cs`, `tests/Nvidea.Core.Tests/DesktopInvocationTests.cs`, and `progress.md`.
 
-No `keyboard.wtf` files were accessed or modified. The NVIDEA worktree remains local and uncommitted; the package is ignored by Git and is not a signed or published release.
+No `keyboard.wtf` files were accessed or modified. At the time of this entry, the worktree was still uncommitted; the persistence note below records its subsequent push. The package is ignored by Git and is not a signed or published release.
+
+## Persistence receipt — 2026-10-31
+
+The implementation, docs, tests, and progress record were committed on the only branch, `main`, as `97bfc17d53a13326428fa76920847823e4bcd00d` (`Improve desktop setup and voice flows`) and pushed to `https://github.com/UnknownGod2011/NVIDEA.git`. The remote `main` was read back and matched that commit; the worktree was clean at verification. No other local or remote branch was observed. The ZIP remains an ignored local artifact, not an uploaded GitHub Release. No Token Factory key was entered, and no microphone, speaker, or live-provider qualification occurred.

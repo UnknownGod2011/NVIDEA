@@ -77,4 +77,8 @@ Validation actually executed on this Windows .NET 8 host:
 - `dotnet test tests/Nvidea.DemoPackageValidator.Tests/Nvidea.DemoPackageValidator.Tests.csproj -c Release --no-restore` — NOT PASS: existing test source has malformed interpolated raw string syntax; no test result is claimed.
 - `Nvidea.sln` is absent, so the requested solution command cannot run.
 
+Follow-up validation added after the baseline-suite audit:
+- `tests/Nvidea.WorkerAuth.Tests/Nvidea.WorkerAuth.Tests.csproj` is a focused provider-free regression project so worker-authentication coverage remains executable while the unrelated legacy Core suite is repaired.
+- `dotnet test tests/Nvidea.WorkerAuth.Tests/Nvidea.WorkerAuth.Tests.csproj -c Release --no-restore` — PASS (2/2): fresh one-use proof verification, pin/deployment/job binding, immutable secret requirement, and plaintext-secret exclusion.
+
 No provider credentials were loaded, no Nebius job was launched, and no paid/live deployment or live canary is claimed. Remaining live blockers are an operator-provisioned Nebius Serverless/Object Storage/SecretStash deployment, the result-signing secret ID/version, matching public pin, and explicit authorization to create the paid canary job. The single best next task after repairing the unrelated test-suite source drift is to run that operator-confirmed canary and record the Windows dialog state/evidence for the submission video.

@@ -17,7 +17,7 @@ The hackathon desktop uses the Windows desktop speech-recognition stack (`System
 
 Before each capture keyboard-wtf discloses that the default microphone will be used and asks for explicit confirmation. Declining does not open the microphone.
 
-The global voice shortcuts mirror the normal invocation privacy model: the foreground application and insertion target are captured before keyboard-wtf activates. Clipboard text is only captured when the existing **Allow clipboard context** control is enabled. Recognition itself does not send that context anywhere. Shortcut choices are saved per user under `%LOCALAPPDATA%\keyboard-wtf\keyboard-settings.json`; the file contains shortcut names only, never credentials.
+The global voice shortcuts mirror the normal invocation privacy model: the foreground application and insertion target are captured before keyboard-wtf activates. Clipboard text is only captured when the existing **Allow clipboard context** control is enabled. Recognition itself does not send that context anywhere. Shortcut choices are saved per user under `%LOCALAPPDATA%\keyboard-wtf\keyboard-settings.json`; the file contains shortcut names only, never credentials. On first run, if that file does not exist, compatible values are imported from `%LOCALAPPDATA%\keyboard.wtf\settings.json`: Smart Writing maps to Smart Dictation, Dictation to Local Dictation, and the Jarvis, Cancel, and Open Settings shortcuts keep their meanings. The importer leaves the original settings file unchanged and does not copy its provider keys or unrelated preferences.
 
 ## Availability
 

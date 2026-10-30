@@ -152,3 +152,21 @@ Validation actually executed during this continuation:
 - No microphone, speaker, NVIDIA GPU, NVIDIA speech endpoint, or live Nebius inference was exercised. The broader legacy Core and DemoPackageValidator test projects were not rerun in this continuation; their last recorded attempts fail at test-source compilation for unrelated API drift/analyzer errors and malformed raw-string syntax respectively.
 
 Next best task: if an operator endpoint is provided, implement and test an optional standards-documented Nemotron VoiceChat client with the existing approval-bounded Windows tools; otherwise keep the honest Nebius text-turn path as the judge-ready default and qualify it with an actual microphone/speaker session. Do not call the current Jarvis path full-duplex.
+
+## Settings continuity follow-up (2026-10-30)
+
+Repository inspected before this follow-up: `UnknownGod2011/NVIDEA`, root `C:\Users\Admin\OneDrive\Desktop\NVIDEA`, branch `main`, local HEAD `dff14e274b3851629d7781718f0c4f856eaeeb52`, origin `https://github.com/UnknownGod2011/NVIDEA.git`. At inspection time the remote `main` still pointed to `e644493d5503375e370482324d5fd1e6cbd1c2be`. The separate `keyboard.wtf` repository was read-only and not modified.
+
+Settings continuity work:
+- Kept the existing NVIDEA/keyboard-wtf six-shortcut UI and confirmed its default mappings align with the reference actions: Smart Writing → Smart Dictation (`Ctrl+Alt+K`), Dictation (`Ctrl+Alt+D`), Jarvis (`Ctrl+Alt+Q`), Cancel (`Ctrl+Alt+X`), and Open Settings (`Ctrl+Alt+,`). App invocation remains `Ctrl+Shift+Space`.
+- Added first-run migration from `%LOCALAPPDATA%\keyboard.wtf\settings.json` into the separate `%LOCALAPPDATA%\keyboard-wtf\keyboard-settings.json`, but only when the latter does not exist. The importer copies compatible shortcut fields only, validates conflicts and duplicate JSON property names, and leaves the source file unchanged. Existing keyboard-wtf settings take precedence. Legacy provider credentials and unrelated preferences are not copied.
+- Added `tests/Nvidea.Windows.Tests` with migration, precedence, source-preservation, credential-exclusion, conflicting-shortcut, and ambiguous-duplicate regressions.
+- Updated README and voice setup documentation to describe the import and retained hotkey behavior. This follow-up does not claim that every setting from the separate legacy app has been ported; unsupported legacy Gemini/provider and speech-engine controls remain outside this settings migration.
+
+Validation actually executed:
+- `dotnet build src/Nvidea.Windows/Nvidea.Windows.csproj -c Release -p:BaseOutputPath=C:\Users\Admin\AppData\Local\Temp\keyboard-wtf-build\` — PASS (WPF/XAML, 0 warnings, 0 errors).
+- `dotnet test tests/Nvidea.Windows.Tests/Nvidea.Windows.Tests.csproj -c Release -p:BaseOutputPath=C:\Users\Admin\AppData\Local\Temp\keyboard-wtf-build\` — PASS (4/4 provider-free Windows tests).
+- `git diff --check` — PASS (only normal Windows CRLF conversion notices).
+- `README.md`, `docs`, `src`, and `tests` were searched for Gemini/Google AI references after the settings change; none were present.
+
+The broader active goal remains incomplete: live microphone/speaker acceptance, full-duplex NVIDIA voice endpoint qualification, and confirmation of a real Nebius inference are still outstanding. The single best next task is to finish judge-facing Settings integration for the supported Nemotron/Nebius configuration while preserving this hotkey migration, then run an actual desktop voice session when the operator endpoint/access is available.

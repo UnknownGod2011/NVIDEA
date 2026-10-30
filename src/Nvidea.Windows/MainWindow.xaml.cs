@@ -36,13 +36,26 @@ public partial class MainWindow : Window
     public MainWindow(NvideaCompositionRoot root)
     {
         _root = root ?? throw new ArgumentNullException(nameof(root));
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         _keyboardSettingsPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            localAppData,
             "keyboard-wtf",
             "keyboard-settings.json");
-        var loadedSettings = KeyboardShortcutSettingsStore.Load(_keyboardSettingsPath);
+        var legacySettingsPath = Path.Combine(localAppData, "keyboard.wtf", "settings.json");
+        var loadedSettings = KeyboardShortcutSettingsStore.Load(_keyboardSettingsPath, legacySettingsPath);
         _keyboardSettings = loadedSettings.Settings;
         _keyboardSettingsNotice = loadedSettings.Notice;
+        if (loadedSettings.MigratedFromLegacy)
+        {
+            try
+            {
+                KeyboardShortcutSettingsStore.Save(_keyboardSettingsPath, _keyboardSettings);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _keyboardSettingsNotice = "Existing keyboard.wtf shortcuts were loaded for this session but could not be saved for future runs. The original settings remain unchanged.";
+            }
+        }
         InitializeComponent();
         SourceInitialized += OnSourceInitialized;
         Loaded += OnLoaded;

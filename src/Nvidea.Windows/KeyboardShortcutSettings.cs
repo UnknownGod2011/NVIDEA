@@ -167,17 +167,25 @@ internal readonly record struct ShortcutChord(uint Modifiers, uint VirtualKey, s
     }
 }
 
-internal sealed record KeyboardShortcutSettingsLoadResult(KeyboardShortcutSettings Settings, string? Notice);
+internal sealed record KeyboardShortcutSettingsLoadResult(
+    KeyboardShortcutSettings Settings,
+    string? Notice,
+    bool MigratedFromLegacy = false);
 
 internal static class KeyboardShortcutSettingsStore
 {
     private const int MaxSettingsBytes = 4096;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
-    public static KeyboardShortcutSettingsLoadResult Load(string path)
+    public static KeyboardShortcutSettingsLoadResult Load(string path, string? legacySettingsPath = null)
     {
         if (!File.Exists(path))
+        {
+            if (!string.IsNullOrWhiteSpace(legacySettingsPath) && File.Exists(legacySettingsPath))
+                return LoadLegacyHotkeys(legacySettingsPath);
+
             return new KeyboardShortcutSettingsLoadResult(KeyboardShortcutSettings.Defaults(), null);
+        }
 
         try
         {
@@ -196,6 +204,91 @@ internal static class KeyboardShortcutSettingsStore
                 KeyboardShortcutSettings.Defaults(),
                 "Saved shortcuts could not be read safely; built-in defaults are active. Open Settings to replace them.");
         }
+    }
+
+    private static KeyboardShortcutSettingsLoadResult LoadLegacyHotkeys(string path)
+    {
+        const int maxLegacySettingsBytes = 1024 * 1024;
+        try
+        {
+            var info = new FileInfo(path);
+            if (info.Length is <= 0 or > maxLegacySettingsBytes)
+                throw new InvalidDataException("Legacy settings file size is outside the supported range.");
+
+            // The legacy file also contains provider credentials and unrelated preferences.
+            // Only the Hotkeys object is projected into the new settings type; no legacy key
+            // field is copied into the new app configuration or surfaced to the UI.
+            using var document = JsonDocument.Parse(File.ReadAllBytes(path), new JsonDocumentOptions { MaxDepth = 24 });
+            if (document.RootElement.ValueKind != JsonValueKind.Object
+                || !TryGetProperty(document.RootElement, "Hotkeys", out var hotkeys)
+                || hotkeys.ValueKind != JsonValueKind.Object)
+            {
+                return new KeyboardShortcutSettingsLoadResult(
+                    KeyboardShortcutSettings.Defaults(),
+                    "Existing keyboard.wtf settings were found, but no compatible hotkeys could be imported. The original settings remain unchanged.");
+            }
+
+            var settings = KeyboardShortcutSettings.Defaults();
+            if (!TryMapLegacyHotkey(hotkeys, "PushToTalk", value => settings.SmartDictation = value)
+                || !TryMapLegacyHotkey(hotkeys, "Dictation", value => settings.LocalDictation = value)
+                || !TryMapLegacyHotkey(hotkeys, "Jarvis", value => settings.Jarvis = value)
+                || !TryMapLegacyHotkey(hotkeys, "Cancel", value => settings.EmergencyStop = value)
+                || !TryMapLegacyHotkey(hotkeys, "OpenSettings", value => settings.OpenSettings = value))
+            {
+                return new KeyboardShortcutSettingsLoadResult(
+                    KeyboardShortcutSettings.Defaults(),
+                    "Existing keyboard.wtf shortcuts could not be validated, so keyboard-wtf defaults are active. The original settings remain unchanged.");
+            }
+
+            if (!settings.TryValidate(out _))
+            {
+                return new KeyboardShortcutSettingsLoadResult(
+                    KeyboardShortcutSettings.Defaults(),
+                    "Existing keyboard.wtf shortcuts conflict with keyboard-wtf shortcuts, so defaults are active. The original settings remain unchanged.");
+            }
+
+            return new KeyboardShortcutSettingsLoadResult(
+                settings,
+                "Existing keyboard.wtf shortcuts were imported. The original settings remain unchanged.",
+                MigratedFromLegacy: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidDataException)
+        {
+            return new KeyboardShortcutSettingsLoadResult(
+                KeyboardShortcutSettings.Defaults(),
+                "Existing keyboard.wtf shortcuts could not be read safely; keyboard-wtf defaults are active. The original settings remain unchanged.");
+        }
+    }
+
+    private static bool TryMapLegacyHotkey(JsonElement hotkeys, string propertyName, Action<string> assign)
+    {
+        if (!TryGetProperty(hotkeys, propertyName, out var property))
+            return true;
+        if (property.ValueKind != JsonValueKind.String)
+            return false;
+        var value = property.GetString();
+        if (!ShortcutChord.TryParse(value, out _))
+            return false;
+        assign(value!);
+        return true;
+    }
+
+    private static bool TryGetProperty(JsonElement element, string name, out JsonElement value)
+    {
+        var found = false;
+        value = default;
+        foreach (var property in element.EnumerateObject())
+        {
+            if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
+            {
+                if (found)
+                    throw new JsonException("Legacy settings contain an ambiguous duplicate property.");
+                value = property.Value;
+                found = true;
+            }
+        }
+
+        return found;
     }
 
     public static void Save(string path, KeyboardShortcutSettings settings)

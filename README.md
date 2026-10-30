@@ -1,6 +1,6 @@
-# NVIDEA
+# keyboard-wtf
 
-NVIDEA is an open-source, Windows-first **Personal AI operating layer** for the Nebius x NVIDIA Global AI Hackathon. It is inspired by interaction patterns that proved useful in keyboard.wtf, but it is a separate project with an NVIDIA/Nebius-first intelligence stack, durable personal memory, Tavily research, safe browser automation, long-running work, verification, and explicit permission boundaries.
+keyboard-wtf is an open-source, Windows-first **Personal AI operating layer** for the Nebius x NVIDIA Global AI Hackathon. It combines an NVIDIA/Nebius-first intelligence stack with durable personal memory, Tavily research, safe browser automation, long-running work, verification, and explicit permission boundaries.
 
 ## Hackathon target
 
@@ -66,7 +66,7 @@ Voice recognition places the transcript into the prompt for user review rather t
 
 ### Personal memory
 
-NVIDEA implements typed working, episodic, semantic, project/entity and skill memory with provenance, confidence, importance, sensitivity and retention metadata.
+keyboard-wtf implements typed working, episodic, semantic, project/entity and skill memory with provenance, confidence, importance, sensitivity and retention metadata.
 
 The retrieval path combines lexical relevance, semantic similarity when compatible embeddings exist, recency and importance. Vector comparisons are isolated by provider/model/dimension provenance so vectors from incompatible embedding spaces are never silently mixed.
 
@@ -108,7 +108,7 @@ The browser subsystem uses persistent Playwright/Chromium sessions with a plan â
 - cancellation, emergency stop, crash recovery and ambiguous-action fail-closed behavior;
 - single-owner profile/state leases to prevent concurrent mutation.
 
-NVIDEA does not bypass CAPTCHA, login, site, browser or OS safeguards.
+keyboard-wtf does not bypass CAPTCHA, login, site, browser or OS safeguards.
 
 ### Skills, permissions and audit
 
@@ -274,7 +274,7 @@ These commands are validation instructions, not claims that a particular environ
 
 ## Privacy and safety contract
 
-NVIDEA is designed around least privilege:
+keyboard-wtf is designed around least privilege:
 
 - observe separately from act;
 - require explicit approval for consequential operations;
@@ -292,7 +292,7 @@ NVIDEA is designed around least privilege:
 Maintainers can create a portable Windows build without changing source or needing a website deployment:
 
 ```powershell
-.\scripts\publish-windows.ps1 -OutputDirectory .\artifacts\NVIDEA-win-x64
+.\scripts\publish-windows.ps1 -OutputDirectory .\artifacts\keyboard-wtf-win-x64
 ```
 
 Upload the resulting directory as a GitHub Release asset after performing the documented Windows validation. This repository does not claim a binary is a signed public release merely because it was built locally.

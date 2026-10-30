@@ -12,7 +12,7 @@ These are product capabilities, not decorative mode labels. A mode may be descri
 
 ## Reference-to-implementation map
 
-The read-only `keyboard.wtf` reference established the interaction pattern. NVIDEA adapts it without importing its Gemini-dependent runtime:
+The read-only `keyboard.wtf` reference established the interaction pattern. NVIDEA adapts it without importing its legacy cloud runtime:
 
 | Reference pattern | NVIDEA implementation |
 | --- | --- |

@@ -149,7 +149,7 @@ public partial class MainWindow : Window
             var action = new BrowserAction(
                 BrowserActionKind.Navigate,
                 Destination: destination,
-                Rationale: $"Navigate the user-visible NVIDEA browser to {destination.IdnHost}.");
+                Rationale: $"Navigate the user-visible keyboard-wtf browser to {destination.IdnHost}.");
 
             var outcome = await _browserHost.StartActionAsync(action, cancellationToken);
             if (outcome.State == AgentJobState.WaitingForApproval && outcome.Approval is not null)
@@ -227,7 +227,7 @@ public partial class MainWindow : Window
                     break;
 
                 case BrowserAmbiguousRecoveryStatus.NeedsHumanResolution:
-                    OutputBox.Text = "Human resolution required. NVIDEA did not retry the interrupted action because fresh evidence could not prove completion safely.";
+                    OutputBox.Text = "Human resolution required. keyboard-wtf did not retry the interrupted action because fresh evidence could not prove completion safely.";
                     StatusText.Text = "Recovery — human resolution required; no automatic retry";
                     break;
 
@@ -317,14 +317,14 @@ public partial class MainWindow : Window
         {
             DesktopAgentState.Idle => "Idle",
             DesktopAgentState.Listening => "Listening — local voice capture active",
-            DesktopAgentState.Thinking => "Thinking — processing with NVIDEA",
+            DesktopAgentState.Thinking => "Thinking — processing with keyboard-wtf",
             DesktopAgentState.Researching => "Researching — gathering and verifying sources",
             DesktopAgentState.Acting => "Acting — executing an approved local capability",
             DesktopAgentState.WaitingForApproval => "Waiting for explicit approval",
             DesktopAgentState.Completed => "Completed — response ready",
             DesktopAgentState.Cancelled => "Cancelled — stopped safely",
             DesktopAgentState.Failed => "Failed — invocation did not complete",
-            _ => "NVIDEA status unavailable"
+            _ => "keyboard-wtf status unavailable"
         });
     }
 

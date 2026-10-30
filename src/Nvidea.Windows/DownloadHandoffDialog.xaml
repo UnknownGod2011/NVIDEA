@@ -17,7 +17,7 @@
 
         <TextBlock Text="Release quarantined download?" FontSize="22" FontWeight="SemiBold"/>
         <TextBlock Grid.Row="1" Margin="0,6,0,14" TextWrapping="Wrap" Opacity="0.72"
-                   Text="NVIDEA verified this file in quarantine. Exporting it writes the exact file shown below to the selected folder. This approval is single-use."/>
+                   Text="keyboard-wtf verified this file in quarantine. Exporting it writes the exact file shown below to the selected folder. This approval is single-use."/>
 
         <Grid Grid.Row="2" Margin="0,0,0,8">
             <Grid.ColumnDefinitions><ColumnDefinition Width="110"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
@@ -42,7 +42,7 @@
 
         <Border Grid.Row="6" Margin="0,10,0,14" Padding="10" BorderThickness="1" CornerRadius="5">
             <TextBlock TextWrapping="Wrap" Opacity="0.72"
-                       Text="Only this exact quarantined download and destination are approved. If anything changes after this dialog was prepared, NVIDEA will reject the export and require a new approval."/>
+                       Text="Only this exact quarantined download and destination are approved. If anything changes after this dialog was prepared, keyboard-wtf will reject the export and require a new approval."/>
         </Border>
 
         <StackPanel Grid.Row="7" Orientation="Horizontal" HorizontalAlignment="Right">

@@ -30,7 +30,7 @@ public partial class App : Application
                 if (await TryRecoverMemoryWithExplicitConsentAsync().ConfigureAwait(true))
                 {
                     MessageBox.Show(
-                        "The previous durable memory generation was restored successfully. NVIDEA will now close. Restart it to open the recovered state. No memory content was displayed during recovery.",
+                        "The previous durable memory generation was restored successfully. keyboard-wtf will now close. Restart it to open the recovered state. No memory content was displayed during recovery.",
                         "Memory recovery complete",
                         MessageBoxButton.OK,
                         MessageBoxImage.Information);
@@ -48,7 +48,7 @@ public partial class App : Application
 
             MessageBox.Show(
                 BuildCredentialSafeStartupFailureText(),
-                "NVIDEA startup failed safely",
+                "keyboard-wtf startup failed safely",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
             Shutdown(1);
@@ -57,7 +57,7 @@ public partial class App : Application
         {
             MessageBox.Show(
                 BuildCredentialSafeStartupFailureText(),
-                "NVIDEA startup failed safely",
+                "keyboard-wtf startup failed safely",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
             Shutdown(1);
@@ -99,7 +99,7 @@ public partial class App : Application
             return false;
 
         var choice = MessageBox.Show(
-            "NVIDEA verified that the current personal-memory file cannot be opened safely, and a previous generation is available.\n\n" +
+            "keyboard-wtf verified that the current personal-memory file cannot be opened safely, and a previous generation is available.\n\n" +
             "Recovering will replace the current personal-memory file with exactly one earlier last-known-good generation. Recent memory changes after that generation may be lost. Recovery does not inspect or display memory content, does not contact a cloud provider, and is never automatic.\n\n" +
             "Choose OK only if you want to perform this one-generation rollback now. Choose Cancel to leave every file unchanged.",
             "Recover previous memory generation?",
@@ -153,13 +153,13 @@ public partial class App : Application
                     dispatchReady: false,
                     cloudPreflightFailed: cloudMode.LifecycleEnabled);
 
-            return "NVIDEA could not start. No secret or provider exception text is displayed.\n\n" +
+            return "keyboard-wtf could not start. No secret or provider exception text is displayed.\n\n" +
                    readiness.ToStatusText() +
                    "\n\nFix the named configuration blockers or run the Nebius contract probe for redacted deployment diagnostics, then restart.";
         }
         catch
         {
-            return "NVIDEA could not start. No secret or provider exception text is displayed.\n\n" +
+            return "keyboard-wtf could not start. No secret or provider exception text is displayed.\n\n" +
                    "Desktop research configuration is invalid or incomplete. Verify the documented NVIDEA_DESKTOP_REMOTE_RESEARCH_* flags and Nebius live configuration, run the Nebius contract probe for redacted diagnostics, then restart.";
         }
     }

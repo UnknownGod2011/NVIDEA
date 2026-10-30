@@ -191,3 +191,20 @@ Validation actually executed on this Windows .NET 8 host:
 - The broad legacy `Nvidea.Core.Tests` suite was not rerun in this continuation; its previously recorded attempt fails compilation due unrelated pre-existing test/source API drift and analyzer errors.
 
 No Nebius credential was read or used, and no live API call, paid Serverless job, microphone session, or speaker-output session was run. Provider-free tests establish code contracts only; live Nemotron and real-device voice behavior remain unverified. The strongest next validation is to configure a Nebius Token Factory key through Settings and run a real local microphone/SAPI Jarvis turn, then capture the working modes for the public demo.
+
+## Current continuation — Jarvis session target stability and speech-runtime audit (2026-10-30)
+
+Repository checked before this continuation: `UnknownGod2011/NVIDEA`, root `C:\Users\Admin\OneDrive\Desktop\NVIDEA`, branch `main`, local and remote HEAD `9cd5c0b7faf02055bcb69b56af491a56726b3090`, origin `https://github.com/UnknownGod2011/NVIDEA.git`; working tree was clean. `keyboard.wtf` remains read-only.
+
+Fixed a Jarvis session target regression in `src/Nvidea.Windows/MainWindow.Voice.cs`: the continuous session used to re-capture the foreground application after each answer, when keyboard-wtf had taken focus. Later `type_text` tool calls could therefore lose the original invocation target. Jarvis now retains the invocation-time desktop context and insertion target until that voice session ends, matching the executor's existing approval and target-binding contract.
+
+Audited current speech hardware without opening the microphone: this host reports installed SAPI recognizers `en-GB` and `en-US`, and Realtek microphone-array and speaker endpoints with status `OK`. Only Intel UHD graphics is present and `nvidia-smi` is unavailable. This establishes speech recognizer/device availability only; it does not prove live capture, accurate transcription, or audible playback.
+
+Rechecked current NVIDIA speech options against primary sources. The `nvidia/nemotron-voicechat` hosted page exposes a free endpoint but requires applying for early access; it is a separate NVIDIA API credential/access path from Nebius Token Factory. NVIDIA's official NeMo-Speech.cpp provides a Windows runtime and documented local speech APIs; its recommended Q4 full-duplex VoiceChat model setup requires at least 16 GB GPU-accessible memory. The current host cannot qualify that local GPU route. No undocumented endpoint was guessed, no API key was accessed, and no microphone audio was sent to a hosted trial. The shipped Jarvis path remains accurately described as Nemotron text streaming with local SAPI output between user turns, not full-duplex.
+
+Validation actually executed after the target fix:
+- `dotnet test tests/Nvidea.Windows.Tests/Nvidea.Windows.Tests.csproj -c Release -p:BaseOutputPath=...` — PASS (10/10); this compiles the Windows WPF/XAML project.
+- Hardware enumeration — PASS for two installed recognizers and the default Realtek input/output endpoints; this is inventory only, not a capture/playback test.
+- `git diff --check` — PASS (normal CRLF notices only).
+
+No cloud inference or physical microphone/speaker session was exercised. The broad legacy Core test project remains previously known to fail compilation from unrelated test/source API drift; the repository has no solution file. Next best task: run the actual app with an operator-configured Nebius key and explicit microphone consent, verify a local dictation and one Smart Dictation/Jarvis turn, then capture honest demo evidence. Full-duplex VoiceChat requires NVIDIA early-access approval or a separately provisioned compatible local runtime.

@@ -193,8 +193,9 @@ public partial class MainWindow
             StatusText.Text = "Jarvis — connecting to NVIDIA Nemotron";
             var context = _pendingContext ?? WindowsContextCapture.Capture(false);
             await RunJarvisTurnAsync(text, context, cancellationToken);
-            _pendingContext = WindowsContextCapture.Capture(false);
-            _voiceFocusTarget = WindowsFocusTarget.Capture();
+            // Keep the invocation context and insertion target pinned for this session.
+            // The app owns foreground focus after activation; recapturing here would replace
+            // the user's original application with keyboard-wtf itself.
         }
     }
 

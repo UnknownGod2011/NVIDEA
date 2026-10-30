@@ -81,4 +81,11 @@ Follow-up validation added after the baseline-suite audit:
 - `tests/Nvidea.WorkerAuth.Tests/Nvidea.WorkerAuth.Tests.csproj` is a focused provider-free regression project so worker-authentication coverage remains executable while the unrelated legacy Core suite is repaired.
 - `dotnet test tests/Nvidea.WorkerAuth.Tests/Nvidea.WorkerAuth.Tests.csproj -c Release` — PASS (3/3): fresh one-use proof verification, pin/deployment/job binding, immutable secret requirement, plaintext-secret exclusion, and a provider-free Serverless orchestration contract that verifies use of the configured digest-pinned image and immutable signing-secret version before accepting a returned-job-bound proof.
 
+Recording-gate completion follow-up:
+- Added `tools/Nvidea.WorkerSigningCanaryVerifier`, a local no-network verifier that loads the active live deployment configuration, DPAPI-unprotects a receipt from `NVIDEA_WORKER_SIGNING_CANARY_EVIDENCE_PATH`, and independently projects `VERIFIED` only if the signature, expiry, active image, immutable signing-secret version, and public pin still match.
+- `scripts/live-demo-readiness.ps1 -RequireCloudResearch` now invokes that verifier and blocks recording unless the result is `VERIFIED`; configuration-variable presence or an editable JSON boolean is insufficient.
+- `dotnet test tests/Nvidea.WorkerAuth.Tests/Nvidea.WorkerAuth.Tests.csproj -c Release` — PASS (4/4), including protected-receipt revalidation, stale evidence, and rejection of plain `verified` JSON.
+- `dotnet build tools/Nvidea.WorkerSigningCanaryVerifier/Nvidea.WorkerSigningCanaryVerifier.csproj -c Release --no-restore` — PASS.
+- `dotnet build src/Nvidea.Windows/Nvidea.Windows.csproj -c Release` — PASS.
+
 No provider credentials were loaded, no Nebius job was launched, and no paid/live deployment or live canary is claimed. Remaining live blockers are an operator-provisioned Nebius Serverless/Object Storage/SecretStash deployment, the result-signing secret ID/version, matching public pin, and explicit authorization to create the paid canary job. The single best next task after repairing the unrelated test-suite source drift is to run that operator-confirmed canary and record the Windows dialog state/evidence for the submission video.

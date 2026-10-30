@@ -110,6 +110,8 @@ The worker consumes that invocation and create-once publishes a bounded JSON pro
 
 The judge panel reports `NOT CONFIGURED`, `PUBLIC KEY PINNED — CANARY NOT RUN`, `CANARY RUNNING`, `CANARY FAILED`, `CANARY VERIFIED`, or `CANARY STALE`. A receipt becomes stale whenever the image digest, immutable signing-secret version, or public pin changes. A public pin or a MysteryBox reference alone can never create `VERIFIED` state.
 
+`scripts/live-demo-readiness.ps1 -RequireCloudResearch` requires `NVIDEA_WORKER_SIGNING_CANARY_EVIDENCE_PATH` and runs `Nvidea.WorkerSigningCanaryVerifier` locally. The verifier DPAPI-unprotects the receipt and independently revalidates its proof against the active configuration; a JSON `verified: true`, an expired receipt, a changed image/secret-version/pin, or a malformed receipt fails the gate. It makes no provider/network call.
+
 For rollback, deploy the prior digest and immutable secret version together with its matching public pin, then run a new canary. If the proof is late, absent, malformed, from another job, replayed, or fails verification, readiness remains failed; do not fall back to log text or configuration presence.
 
 Provider-free tests cover secret-role isolation, weak/malformed key rejection, missing signatures, wrong pinned workers, replay/substitution, challenge/context tampering, and verify-before-decrypt behavior at the production ingestor boundary. Live Nebius MysteryBox creation, secret-version injection, Windows deployment, and end-to-end provider validation still require a real account and an operator-authorized canary; they are not claimed by this runbook.

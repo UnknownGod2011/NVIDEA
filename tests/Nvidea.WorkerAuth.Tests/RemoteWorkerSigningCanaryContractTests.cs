@@ -79,6 +79,36 @@ public sealed class RemoteWorkerSigningCanaryContractTests
         }
     }
 
+    [Fact]
+    public async Task Protected_receipt_is_revalidated_and_plain_boolean_style_evidence_is_rejected()
+    {
+        using var worker = RSA.Create(2048);
+        var root = Path.Combine(Path.GetTempPath(), "nvidea-canary-receipt-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var path = Path.Combine(root, "receipt");
+            var store = new WorkerSigningCanaryEvidenceStore(path, new PassThroughProtector());
+            await File.WriteAllTextAsync(path, "{\"verified\":true}");
+            await Assert.ThrowsAsync<InvalidDataException>(() => store.LoadAsync());
+
+            var deployment = WorkerSigningCanaryDeployment.Create(CreateOptions(worker.ExportSubjectPublicKeyInfoPem()), worker.ExportSubjectPublicKeyInfoPem());
+            var now = DateTimeOffset.UtcNow;
+            var challenge = WorkerSigningCanary.Create(deployment.DeploymentFingerprintSha256, now);
+            var proof = WorkerSigningCanary.Sign(challenge, worker.ExportPkcs8PrivateKeyPem(), JobBinding, now);
+            var receipt = new WorkerSigningCanaryReceipt(challenge, proof, now);
+            await store.SaveAsync(receipt);
+
+            var verified = WorkerSigningCanaryEvidenceEvaluator.Evaluate(await store.LoadAsync(), deployment, worker.ExportSubjectPublicKeyInfoPem(), now);
+            Assert.Equal(WorkerSigningCanaryStatus.Verified, verified.Status);
+            Assert.Equal(WorkerSigningCanaryStatus.Stale, WorkerSigningCanaryEvidenceEvaluator.Evaluate(receipt, deployment, worker.ExportSubjectPublicKeyInfoPem(), now.AddMinutes(31)).Status);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
     private static NebiusResearchDispatchOptions CreateOptions(string publicKeyPem) => new(
         "registry.example/worker@sha256:" + new string('a', 64), publicKeyPem, "dotnet", "cpu-d3", "1vcpu-4gb", "600s", "subnet", new NebiusServerlessDiskSpec("NETWORK_SSD", 10L * 1024 * 1024 * 1024),
         EnvironmentVariables: new Dictionary<string, string> { ["NVIDEA_TRANSPORT_ROOT"] = "/mnt/nvidea" },

@@ -87,5 +87,6 @@ Recording-gate completion follow-up:
 - `dotnet test tests/Nvidea.WorkerAuth.Tests/Nvidea.WorkerAuth.Tests.csproj -c Release` — PASS (4/4), including protected-receipt revalidation, stale evidence, and rejection of plain `verified` JSON.
 - `dotnet build tools/Nvidea.WorkerSigningCanaryVerifier/Nvidea.WorkerSigningCanaryVerifier.csproj -c Release --no-restore` — PASS.
 - `dotnet build src/Nvidea.Windows/Nvidea.Windows.csproj -c Release` — PASS.
+- Draft PR #1 security qualification: GitGuardian Security Checks PASS on the canary branch; PR remains OPEN/DRAFT and mergeable. No merge was performed.
 
 No provider credentials were loaded, no Nebius job was launched, and no paid/live deployment or live canary is claimed. Remaining live blockers are an operator-provisioned Nebius Serverless/Object Storage/SecretStash deployment, the result-signing secret ID/version, matching public pin, and explicit authorization to create the paid canary job. The single best next task after repairing the unrelated test-suite source drift is to run that operator-confirmed canary and record the Windows dialog state/evidence for the submission video.

@@ -139,6 +139,17 @@ public interface IAgentInferenceClient
     Task<AgentCompletion> CompleteAsync(AgentRequest request, CancellationToken cancellationToken = default);
 }
 
+/// <summary>
+/// Keeps local-first desktop features available when cloud reasoning is intentionally unconfigured.
+/// It contains no credentials and fails only at the attempted cloud-inference boundary.
+/// </summary>
+public sealed class UnconfiguredInferenceClient : IAgentInferenceClient
+{
+    public Task<AgentCompletion> CompleteAsync(AgentRequest request, CancellationToken cancellationToken = default) =>
+        Task.FromException<AgentCompletion>(new InvalidOperationException(
+            "NVIDIA Nemotron reasoning is not configured. Set NEBIUS_API_KEY to use Smart Dictation or Jarvis."));
+}
+
 public sealed class NebiusTokenFactoryClient : IAgentInferenceClient
 {
     private const string QuarantinedTransportDiagnostic = "Nebius transport request failed; provider/network diagnostics quarantined.";

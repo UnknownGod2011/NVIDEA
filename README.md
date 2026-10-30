@@ -9,7 +9,7 @@ keyboard-wtf is an open-source, Windows-first **Personal AI operating layer** fo
 - Bonus target: **Best Use of Tavily**
 - Core reasoning runtime: **NVIDIA Nemotron on Nebius Token Factory / Nebius AI Cloud**
 
-Every cloud reasoning request is sent through the NVIDIA Nemotron / Nebius Token Factory adapter. Local speech recognition stays on Windows; optional Ollama is used only for local memory embeddings, never for the reasoning runtime.
+Every cloud reasoning request is sent through the NVIDIA Nemotron / Nebius Token Factory adapter. Local speech recognition and speech output stay on Windows by default; optional Ollama is used only for local memory embeddings, never for the reasoning runtime.
 
 ## Quick start for judges
 
@@ -31,7 +31,9 @@ The normal judge path is a local source build; no website download is required.
    dotnet run --project .\src\Nvidea.Windows\Nvidea.Windows.csproj -c Release
    ```
 
-The app fails safely with a configuration-only message if either key is missing. A complete, copy/paste-friendly guide—including optional local memory and the opt-in Serverless path—is in [`docs/judge-setup.md`](docs/judge-setup.md).
+The app starts in local-only mode when `NEBIUS_API_KEY` is absent, so Local Dictation remains available. Smart Dictation, Jarvis reasoning, and Tavily research fail at their own cloud boundary with configuration-only guidance. A complete, copy/paste-friendly guide—including optional local memory and the opt-in Serverless path—is in [`docs/judge-setup.md`](docs/judge-setup.md).
+
+For voice, enable a Windows speech-recognition language and grant microphone permission. Press `Ctrl+Shift+V` from the target app, choose a mode, and speak. Local Dictation works without a Nebius or Tavily key; Smart Dictation and Jarvis require `NEBIUS_API_KEY`. The speech transcript is processed locally; only transcript text is sent to Nemotron for Smart Dictation and Jarvis.
 
 ## What is implemented
 
@@ -55,14 +57,21 @@ All three remain overrideable through environment variables so a provider catalo
 
 - global text invocation and active-app context capture;
 - selected-text and opt-in clipboard context paths;
-- local review-first voice invocation (`Ctrl+Shift+V` / Voice);
-- Windows speech recognition without routing microphone audio to a cloud speech provider;
+- unified Local Dictation, Smart Dictation and Jarvis voice modes (`Ctrl+Shift+V` / Voice);
+- continuous local Windows speech recognition with live partial transcript feedback and pause-based turn detection, without routing microphone audio to a cloud speech provider;
+- local SAPI spoken responses, interruption, emergency stop, and a bounded multi-turn Jarvis session;
 - emergency stop and cancellation;
 - approval dialogs for consequential actions;
 - durable research controls, readiness state, audit UI and browser-download handoff;
 - Memory maintenance for local semantic embedding re-indexing.
 
-Voice recognition places the transcript into the prompt for user review rather than auto-executing it.
+Voice modes are deliberately distinct:
+
+- **Local Dictation** transcribes locally and inserts the exact final transcript only after restoring the foreground window captured before invocation; a changed target fails closed.
+- **Smart Dictation** sends transcript text—not raw microphone audio—to NVIDIA Nemotron on Nebius, requests grammar/formatting cleanup while preserving meaning, then requires approval before safe insertion.
+- **Jarvis** keeps a bounded multi-turn conversation, retrieves relevant personal memory, uses the same NVIDIA Nemotron client, speaks through local Windows SAPI, and accepts only schema-validated typed tools. The initial supported local tools are approved application launch, approved HTTPS website launch, and approved insertion into the captured application. It never accepts model-generated shell commands.
+
+The baseline speech path depends on the installed Windows recognizer/SAPI voice. NVIDIA Riva / Speech NIM is intentionally an optional future speech-provider adapter; a Nebius Token Factory key alone is not represented as a speech-service credential.
 
 ### Personal memory
 

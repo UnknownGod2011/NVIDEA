@@ -57,6 +57,26 @@ Risks and blockers:
 ## Single Best Next Task
 Implement a real end-to-end **signed-result canary** across deployed Nebius Worker and Windows pinned-key verifier that proves signer/pin matching without exposing research data, with negative cases for wrong key, replay and signing-version drift. Integrate its verified outcome into fail-closed recording readiness; run .NET 8 + WPF qualification and update draft PR #1 based on results.
 
+## Current run — voice-first keyboard-wtf implementation stage (2026-10-30)
+
+Repository/branch inspected before work: exact mutation target `UnknownGod2011/NVIDEA`, `main`, starting HEAD `923384905bb445432c8625082169f681439ac794`; origin is `https://github.com/UnknownGod2011/NVIDEA.git`. The read-only `keyboard.wtf` reference was inspected for its actual `AudioRecorderService`, Vosk streaming-session, `VoiceCaptureService`, local TTS, overlay and Jarvis routing patterns. It was not changed.
+
+Implemented a cohesive first voice runtime in NVIDEA:
+- `JarvisConversation` uses the existing `IAgentInferenceClient` (NVIDIA Nemotron/Nebius) and `PersonalMemoryService`, preserves a bounded conversation window, retrieves eligible memory per turn, accepts only three JSON-schema typed tools, rejects malformed/unsupported tool calls, and limits a turn to one verified tool-follow-up round.
+- `SystemSpeechStreamingRecognizer` replaces one-shot-only voice behavior with local continuous Windows recognition, partial transcript projection and a 900 ms speech-pause turn boundary. It does not send microphone audio to a network provider.
+- `LocalSpeechOutput` provides cancellable local Windows SAPI playback. The voice hotkey interrupts active Jarvis speech; Emergency Stop cancels speech and the active turn/session.
+- Windows now exposes Local Dictation, Smart Dictation and Jarvis in one voice selector. Local Dictation restores the exact pre-invocation foreground HWND before insertion and fails closed if the target changed. Smart Dictation sends transcript text only to Nemotron, asks for local insertion approval, and never sends microphone audio to Nebius. Jarvis has a continuous pause-turn-listen/reason/speak loop and its initial typed local tools are approved application launch, approved HTTPS website launch and approved captured-target text insertion. It never accepts a model-generated shell command.
+- `docs/voice-first-windows-assistant.md` documents the reference-to-NVIDEA map, runtime privacy behavior, optional Riva/Speech NIM strategy, and physical-device validation boundary. README now describes the three modes accurately.
+
+Validation actually executed on this Windows .NET 8 host:
+- `dotnet test tests/Nvidea.WorkerAuth.Tests/Nvidea.WorkerAuth.Tests.csproj -c Release --no-restore` — PASS (7/7), including typed tool receipt/follow-up, unsupported shell-style tool rejection, bounded conversation follow-up, plus the existing worker-authentication suite.
+- `dotnet build src/Nvidea.Windows/Nvidea.Windows.csproj -c Release --no-restore` — PASS, including WPF/XAML compilation.
+- `git diff --check` — PASS.
+
+Follow-up correction: composition now supplies an `UnconfiguredInferenceClient` only when `NEBIUS_API_KEY` is absent, so the desktop app can start for genuine local-only Local Dictation. Smart Dictation/Jarvis fail at their actual cloud-reasoning boundary with safe setup guidance. Focused provider-free suite was rerun after this change: PASS (8/8).
+
+Not yet claimed: no physical microphone/speaker smoke was run; no live Nebius inference was made because no credential was loaded; Riva/Speech NIM ASR/TTS is not implemented or configured; Vosk/Whisper local-model fallback and the floating orb visual layer remain future work. The current default local speech path requires an installed Windows desktop speech recognizer and SAPI voice. The next highest-value task is a physical Windows voice smoke with a Nebius key, then a Vosk local-model fallback and an operator-configured Riva/Speech NIM adapter if lower-latency cloud speech is desired.
+
 ## Judge onboarding and NVIDIA-only provider audit (2026-10-30)
 
 Preserved the existing keyboard.wtf-inspired Windows interaction model; no `keyboard.wtf` files were accessed or changed. NVIDEA has no legacy-provider adapter or credential path: cloud reasoning remains NVIDIA Nemotron through Nebius Token Factory, local voice remains Windows-native, and optional Ollama remains local-memory-only.

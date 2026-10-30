@@ -54,6 +54,8 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     public DesktopInvocationService Desktop { get; }
     public DesktopSessionController Session { get; }
     public PersonalMemoryService Memory => _memory;
+    /// <summary>Creates a bounded spoken conversation that uses the same pinned Nemotron and memory graph as the desktop shell.</summary>
+    public JarvisConversation CreateJarvisConversation() => new(_inference, _memory);
     public ResearchProductRuntime? Research { get; }
     /// <summary>Explicit operator action only; it never submits a Serverless job during startup.</summary>
     public RemoteWorkerSigningCanary? WorkerSigningCanary { get; }
@@ -64,9 +66,10 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         var dataDirectory = ResolveStateDirectory(stateDirectory);
         Directory.CreateDirectory(dataDirectory);
         using var startupLease = new StartupResourceLease();
-        var nebiusOptions = NebiusOptions.FromEnvironment();
         var nebiusHttp = startupLease.Own(ProviderHttpClientFactory.CreateNoRedirectClient());
-        var inference = new NebiusTokenFactoryClient(nebiusHttp, nebiusOptions);
+        IAgentInferenceClient inference = string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("NEBIUS_API_KEY"))
+            ? new UnconfiguredInferenceClient()
+            : new NebiusTokenFactoryClient(nebiusHttp, NebiusOptions.FromEnvironment());
         var memoryStore = startupLease.Own(new JsonFileMemoryStore(Path.Combine(dataDirectory, "memory.json")));
         var memoryEmbeddingConfiguration = LocalMemoryEmbeddingConfiguration.FromEnvironment();
         var memoryEmbeddingProvider = memoryEmbeddingConfiguration.CreateProvider();

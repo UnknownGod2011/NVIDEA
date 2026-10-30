@@ -7,14 +7,11 @@ namespace Nvidea.Windows;
 
 public partial class MainWindow
 {
-    private const int VoiceHotKeyId = 0x4E57;
-    private const uint VkV = 0x56;
     private readonly SystemSpeechStreamingRecognizer _streamingVoice = new();
     private readonly LocalSpeechOutput _speechOutput = new();
     private CancellationTokenSource? _voiceCts;
     private Button? _voiceButton;
     private ComboBox? _voiceModeBox;
-    private HwndSource? _voiceSource;
     private bool _voiceRunning;
     private bool _jarvisSessionActive;
     private bool _jarvisSpeaking;
@@ -43,7 +40,7 @@ public partial class MainWindow
         _voiceButton = new Button
         {
             Content = "Voice", Padding = new Thickness(14, 6, 14, 6), Margin = new Thickness(0, 0, 8, 0),
-            ToolTip = "Ctrl+Shift+V. Local Dictation stays local; Smart Dictation and Jarvis send transcript text, never microphone audio, to Nemotron on Nebius."
+            ToolTip = "Choose a voice mode. Configure separate global shortcuts in Settings."
         };
         _voiceButton.Click += VoiceButton_Click;
         Grid.SetColumn(_voiceButton, 4);
@@ -55,41 +52,32 @@ public partial class MainWindow
             Closed += VoiceWindow_Closed;
             _voiceWindowHooksAttached = true;
         }
-        var handle = new WindowInteropHelper(this).Handle;
-        if (handle == IntPtr.Zero) return;
-        _voiceSource = HwndSource.FromHwnd(handle);
-        _voiceSource?.AddHook(VoiceWndProc);
-        if (!RegisterHotKey(handle, VoiceHotKeyId, ModControl | ModShift, VkV))
-            _voiceButton.ToolTip += " Global voice hotkey registration failed in this Windows session; the Voice button still works.";
     }
 
-    private IntPtr VoiceWndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    private void StartVoiceShortcut(VoiceAssistantMode mode)
     {
-        const int WmHotKey = 0x0312;
-        if (msg != WmHotKey || wParam.ToInt32() != VoiceHotKeyId) return IntPtr.Zero;
-        if (_jarvisSessionActive && _jarvisSpeaking)
-        {
-            _speechOutput.Stop(); // Barge-in: immediately stop local speech, then return to listening.
-            handled = true;
-            return IntPtr.Zero;
-        }
         if (_voiceRunning)
         {
-            _voiceCts?.Cancel();
-            handled = true;
-            return IntPtr.Zero;
+            if (mode == VoiceAssistantMode.Jarvis && _jarvisSessionActive && _jarvisSpeaking)
+                _speechOutput.Stop(); // Barge-in: interrupt speech and return to the listening loop.
+            else
+                _voiceCts?.Cancel();
+            return;
         }
+
         _voiceFocusTarget = WindowsFocusTarget.Capture();
         _pendingContext = WindowsContextCapture.Capture(ClipboardCheck.IsChecked == true);
         UpdateContextLabel(_pendingContext);
-        Show(); Activate(); handled = true;
-        _ = Dispatcher.InvokeAsync(async () => await StartVoiceCaptureAsync());
-        return IntPtr.Zero;
+        if (_voiceModeBox is not null)
+            _voiceModeBox.SelectedIndex = mode switch { VoiceAssistantMode.SmartDictation => 1, VoiceAssistantMode.Jarvis => 2, _ => 0 };
+        Show();
+        Activate();
+        _ = Dispatcher.InvokeAsync(async () => await StartVoiceCaptureAsync(mode));
     }
 
     private async void VoiceButton_Click(object sender, RoutedEventArgs e) => await StartVoiceCaptureAsync();
 
-    private async Task StartVoiceCaptureAsync()
+    private async Task StartVoiceCaptureAsync(VoiceAssistantMode? requestedMode = null)
     {
         if (_voiceRunning || _running || _browserRunning || _researchRunning || _memoryMigrationRunning) return;
         if (!_streamingVoice.IsAvailable)
@@ -98,7 +86,7 @@ public partial class MainWindow
             StatusText.Text = "Voice — unavailable locally";
             return;
         }
-        var mode = SelectedVoiceMode();
+        var mode = requestedMode ?? SelectedVoiceMode();
         var processingNotice = mode == VoiceAssistantMode.LocalDictation
             ? "Your microphone audio is processed locally and is never sent to a cloud speech provider."
             : "Your microphone audio is processed locally. The resulting transcript text may be sent to NVIDIA Nemotron through Nebius for this request.";
@@ -175,7 +163,7 @@ public partial class MainWindow
     {
         _jarvisConversation ??= _root.CreateJarvisConversation();
         _jarvisSessionActive = true;
-        OutputBox.Text = "Jarvis is active. Speak naturally; pause to end each turn. Press Ctrl+Shift+V while Jarvis speaks to interrupt it, or Emergency stop to end the session.";
+        OutputBox.Text = "Jarvis is active. Speak naturally; pause to end each turn. Use the Jarvis shortcut while it speaks to interrupt; use Emergency stop to end the session.";
         while (!cancellationToken.IsCancellationRequested)
         {
             var transcript = await ListenForTurnAsync(VoiceAssistantMode.Jarvis, cancellationToken);
@@ -208,9 +196,7 @@ public partial class MainWindow
     {
         _speechOutput.Stop(); _voiceCts?.Cancel(); _voiceCts?.Dispose(); _voiceCts = null;
         if (_jarvisConversation is not null) await _jarvisConversation.DisposeAsync();
-        var handle = new WindowInteropHelper(this).Handle;
-        if (handle != IntPtr.Zero) _ = UnregisterHotKey(handle, VoiceHotKeyId);
-        _voiceSource?.RemoveHook(VoiceWndProc); _voiceSource = null; _speechOutput.Dispose();
+        _speechOutput.Dispose();
     }
 
     private VoiceAssistantMode SelectedVoiceMode() => _voiceModeBox?.SelectedIndex switch { 1 => VoiceAssistantMode.SmartDictation, 2 => VoiceAssistantMode.Jarvis, _ => VoiceAssistantMode.LocalDictation };

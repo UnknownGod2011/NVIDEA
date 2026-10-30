@@ -1,3 +1,4 @@
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
@@ -10,9 +11,14 @@ namespace Nvidea.Windows;
 public partial class MainWindow : Window
 {
     private const int HotKeyId = 0x4E56;
-    private const uint ModControl = 0x0002;
-    private const uint ModShift = 0x0004;
-    private const uint VkSpace = 0x20;
+    private const int LocalDictationHotKeyId = 0x4E57;
+    private const int SmartDictationHotKeyId = 0x4E58;
+    private const int JarvisHotKeyId = 0x4E59;
+    private const int EmergencyStopHotKeyId = 0x4E5A;
+    private const int OpenSettingsHotKeyId = 0x4E5B;
+    private const uint ModNoRepeat = 0x4000;
+    private static readonly int[] HotKeyIds =
+    [HotKeyId, LocalDictationHotKeyId, SmartDictationHotKeyId, JarvisHotKeyId, EmergencyStopHotKeyId, OpenSettingsHotKeyId];
 
     private readonly NvideaCompositionRoot _root;
     private HwndSource? _source;
@@ -23,10 +29,20 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _browserActionCts;
     private bool _running;
     private bool _browserRunning;
+    private readonly string _keyboardSettingsPath;
+    private KeyboardShortcutSettings _keyboardSettings;
+    private string? _keyboardSettingsNotice;
 
     public MainWindow(NvideaCompositionRoot root)
     {
         _root = root ?? throw new ArgumentNullException(nameof(root));
+        _keyboardSettingsPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "keyboard-wtf",
+            "keyboard-settings.json");
+        var loadedSettings = KeyboardShortcutSettingsStore.Load(_keyboardSettingsPath);
+        _keyboardSettings = loadedSettings.Settings;
+        _keyboardSettingsNotice = loadedSettings.Notice;
         InitializeComponent();
         SourceInitialized += OnSourceInitialized;
         Loaded += OnLoaded;
@@ -44,9 +60,9 @@ public partial class MainWindow : Window
         var handle = new WindowInteropHelper(this).Handle;
         _source = HwndSource.FromHwnd(handle);
         _source?.AddHook(WndProc);
-
-        if (!RegisterHotKey(handle, HotKeyId, ModControl | ModShift, VkSpace))
-            StatusText.Text = "Global hotkey unavailable; use the Run button.";
+        var warning = ApplyConfiguredHotkeys(handle);
+        if (warning is not null)
+            StatusText.Text = warning;
     }
 
     private void OnClosed(object? sender, EventArgs e)
@@ -58,24 +74,114 @@ public partial class MainWindow : Window
         _root.Session.StatusChanged -= Session_StatusChanged;
         var handle = new WindowInteropHelper(this).Handle;
         if (handle != IntPtr.Zero)
-            _ = UnregisterHotKey(handle, HotKeyId);
+        {
+            foreach (var id in HotKeyIds)
+                _ = UnregisterHotKey(handle, id);
+        }
         _source?.RemoveHook(WndProc);
     }
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
         const int WmHotKey = 0x0312;
-        if (msg != WmHotKey || wParam.ToInt32() != HotKeyId)
+        if (msg != WmHotKey)
             return IntPtr.Zero;
+        switch (wParam.ToInt32())
+        {
+            case HotKeyId:
+                InvokeGlobalShortcut();
+                break;
+            case LocalDictationHotKeyId:
+                StartVoiceShortcut(VoiceAssistantMode.LocalDictation);
+                break;
+            case SmartDictationHotKeyId:
+                StartVoiceShortcut(VoiceAssistantMode.SmartDictation);
+                break;
+            case JarvisHotKeyId:
+                StartVoiceShortcut(VoiceAssistantMode.Jarvis);
+                break;
+            case EmergencyStopHotKeyId:
+                VoiceEmergencyStop_Click(this, new RoutedEventArgs());
+                StopButton_Click(this, new RoutedEventArgs());
+                break;
+            case OpenSettingsHotKeyId:
+                OpenKeyboardSettings();
+                break;
+            default:
+                return IntPtr.Zero;
+        }
+        handled = true;
+        return IntPtr.Zero;
+    }
 
-        // Capture before activation so context belongs to the app the user invoked NVIDEA from.
+    private void InvokeGlobalShortcut()
+    {
+        // Capture before activation so context belongs to the application invoked from.
         _pendingContext = WindowsContextCapture.Capture(ClipboardCheck.IsChecked == true);
         UpdateContextLabel(_pendingContext);
         Show();
         Activate();
         PromptBox.Focus();
-        handled = true;
-        return IntPtr.Zero;
+    }
+
+    private string? ApplyConfiguredHotkeys(IntPtr handle)
+    {
+        foreach (var id in HotKeyIds)
+            _ = UnregisterHotKey(handle, id);
+
+        var registrations = new (int Id, string Name, string Shortcut)[]
+        {
+            (HotKeyId, "Open keyboard-wtf", _keyboardSettings.Invoke),
+            (LocalDictationHotKeyId, "Local Dictation", _keyboardSettings.LocalDictation),
+            (SmartDictationHotKeyId, "Smart Dictation", _keyboardSettings.SmartDictation),
+            (JarvisHotKeyId, "Jarvis", _keyboardSettings.Jarvis),
+            (EmergencyStopHotKeyId, "Emergency stop", _keyboardSettings.EmergencyStop),
+            (OpenSettingsHotKeyId, "Open Settings", _keyboardSettings.OpenSettings)
+        };
+        var unavailable = new List<string>();
+        foreach (var registration in registrations)
+        {
+            if (!ShortcutChord.TryParse(registration.Shortcut, out var chord)
+                || !RegisterHotKey(handle, registration.Id, chord.Modifiers | ModNoRepeat, chord.VirtualKey))
+                unavailable.Add(registration.Name);
+        }
+
+        if (_voiceButton is not null)
+        {
+            _voiceButton.ToolTip = $"Voice mode selector. Shortcuts: Local Dictation {_keyboardSettings.LocalDictation}; Smart Dictation {_keyboardSettings.SmartDictation}; Jarvis {_keyboardSettings.Jarvis}. Local Dictation stays local; other modes send transcript text, never microphone audio, to Nemotron on Nebius.";
+        }
+
+        if (_keyboardSettingsNotice is not null)
+            return _keyboardSettingsNotice;
+        return unavailable.Count == 0
+            ? null
+            : $"Some global shortcuts could not register ({string.Join(", ", unavailable)}). Change them in Settings if another app uses them.";
+    }
+
+    private void KeyboardSettingsButton_Click(object sender, RoutedEventArgs e) => OpenKeyboardSettings();
+
+    private void OpenKeyboardSettings()
+    {
+        Show();
+        Activate();
+        var dialog = new KeyboardSettingsDialog(_keyboardSettings) { Owner = this };
+        if (dialog.ShowDialog() != true || dialog.ResultSettings is null)
+            return;
+
+        try
+        {
+            KeyboardShortcutSettingsStore.Save(_keyboardSettingsPath, dialog.ResultSettings);
+            _keyboardSettings = dialog.ResultSettings.Copy();
+            _keyboardSettingsNotice = null;
+            var handle = new WindowInteropHelper(this).Handle;
+            var warning = handle == IntPtr.Zero ? "Settings saved. Shortcuts apply when the window handle is ready." : ApplyConfiguredHotkeys(handle);
+            StatusText.Text = warning ?? "Settings saved; global shortcuts updated.";
+        }
+        catch (Exception)
+        {
+            MessageBox.Show(this, "Settings could not be saved. Your existing shortcuts remain active.",
+                "Settings not saved", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
     }
 
     private async void InvokeButton_Click(object sender, RoutedEventArgs e)

@@ -33,7 +33,7 @@ The normal judge path is a local source build; no website download is required.
 
 The app starts in local-only mode when `NEBIUS_API_KEY` is absent, so Local Dictation remains available. Smart Dictation, Jarvis reasoning, and Tavily research fail at their own cloud boundary with configuration-only guidance. A complete, copy/paste-friendly guide—including optional local memory and the opt-in Serverless path—is in [`docs/judge-setup.md`](docs/judge-setup.md).
 
-For voice, enable a Windows speech-recognition language and grant microphone permission. Press `Ctrl+Shift+V` from the target app, choose a mode, and speak. Local Dictation works without a Nebius or Tavily key; Smart Dictation and Jarvis require `NEBIUS_API_KEY`. The speech transcript is processed locally; only transcript text is sent to Nemotron for Smart Dictation and Jarvis.
+For voice, enable a Windows speech-recognition language and grant microphone permission. Open **Settings** to configure global shortcuts for the app, Local Dictation, Smart Dictation, Jarvis, and Emergency Stop. Defaults are `Ctrl+Shift+Space` (open app), `Ctrl+Alt+D` (Local Dictation), `Ctrl+Alt+K` (Smart Dictation), `Ctrl+Alt+Q` (Jarvis), `Ctrl+Alt+X` (Emergency Stop), and `Ctrl+Alt+,` (Settings). Local Dictation works without a Nebius or Tavily key; Smart Dictation and Jarvis require `NEBIUS_API_KEY`. Speech is transcribed locally; only transcript text is sent to Nemotron for Smart Dictation and Jarvis.
 
 ## What is implemented
 
@@ -57,7 +57,7 @@ All three remain overrideable through environment variables so a provider catalo
 
 - global text invocation and active-app context capture;
 - selected-text and opt-in clipboard context paths;
-- unified Local Dictation, Smart Dictation and Jarvis voice modes (`Ctrl+Shift+V` / Voice);
+- unified Local Dictation, Smart Dictation and Jarvis voice modes with configurable per-mode global shortcuts;
 - continuous local Windows speech recognition with live partial transcript feedback and pause-based turn detection, without routing microphone audio to a cloud speech provider;
 - local SAPI spoken responses, interruption, emergency stop, and a bounded multi-turn Jarvis session;
 - emergency stop and cancellation;

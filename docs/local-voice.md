@@ -4,8 +4,8 @@ NVIDEA supports a local, review-first voice entry path on Windows.
 
 ## Usage
 
-- `Ctrl+Shift+Space` opens the normal text invocation surface.
-- `Ctrl+Shift+V` opens NVIDEA and starts the voice flow after an explicit microphone disclosure.
+- Open **Settings** to configure global shortcuts. Defaults are `Ctrl+Shift+Space` for text invocation, `Ctrl+Alt+D` for Local Dictation, `Ctrl+Alt+K` for Smart Dictation, `Ctrl+Alt+Q` for Jarvis, `Ctrl+Alt+X` for Emergency Stop, and `Ctrl+Alt+,` to open Settings.
+- The voice-mode shortcuts open NVIDEA and start that specific mode after an explicit microphone disclosure. The Voice button uses the selected mode in the main window.
 - The **Voice** button provides the same flow from the desktop window.
 - **Emergency stop** cancels an in-progress recognition operation.
 
@@ -17,7 +17,7 @@ The hackathon desktop uses the Windows desktop speech-recognition stack (`System
 
 Before each capture NVIDEA discloses that the default microphone will be used and asks for explicit confirmation. Declining does not open the microphone.
 
-The global voice hotkey mirrors the normal global invocation privacy model: foreground application context is captured before NVIDEA activates. Clipboard text is only captured when the existing **Allow clipboard context** control is enabled. Recognition itself does not send that context anywhere.
+The global voice shortcuts mirror the normal invocation privacy model: the foreground application and insertion target are captured before NVIDEA activates. Clipboard text is only captured when the existing **Allow clipboard context** control is enabled. Recognition itself does not send that context anywhere. Shortcut choices are saved per user under `%LOCALAPPDATA%\keyboard-wtf\keyboard-settings.json`; the file contains shortcut names only, never credentials.
 
 ## Availability
 

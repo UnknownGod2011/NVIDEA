@@ -27,7 +27,7 @@ The read-only `keyboard.wtf` reference established the interaction pattern. NVID
 
 ### Local Dictation
 
-`Ctrl+Shift+V` captures the foreground target before the desktop window activates. Continuous local recognition displays partial text and finishes after a pause. The final transcript is bounded, focus is restored to the captured window, and insertion occurs through a temporary Unicode clipboard paste. If Windows cannot restore the exact target, nothing is typed.
+The configurable Local Dictation shortcut captures the foreground target before the desktop window activates. Its default is `Ctrl+Alt+D`. Continuous local recognition displays partial text and finishes after a pause. The final transcript is bounded, focus is restored to the captured window, and insertion occurs through a temporary Unicode clipboard paste. If Windows cannot restore the exact target, nothing is typed.
 
 ### Smart Dictation
 
@@ -35,7 +35,7 @@ The same local recognition path produces the transcript. Only that text is sent 
 
 ### Jarvis
 
-Jarvis maintains a bounded in-memory conversation window and retrieves eligible Personal Memory on each turn. It supports model-selected typed calls only for the small approved Windows tool set. Every actual side effect has a local visible approval; unsupported tools, malformed arguments and all shell-like requests are rejected. After a response, local SAPI speaks it. The voice shortcut during speech cancels playback and returns Jarvis to listening; Emergency Stop cancels speech and the active session.
+Jarvis maintains a bounded in-memory conversation window and retrieves eligible Personal Memory on each turn. It supports model-selected typed calls only for the small approved Windows tool set. Every actual side effect has a local visible approval; unsupported tools, malformed arguments and all shell-like requests are rejected. After a response, local SAPI speaks it. The configurable Jarvis shortcut (default `Ctrl+Alt+Q`) during speech cancels playback and returns Jarvis to listening; Emergency Stop (default `Ctrl+Alt+X`) cancels speech and the active session.
 
 ## Speech provider strategy
 

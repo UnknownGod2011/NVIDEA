@@ -17,10 +17,23 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <StackPanel Grid.Row="0">
-            <TextBlock Text="keyboard-wtf" FontSize="26" FontWeight="SemiBold"/>
-            <TextBlock Text="Ctrl+Shift+Space invokes from anywhere on Windows" Opacity="0.72" Margin="0,2,0,8"/>
-            <Border BorderThickness="1" CornerRadius="5" Padding="8" Margin="0,0,0,12">
+        <Grid Grid.Row="0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="keyboard-wtf" FontSize="26" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                <Button Grid.Column="1" Content="Settings" Padding="14,5" Margin="8,0,0,0"
+                        Click="KeyboardSettingsButton_Click" ToolTip="Configure global shortcuts for invocation, all three voice modes, emergency stop, and Settings."/>
+            </Grid>
+            <TextBlock Grid.Row="1" Text="Configure global shortcuts in Settings" Opacity="0.72" Margin="0,2,0,8"/>
+            <Border Grid.Row="2" BorderThickness="1" CornerRadius="5" Padding="8" Margin="0,0,0,12">
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
@@ -37,7 +50,7 @@
                             Click="ResearchReadinessDetailsButton_Click"/>
                 </Grid>
             </Border>
-        </StackPanel>
+        </Grid>
 
         <TextBox x:Name="PromptBox" Grid.Row="1" MinHeight="86" TextWrapping="Wrap"
                  AcceptsReturn="True" VerticalScrollBarVisibility="Auto"

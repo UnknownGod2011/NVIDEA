@@ -75,6 +75,8 @@ Validation actually executed on this Windows .NET 8 host:
 
 Follow-up correction: composition now supplies an `UnconfiguredInferenceClient` only when `NEBIUS_API_KEY` is absent, so the desktop app can start for genuine local-only Local Dictation. Smart Dictation/Jarvis fail at their actual cloud-reasoning boundary with safe setup guidance. Focused provider-free suite was rerun after this change: PASS (8/8).
 
+Interactive Windows smoke: launched the freshly compiled `Nvidea.Windows.exe` with no `NEBIUS_API_KEY`; the WPF application opened successfully, showed the Local Dictation / Smart Dictation / Jarvis selector plus Voice button, and reported local research blocked only by missing Tavily rather than crashing at startup. The smoke deliberately did not open the microphone consent prompt or invoke microphone/speaker hardware, so it is UI/startup evidence only—not physical ASR/TTS qualification.
+
 Not yet claimed: no physical microphone/speaker smoke was run; no live Nebius inference was made because no credential was loaded; Riva/Speech NIM ASR/TTS is not implemented or configured; Vosk/Whisper local-model fallback and the floating orb visual layer remain future work. The current default local speech path requires an installed Windows desktop speech recognizer and SAPI voice. The next highest-value task is a physical Windows voice smoke with a Nebius key, then a Vosk local-model fallback and an operator-configured Riva/Speech NIM adapter if lower-latency cloud speech is desired.
 
 ## Judge onboarding and NVIDIA-only provider audit (2026-10-30)

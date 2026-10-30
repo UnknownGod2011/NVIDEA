@@ -17,29 +17,22 @@ The normal judge path is a local source build; no website download is required.
 
 1. Install **Windows 10/11** and the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0).
 2. Clone this repository and open PowerShell in its root.
-3. Create a Nebius Token Factory API key and a Tavily API key, then set them for the current PowerShell session:
-
-   ```powershell
-   $env:NEBIUS_API_KEY = "your-nebius-token-factory-key"
-   $env:TAVILY_API_KEY = "your-tavily-key"
-   ```
-
-4. Restore, build, and run the Windows app:
+3. Restore, build, and run the Windows app:
 
    ```powershell
    dotnet restore .\src\Nvidea.Windows\Nvidea.Windows.csproj
    dotnet run --project .\src\Nvidea.Windows\Nvidea.Windows.csproj -c Release
    ```
 
-The app starts in local-only mode when `NEBIUS_API_KEY` is absent, so Local Dictation remains available. Smart Dictation, Jarvis reasoning, and Tavily research fail at their own cloud boundary with configuration-only guidance. A complete, copy/paste-friendly guide—including optional local memory and the opt-in Serverless path—is in [`docs/judge-setup.md`](docs/judge-setup.md).
+On first launch, open **Settings → Models & keys** and enter a Nebius Token Factory key. A Tavily key is optional and enables web research. Keys are protected for the current Windows user with DPAPI; model choices and keys apply after restarting the app. Environment variables `NEBIUS_API_KEY`, `TAVILY_API_KEY`, and `NVIDEA_MODEL_FAST/STANDARD/DEEP` remain supported and take precedence over saved values. Without a saved or environment Nebius key, the app stays in local-only mode and Local Dictation remains available. A complete guide—including optional local memory and the opt-in Serverless path—is in [`docs/judge-setup.md`](docs/judge-setup.md).
 
-For voice, enable a Windows speech-recognition language and grant microphone permission. Open **Settings** to configure global shortcuts for the app, Local Dictation, Smart Dictation, Jarvis, Emergency Stop, and Settings. Defaults are `Ctrl+Shift+Space` (open app), `Ctrl+Alt+D` (Local Dictation), `Ctrl+Alt+K` (Smart Dictation), `Ctrl+Alt+Q` (Jarvis), `Ctrl+Alt+X` (Emergency Stop), and `Ctrl+Alt+,` (Settings). On first run, compatible shortcuts are imported from `%LOCALAPPDATA%\keyboard.wtf\settings.json` if it exists and no keyboard-wtf shortcut file has been saved. Only shortcut values are copied; the old file is not changed, and legacy provider credentials are not copied. Local Dictation works without a Nebius or Tavily key; Smart Dictation and Jarvis require `NEBIUS_API_KEY`. Speech is transcribed locally; only transcript text is sent to Nemotron for Smart Dictation and Jarvis.
+For voice, grant microphone permission and install a Windows desktop speech recognizer. **Settings → Shortcuts** keeps configurable global shortcuts for the app, Local Dictation, Smart Dictation, Jarvis, Emergency Stop, and Settings. Defaults are `Ctrl+Shift+Space` (open app), `Ctrl+Alt+D` (Local Dictation), `Ctrl+Alt+K` (Smart Dictation), `Ctrl+Alt+Q` (Jarvis), `Ctrl+Alt+X` (Emergency Stop), and `Ctrl+Alt+,` (Settings). **Settings → Voice & Assistant** configures recognizer language, listening duration, pause detection, Jarvis name and style, local speech voice/rate, spoken replies, and whether Jarvis retrieves personal memory. On first run, compatible shortcuts are imported from `%LOCALAPPDATA%\keyboard.wtf\settings.json` if it exists and no keyboard-wtf shortcut file has been saved. Only shortcut values are copied; the old file is not changed, and legacy provider credentials are not copied. Local Dictation works without a cloud key; Smart Dictation and Jarvis require a Nebius key from Settings or the environment. Speech is transcribed locally; only transcript text is sent to Nemotron for Smart Dictation and Jarvis.
 
 ## What is implemented
 
 ### NVIDIA / Nebius reasoning
 
-`src/Nvidea.Core/Nebius` contains a direct `HttpClient` Token Factory adapter with structured tool calling, optional JSON-schema output, retry handling, cancellation, timeouts, endpoint validation, and secret-safe provider errors.
+`src/Nvidea.Core/Nebius` contains a direct `HttpClient` Token Factory adapter with structured tool calling, optional JSON-schema output, server-sent text streaming for Jarvis, retry handling, cancellation, timeouts, endpoint validation, and secret-safe provider errors.
 
 Current default workload routing uses Token Factory model identifiers verified in the official Nebius cookbook:
 
@@ -59,7 +52,7 @@ All three remain overrideable through environment variables so a provider catalo
 - selected-text and opt-in clipboard context paths;
 - unified Local Dictation, Smart Dictation and Jarvis voice modes with configurable per-mode global shortcuts;
 - continuous local Windows speech recognition with live partial transcript feedback and pause-based turn detection, without routing microphone audio to a cloud speech provider;
-- local SAPI spoken responses, interruption, emergency stop, and a bounded multi-turn Jarvis session;
+- local SAPI spoken responses that begin as Nemotron text arrives, interruption, emergency stop, and a bounded multi-turn Jarvis session;
 - emergency stop and cancellation;
 - approval dialogs for consequential actions;
 - durable research controls, readiness state, audit UI and browser-download handoff;
@@ -69,9 +62,9 @@ Voice modes are deliberately distinct:
 
 - **Local Dictation** transcribes locally and inserts the exact final transcript only after restoring the foreground window captured before invocation; a changed target fails closed. When started from the main window without an external target, it leaves the transcript in the prompt for review.
 - **Smart Dictation** sends transcript text—not raw microphone audio—to NVIDIA Nemotron on Nebius, requests grammar/formatting cleanup while preserving meaning, then requires approval before safe insertion. When started from the main window without an external target, the result stays in the prompt for review.
-- **Jarvis** keeps a bounded multi-turn conversation, retrieves relevant personal memory, uses the same NVIDIA Nemotron client, speaks through local Windows SAPI, and accepts only schema-validated typed tools. The initial supported local tools are approved application launch, approved HTTPS website launch, and approved insertion into the captured application. It never accepts model-generated shell commands.
+- **Jarvis** keeps a bounded multi-turn conversation, can retrieve relevant personal memory (or run with retrieval disabled in Settings), uses the same NVIDIA Nemotron client, starts local Windows SAPI speech as response text streams, and accepts only schema-validated typed tools. The initial supported local tools are approved application launch, approved HTTPS website launch, and approved insertion into the captured application. It never accepts model-generated shell commands.
 
-The baseline speech path depends on the installed Windows recognizer/SAPI voice. Jarvis is turn-taking rather than full-duplex: local speech recognition produces a transcript, Nemotron reasons over text through Nebius, and Windows SAPI speaks the response. NVIDIA Nemotron VoiceChat full-duplex inference is not bundled or claimed as a feature; its hosted endpoint is currently early-access gated, and NVIDIA's documented local runtime requires a separate model and suitable GPU.
+The baseline speech path depends on an installed Windows recognizer/SAPI voice. Jarvis is turn-taking rather than full-duplex: local speech recognition produces a transcript, Nebius Token Factory streams Nemotron response text, and Windows SAPI begins speaking sentence-sized chunks while generation continues. NVIDIA Nemotron VoiceChat full-duplex inference is not bundled or claimed as a feature; its hosted endpoint is currently early-access gated, and NVIDIA's documented local runtime requires a separate model and suitable GPU.
 
 ### Personal memory
 

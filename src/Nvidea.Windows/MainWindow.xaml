@@ -30,9 +30,9 @@
                 </Grid.ColumnDefinitions>
                 <TextBlock Text="keyboard-wtf" FontSize="26" FontWeight="SemiBold" VerticalAlignment="Center"/>
                 <Button Grid.Column="1" Content="Settings" Padding="14,5" Margin="8,0,0,0"
-                        Click="KeyboardSettingsButton_Click" ToolTip="Configure global shortcuts for invocation, all three voice modes, emergency stop, and Settings."/>
+                        Click="KeyboardSettingsButton_Click" ToolTip="Configure Nemotron models, provider keys, and global shortcuts."/>
             </Grid>
-            <TextBlock Grid.Row="1" Text="Configure global shortcuts in Settings" Opacity="0.72" Margin="0,2,0,8"/>
+            <TextBlock Grid.Row="1" Text="Configure AI models, provider keys, and global shortcuts in Settings" Opacity="0.72" Margin="0,2,0,8"/>
             <Border Grid.Row="2" BorderThickness="1" CornerRadius="5" Padding="8" Margin="0,0,0,12">
                 <Grid>
                     <Grid.ColumnDefinitions>

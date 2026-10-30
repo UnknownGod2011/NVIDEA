@@ -8,39 +8,152 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
         <StackPanel>
             <TextBlock Text="Keyboard shortcuts" FontSize="22" FontWeight="SemiBold"/>
             <TextBlock Text="Choose a shortcut, then press its key combination. Changes are saved on this PC and apply immediately."
                        TextWrapping="Wrap" Opacity="0.72" Margin="0,5,0,16"/>
         </StackPanel>
-        <Grid Grid.Row="1">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="190"/>
-            </Grid.ColumnDefinitions>
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
-                <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
-            </Grid.RowDefinitions>
-            <TextBlock Text="Open keyboard-wtf" VerticalAlignment="Center" Margin="0,5"/>
-            <Button x:Name="InvokeShortcutButton" Grid.Column="1" Tag="Invoke" Click="CaptureShortcutButton_Click" Padding="10,6" Margin="0,3"/>
-            <TextBlock Grid.Row="1" Text="Local Dictation" VerticalAlignment="Center" Margin="0,5"/>
-            <Button x:Name="LocalDictationShortcutButton" Grid.Row="1" Grid.Column="1" Tag="LocalDictation" Click="CaptureShortcutButton_Click" Padding="10,6" Margin="0,3"/>
-            <TextBlock Grid.Row="2" Text="Smart Dictation" VerticalAlignment="Center" Margin="0,5"/>
-            <Button x:Name="SmartDictationShortcutButton" Grid.Row="2" Grid.Column="1" Tag="SmartDictation" Click="CaptureShortcutButton_Click" Padding="10,6" Margin="0,3"/>
-            <TextBlock Grid.Row="3" Text="Jarvis conversation" VerticalAlignment="Center" Margin="0,5"/>
-            <Button x:Name="JarvisShortcutButton" Grid.Row="3" Grid.Column="1" Tag="Jarvis" Click="CaptureShortcutButton_Click" Padding="10,6" Margin="0,3"/>
-            <TextBlock Grid.Row="4" Text="Emergency stop" VerticalAlignment="Center" Margin="0,5"/>
-            <Button x:Name="EmergencyStopShortcutButton" Grid.Row="4" Grid.Column="1" Tag="EmergencyStop" Click="CaptureShortcutButton_Click" Padding="10,6" Margin="0,3"/>
-            <TextBlock Grid.Row="5" Text="Open Settings" VerticalAlignment="Center" Margin="0,5"/>
-            <Button x:Name="OpenSettingsShortcutButton" Grid.Row="5" Grid.Column="1" Tag="OpenSettings" Click="CaptureShortcutButton_Click" Padding="10,6" Margin="0,3"/>
-        </Grid>
-        <TextBlock x:Name="ShortcutStatusText" Grid.Row="2" Margin="0,12,0,8" TextWrapping="Wrap"
-                   MinHeight="22" Opacity="0.75"/>
-        <DockPanel Grid.Row="3" LastChildFill="False">
-            <Button Content="Restore defaults" Click="RestoreDefaultsButton_Click" Padding="12,6" DockPanel.Dock="Left"/>
+        <TabControl x:Name="SettingsTabs" Grid.Row="1" SelectedIndex="1">
+            <TabItem Header="Models &amp; keys">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="14">
+                        <TextBlock Text="NVIDIA Nemotron on Nebius Token Factory" FontSize="17" FontWeight="SemiBold"/>
+                        <TextBlock Text="Add a Nebius Token Factory key for Smart Dictation, Jarvis, and reasoning. Add a Tavily key only if you want web research."
+                                   TextWrapping="Wrap" Opacity="0.72" Margin="0,4,0,12"/>
+
+                        <TextBlock Text="Nebius Token Factory API key" FontWeight="SemiBold" Margin="0,5,0,4"/>
+                        <PasswordBox x:Name="NebiusApiKeyBox" Padding="7,5"/>
+                        <TextBlock x:Name="NebiusKeyStatusText" TextWrapping="Wrap" Opacity="0.68" Margin="0,4,0,2"/>
+                        <CheckBox x:Name="RemoveNebiusKeyCheckBox" Content="Remove saved Nebius key" Margin="0,3,0,10"/>
+
+                        <TextBlock Text="Tavily API key (optional)" FontWeight="SemiBold" Margin="0,5,0,4"/>
+                        <PasswordBox x:Name="TavilyApiKeyBox" Padding="7,5"/>
+                        <TextBlock x:Name="TavilyKeyStatusText" TextWrapping="Wrap" Opacity="0.68" Margin="0,4,0,2"/>
+                        <CheckBox x:Name="RemoveTavilyKeyCheckBox" Content="Remove saved Tavily key" Margin="0,3,0,12"/>
+
+                        <TextBlock Text="Nemotron routing" FontSize="17" FontWeight="SemiBold" Margin="0,5,0,4"/>
+                        <TextBlock Text="Fast handles short calls, Standard handles everyday reasoning, and Deep handles harder requests. Enter model identifiers available to your Nebius account."
+                                   TextWrapping="Wrap" Opacity="0.72" Margin="0,0,0,9"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="110"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Text="Fast" VerticalAlignment="Center" Margin="0,5"/>
+                            <TextBox x:Name="FastModelTextBox" Grid.Column="1" Margin="0,3" Padding="7,5"/>
+                            <TextBlock Grid.Row="1" Text="Standard" VerticalAlignment="Center" Margin="0,5"/>
+                            <TextBox x:Name="StandardModelTextBox" Grid.Row="1" Grid.Column="1" Margin="0,3" Padding="7,5"/>
+                            <TextBlock Grid.Row="2" Text="Deep" VerticalAlignment="Center" Margin="0,5"/>
+                            <TextBox x:Name="DeepModelTextBox" Grid.Row="2" Grid.Column="1" Margin="0,3" Padding="7,5"/>
+                        </Grid>
+
+                        <TextBlock Text="Saved keys are protected for this Windows user with DPAPI and are never shown again. Environment variables take precedence. Model and key changes apply after restarting keyboard-wtf."
+                                   TextWrapping="Wrap" Opacity="0.62" Margin="0,12,0,0"/>
+                        <CheckBox x:Name="ReplaceUnreadableSettingsCheckBox"
+                                  Content="Replace saved provider settings that could not be unlocked"
+                                  Visibility="Collapsed" Margin="0,12,0,0"/>
+                        <TextBlock x:Name="ProviderSettingsStatusText" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+            <TabItem Header="Shortcuts">
+                <Grid Margin="14">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="Choose a shortcut, then press its key combination. Changes are saved on this PC and apply immediately."
+                               TextWrapping="Wrap" Opacity="0.72" Margin="0,0,0,12"/>
+                    <Grid Grid.Row="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="190"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock Text="Open keyboard-wtf" VerticalAlignment="Center" Margin="0,5"/>
+                        <Button x:Name="InvokeShortcutButton" Grid.Column="1" Tag="Invoke" Click="CaptureShortcutButton_Click" Padding="10,6" Margin="0,3"/>
+                        <TextBlock Grid.Row="1" Text="Local Dictation" VerticalAlignment="Center" Margin="0,5"/>
+                        <Button x:Name="LocalDictationShortcutButton" Grid.Row="1" Grid.Column="1" Tag="LocalDictation" Click="CaptureShortcutButton_Click" Padding="10,6" Margin="0,3"/>
+                        <TextBlock Grid.Row="2" Text="Smart Dictation" VerticalAlignment="Center" Margin="0,5"/>
+                        <Button x:Name="SmartDictationShortcutButton" Grid.Row="2" Grid.Column="1" Tag="SmartDictation" Click="CaptureShortcutButton_Click" Padding="10,6" Margin="0,3"/>
+                        <TextBlock Grid.Row="3" Text="Jarvis conversation" VerticalAlignment="Center" Margin="0,5"/>
+                        <Button x:Name="JarvisShortcutButton" Grid.Row="3" Grid.Column="1" Tag="Jarvis" Click="CaptureShortcutButton_Click" Padding="10,6" Margin="0,3"/>
+                        <TextBlock Grid.Row="4" Text="Emergency stop" VerticalAlignment="Center" Margin="0,5"/>
+                        <Button x:Name="EmergencyStopShortcutButton" Grid.Row="4" Grid.Column="1" Tag="EmergencyStop" Click="CaptureShortcutButton_Click" Padding="10,6" Margin="0,3"/>
+                        <TextBlock Grid.Row="5" Text="Open Settings" VerticalAlignment="Center" Margin="0,5"/>
+                        <Button x:Name="OpenSettingsShortcutButton" Grid.Row="5" Grid.Column="1" Tag="OpenSettings" Click="CaptureShortcutButton_Click" Padding="10,6" Margin="0,3"/>
+                    </Grid>
+                    <TextBlock x:Name="ShortcutStatusText" Grid.Row="2" Margin="0,12,0,0" TextWrapping="Wrap"
+                               MinHeight="22" Opacity="0.75"/>
+                </Grid>
+            </TabItem>
+            <TabItem Header="Voice &amp; Assistant">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="14">
+                        <TextBlock Text="Voice capture" FontSize="17" FontWeight="SemiBold"/>
+                        <TextBlock Text="Choose a Windows speech recognizer language and tune how long each turn listens. Microphone audio stays on this PC."
+                                   TextWrapping="Wrap" Opacity="0.72" Margin="0,4,0,10"/>
+                        <TextBlock Text="Speech language" FontWeight="SemiBold" Margin="0,5,0,4"/>
+                        <ComboBox x:Name="SpeechLanguageComboBox" Padding="7,5"/>
+                        <TextBlock Text="Maximum listening time" FontWeight="SemiBold" Margin="0,9,0,4"/>
+                        <ComboBox x:Name="MaximumListeningSecondsComboBox" Padding="7,5">
+                            <ComboBoxItem Content="35 seconds" Tag="35"/>
+                            <ComboBoxItem Content="60 seconds" Tag="60"/>
+                            <ComboBoxItem Content="90 seconds" Tag="90"/>
+                            <ComboBoxItem Content="120 seconds" Tag="120"/>
+                        </ComboBox>
+                        <TextBlock Text="Silence before a turn is submitted" FontWeight="SemiBold" Margin="0,9,0,4"/>
+                        <ComboBox x:Name="EndOfTurnSilenceComboBox" Padding="7,5">
+                            <ComboBoxItem Content="0.6 seconds" Tag="600"/>
+                            <ComboBoxItem Content="0.9 seconds" Tag="900"/>
+                            <ComboBoxItem Content="1.2 seconds" Tag="1200"/>
+                            <ComboBoxItem Content="1.5 seconds" Tag="1500"/>
+                            <ComboBoxItem Content="2 seconds" Tag="2000"/>
+                            <ComboBoxItem Content="3 seconds" Tag="3000"/>
+                        </ComboBox>
+
+                        <Separator Margin="0,16,0,12"/>
+                        <TextBlock Text="Jarvis" FontSize="17" FontWeight="SemiBold"/>
+                        <TextBlock Text="Personalize the assistant while keeping the same approval and emergency-stop protections."
+                                   TextWrapping="Wrap" Opacity="0.72" Margin="0,4,0,10"/>
+                        <TextBlock Text="Assistant name" FontWeight="SemiBold" Margin="0,5,0,4"/>
+                        <TextBox x:Name="AssistantNameTextBox" MaxLength="32" Padding="7,5"/>
+                        <TextBlock Text="Conversation style" FontWeight="SemiBold" Margin="0,9,0,4"/>
+                        <ComboBox x:Name="AssistantToneComboBox" Padding="7,5">
+                            <ComboBoxItem Content="Balanced" Tag="Balanced"/>
+                            <ComboBoxItem Content="Concise" Tag="Concise"/>
+                            <ComboBoxItem Content="Friendly" Tag="Friendly"/>
+                            <ComboBoxItem Content="Professional" Tag="Professional"/>
+                        </ComboBox>
+                        <CheckBox x:Name="SpeakJarvisResponsesCheckBox" Content="Speak Jarvis replies aloud" Margin="0,10,0,4"/>
+                        <TextBlock Text="Local speech voice" FontWeight="SemiBold" Margin="0,6,0,4"/>
+                        <ComboBox x:Name="SpeechOutputVoiceComboBox" Padding="7,5"/>
+                        <TextBlock Text="Speech rate" FontWeight="SemiBold" Margin="0,9,0,4"/>
+                        <ComboBox x:Name="SpeechOutputRateComboBox" Padding="7,5">
+                            <ComboBoxItem Content="Slowest" Tag="-5"/>
+                            <ComboBoxItem Content="Slower" Tag="-3"/>
+                            <ComboBoxItem Content="Slightly slower" Tag="-1"/>
+                            <ComboBoxItem Content="Normal" Tag="0"/>
+                            <ComboBoxItem Content="Slightly faster" Tag="1"/>
+                            <ComboBoxItem Content="Faster" Tag="3"/>
+                            <ComboBoxItem Content="Fastest" Tag="5"/>
+                        </ComboBox>
+                        <CheckBox x:Name="UsePersonalMemoryCheckBox" Content="Use relevant personal memory in Jarvis conversations" Margin="0,12,0,3"/>
+                        <TextBlock Text="Speech capture and voice output use Windows components. Jarvis conversation text is sent to NVIDIA Nemotron through Nebius; microphone audio is not."
+                                   TextWrapping="Wrap" Opacity="0.62" Margin="0,10,0,0"/>
+                        <TextBlock x:Name="VoiceSettingsStatusText" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+        <DockPanel Grid.Row="2" LastChildFill="False" Margin="0,12,0,0">
+            <Button Content="Restore shortcut defaults" Click="RestoreDefaultsButton_Click" Padding="12,6" DockPanel.Dock="Left"/>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                 <Button Content="Cancel" IsCancel="True" Padding="16,6" Margin="8,0,0,0"/>
                 <Button Content="Save" IsDefault="True" Click="SaveButton_Click" Padding="18,6" Margin="8,0,0,0"/>

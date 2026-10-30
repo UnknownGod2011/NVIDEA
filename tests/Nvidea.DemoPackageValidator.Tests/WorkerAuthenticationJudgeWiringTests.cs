@@ -28,9 +28,9 @@ public sealed class WorkerAuthenticationJudgeWiringTests
         Assert.Contains("WorkerAuthenticationText.Text = BuildWorkerAuthenticationSummary(workerAuthentication)", dialog, StringComparison.Ordinal);
         Assert.Contains("evidence is null", dialog, StringComparison.Ordinal);
         Assert.Contains("NOT VERIFIED", dialog, StringComparison.Ordinal);
-        Assert.Contains("deployed worker identity NOT VERIFIED", dialog, StringComparison.Ordinal);
+        Assert.Contains("no valid pinned worker verification identity is available", dialog, StringComparison.Ordinal);
         Assert.Contains("WorkerAuthenticationJudgeEvidence.FromPinnedEnvironment()", readiness, StringComparison.Ordinal);
-        Assert.Contains("researchProvenance, workerAuthentication)", readiness, StringComparison.Ordinal);
+        Assert.Contains("researchProvenance, workerAuthentication, runWorkerCanary)", readiness, StringComparison.Ordinal);
         Assert.DoesNotContain("Environment.GetEnvironmentVariable", dialog, StringComparison.Ordinal);
     }
 

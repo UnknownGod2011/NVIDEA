@@ -10,6 +10,35 @@ internal sealed class LocalSpeechOutput : IDisposable
     private TaskCompletionSource? _active;
     private bool _disposed;
 
+    public static IReadOnlyList<string> GetInstalledVoiceNames()
+    {
+        using var synthesizer = new SpeechSynthesizer();
+        return synthesizer.GetInstalledVoices()
+            .Where(static voice => voice.Enabled)
+            .Select(static voice => voice.VoiceInfo.Name)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(static name => name, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    public void Configure(string? voiceName, int rate)
+    {
+        ThrowIfDisposed();
+        if (rate is < -5 or > 5)
+            throw new ArgumentOutOfRangeException(nameof(rate));
+
+        lock (_gate)
+        {
+            _synthesizer.Rate = rate;
+            if (!string.IsNullOrWhiteSpace(voiceName)
+                && !string.Equals(voiceName, "System default", StringComparison.OrdinalIgnoreCase)
+                && GetInstalledVoiceNames().Contains(voiceName, StringComparer.OrdinalIgnoreCase))
+            {
+                _synthesizer.SelectVoice(voiceName);
+            }
+        }
+    }
+
     public async Task SpeakAsync(string text, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(text)) return;

@@ -102,6 +102,124 @@ public sealed class NebiusTokenFactoryClientTests
         Assert.Equal(0.95, sent.RootElement.GetProperty("top_p").GetDouble());
     }
 
+    [Fact]
+    public async Task Streaming_client_requests_event_stream_and_emits_only_text_deltas()
+    {
+        string? requestBody = null;
+        string? accept = null;
+        var deltas = new List<string>();
+        var handler = new StubHandler(request =>
+        {
+            requestBody = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            accept = request.Headers.Accept.Single().MediaType;
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    "data: {\"id\":\"x\",\"model\":\"nvidia/test\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n"
+                    + "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\" there!\"},\"finish_reason\":\"stop\"}]}\n\n"
+                    + "data: [DONE]\n\n",
+                    Encoding.UTF8,
+                    "text/event-stream")
+            };
+        });
+
+        using var httpClient = new HttpClient(handler);
+        var client = new NebiusTokenFactoryClient(httpClient, TestOptions());
+        var completion = await client.CompleteStreamingAsync(
+            new AgentRequest([new ChatMessage("user", "hello")]),
+            delta =>
+            {
+                deltas.Add(delta);
+                return ValueTask.CompletedTask;
+            });
+
+        Assert.Equal("text/event-stream", accept);
+        Assert.Equal(new[] { "Hello", " there!" }, deltas);
+        Assert.Equal("Hello there!", completion.Content);
+        Assert.Equal("stop", completion.FinishReason);
+        Assert.NotNull(requestBody);
+        using var sent = JsonDocument.Parse(requestBody!);
+        Assert.True(sent.RootElement.GetProperty("stream").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Streaming_client_reassembles_fragmented_typed_tool_calls()
+    {
+        var firstFragment = JsonSerializer.Serialize(new
+        {
+            choices = new[]
+            {
+                new
+                {
+                    index = 0,
+                    delta = new
+                    {
+                        tool_calls = new[]
+                        {
+                            new { index = 0, id = "call_1", function = new { name = "open_", arguments = "{\"application\":\"not" } }
+                        }
+                    },
+                    finish_reason = (string?)null
+                }
+            }
+        });
+        var secondFragment = JsonSerializer.Serialize(new
+        {
+            choices = new[]
+            {
+                new
+                {
+                    index = 0,
+                    delta = new
+                    {
+                        tool_calls = new[]
+                        {
+                            new { index = 0, function = new { name = "application", arguments = "epad\"}" } }
+                        }
+                    },
+                    finish_reason = "tool_calls"
+                }
+            }
+        });
+        var handler = new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                $"data: {firstFragment}\n\n"
+                + $"data: {secondFragment}\n\n"
+                + "data: [DONE]\n\n",
+                Encoding.UTF8,
+                "text/event-stream")
+        });
+        using var httpClient = new HttpClient(handler);
+        var client = new NebiusTokenFactoryClient(httpClient, TestOptions());
+
+        var completion = await client.CompleteStreamingAsync(
+            new AgentRequest([new ChatMessage("user", "Open Notepad")], Tools: []),
+            _ => ValueTask.CompletedTask);
+
+        var call = Assert.Single(completion.ToolCalls);
+        Assert.Equal("open_application", call.Name);
+        Assert.Equal("{\"application\":\"notepad\"}", call.ArgumentsJson);
+    }
+
+    [Fact]
+    public async Task Streaming_client_rejects_truncated_event_stream()
+    {
+        var handler = new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"},\"finish_reason\":null}]}\n\n",
+                Encoding.UTF8,
+                "text/event-stream")
+        });
+        using var httpClient = new HttpClient(handler);
+        var client = new NebiusTokenFactoryClient(httpClient, TestOptions());
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => client.CompleteStreamingAsync(
+            new AgentRequest([new ChatMessage("user", "hello")]),
+            _ => ValueTask.CompletedTask));
+    }
+
     [Theory]
     [InlineData(WorkloadKind.Fast, NebiusOptions.VerifiedNemotronNanoModel)]
     [InlineData(WorkloadKind.Deep, NebiusOptions.VerifiedNemotronUltraModel)]

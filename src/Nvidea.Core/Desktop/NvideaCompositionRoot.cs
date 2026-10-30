@@ -26,12 +26,13 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     private readonly LocalOllamaMemoryEmbeddingProvider? _memoryEmbeddingProvider;
     private readonly string _stateDirectory;
     private readonly JsonBrowserGoalSessionStore _browserGoalStore;
+    private readonly JarvisConversationOptions _jarvisOptions;
     private readonly CompositionLifetimeGate _lifetime = new();
     private readonly Func<CancellationToken, Task<ICrashConsistentBrowserGoalHost>>? _browserGoalHostFactory;
     private BrowserHostRuntime? _browser;
     private BrowserProductRuntime? _browserProduct;
 
-    private NvideaCompositionRoot(HttpClient nebiusHttp, HttpClient? tavilyHttp, HttpClient? researchServerlessHttp, NebiusObjectStorageClient? researchObjectStorage, IAgentInferenceClient inference, JsonFileMemoryStore memoryStore, PersonalMemoryService memory, LocalOllamaMemoryEmbeddingProvider? memoryEmbeddingProvider, DesktopInvocationService desktop, DesktopSessionController session, ResearchProductRuntime? research, RemoteWorkerSigningCanary? workerSigningCanary, string stateDirectory, Func<CancellationToken, Task<ICrashConsistentBrowserGoalHost>>? browserGoalHostFactory = null)
+    private NvideaCompositionRoot(HttpClient nebiusHttp, HttpClient? tavilyHttp, HttpClient? researchServerlessHttp, NebiusObjectStorageClient? researchObjectStorage, IAgentInferenceClient inference, JsonFileMemoryStore memoryStore, PersonalMemoryService memory, LocalOllamaMemoryEmbeddingProvider? memoryEmbeddingProvider, DesktopInvocationService desktop, DesktopSessionController session, ResearchProductRuntime? research, RemoteWorkerSigningCanary? workerSigningCanary, string stateDirectory, Func<CancellationToken, Task<ICrashConsistentBrowserGoalHost>>? browserGoalHostFactory = null, KeyboardWtfProviderSettings? appSettings = null)
     {
         _nebiusHttp = nebiusHttp;
         _tavilyHttp = tavilyHttp;
@@ -43,6 +44,15 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         _memoryEmbeddingProvider = memoryEmbeddingProvider;
         _stateDirectory = stateDirectory;
         _browserGoalHostFactory = browserGoalHostFactory;
+        appSettings ??= KeyboardWtfProviderSettings.Defaults();
+        _jarvisOptions = new JarvisConversationOptions(appSettings.AssistantName, appSettings.AssistantTone, appSettings.UsePersonalMemory);
+        VoicePreferences = new KeyboardWtfVoicePreferences(
+            appSettings.SpeechLanguage,
+            appSettings.SpeakJarvisResponses,
+            appSettings.SpeechOutputVoice,
+            appSettings.SpeechOutputRate,
+            appSettings.MaximumListeningSeconds,
+            appSettings.EndOfTurnSilenceMilliseconds);
         _browserGoalStore = new(Path.Combine(stateDirectory, "browser", "goal-sessions.json"));
         Desktop = desktop;
         Session = session;
@@ -54,8 +64,9 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     public DesktopInvocationService Desktop { get; }
     public DesktopSessionController Session { get; }
     public PersonalMemoryService Memory => _memory;
+    public KeyboardWtfVoicePreferences VoicePreferences { get; }
     /// <summary>Creates a bounded spoken conversation that uses the same pinned Nemotron and memory graph as the desktop shell.</summary>
-    public JarvisConversation CreateJarvisConversation() => new(_inference, _memory);
+    public JarvisConversation CreateJarvisConversation() => new(_inference, _memory, _jarvisOptions);
     public ResearchProductRuntime? Research { get; }
     /// <summary>Explicit operator action only; it never submits a Serverless job during startup.</summary>
     public RemoteWorkerSigningCanary? WorkerSigningCanary { get; }
@@ -67,9 +78,27 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         Directory.CreateDirectory(dataDirectory);
         using var startupLease = new StartupResourceLease();
         var nebiusHttp = startupLease.Own(ProviderHttpClientFactory.CreateNoRedirectClient());
-        IAgentInferenceClient inference = string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("NEBIUS_API_KEY"))
+        KeyboardWtfProviderSettings providerSettings = KeyboardWtfProviderSettings.Defaults();
+        NebiusOptions? nebiusOptions;
+        try
+        {
+            nebiusOptions = NebiusOptions.FromEnvironment(
+                () => providerSettings = KeyboardWtfProviderSettingsStore.Load(
+                    KeyboardWtfProviderSettingsStore.DefaultPath,
+                    new WindowsDpapiLocalStateProtector()),
+                Environment.GetEnvironmentVariable);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or System.Security.Cryptography.CryptographicException)
+        {
+            // A corrupt protected settings file must not be treated as an empty saved credential
+            // store. Environment-provided operator configuration can still be used explicitly.
+            providerSettings = KeyboardWtfProviderSettings.Defaults();
+            nebiusOptions = NebiusOptions.FromEnvironment(providerSettings);
+        }
+
+        IAgentInferenceClient inference = nebiusOptions is null
             ? new UnconfiguredInferenceClient()
-            : new NebiusTokenFactoryClient(nebiusHttp, NebiusOptions.FromEnvironment());
+            : new NebiusTokenFactoryClient(nebiusHttp, nebiusOptions);
         var memoryStore = startupLease.Own(new JsonFileMemoryStore(Path.Combine(dataDirectory, "memory.json")));
         var memoryEmbeddingConfiguration = LocalMemoryEmbeddingConfiguration.FromEnvironment();
         var memoryEmbeddingProvider = memoryEmbeddingConfiguration.CreateProvider();
@@ -87,7 +116,8 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         RemoteWorkerSigningCanary? workerSigningCanary = null;
         var researchDirectory = Path.Combine(dataDirectory, "research");
         var cloudMode = DesktopResearchCloudMode.FromEnvironment();
-        var tavilyKey = Environment.GetEnvironmentVariable("TAVILY_API_KEY");
+        var environmentTavilyKey = Environment.GetEnvironmentVariable("TAVILY_API_KEY");
+        var tavilyKey = string.IsNullOrWhiteSpace(environmentTavilyKey) ? providerSettings.TavilyApiKey : environmentTavilyKey;
         if (!string.IsNullOrWhiteSpace(tavilyKey))
         {
             tavilyHttp = startupLease.Own(ProviderHttpClientFactory.CreateNoRedirectClient());
@@ -161,7 +191,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
 
         var desktop = new DesktopInvocationService(inference, memory, researchEngine);
         var session = new DesktopSessionController(desktop);
-        var root = new NvideaCompositionRoot(nebiusHttp, tavilyHttp, researchServerlessHttp, researchObjectStorage, inference, memoryStore, memory, memoryEmbeddingProvider, desktop, session, research, workerSigningCanary, dataDirectory);
+        var root = new NvideaCompositionRoot(nebiusHttp, tavilyHttp, researchServerlessHttp, researchObjectStorage, inference, memoryStore, memory, memoryEmbeddingProvider, desktop, session, research, workerSigningCanary, dataDirectory, appSettings: providerSettings);
         startupLease.ReleaseAll();
         return root;
     }
@@ -295,3 +325,11 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         return Path.Combine(localAppData, "NVIDEA");
     }
 }
+
+public sealed record KeyboardWtfVoicePreferences(
+    string SpeechLanguage,
+    bool SpeakJarvisResponses,
+    string SpeechOutputVoice,
+    int SpeechOutputRate,
+    int MaximumListeningSeconds,
+    int EndOfTurnSilenceMilliseconds);

@@ -12,7 +12,7 @@ internal sealed class SystemSpeechStreamingRecognizer
 {
     private readonly RecognizerInfo? _recognizer;
 
-    public SystemSpeechStreamingRecognizer() => _recognizer = SelectRecognizer();
+    public SystemSpeechStreamingRecognizer(string? language = null) => _recognizer = SelectRecognizer(language);
 
     public bool IsAvailable => _recognizer is not null;
     public string? UnavailableReason => IsAvailable ? null : "Windows has no installed desktop speech recognizer for the current language.";
@@ -96,10 +96,22 @@ internal sealed class SystemSpeechStreamingRecognizer
     private static string JoinTranscript(IEnumerable<string> committed, string? partial) =>
         string.Join(" ", committed.Append(partial ?? string.Empty).Where(static item => !string.IsNullOrWhiteSpace(item))).Trim();
 
-    private static RecognizerInfo? SelectRecognizer()
+    public static IReadOnlyList<string> GetInstalledLanguages() =>
+        SpeechRecognitionEngine.InstalledRecognizers()
+            .Select(static info => info.Culture.Name)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(static name => name, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+    private static RecognizerInfo? SelectRecognizer(string? language)
     {
         var installed = SpeechRecognitionEngine.InstalledRecognizers();
         if (installed.Count == 0) return null;
+        if (!string.IsNullOrWhiteSpace(language)
+            && !string.Equals(language, "auto", StringComparison.OrdinalIgnoreCase))
+        {
+            return installed.FirstOrDefault(info => string.Equals(info.Culture.Name, language, StringComparison.OrdinalIgnoreCase));
+        }
         var current = CultureInfo.CurrentUICulture;
         return installed.FirstOrDefault(info => string.Equals(info.Culture.Name, current.Name, StringComparison.OrdinalIgnoreCase))
             ?? installed.FirstOrDefault(info => string.Equals(info.Culture.TwoLetterISOLanguageName, current.TwoLetterISOLanguageName, StringComparison.OrdinalIgnoreCase))

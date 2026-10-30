@@ -136,7 +136,20 @@ public sealed class DemoPackageValidatorTests
                 ["expectedSessionMilestones"]=Milestones[i],["preflightDependencies"]=new[]{"Required local dependency is ready"},["fallbackPolicy"]="Fail closed; do not claim live evidence.",
                 ["featurePaths"]=new[]{paths[i]},["evidence"]=new[]{new Dictionary<string,object?>{{"evidenceClass","synthetic"},{"path","docs/evidence.json"},{"claim","Synthetic validation only"}}}
             });
-            return new(){{"schemaVersion",2},{"title","NVIDEA deterministic demo"},{"maxDurationSeconds",180},{"beats",beats},{"commands",new List<Dictionary<string,object?>>{new(){{"label","Positive evaluator"},{"projectPath","tools/Nvidea.PersonalAiDemoEval/Nvidea.PersonalAiDemoEval.csproj"},{"command","dotnet run --project tools/Nvidea.PersonalAiDemoEval/Nvidea.PersonalAiDemoEval.csproj"}}}};
+            var command = new Dictionary<string, object?>
+            {
+                ["label"] = "Positive evaluator",
+                ["projectPath"] = "tools/Nvidea.PersonalAiDemoEval/Nvidea.PersonalAiDemoEval.csproj",
+                ["command"] = "dotnet run --project tools/Nvidea.PersonalAiDemoEval/Nvidea.PersonalAiDemoEval.csproj"
+            };
+            return new Dictionary<string, object?>
+            {
+                ["schemaVersion"] = 2,
+                ["title"] = "NVIDEA deterministic demo",
+                ["maxDurationSeconds"] = 180,
+                ["beats"] = beats,
+                ["commands"] = new List<Dictionary<string, object?>> { command }
+            };
         }
         public Task<int> RunAsync(Dictionary<string,object?> m)=>RunRawAsync(JsonSerializer.Serialize(m));
         public async Task<int> RunRawAsync(string json)

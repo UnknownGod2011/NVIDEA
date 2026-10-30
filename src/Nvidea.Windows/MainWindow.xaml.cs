@@ -5,6 +5,8 @@ using System.Windows.Interop;
 using Nvidea.Core.Browser;
 using Nvidea.Core.Desktop;
 using Nvidea.Core.Jobs;
+using Nvidea.Core.Nebius;
+using Nvidea.Core.Security;
 
 namespace Nvidea.Windows;
 
@@ -177,7 +179,10 @@ public partial class MainWindow : Window
     {
         Show();
         Activate();
-        var dialog = new KeyboardSettingsDialog(_keyboardSettings) { Owner = this };
+        var protector = new WindowsDpapiLocalStateProtector();
+        var providerSettingsPath = KeyboardWtfProviderSettingsStore.DefaultPath;
+        var providerSummary = KeyboardWtfProviderSettingsStore.LoadSummary(providerSettingsPath, protector);
+        var dialog = new KeyboardSettingsDialog(_keyboardSettings, providerSummary) { Owner = this };
         if (dialog.ShowDialog() != true || dialog.ResultSettings is null)
             return;
 
@@ -186,15 +191,40 @@ public partial class MainWindow : Window
             KeyboardShortcutSettingsStore.Save(_keyboardSettingsPath, dialog.ResultSettings);
             _keyboardSettings = dialog.ResultSettings.Copy();
             _keyboardSettingsNotice = null;
-            var handle = new WindowInteropHelper(this).Handle;
-            var warning = handle == IntPtr.Zero ? "Settings saved. Shortcuts apply when the window handle is ready." : ApplyConfiguredHotkeys(handle);
-            StatusText.Text = warning ?? "Settings saved; global shortcuts updated.";
         }
         catch (Exception)
         {
-            MessageBox.Show(this, "Settings could not be saved. Your existing shortcuts remain active.",
+            MessageBox.Show(this, "Shortcut settings could not be saved. Your existing shortcuts remain active.",
                 "Settings not saved", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
         }
+
+        var handle = new WindowInteropHelper(this).Handle;
+        var shortcutWarning = handle == IntPtr.Zero
+            ? "Settings saved. Shortcuts apply when the window handle is ready."
+            : ApplyConfiguredHotkeys(handle);
+
+        var providerSettingsSaved = false;
+        if (dialog.ProviderSettingsEdit is { } providerEdit)
+        {
+            try
+            {
+                KeyboardWtfProviderSettingsStore.SaveChanges(providerSettingsPath, providerEdit, protector);
+                providerSettingsSaved = true;
+            }
+            catch (Exception)
+            {
+                StatusText.Text = shortcutWarning ?? "Shortcut settings were saved. Provider settings could not be saved; the prior provider configuration remains active.";
+                MessageBox.Show(this,
+                    "Provider settings could not be saved. No credential or provider error details were displayed.",
+                    "Provider settings not saved", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+        }
+
+        StatusText.Text = shortcutWarning ?? (providerSettingsSaved
+            ? "Settings saved. Global shortcuts are updated; close and reopen keyboard-wtf to apply provider and model changes."
+            : "Settings saved; global shortcuts updated.");
     }
 
     private async void InvokeButton_Click(object sender, RoutedEventArgs e)

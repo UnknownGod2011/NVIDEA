@@ -1,23 +1,28 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
+using System.Text;
+using System.Threading.Channels;
 using Nvidea.Core.Desktop;
 
 namespace Nvidea.Windows;
 
 public partial class MainWindow
 {
-    private readonly SystemSpeechStreamingRecognizer _streamingVoice = new();
+    private SystemSpeechStreamingRecognizer? _streamingVoice;
     private readonly LocalSpeechOutput _speechOutput = new();
     private CancellationTokenSource? _voiceCts;
+    private CancellationTokenSource? _jarvisTurnCts;
     private Button? _voiceButton;
     private ComboBox? _voiceModeBox;
     private bool _voiceRunning;
     private bool _jarvisSessionActive;
-    private bool _jarvisSpeaking;
     private bool _voiceWindowHooksAttached;
     private JarvisConversation? _jarvisConversation;
     private WindowsFocusTarget? _voiceFocusTarget;
+
+    private SystemSpeechStreamingRecognizer StreamingVoice =>
+        _streamingVoice ??= new SystemSpeechStreamingRecognizer(_root.VoicePreferences.SpeechLanguage);
 
     private void InitializeVoiceUi()
     {
@@ -58,8 +63,11 @@ public partial class MainWindow
     {
         if (_voiceRunning)
         {
-            if (mode == VoiceAssistantMode.Jarvis && _jarvisSessionActive && _jarvisSpeaking)
-                _speechOutput.Stop(); // Barge-in: interrupt speech and return to the listening loop.
+            if (mode == VoiceAssistantMode.Jarvis && _jarvisSessionActive && _jarvisTurnCts is not null)
+            {
+                _speechOutput.Stop();
+                _jarvisTurnCts.Cancel(); // Stop the current streamed answer and return to the listening loop.
+            }
             else
                 _voiceCts?.Cancel();
             return;
@@ -80,9 +88,9 @@ public partial class MainWindow
     private async Task StartVoiceCaptureAsync(VoiceAssistantMode? requestedMode = null)
     {
         if (_voiceRunning || _running || _browserRunning || _researchRunning || _memoryMigrationRunning) return;
-        if (!_streamingVoice.IsAvailable)
+        if (!StreamingVoice.IsAvailable)
         {
-            OutputBox.Text = _streamingVoice.UnavailableReason ?? "Local Windows speech recognition is unavailable.";
+            OutputBox.Text = StreamingVoice.UnavailableReason ?? "Local Windows speech recognition is unavailable.";
             StatusText.Text = "Voice — unavailable locally";
             return;
         }
@@ -119,7 +127,7 @@ public partial class MainWindow
         }
         finally
         {
-            _jarvisSpeaking = false; _jarvisSessionActive = false;
+            _jarvisSessionActive = false;
             _voiceCts?.Dispose(); _voiceCts = null;
             SetVoiceRunning(false);
             await RefreshResearchAsync();
@@ -173,6 +181,7 @@ public partial class MainWindow
 
     private async Task RunJarvisSessionAsync(CancellationToken cancellationToken)
     {
+        _speechOutput.Configure(_root.VoicePreferences.SpeechOutputVoice, _root.VoicePreferences.SpeechOutputRate);
         _jarvisConversation ??= _root.CreateJarvisConversation();
         _jarvisSessionActive = true;
         OutputBox.Text = "Jarvis is active. Speak naturally; pause to end each turn. Use the Jarvis shortcut while it speaks to interrupt; use Emergency stop to end the session.";
@@ -181,25 +190,132 @@ public partial class MainWindow
             var transcript = await ListenForTurnAsync(VoiceAssistantMode.Jarvis, cancellationToken);
             var text = transcript.PreparePrompt();
             PromptBox.Text = text;
-            StatusText.Text = "Jarvis — reasoning with NVIDIA Nemotron";
+            StatusText.Text = "Jarvis — connecting to NVIDIA Nemotron";
             var context = _pendingContext ?? WindowsContextCapture.Capture(false);
-            var result = await _jarvisConversation.ProcessTurnAsync(text, context, new JarvisWindowsToolExecutor(this, _voiceFocusTarget), cancellationToken);
-            OutputBox.Text = result.Response;
-            StatusText.Text = "Jarvis — speaking locally";
-            _jarvisSpeaking = true;
-            try { await _speechOutput.SpeakAsync(result.Response, cancellationToken); }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { }
-            finally { _jarvisSpeaking = false; }
+            await RunJarvisTurnAsync(text, context, cancellationToken);
             _pendingContext = WindowsContextCapture.Capture(false);
             _voiceFocusTarget = WindowsFocusTarget.Capture();
         }
+    }
+
+    private async Task RunJarvisTurnAsync(string text, DesktopContext context, CancellationToken sessionToken)
+    {
+        using var turnCts = CancellationTokenSource.CreateLinkedTokenSource(sessionToken);
+        _jarvisTurnCts = turnCts;
+        OutputBox.Text = string.Empty;
+        var streamedText = new StringBuilder();
+        var pendingSpeech = new StringBuilder();
+        Channel<string>? speechQueue = null;
+        Task? playbackTask = null;
+
+        if (_root.VoicePreferences.SpeakJarvisResponses)
+        {
+            speechQueue = Channel.CreateBounded<string>(new BoundedChannelOptions(4)
+            {
+                SingleReader = true,
+                SingleWriter = true,
+                FullMode = BoundedChannelFullMode.Wait
+            });
+            playbackTask = PlayJarvisSpeechQueueAsync(speechQueue.Reader, turnCts.Token);
+        }
+
+        try
+        {
+            var result = await _jarvisConversation!.ProcessTurnStreamingAsync(
+                text,
+                context,
+                new JarvisWindowsToolExecutor(this, _voiceFocusTarget),
+                async delta =>
+                {
+                    streamedText.Append(delta);
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        OutputBox.AppendText(delta);
+                        OutputBox.ScrollToEnd();
+                        StatusText.Text = "Jarvis — response streaming from NVIDIA Nemotron";
+                    }).Task.ConfigureAwait(false);
+
+                    if (speechQueue is null) return;
+                    pendingSpeech.Append(delta);
+                    while (TryTakeSpeakableChunk(pendingSpeech, out var phrase))
+                        await speechQueue.Writer.WriteAsync(phrase, turnCts.Token).ConfigureAwait(false);
+                },
+                turnCts.Token);
+
+            if (speechQueue is not null)
+            {
+                if (streamedText.Length == 0)
+                    pendingSpeech.Append(result.Response);
+                if (pendingSpeech.Length > 0)
+                    await speechQueue.Writer.WriteAsync(pendingSpeech.ToString(), turnCts.Token).ConfigureAwait(false);
+                speechQueue.Writer.TryComplete();
+                await playbackTask!.ConfigureAwait(false);
+            }
+
+            OutputBox.Text = result.Response;
+            StatusText.Text = _root.VoicePreferences.SpeakJarvisResponses
+                ? "Jarvis — reply complete; listening locally"
+                : "Jarvis — reply ready; spoken output is disabled in Settings";
+        }
+        catch (OperationCanceledException) when (!sessionToken.IsCancellationRequested)
+        {
+            speechQueue?.Writer.TryComplete();
+            if (playbackTask is not null)
+            {
+                try { await playbackTask.ConfigureAwait(false); }
+                catch (OperationCanceledException) { }
+            }
+            StatusText.Text = "Jarvis — response interrupted; listening locally";
+        }
+        finally
+        {
+            speechQueue?.Writer.TryComplete();
+            _jarvisTurnCts = null;
+        }
+    }
+
+    private async Task PlayJarvisSpeechQueueAsync(ChannelReader<string> queue, CancellationToken cancellationToken)
+    {
+        await foreach (var phrase in queue.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+        {
+            await _speechOutput.SpeakAsync(phrase, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static bool TryTakeSpeakableChunk(StringBuilder pending, out string chunk)
+    {
+        chunk = string.Empty;
+        var text = pending.ToString();
+        var boundary = text.IndexOfAny(['.', '!', '?', '\n']);
+        if (boundary >= 0)
+        {
+            boundary++;
+            while (boundary < text.Length && char.IsWhiteSpace(text[boundary])) boundary++;
+        }
+        else if (text.Length >= 180)
+        {
+            boundary = text.LastIndexOf(' ', 179);
+            if (boundary <= 0) return false;
+        }
+        else
+        {
+            return false;
+        }
+
+        chunk = text[..boundary].Trim();
+        pending.Remove(0, boundary);
+        return chunk.Length > 0;
     }
 
     private async Task<LocalVoiceTranscript> ListenForTurnAsync(VoiceAssistantMode mode, CancellationToken cancellationToken)
     {
         StatusText.Text = $"{ModeTitle(mode)} — listening locally";
         var progress = new Progress<string>(partial => { if (!string.IsNullOrWhiteSpace(partial)) OutputBox.Text = $"Listening: {partial}"; });
-        return await _streamingVoice.TranscribeTurnAsync(TimeSpan.FromSeconds(35), TimeSpan.FromMilliseconds(900), progress, cancellationToken);
+        return await StreamingVoice.TranscribeTurnAsync(
+            TimeSpan.FromSeconds(_root.VoicePreferences.MaximumListeningSeconds),
+            TimeSpan.FromMilliseconds(_root.VoicePreferences.EndOfTurnSilenceMilliseconds),
+            progress,
+            cancellationToken);
     }
 
     private void VoiceEmergencyStop_Click(object sender, RoutedEventArgs e) { _speechOutput.Stop(); _voiceCts?.Cancel(); }

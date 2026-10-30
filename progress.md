@@ -170,3 +170,24 @@ Validation actually executed:
 - `README.md`, `docs`, `src`, and `tests` were searched for Gemini/Google AI references after the settings change; none were present.
 
 The broader active goal remains incomplete: live microphone/speaker acceptance, full-duplex NVIDIA voice endpoint qualification, and confirmation of a real Nebius inference are still outstanding. The single best next task is to finish judge-facing Settings integration for the supported Nemotron/Nebius configuration while preserving this hotkey migration, then run an actual desktop voice session when the operator endpoint/access is available.
+
+## Current continuation — shortcut-first settings and streaming Jarvis (2026-10-30)
+
+Repository and branch verified before this continuation: root `C:\Users\Admin\OneDrive\Desktop\NVIDEA`, exact origin `https://github.com/UnknownGod2011/NVIDEA.git`, branch `main`, local and remote `main` both at `1b88a38e0653e22d342213bb19da1c771e1edd15`. `main` is the only local branch. The separate `keyboard.wtf` repository was read for reference only; it was not modified.
+
+Settings correction: the first draft expanded the existing shortcut dialog into a large settings window. That changed the familiar hotkey screen even though it did not remove the shortcuts. Restored the compact 540×490, non-resizable `Keyboard shortcuts` presentation and its original heading; the Shortcuts tab opens by default and retains all six editable hotkeys, capture behavior, duplicate validation, immediate application, and restore defaults. Nebius/Tavily/model setup and voice preferences remain in separate scrollable tabs. Keys remain CurrentUser DPAPI protected, are not re-displayed, and environment variables take precedence. Existing shortcut settings are saved separately from provider settings, so provider-save errors do not discard shortcut changes. No keyboard.wtf settings or files were changed.
+
+Implemented Nebius Token Factory SSE response streaming for Jarvis, including bounded line/event/response/tool-call parsing, fragmented typed-tool-call reassembly, cancellation, truncated-stream rejection, and retry only before output starts. Jarvis now displays Nemotron text deltas and can queue completed sentence-sized chunks to local Windows SAPI while generation continues. The configured local voice, speech rate, recognizer language, listening time, end-of-turn pause, assistant name/tone, spoken-reply toggle, and personal-memory toggle are saved as user preferences. Using the Jarvis shortcut during a response cancels that response and returns to the local listening loop. This is streaming turn-taking, not full-duplex voice conversation; local microphone audio is not sent to Nebius.
+
+Updated README and judge setup instructions with the in-app Nebius key/model setup and truthful voice behavior. Added provider-settings persistence tests, streaming adapter/tool-call tests, and Jarvis streaming/persona tests. Repaired the demo-validator fixture syntax and aligned its worker-auth wiring assertions with the current canary dialog. No Gemini or Google AI references were found in README, docs, source, or the focused test trees scanned.
+
+Validation actually executed on this Windows .NET 8 host:
+- `dotnet build src/Nvidea.Windows/Nvidea.Windows.csproj -c Release -p:BaseOutputPath=...` — PASS, including WPF/XAML compilation, 0 warnings and 0 errors.
+- `dotnet test tests/Nvidea.Windows.Tests/Nvidea.Windows.Tests.csproj -c Release -p:BaseOutputPath=...` — PASS (10/10).
+- `dotnet test tests/Nvidea.WorkerAuth.Tests/Nvidea.WorkerAuth.Tests.csproj -c Release -p:BaseOutputPath=...` — PASS (13/13, provider-free).
+- `dotnet test tests/Nvidea.DemoPackageValidator.Tests/Nvidea.DemoPackageValidator.Tests.csproj -c Release -p:BaseOutputPath=...` — PASS (26/26).
+- `git diff --check` — PASS; only normal CRLF conversion notices were printed.
+- `dotnet build Nvidea.sln -c Release` cannot run because this repository contains no `.sln` or `.slnx`; the Windows application project built successfully instead.
+- The broad legacy `Nvidea.Core.Tests` suite was not rerun in this continuation; its previously recorded attempt fails compilation due unrelated pre-existing test/source API drift and analyzer errors.
+
+No Nebius credential was read or used, and no live API call, paid Serverless job, microphone session, or speaker-output session was run. Provider-free tests establish code contracts only; live Nemotron and real-device voice behavior remain unverified. The strongest next validation is to configure a Nebius Token Factory key through Settings and run a real local microphone/SAPI Jarvis turn, then capture the working modes for the public demo.

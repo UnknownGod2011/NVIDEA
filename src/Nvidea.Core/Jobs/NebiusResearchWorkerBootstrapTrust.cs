@@ -27,7 +27,7 @@ public sealed record NebiusResearchWorkerBootstrapTrust(
         var read = environmentReader ?? Environment.GetEnvironmentVariable;
 
         var transportRoot = Require(read, TransportRootEnvironmentVariable).Trim();
-        if (!transportRoot.StartsWith('/', StringComparison.Ordinal)
+        if (!transportRoot.StartsWith("/", StringComparison.Ordinal)
             || transportRoot.Length > 1024
             || transportRoot.Any(char.IsControl))
         {

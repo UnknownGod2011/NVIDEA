@@ -202,7 +202,7 @@ public sealed class NebiusResearchCompletedCancellationRaceTests
 
     private static NebiusServerlessResponse CompletedResponse(string expectedName) =>
         new(HttpStatusCode.OK,
-            $$"""{"metadata":{"id":"job-123","name":"{{expectedName}}"},"status":{"state":"COMPLETED"}}""");
+            $$$"""{"metadata":{"id":"job-123","name":"{{{expectedName}}}"},"status":{"state":"COMPLETED"}}""");
 
     private static AgentJobRecord CreatePendingJob(DateTimeOffset now) => new(
         Guid.NewGuid(),

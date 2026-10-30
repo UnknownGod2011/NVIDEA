@@ -12,15 +12,24 @@ namespace Nvidea.Core.Jobs;
 public static class WorkerSigningCanary
 {
     public const string Protocol = "nvidea.worker.signing-canary.v1";
-    public static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(2);
+    // Serverless scheduling and a cold image pull can legitimately take longer than a local
+    // process start. Ten minutes is deliberately bounded but avoids turning a healthy remote
+    // canary into an artificial expiry failure.
+    public static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan AllowedClockSkew = TimeSpan.FromSeconds(30);
     private const int NonceBytes = 32;
 
-    public static WorkerSigningCanaryChallenge Create(DateTimeOffset? now = null)
+    public static WorkerSigningCanaryChallenge Create(
+        string deploymentFingerprintSha256,
+        DateTimeOffset? now = null)
     {
         var issuedAt = now ?? DateTimeOffset.UtcNow;
-        return new(Protocol, ToBase64Url(RandomNumberGenerator.GetBytes(NonceBytes)),
-            issuedAt, issuedAt.Add(Lifetime));
+        return new(
+            Protocol,
+            ToBase64Url(RandomNumberGenerator.GetBytes(NonceBytes)),
+            issuedAt,
+            issuedAt.Add(Lifetime),
+            ValidateSha256(deploymentFingerprintSha256, nameof(deploymentFingerprintSha256)));
     }
 
     /// <summary>A bounded public argument for Serverless command dispatch; it contains no secrets.</summary>
@@ -51,13 +60,24 @@ public static class WorkerSigningCanary
     public static WorkerSigningCanaryProof Sign(
         WorkerSigningCanaryChallenge challenge,
         string signingPrivateKeyPem,
+        string jobBindingSha256,
         DateTimeOffset? now = null)
     {
         Validate(challenge, now ?? DateTimeOffset.UtcNow);
+        var canonicalJobBinding = ValidateSha256(jobBindingSha256, nameof(jobBindingSha256));
         using var rsa = RSA.Create();
         rsa.ImportFromPem(WorkerResultSigningPrivateKeyTrust.ValidateAndCanonicalize(signingPrivateKeyPem));
-        var signature = rsa.SignData(Commitment(challenge), HashAlgorithmName.SHA256, RSASignaturePadding.Pss);
-        return new(Protocol, challenge.Nonce, challenge.IssuedAt, challenge.ExpiresAt,
+        var signature = rsa.SignData(
+            Commitment(challenge, canonicalJobBinding),
+            HashAlgorithmName.SHA256,
+            RSASignaturePadding.Pss);
+        return new(
+            Protocol,
+            challenge.Nonce,
+            challenge.IssuedAt,
+            challenge.ExpiresAt,
+            challenge.DeploymentFingerprintSha256,
+            canonicalJobBinding,
             Convert.ToBase64String(signature));
     }
 
@@ -65,6 +85,7 @@ public static class WorkerSigningCanary
         WorkerSigningCanaryChallenge expectedChallenge,
         WorkerSigningCanaryProof proof,
         string pinnedWorkerPublicKeyPem,
+        string expectedJobBindingSha256,
         DateTimeOffset? now = null)
     {
         var verifiedAt = now ?? DateTimeOffset.UtcNow;
@@ -73,7 +94,9 @@ public static class WorkerSigningCanary
         if (!string.Equals(proof.Protocol, expectedChallenge.Protocol, StringComparison.Ordinal)
             || !string.Equals(proof.Nonce, expectedChallenge.Nonce, StringComparison.Ordinal)
             || proof.IssuedAt != expectedChallenge.IssuedAt
-            || proof.ExpiresAt != expectedChallenge.ExpiresAt)
+            || proof.ExpiresAt != expectedChallenge.ExpiresAt
+            || !string.Equals(proof.DeploymentFingerprintSha256, expectedChallenge.DeploymentFingerprintSha256, StringComparison.Ordinal)
+            || !string.Equals(proof.JobBindingSha256, ValidateSha256(expectedJobBindingSha256, nameof(expectedJobBindingSha256)), StringComparison.Ordinal))
             throw new CryptographicException("Signing canary proof does not match the outstanding challenge.");
 
         if (string.IsNullOrWhiteSpace(proof.SignatureBase64) || proof.SignatureBase64.Length > 1024)
@@ -85,10 +108,18 @@ public static class WorkerSigningCanary
         var canonicalPublicKey = WorkerResultVerificationPublicKeyTrust.ValidateAndCanonicalize(pinnedWorkerPublicKeyPem);
         using var rsa = RSA.Create();
         rsa.ImportFromPem(canonicalPublicKey);
-        if (!rsa.VerifyData(Commitment(expectedChallenge), signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pss))
+        if (!rsa.VerifyData(
+                Commitment(expectedChallenge, proof.JobBindingSha256),
+                signature,
+                HashAlgorithmName.SHA256,
+                RSASignaturePadding.Pss))
             throw new CryptographicException("Signing canary signature does not match the pinned worker identity.");
 
-        return new(WorkerResultVerificationPublicKeyTrust.GetSha256Fingerprint(canonicalPublicKey), verifiedAt);
+        return new(
+            WorkerResultVerificationPublicKeyTrust.GetSha256Fingerprint(canonicalPublicKey),
+            expectedChallenge.DeploymentFingerprintSha256,
+            proof.JobBindingSha256,
+            verifiedAt);
     }
 
     private static void Validate(WorkerSigningCanaryChallenge challenge, DateTimeOffset now)
@@ -96,6 +127,7 @@ public static class WorkerSigningCanary
         ArgumentNullException.ThrowIfNull(challenge);
         if (!string.Equals(challenge.Protocol, Protocol, StringComparison.Ordinal))
             throw new CryptographicException("Unsupported signing canary protocol.");
+        ValidateSha256(challenge.DeploymentFingerprintSha256, nameof(challenge.DeploymentFingerprintSha256));
         if (string.IsNullOrWhiteSpace(challenge.Nonce) || challenge.Nonce.Length != 43)
             throw new CryptographicException("Signing canary nonce has invalid length.");
         try
@@ -113,10 +145,24 @@ public static class WorkerSigningCanary
             throw new CryptographicException("Signing canary challenge is expired, premature, or has an invalid lifetime.");
     }
 
-    private static byte[] Commitment(WorkerSigningCanaryChallenge challenge) =>
+    private static byte[] Commitment(WorkerSigningCanaryChallenge challenge, string jobBindingSha256) =>
         Encoding.UTF8.GetBytes(string.Join('\n', Protocol, challenge.Protocol, challenge.Nonce,
             challenge.IssuedAt.ToUniversalTime().ToString("O"),
-            challenge.ExpiresAt.ToUniversalTime().ToString("O")));
+            challenge.ExpiresAt.ToUniversalTime().ToString("O"),
+            challenge.DeploymentFingerprintSha256,
+            jobBindingSha256));
+
+    internal static string ValidateSha256(string value, string parameterName)
+    {
+        if (string.IsNullOrWhiteSpace(value)
+            || value.Length != 64
+            || value.Any(static character => !((character >= '0' && character <= '9') || (character >= 'A' && character <= 'F'))))
+        {
+            throw new CryptographicException($"{parameterName} must be canonical uppercase SHA-256 hexadecimal.");
+        }
+
+        return value;
+    }
 
     private static string ToBase64Url(byte[] bytes) =>
         Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
@@ -132,13 +178,27 @@ public static class WorkerSigningCanary
 }
 
 public sealed record WorkerSigningCanaryChallenge(
-    string Protocol, string Nonce, DateTimeOffset IssuedAt, DateTimeOffset ExpiresAt);
+    string Protocol,
+    string Nonce,
+    DateTimeOffset IssuedAt,
+    DateTimeOffset ExpiresAt,
+    string DeploymentFingerprintSha256);
 
 public sealed record WorkerSigningCanaryProof(
-    string Protocol, string Nonce, DateTimeOffset IssuedAt, DateTimeOffset ExpiresAt, string SignatureBase64);
+    string Protocol,
+    string Nonce,
+    DateTimeOffset IssuedAt,
+    DateTimeOffset ExpiresAt,
+    string DeploymentFingerprintSha256,
+    string JobBindingSha256,
+    string SignatureBase64);
 
 /// <summary>Public-only cryptographic evidence. This does not attest to a Nebius deployment by itself.</summary>
-public sealed record WorkerSigningCanaryVerification(string VerificationKeySha256, DateTimeOffset VerifiedAt);
+public sealed record WorkerSigningCanaryVerification(
+    string VerificationKeySha256,
+    string DeploymentFingerprintSha256,
+    string JobBindingSha256,
+    DateTimeOffset VerifiedAt);
 
 /// <summary>
 /// Prevents accepting the same challenge twice in one verification session. A fresh random challenge
@@ -147,15 +207,24 @@ public sealed record WorkerSigningCanaryVerification(string VerificationKeySha25
 public sealed class WorkerSigningCanaryVerifier
 {
     private readonly WorkerSigningCanaryChallenge _challenge;
+    private readonly string _jobBindingSha256;
     private int _consumed;
 
-    public WorkerSigningCanaryVerifier(WorkerSigningCanaryChallenge challenge) =>
+    public WorkerSigningCanaryVerifier(WorkerSigningCanaryChallenge challenge, string jobBindingSha256)
+    {
         _challenge = challenge ?? throw new ArgumentNullException(nameof(challenge));
+        _jobBindingSha256 = WorkerSigningCanary.ValidateSha256(jobBindingSha256, nameof(jobBindingSha256));
+    }
 
     public WorkerSigningCanaryVerification VerifyAndConsume(
         WorkerSigningCanaryProof proof, string pinnedWorkerPublicKeyPem, DateTimeOffset? now = null)
     {
-        var verification = WorkerSigningCanary.Verify(_challenge, proof, pinnedWorkerPublicKeyPem, now);
+        var verification = WorkerSigningCanary.Verify(
+            _challenge,
+            proof,
+            pinnedWorkerPublicKeyPem,
+            _jobBindingSha256,
+            now);
         if (Interlocked.CompareExchange(ref _consumed, 1, 0) != 0)
             throw new CryptographicException("Signing canary challenge was already consumed.");
         return verification;

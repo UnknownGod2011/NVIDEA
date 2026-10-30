@@ -228,7 +228,7 @@ public sealed class BrowserHostRuntimeIntegrationTests
         }
     }
 
-    private sealed class SequenceInferenceClient : IInferenceClient
+    private sealed class SequenceInferenceClient : IAgentInferenceClient
     {
         private readonly Queue<string> _responses;
 
@@ -237,7 +237,7 @@ public sealed class BrowserHostRuntimeIntegrationTests
         public int RequestCount { get; private set; }
         public List<string> ResponseSchemas { get; } = new();
 
-        public Task<InferenceResponse> CompleteAsync(InferenceRequest request, CancellationToken cancellationToken = default)
+        public Task<AgentCompletion> CompleteAsync(AgentRequest request, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
             RequestCount++;
@@ -245,7 +245,7 @@ public sealed class BrowserHostRuntimeIntegrationTests
             if (_responses.Count == 0)
                 throw new InvalidOperationException("No inference response remains for the integration test.");
 
-            return Task.FromResult(new InferenceResponse(_responses.Dequeue(), "test-nemotron", null));
+            return Task.FromResult(new AgentCompletion(_responses.Dequeue(), "test-nemotron", null));
         }
     }
 

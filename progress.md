@@ -56,3 +56,25 @@ Risks and blockers:
 
 ## Single Best Next Task
 Implement a real end-to-end **signed-result canary** across deployed Nebius Worker and Windows pinned-key verifier that proves signer/pin matching without exposing research data, with negative cases for wrong key, replay and signing-version drift. Integrate its verified outcome into fail-closed recording readiness; run .NET 8 + WPF qualification and update draft PR #1 based on results.
+
+## Current run — remote signed-worker canary completion attempt (2026-10-30)
+
+Repository/branch inspected before work: `UnknownGod2011/NVIDEA`, `automation/worker-auth-evidence`, starting HEAD `d1e22c77bbe2b1921a0adb6765b7f2a4b6977a9e`; origin remains `https://github.com/UnknownGod2011/NVIDEA.git`. `keyboard.wtf` was not accessed or changed.
+
+Implemented the production missing-secret fix: `NebiusResearchLiveConfigurationLoader` now maps `NVIDEA_WORKER_RESULT_SIGNING_PRIVATE_KEY_PEM` into `SecretEnvironmentVariables` using the dedicated live secret ID and immutable version variables. It remains absent from plaintext environment configuration and is preflight-validated.
+
+Implemented the first real signed-worker canary path: a fresh ten-minute domain-separated RSA-PSS/SHA-256 challenge is submitted in a dedicated Serverless job using the configured digest-pinned image, volume and signing-secret reference. The returned job ID is hashed into a public invocation artifact; the worker reads it and create-once publishes a bounded proof artifact to the existing Object Storage transport. The client requires completed job state, verifies the public proof against the outstanding challenge/current public pin/job binding/deployment fingerprint, and persists only a DPAPI-protected receipt. The Windows Judge Evidence panel now projects pin-only, running, failed, verified and stale states; it never accepts a caller-provided verification boolean and never displays secret/provider identifiers.
+
+The deterministic stale-clock regression was corrected in `WorkerSigningCanaryTests`: its successful round trip now captures a fresh UTC timestamp while expiration tests retain a deterministic clock. Added loader assertions for exact dedicated secret ID/version, plaintext exclusion, missing ID/version, and malformed version failure.
+
+Documentation updated: `docs/nebius-research-worker.md` now documents all four RSA roles and the exact result-signing secret mapping; `docs/worker-result-signing-key-lifecycle.md` documents Object Storage proof return, job/image/secret/pin binding, receipt staleness and rollback. The proof artifact approach was selected over log parsing because it is bounded, create-once, works through the existing S3-compatible protected transport, and is always cryptographically verified before acceptance.
+
+Validation actually executed on this Windows .NET 8 host:
+- `dotnet build src/Nvidea.Core/Nvidea.Core.csproj -c Release --no-restore` — PASS.
+- `dotnet build src/Nvidea.Worker/Nvidea.Worker.csproj -c Release --no-restore` — PASS.
+- `dotnet build src/Nvidea.Windows/Nvidea.Windows.csproj -c Release --no-restore` — PASS, including WPF/XAML compilation.
+- `dotnet test tests/Nvidea.Core.Tests/Nvidea.Core.Tests.csproj -c Release --no-restore` — NOT PASS: the existing suite has unrelated API-drift/old-source compile failures across browser, memory, research and analyzer tests; no test result is claimed.
+- `dotnet test tests/Nvidea.DemoPackageValidator.Tests/Nvidea.DemoPackageValidator.Tests.csproj -c Release --no-restore` — NOT PASS: existing test source has malformed interpolated raw string syntax; no test result is claimed.
+- `Nvidea.sln` is absent, so the requested solution command cannot run.
+
+No provider credentials were loaded, no Nebius job was launched, and no paid/live deployment or live canary is claimed. Remaining live blockers are an operator-provisioned Nebius Serverless/Object Storage/SecretStash deployment, the result-signing secret ID/version, matching public pin, and explicit authorization to create the paid canary job. The single best next task after repairing the unrelated test-suite source drift is to run that operator-confirmed canary and record the Windows dialog state/evidence for the submission video.

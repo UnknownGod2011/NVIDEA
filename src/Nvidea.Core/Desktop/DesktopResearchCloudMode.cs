@@ -5,12 +5,12 @@ namespace Nvidea.Core.Desktop;
 /// can be enabled independently from new paid dispatch so the desktop can safely recover/cancel
 /// persisted remote jobs without silently opting users into additional Serverless work.
 /// </summary>
-internal sealed record DesktopResearchCloudMode(bool LifecycleEnabled, bool DispatchEnabled)
+public sealed record DesktopResearchCloudMode(bool LifecycleEnabled, bool DispatchEnabled)
 {
     internal const string LifecycleEnvironmentVariable = "NVIDEA_DESKTOP_REMOTE_RESEARCH_LIFECYCLE";
     internal const string DispatchEnvironmentVariable = "NVIDEA_DESKTOP_REMOTE_RESEARCH_DISPATCH";
 
-    internal static DesktopResearchCloudMode FromEnvironment(Func<string, string?>? environmentReader = null)
+    public static DesktopResearchCloudMode FromEnvironment(Func<string, string?>? environmentReader = null)
     {
         environmentReader ??= Environment.GetEnvironmentVariable;
         var lifecycle = ReadBoolean(environmentReader, LifecycleEnvironmentVariable);

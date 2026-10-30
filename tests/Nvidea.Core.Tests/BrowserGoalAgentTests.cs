@@ -160,23 +160,23 @@ public sealed class BrowserGoalAgentTests
     private static BrowserJobOutcome CompletedOutcome() => new(
         Guid.NewGuid(), AgentJobState.Completed, "verified");
 
-    private static string CompleteDecision(string reason) => $$"""
-        {"decision":"complete","reason":"{{reason}}","action":null}
+    private static string CompleteDecision(string reason) => $$$"""
+        {"decision":"complete","reason":"{{{reason}}}","action":null}
         """;
 
-    private static string ClickDecision(string reference, string expected) => $$"""
+    private static string ClickDecision(string reference, string expected) => $$$"""
         {
           "decision":"act",
           "reason":"Advance goal",
           "action":{
             "kind":"click",
             "locator_kind":"accessibility_ref",
-            "locator_value":"{{reference}}",
+            "locator_value":"{{{reference}}}",
             "locator_name":"Continue",
             "locator_role":"button",
             "value":null,
             "destination":null,
-            "expected_state":"{{expected}}",
+            "expected_state":"{{{expected}}}",
             "rationale":"Advance the user goal"
           }
         }

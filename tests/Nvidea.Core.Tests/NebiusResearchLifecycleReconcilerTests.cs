@@ -28,9 +28,9 @@ public sealed class NebiusResearchLifecycleReconcilerTests
             var client = new FakeServerlessClient
             {
                 ListResponse = new NebiusServerlessResponse(HttpStatusCode.OK,
-                    $$"""{"items":[{"metadata":{"id":"job-123","name":"{{expectedName}}"},"status":{"state":"RUNNING"}},{"metadata":{"id":"job-other","name":"other"},"status":{"state":"RUNNING"}}]}"""),
+                    $$$"""{"items":[{"metadata":{"id":"job-123","name":"{{{expectedName}}}"},"status":{"state":"RUNNING"}},{"metadata":{"id":"job-other","name":"other"},"status":{"state":"RUNNING"}}]}"""),
                 GetResponse = new NebiusServerlessResponse(HttpStatusCode.OK,
-                    $$"""{"metadata":{"id":"job-123","name":"{{expectedName}}"},"status":{"state":"RUNNING"}}""")
+                    $$$"""{"metadata":{"id":"job-123","name":"{{{expectedName}}}"},"status":{"state":"RUNNING"}}""")
             };
             var reconciler = new NebiusResearchLifecycleReconciler(store, client, ingestor, audit);
 
@@ -70,10 +70,10 @@ public sealed class NebiusResearchLifecycleReconcilerTests
                 ListResponse = new NebiusServerlessResponse(HttpStatusCode.OK,
                     "{\"items\":[{\"metadata\":{\"id\":\"job-other\",\"name\":\"other\"},\"status\":{\"state\":\"RUNNING\"}}],\"nextPageToken\":\"page-2\"}"),
                 GetResponse = new NebiusServerlessResponse(HttpStatusCode.OK,
-                    $$"""{"metadata":{"id":"job-123","name":"{{expectedName}}"},"status":{"state":"RUNNING"}}""")
+                    $$$"""{"metadata":{"id":"job-123","name":"{{{expectedName}}}"},"status":{"state":"RUNNING"}}""")
             };
             client.PageResponses["page-2"] = new NebiusServerlessResponse(HttpStatusCode.OK,
-                $$"""{"items":[{"metadata":{"id":"job-123","name":"{{expectedName}}"},"status":{"state":"RUNNING"}}]}""");
+                $$$"""{"items":[{"metadata":{"id":"job-123","name":"{{{expectedName}}}"},"status":{"state":"RUNNING"}}]}""");
             var reconciler = new NebiusResearchLifecycleReconciler(store, client, ingestor, audit);
 
             var attached = await reconciler.ReconcileReservedAsync(original.JobId);
@@ -108,13 +108,13 @@ public sealed class NebiusResearchLifecycleReconcilerTests
             var reconciler = new NebiusResearchLifecycleReconciler(store, client, ingestor, audit);
 
             client.ListResponse = new NebiusServerlessResponse(HttpStatusCode.OK,
-                $$"""{"items":[{"metadata":{"id":"job-123","name":"{{expectedName}}"},"status":{"state":"NEW_FUTURE_STATE"}}]}""");
+                $$$"""{"items":[{"metadata":{"id":"job-123","name":"{{{expectedName}}}"},"status":{"state":"NEW_FUTURE_STATE"}}]}""");
             await Assert.ThrowsAsync<InvalidOperationException>(() => reconciler.ReconcileReservedAsync(original.JobId));
 
             client.ListResponse = new NebiusServerlessResponse(HttpStatusCode.OK,
-                $$"""{"items":[{"metadata":{"id":"job-1","name":"{{expectedName}}"},"status":{"state":"RUNNING"}}],"nextPageToken":"more"}""");
+                $$$"""{"items":[{"metadata":{"id":"job-1","name":"{{{expectedName}}}"},"status":{"state":"RUNNING"}}],"nextPageToken":"more"}""");
             client.PageResponses["more"] = new NebiusServerlessResponse(HttpStatusCode.OK,
-                $$"""{"items":[{"metadata":{"id":"job-2","name":"{{expectedName}}"},"status":{"state":"RUNNING"}}]}""");
+                $$$"""{"items":[{"metadata":{"id":"job-2","name":"{{{expectedName}}}"},"status":{"state":"RUNNING"}}]}""");
             await Assert.ThrowsAsync<InvalidOperationException>(() => reconciler.ReconcileReservedAsync(original.JobId));
 
             var unchanged = await store.GetAsync(original.JobId);
@@ -147,7 +147,7 @@ public sealed class NebiusResearchLifecycleReconcilerTests
             var client = new FakeServerlessClient
             {
                 GetResponse = new NebiusServerlessResponse(HttpStatusCode.OK,
-                    $$"""{"metadata":{"id":"job-123","name":"{{expectedName}}"},"status":{"state":"FAILED"}}""")
+                    $$$"""{"metadata":{"id":"job-123","name":"{{{expectedName}}}"},"status":{"state":"FAILED"}}""")
             };
             var reconciler = new NebiusResearchLifecycleReconciler(store, client, ingestor, audit);
 
@@ -186,7 +186,7 @@ public sealed class NebiusResearchLifecycleReconcilerTests
             var client = new FakeServerlessClient
             {
                 GetResponse = new NebiusServerlessResponse(HttpStatusCode.OK,
-                    $$"""{"metadata":{"id":"job-123","name":"{{expectedName}}"},"status":{"state":"COMPLETED"}}""")
+                    $$$"""{"metadata":{"id":"job-123","name":"{{{expectedName}}}"},"status":{"state":"COMPLETED"}}""")
             };
             var reconciler = new NebiusResearchLifecycleReconciler(store, client, ingestor, audit);
 
@@ -232,7 +232,7 @@ public sealed class NebiusResearchLifecycleReconcilerTests
                 Assert.Equal(RemoteResearchProvenanceState.CancelRequested, durable!.RemoteResearch!.State);
             };
             client.GetResponse = new NebiusServerlessResponse(HttpStatusCode.OK,
-                $$"""{"metadata":{"id":"job-123","name":"{{expectedName}}"},"status":{"state":"CANCELLED"}}""");
+                $$$"""{"metadata":{"id":"job-123","name":"{{{expectedName}}}"},"status":{"state":"CANCELLED"}}""");
             var reconciler = new NebiusResearchLifecycleReconciler(store, client, ingestor, audit);
 
             var requested = await reconciler.RequestCancellationAsync(original.JobId);

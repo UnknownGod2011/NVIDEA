@@ -292,7 +292,7 @@ public sealed class NebiusObjectStorageClient : IProtectedResearchObjectStoreCli
     private static void ValidateRelativeObjectKey(string value)
     {
         if (string.IsNullOrWhiteSpace(value)
-            || value.StartsWith('/', StringComparison.Ordinal)
+            || value.StartsWith("/", StringComparison.Ordinal)
             || value.Contains('\\')
             || value.Contains("..", StringComparison.Ordinal)
             || value.Any(static ch => char.IsControl(ch)))

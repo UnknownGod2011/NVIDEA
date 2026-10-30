@@ -10,7 +10,7 @@ public sealed record PlaywrightBrowserDriverOptions(
     float ActionTimeoutMilliseconds = 15_000)
 {
     public IReadOnlySet<string> NormalizedAllowedHosts { get; } =
-        new HashSet<string>(AllowedHosts ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+        new HashSet<string>(AllowedHosts is null ? Array.Empty<string>() : AllowedHosts, StringComparer.OrdinalIgnoreCase);
 }
 
 public sealed class PlaywrightBrowserDriver : IBrowserDriver

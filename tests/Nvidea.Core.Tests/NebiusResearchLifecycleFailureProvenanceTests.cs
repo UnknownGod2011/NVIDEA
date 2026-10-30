@@ -50,7 +50,7 @@ public sealed class NebiusResearchLifecycleFailureProvenanceTests
             {
                 GetResponse = new NebiusServerlessResponse(
                     HttpStatusCode.OK,
-                    $$"""{"metadata":{"id":"job-123","name":"{{expectedName}}"},"status":{"state":"FAILED","stateDetails":{"code":"{{providerCode}}","message":"{{providerMessage}}"}}}""")
+                    $$$$"""{"metadata":{"id":"job-123","name":"{{{{expectedName}}}}"},"status":{"state":"FAILED","stateDetails":{"code":"{{{{providerCode}}}}","message":"{{{{providerMessage}}}}"}}}""")
             };
             var reconciler = new NebiusResearchLifecycleReconciler(store, client, ingestor, audit);
 
@@ -120,7 +120,7 @@ public sealed class NebiusResearchLifecycleFailureProvenanceTests
             {
                 GetResponse = new NebiusServerlessResponse(
                     HttpStatusCode.OK,
-                    $$"""{"metadata":{"id":"job-123","name":"{{expectedName}}"},"status":{"state":"FAILED","stateDetails":{"code":"{{oversizedCode}}","message":"ignored with the rejected diagnostic"}}}""")
+                    $$$$"""{"metadata":{"id":"job-123","name":"{{{{expectedName}}}}"},"status":{"state":"FAILED","stateDetails":{"code":"{{{{oversizedCode}}}}","message":"ignored with the rejected diagnostic"}}}""")
             };
             var reconciler = new NebiusResearchLifecycleReconciler(store, client, ingestor, audit);
 

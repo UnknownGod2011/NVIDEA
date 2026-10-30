@@ -1,4 +1,5 @@
 using Nvidea.Core.Capabilities;
+using Nvidea.Core.Desktop;
 
 namespace Nvidea.Core.Jobs;
 

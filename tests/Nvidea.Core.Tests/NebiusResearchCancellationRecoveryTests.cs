@@ -205,15 +205,15 @@ public sealed class NebiusResearchCancellationRecoveryTests
 
     private static NebiusServerlessResponse RunningResponse(string expectedName) =>
         new(HttpStatusCode.OK,
-            $$"""{"metadata":{"id":"job-123","name":"{{expectedName}}"},"status":{"state":"RUNNING"}}""");
+            $$$"""{"metadata":{"id":"job-123","name":"{{{expectedName}}}"},"status":{"state":"RUNNING"}}""");
 
     private static NebiusServerlessResponse CancelledResponse(string expectedName) =>
         new(HttpStatusCode.OK,
-            $$"""{"metadata":{"id":"job-123","name":"{{expectedName}}"},"status":{"state":"CANCELLED"}}""");
+            $$$"""{"metadata":{"id":"job-123","name":"{{{expectedName}}}"},"status":{"state":"CANCELLED"}}""");
 
     private static NebiusServerlessResponse FailedResponse(string expectedName) =>
         new(HttpStatusCode.OK,
-            $$"""{"metadata":{"id":"job-123","name":"{{expectedName}}"},"status":{"state":"FAILED"}}""");
+            $$$"""{"metadata":{"id":"job-123","name":"{{{expectedName}}}"},"status":{"state":"FAILED"}}""");
 
     private static AgentJobRecord CreatePendingJob(DateTimeOffset now) => new(
         Guid.NewGuid(),

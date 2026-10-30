@@ -20,11 +20,12 @@ All three transport namespaces use create-once publication and temp-file + move 
 
 ## Cryptographic identities
 
-Remote research deliberately uses **three separate RSA identities**. Do not reuse any of these keypairs for another role:
+Remote research deliberately uses **four separate RSA identities**. Do not reuse any of these keypairs for another role:
 
 1. **Worker envelope keypair** — the client encrypts protected work items with the worker public key; the worker decrypts them with `NVIDEA_WORKER_PRIVATE_KEY_PEM`.
 2. **Client dispatch-signing keypair** — the client signs authoritative dispatch bindings; the worker verifies them with `NVIDEA_CLIENT_PUBLIC_KEY_PEM`.
 3. **Client result-envelope keypair** — the worker encrypts protected results to `NVIDEA_CLIENT_RESULT_PUBLIC_KEY_PEM`; the Windows client decrypts them with its separate local result private key.
+4. **Worker remote-result signing keypair** — the worker signs remote-result and signing-canary proofs with `NVIDEA_WORKER_RESULT_SIGNING_PRIVATE_KEY_PEM`; Windows retains only the matching `NVIDEA_WORKER_RESULT_VERIFICATION_PUBLIC_KEY_PEM` pin.
 
 Production validation requires RSA keys of at least 2048 bits, strict public/private role separation, and distinct client signing/result identities. Reusing the same client RSA keypair for signing and result encryption is rejected.
 
@@ -42,6 +43,10 @@ openssl pkey -in client-signing-private.pem -pubout -out client-signing-public.p
 # 3) Client result encryption/decryption identity
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out client-result-private.pem
 openssl pkey -in client-result-private.pem -pubout -out client-result-public.pem
+
+# 4) Worker remote-result signing identity
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out worker-result-signing-private.pem
+openssl pkey -in worker-result-signing-private.pem -pubout -out worker-result-signing-public.pem
 ```
 
 Keep all private PEM files outside the repository. For real Serverless deployment, place the worker private key in Nebius MysteryBox and keep both client private keys only on the originating trusted client machine.
@@ -53,6 +58,9 @@ Inject worker secrets with Nebius MysteryBox rather than plaintext job environme
 - `NEBIUS_API_KEY` — Token Factory key.
 - `TAVILY_API_KEY` — Tavily key.
 - `NVIDEA_WORKER_PRIVATE_KEY_PEM` — worker RSA private key used only to unwrap incoming protected work items.
+- `NVIDEA_WORKER_RESULT_SIGNING_PRIVATE_KEY_PEM` — distinct worker RSA private key used only for remote-result and signing-canary signatures.
+
+The live loader maps that exact worker environment name only from `NVIDEA_LIVE_SECRET_WORKER_RESULT_SIGNING_PRIVATE_KEY_ID` and `NVIDEA_LIVE_SECRET_WORKER_RESULT_SIGNING_PRIVATE_KEY_VERSION_ID`. It never resolves the PEM on Windows or copies it to plaintext environment variables.
 
 Supply these two **public-only** client identities to the worker as non-secret configuration:
 
@@ -81,6 +89,14 @@ Worker command:
 Nvidea.Worker.dll research --work-item-id=<opaque-id>
 ```
 
+The separate, operator-triggered signing-canary command is submitted only in a dedicated Serverless canary job:
+
+```text
+Nvidea.Worker.dll signing-canary --challenge=<public-base64url-challenge> --input-id=<opaque-id>
+```
+
+It reads a public invocation artifact and create-once publishes a bounded signed proof under `signing-canary/proofs/` in the existing mounted protected Object Storage transport. It logs no proof body or private material.
+
 The worker deliberately logs only `nvidea_worker_completed stage=research` or `nvidea_worker_failed error_type=<type>`; it does not print the research question, evidence, secret values, binding contents, or provider response bodies.
 
 ## Live deployment preflight
@@ -90,7 +106,7 @@ Production composition should use `NebiusResearchLiveRuntimeFactory.Create`, not
 1. `NVIDEA_TRANSPORT_ROOT` is a bounded absolute Linux path.
 2. Exactly one configured volume has a `ContainerPath` equal to that transport root.
 3. That matching research transport volume is `READ_WRITE`.
-4. `NEBIUS_API_KEY`, `TAVILY_API_KEY`, and `NVIDEA_WORKER_PRIVATE_KEY_PEM` are present as Nebius MysteryBox secret references, never plaintext environment values.
+4. `NEBIUS_API_KEY`, `TAVILY_API_KEY`, `NVIDEA_WORKER_PRIVATE_KEY_PEM`, and `NVIDEA_WORKER_RESULT_SIGNING_PRIVATE_KEY_PEM` are present as immutable MysteryBox secret references, never plaintext environment values.
 5. `NVIDEA_CLIENT_PUBLIC_KEY_PEM` is a validated public-only RSA identity for dispatch verification.
 6. `NVIDEA_CLIENT_RESULT_PUBLIC_KEY_PEM` is a validated public-only RSA identity for result encryption.
 7. The canonical dispatch-verification and result-encryption client identities are different RSA keys.

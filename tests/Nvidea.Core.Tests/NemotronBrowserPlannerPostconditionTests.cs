@@ -167,25 +167,25 @@ public sealed class NemotronBrowserPlannerPostconditionTests
         "Example form Submit Remember me",
         DateTimeOffset.UtcNow);
 
-    private static string ActionJson(string kind, string postconditions) => $$"""
+    private static string ActionJson(string kind, string postconditions) => $$$"""
         {
           "decision": "act",
           "reason": "next step",
           "action": {
-            "kind": "{{kind}}",
+            "kind": "{{{kind}}}",
             "locator_kind": "accessibility_ref",
             "locator_value": "e-submit",
             "locator_name": null,
             "locator_role": null,
             "value": null,
             "destination": null,
-            "postconditions": {{postconditions}},
+            "postconditions": {{{postconditions}}},
             "rationale": "test"
           }
         }
         """;
 
-    private static string NavigateJson(string postconditions) => $$"""
+    private static string NavigateJson(string postconditions) => $$$"""
         {
           "decision": "act",
           "reason": "navigate",
@@ -197,7 +197,7 @@ public sealed class NemotronBrowserPlannerPostconditionTests
             "locator_role": null,
             "value": null,
             "destination": "https://example.test/result",
-            "postconditions": {{postconditions}},
+            "postconditions": {{{postconditions}}},
             "rationale": "test"
           }
         }

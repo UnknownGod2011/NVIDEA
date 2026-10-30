@@ -53,10 +53,10 @@ public sealed class NebiusResearchClientRuntimeReservationAmbiguityTests
             {
                 ListResponse = new NebiusServerlessResponse(
                     HttpStatusCode.OK,
-                    $$"""{"items":[{"metadata":{"id":"{{authoritativeRemoteId}}","name":"{{expectedName}}"},"status":{"state":"RUNNING"}},{"metadata":{"id":"unrelated-job","name":"unrelated"},"status":{"state":"RUNNING"}}]}"""),
+                    $$$"""{"items":[{"metadata":{"id":"{{{authoritativeRemoteId}}}","name":"{{{expectedName}}}"},"status":{"state":"RUNNING"}},{"metadata":{"id":"unrelated-job","name":"unrelated"},"status":{"state":"RUNNING"}}]}"""),
                 GetResponse = new NebiusServerlessResponse(
                     HttpStatusCode.OK,
-                    $$"""{"metadata":{"id":"{{authoritativeRemoteId}}","name":"{{expectedName}}"},"status":{"state":"RUNNING"}}""")
+                    $$$"""{"metadata":{"id":"{{{authoritativeRemoteId}}}","name":"{{{expectedName}}}"},"status":{"state":"RUNNING"}}""")
             };
             var workItems = new NoSharedTransportAccessWorkItemTransport();
             var results = new EmptyResultTransport();

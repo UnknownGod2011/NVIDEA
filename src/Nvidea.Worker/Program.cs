@@ -1,5 +1,4 @@
 using System.Runtime.InteropServices;
-using System.Text.Json;
 using Nvidea.Core.Jobs;
 using Nvidea.Core.Nebius;
 using Nvidea.Core.Research;
@@ -26,16 +25,29 @@ internal static class Program
             var cancellationToken = shutdown.Token;
 
             // Payload-free worker-signing canary. Only the public challenge travels in command
-            // arguments; the dedicated worker private key is loaded from the worker secret
-            // boundary and never printed. This command deliberately does not initialize providers.
-            if (args.Length == 2
+            // arguments. The returned Nebius job identity arrives over the mounted, create-once
+            // transport and is committed only as a SHA-256 binding in the signed proof. The
+            // dedicated worker private key is never printed, returned or written to ordinary logs.
+            if (args.Length == 3
                 && string.Equals(args[0], "signing-canary", StringComparison.Ordinal)
-                && args[1].StartsWith("--challenge=", StringComparison.Ordinal))
+                && args[1].StartsWith("--challenge=", StringComparison.Ordinal)
+                && args[2].StartsWith("--input-id=", StringComparison.Ordinal))
             {
                 var challenge = WorkerSigningCanary.DecodeChallenge(args[1]["--challenge=".Length..]);
+                var inputId = args[2]["--input-id=".Length..];
+                if (!string.Equals(inputId, challenge.Nonce, StringComparison.Ordinal))
+                    throw new ArgumentException("Signing canary input id must equal the challenge nonce.");
+                var root = Environment.GetEnvironmentVariable(NebiusResearchDeploymentPreflight.TransportRootEnvironmentVariable)
+                    ?? throw new InvalidOperationException("Signing canary transport root is missing.");
+                var invocation = await WorkerSigningCanaryMountedArtifactTransport
+                    .WaitForInvocationAsync(root, challenge, cancellationToken)
+                    .ConfigureAwait(false);
                 var privateKey = WorkerResultSigningPrivateKeyTrust.LoadRequired();
-                var proof = WorkerSigningCanary.Sign(challenge, privateKey);
-                Console.WriteLine(JsonSerializer.Serialize(proof));
+                var proof = WorkerSigningCanary.Sign(challenge, privateKey, invocation.JobBindingSha256);
+                await WorkerSigningCanaryMountedArtifactTransport
+                    .PublishProofAsync(root, proof, cancellationToken)
+                    .ConfigureAwait(false);
+                Console.WriteLine("nvidea_worker_completed stage=signing_canary");
                 return 0;
             }
 

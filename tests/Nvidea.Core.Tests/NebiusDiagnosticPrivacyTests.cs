@@ -10,10 +10,10 @@ public sealed class NebiusDiagnosticPrivacyTests
     {
         const string secret = "Bearer super-secret-nebius-token";
         const string signedUrl = "https://storage.example.test/result?token=sensitive-query-value";
-        var body = $$"""
+        var body = $$$"""
             {
               "error": {
-                "message": "request failed: {{secret}} {{signedUrl}}"
+                "message": "request failed: {{{secret}}} {{{signedUrl}}}"
               }
             }
             """;

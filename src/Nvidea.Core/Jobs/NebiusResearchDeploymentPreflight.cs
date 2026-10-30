@@ -30,6 +30,8 @@ public static class NebiusResearchDeploymentPreflight
         if (!secrets.TryGetValue(WorkerResultSigningPrivateKeyEnvironmentVariable, out var secretRef) || secretRef is null)
             throw new InvalidOperationException($"Live Nebius research requires '{WorkerResultSigningPrivateKeyEnvironmentVariable}' as a Nebius MysteryBox secret reference.");
         ValidateMysteryBoxSecretReference(WorkerResultSigningPrivateKeyEnvironmentVariable, secretRef);
+        if (string.IsNullOrWhiteSpace(secretRef.SecretId) || string.IsNullOrWhiteSpace(secretRef.VersionId))
+            throw new InvalidOperationException($"Live Nebius research requires '{WorkerResultSigningPrivateKeyEnvironmentVariable}' to use an immutable MysteryBox secret version.");
     }
 
     private static void ValidateCore(NebiusResearchDispatchOptions options, bool requireClientPublicKey)
@@ -42,7 +44,7 @@ public static class NebiusResearchDeploymentPreflight
         if (!plaintext.TryGetValue(TransportRootEnvironmentVariable, out var transportRoot) || string.IsNullOrWhiteSpace(transportRoot))
             throw new InvalidOperationException($"Live Nebius research requires plaintext infrastructure variable '{TransportRootEnvironmentVariable}'.");
         transportRoot = transportRoot.Trim();
-        if (!transportRoot.StartsWith('/', StringComparison.Ordinal) || transportRoot.Length > 1024 || transportRoot.Any(char.IsControl))
+        if (!transportRoot.StartsWith("/", StringComparison.Ordinal) || transportRoot.Length > 1024 || transportRoot.Any(char.IsControl))
             throw new InvalidOperationException($"'{TransportRootEnvironmentVariable}' must be a bounded absolute Linux container path.");
         var matchingVolumes = volumes.Where(volume => string.Equals(volume.ContainerPath, transportRoot, StringComparison.Ordinal)).ToArray();
         if (matchingVolumes.Length != 1)

@@ -69,7 +69,11 @@ public static class NebiusResearchLiveConfigurationLoader
             ["NVIDEA_WORKER_PRIVATE_KEY_PEM"] = RequiredSecretRef(
                 environmentReader,
                 "NVIDEA_LIVE_SECRET_WORKER_PRIVATE_KEY_ID",
-                "NVIDEA_LIVE_SECRET_WORKER_PRIVATE_KEY_VERSION_ID")
+                "NVIDEA_LIVE_SECRET_WORKER_PRIVATE_KEY_VERSION_ID"),
+            [WorkerResultSigningPrivateKeyTrust.EnvironmentVariable] = RequiredVersionPinnedSecretRef(
+                environmentReader,
+                "NVIDEA_LIVE_SECRET_WORKER_RESULT_SIGNING_PRIVATE_KEY_ID",
+                "NVIDEA_LIVE_SECRET_WORKER_RESULT_SIGNING_PRIVATE_KEY_VERSION_ID")
         };
         var topologyPlainEnvironment = new Dictionary<string, string>(StringComparer.Ordinal)
         {
@@ -295,6 +299,26 @@ public static class NebiusResearchLiveConfigurationLoader
         var reference = new NebiusMysteryBoxSecretRef(
             SecretId: RequiredEnvironment(environmentReader, idEnvironmentName),
             VersionId: OptionalEnvironment(environmentReader, versionEnvironmentName));
+
+        NebiusResearchDeploymentPreflight.ValidateMysteryBoxSecretReference(
+            idEnvironmentName,
+            reference);
+        return reference;
+    }
+
+    /// <summary>
+    /// The remote-result signer is part of the deployment identity. Unlike ordinary provider
+    /// credentials, it must never follow a mutable primary/latest secret version because a
+    /// successful canary must attest to the exact worker signer configured for production.
+    /// </summary>
+    public static NebiusMysteryBoxSecretRef RequiredVersionPinnedSecretRef(
+        Func<string, string?> environmentReader,
+        string idEnvironmentName,
+        string versionEnvironmentName)
+    {
+        var reference = new NebiusMysteryBoxSecretRef(
+            SecretId: RequiredEnvironment(environmentReader, idEnvironmentName),
+            VersionId: RequiredEnvironment(environmentReader, versionEnvironmentName));
 
         NebiusResearchDeploymentPreflight.ValidateMysteryBoxSecretReference(
             idEnvironmentName,

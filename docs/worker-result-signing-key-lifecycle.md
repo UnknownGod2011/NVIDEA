@@ -102,4 +102,14 @@ NVIDEA does not currently ship a multi-key grace ring or signed key-transition c
 
 ## Evidence and limitations
 
-Provider-free tests cover secret-role isolation, weak/malformed key rejection, missing signatures, wrong pinned workers, replay/substitution, and verify-before-decrypt behavior at the production ingestor boundary. Live Nebius MysteryBox creation, secret-version injection, Windows deployment, and end-to-end provider validation still require a real account and are not claimed by this runbook.
+## Remote signing canary and recording readiness
+
+The Windows Judge Evidence dialog exposes an explicit, cost-confirmed **Run signed-worker canary** action. It is never launched at startup or merely by opening the dialog. The client creates a fresh ten-minute RSA-PSS/SHA-256 challenge, submits a dedicated Serverless job using the same digest-pinned worker image and immutable signing-secret reference as production, then publishes the public invocation to the configured mounted Object Storage transport.
+
+The worker consumes that invocation and create-once publishes a bounded JSON proof at `signing-canary/proofs/<opaque-id>.json`. NVIDEA treats the object store as untrusted: the client requires a successful returned Serverless job, binds the proof to that exact job ID, challenge, image/secret-version/public-pin deployment fingerprint, and verifies the signature with the current public pin before storing a DPAPI-protected local receipt. Provider logs are intentionally not parsed as proof.
+
+The judge panel reports `NOT CONFIGURED`, `PUBLIC KEY PINNED — CANARY NOT RUN`, `CANARY RUNNING`, `CANARY FAILED`, `CANARY VERIFIED`, or `CANARY STALE`. A receipt becomes stale whenever the image digest, immutable signing-secret version, or public pin changes. A public pin or a MysteryBox reference alone can never create `VERIFIED` state.
+
+For rollback, deploy the prior digest and immutable secret version together with its matching public pin, then run a new canary. If the proof is late, absent, malformed, from another job, replayed, or fails verification, readiness remains failed; do not fall back to log text or configuration presence.
+
+Provider-free tests cover secret-role isolation, weak/malformed key rejection, missing signatures, wrong pinned workers, replay/substitution, challenge/context tampering, and verify-before-decrypt behavior at the production ingestor boundary. Live Nebius MysteryBox creation, secret-version injection, Windows deployment, and end-to-end provider validation still require a real account and an operator-authorized canary; they are not claimed by this runbook.

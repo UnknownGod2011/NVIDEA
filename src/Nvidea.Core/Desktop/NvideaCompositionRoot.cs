@@ -31,7 +31,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     private BrowserHostRuntime? _browser;
     private BrowserProductRuntime? _browserProduct;
 
-    private NvideaCompositionRoot(HttpClient nebiusHttp, HttpClient? tavilyHttp, HttpClient? researchServerlessHttp, NebiusObjectStorageClient? researchObjectStorage, IAgentInferenceClient inference, JsonFileMemoryStore memoryStore, PersonalMemoryService memory, LocalOllamaMemoryEmbeddingProvider? memoryEmbeddingProvider, DesktopInvocationService desktop, DesktopSessionController session, ResearchProductRuntime? research, string stateDirectory, Func<CancellationToken, Task<ICrashConsistentBrowserGoalHost>>? browserGoalHostFactory = null)
+    private NvideaCompositionRoot(HttpClient nebiusHttp, HttpClient? tavilyHttp, HttpClient? researchServerlessHttp, NebiusObjectStorageClient? researchObjectStorage, IAgentInferenceClient inference, JsonFileMemoryStore memoryStore, PersonalMemoryService memory, LocalOllamaMemoryEmbeddingProvider? memoryEmbeddingProvider, DesktopInvocationService desktop, DesktopSessionController session, ResearchProductRuntime? research, RemoteWorkerSigningCanary? workerSigningCanary, string stateDirectory, Func<CancellationToken, Task<ICrashConsistentBrowserGoalHost>>? browserGoalHostFactory = null)
     {
         _nebiusHttp = nebiusHttp;
         _tavilyHttp = tavilyHttp;
@@ -47,6 +47,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         Desktop = desktop;
         Session = session;
         Research = research;
+        WorkerSigningCanary = workerSigningCanary;
         LocalState = new LocalStateRuntime(Path.Combine(stateDirectory, "browser"));
     }
 
@@ -54,6 +55,8 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     public DesktopSessionController Session { get; }
     public PersonalMemoryService Memory => _memory;
     public ResearchProductRuntime? Research { get; }
+    /// <summary>Explicit operator action only; it never submits a Serverless job during startup.</summary>
+    public RemoteWorkerSigningCanary? WorkerSigningCanary { get; }
     public LocalStateRuntime LocalState { get; }
 
     public static async Task<NvideaCompositionRoot> CreateFromEnvironmentAsync(string? stateDirectory = null, CancellationToken cancellationToken = default)
@@ -78,6 +81,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         ResearchProductRuntime? research = null;
         ILocalResearchRuntime? localResearch = null;
         IResearchCloudExecutionCoordinator? cloudResearch = null;
+        RemoteWorkerSigningCanary? workerSigningCanary = null;
         var researchDirectory = Path.Combine(dataDirectory, "research");
         var cloudMode = DesktopResearchCloudMode.FromEnvironment();
         var tavilyKey = Environment.GetEnvironmentVariable("TAVILY_API_KEY");
@@ -124,6 +128,17 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
                 providers.Transport,
                 workerResultVerificationKey);
 
+            Directory.CreateDirectory(researchDirectory);
+            workerSigningCanary = new RemoteWorkerSigningCanary(
+                providers.Serverless,
+                new S3WorkerSigningCanaryArtifactTransport(providers.ObjectStorage),
+                configuration.DispatchOptions,
+                workerResultVerificationKey,
+                new WorkerSigningCanaryEvidenceStore(
+                    Path.Combine(researchDirectory, "worker-signing-canary.evidence"),
+                    new WindowsDpapiLocalStateProtector()),
+                TimeSpan.FromSeconds(configuration.PollSeconds));
+
             IRemoteResearchClientRuntime remote = NebiusResearchLiveRuntimeFactory.Create(
                 store,
                 providers.Serverless,
@@ -143,7 +158,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
 
         var desktop = new DesktopInvocationService(inference, memory, researchEngine);
         var session = new DesktopSessionController(desktop);
-        var root = new NvideaCompositionRoot(nebiusHttp, tavilyHttp, researchServerlessHttp, researchObjectStorage, inference, memoryStore, memory, memoryEmbeddingProvider, desktop, session, research, dataDirectory);
+        var root = new NvideaCompositionRoot(nebiusHttp, tavilyHttp, researchServerlessHttp, researchObjectStorage, inference, memoryStore, memory, memoryEmbeddingProvider, desktop, session, research, workerSigningCanary, dataDirectory);
         startupLease.ReleaseAll();
         return root;
     }
@@ -172,7 +187,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         await memory.InitializeAsync(cancellationToken).ConfigureAwait(false);
         var desktop = new DesktopInvocationService(inference, memory);
         var session = new DesktopSessionController(desktop);
-        var root = new NvideaCompositionRoot(nebiusHttp, null, null, null, inference, memoryStore, memory, null, desktop, session, null, dataDirectory, browserGoalHostFactory);
+        var root = new NvideaCompositionRoot(nebiusHttp, null, null, null, inference, memoryStore, memory, null, desktop, session, null, null, dataDirectory, browserGoalHostFactory);
         startupLease.ReleaseAll();
         return root;
     }
@@ -206,7 +221,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
                 ?? throw new InvalidOperationException("Browser goal host factory returned null.");
 
         var browser = await GetBrowserHostUnderLeaseAsync(cancellationToken).ConfigureAwait(false);
-        return new BrowserHostGoalHostAdapter(browser);
+        return BrowserGoalAgent.Adapt(browser);
     }
 
     public async Task<IBrowserGoalAgent> CreateBrowserGoalAgentAsync(CancellationToken cancellationToken = default)

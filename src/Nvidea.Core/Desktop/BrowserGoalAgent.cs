@@ -111,6 +111,7 @@ public interface ICrashConsistentBrowserGoalHost : IBrowserGoalHost
 /// </summary>
 public sealed class BrowserGoalAgent
 {
+    internal static ICrashConsistentBrowserGoalHost Adapt(BrowserHostRuntime host) => new BrowserHostAdapter(host);
     private readonly IBrowserGoalHost _host;
     private readonly NemotronBrowserPlanner _planner;
     private readonly IBrowserGoalSessionStore? _store;

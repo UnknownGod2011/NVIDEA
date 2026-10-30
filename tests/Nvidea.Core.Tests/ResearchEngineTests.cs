@@ -49,7 +49,7 @@ public sealed class ResearchEngineTests
 
         var report = await engine.ResearchAsync("rare thing");
 
-        Assert.Equal(1, inference.Requests.Count);
+        Assert.Single(inference.Requests);
         Assert.Empty(report.UsedCitations);
         Assert.Contains("could not find", report.AnswerMarkdown, StringComparison.OrdinalIgnoreCase);
     }

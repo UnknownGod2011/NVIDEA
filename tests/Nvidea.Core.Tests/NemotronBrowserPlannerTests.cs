@@ -22,7 +22,8 @@ public sealed class NemotronBrowserPlannerTests
                 "value":null,
                 "destination":null,
                 "expected_state":"Project details",
-                "rationale":"Reveal the requested project details."
+                "rationale":"Reveal the requested project details.",
+                "postconditions":[{"kind":"visible_text_contains","expected":"Project details"}]
               }
             }
             """);
@@ -208,7 +209,11 @@ public sealed class NemotronBrowserPlannerTests
                 value,
                 destination,
                 expected_state = "changed",
-                rationale = "Advance the user goal"
+                rationale = "Advance the user goal",
+                postconditions = new[]
+                {
+                    new { kind = "visible_text_contains", expected = "Project details" }
+                }
             }
         });
     }

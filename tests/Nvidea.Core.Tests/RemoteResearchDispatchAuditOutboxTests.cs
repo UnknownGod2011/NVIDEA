@@ -73,13 +73,13 @@ public sealed class RemoteResearchDispatchAuditOutboxTests
             Assert.Null(recovered.PendingAuditEvent);
             Assert.Equal(RemoteResearchProvenanceState.DispatchReserved, recovered.RemoteResearch!.State);
             Assert.True(workItems.Contains(recovered.RemoteResearch.OpaqueWorkItemId));
-            Assert.Single(audit.Events.Where(e => e.EventType == "research.remote_dispatch_reserved"));
+            Assert.Single(audit.Events, e => e.EventType == "research.remote_dispatch_reserved");
             Assert.Equal(0, serverless.CreateCalls);
 
             await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 dispatcher.DispatchWithReservationAsync(workItem, authorization, restarted));
             Assert.Equal(0, serverless.CreateCalls);
-            Assert.Single(audit.Events.Where(e => e.EventType == "research.remote_dispatch_reserved"));
+            Assert.Single(audit.Events, e => e.EventType == "research.remote_dispatch_reserved");
         }
         finally
         {
@@ -145,11 +145,11 @@ public sealed class RemoteResearchDispatchAuditOutboxTests
             Assert.Equal(JobExecutionLocation.NebiusServerless, recovered.ExecutionLocation);
             Assert.Equal(RemoteResearchProvenanceState.Dispatched, recovered.RemoteResearch!.State);
             Assert.Equal(remoteJobId, recovered.RemoteResearch.RemoteJobId);
-            Assert.Single(audit.Events.Where(e => e.EventType == "research.remote_dispatched"));
+            Assert.Single(audit.Events, e => e.EventType == "research.remote_dispatched");
 
             var recoveredAgain = await restarted.RecoverPendingAuditAsync(job.JobId);
             Assert.Null(recoveredAgain.PendingAuditEvent);
-            Assert.Single(audit.Events.Where(e => e.EventType == "research.remote_dispatched"));
+            Assert.Single(audit.Events, e => e.EventType == "research.remote_dispatched");
         }
         finally
         {

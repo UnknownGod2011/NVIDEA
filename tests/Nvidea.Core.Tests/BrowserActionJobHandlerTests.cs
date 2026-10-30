@@ -131,7 +131,7 @@ public sealed class BrowserActionJobHandlerTests
     }
 
     [Fact]
-    public async Task FailedPostActionVerification_SchedulesRetryWithoutFreshSideEffect()
+    public async Task FailedPostActionVerification_BlocksRetryAfterFreshSideEffect()
     {
         var before = DefaultObservation();
         var after = before with { SnapshotId = "unchanged", ObservedAt = DateTimeOffset.UtcNow };
@@ -152,9 +152,11 @@ public sealed class BrowserActionJobHandlerTests
 
         var result = await fixture.Orchestrator.RunNextStepAsync(job.JobId);
 
-        Assert.Equal(AgentJobState.RetryScheduled, result.State);
+        // The browser action already ran, so a failed post-action verification is ambiguous.
+        // Replaying it automatically could duplicate the side effect; require fresh observation.
+        Assert.Equal(AgentJobState.Running, result.State);
         Assert.Equal(1, fixture.Driver.ExecutionCount);
-        Assert.Contains("verification failed", result.LastError ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ambiguous", result.LastError ?? string.Empty, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

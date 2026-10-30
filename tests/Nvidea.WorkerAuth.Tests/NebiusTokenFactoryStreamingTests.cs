@@ -95,6 +95,64 @@ public sealed class NebiusTokenFactoryStreamingTests
             _ => ValueTask.CompletedTask));
     }
 
+    [Fact]
+    public async Task Client_serializes_assistant_tool_calls_and_correlated_tool_results()
+    {
+        string? requestBody = null;
+        using var httpClient = new HttpClient(new StubHandler(request =>
+        {
+            requestBody = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    "{\"model\":\"nvidia/test\",\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"Done.\"},\"finish_reason\":\"stop\"}]}",
+                    Encoding.UTF8,
+                    "application/json")
+            };
+        }));
+        var client = new NebiusTokenFactoryClient(httpClient, TestOptions());
+
+        await client.CompleteAsync(new AgentRequest(
+        [
+            new ChatMessage("user", "Open Notepad"),
+            new ChatMessage(
+                "assistant",
+                string.Empty,
+                [new ToolCall("call-1", "open_application", "{\"application\":\"notepad\"}")]),
+            new ChatMessage(
+                "tool",
+                "{\"ok\":true,\"message\":\"opened safely\"}",
+                ToolCallId: "call-1",
+                Name: "open_application")
+        ]));
+
+        using var sent = JsonDocument.Parse(requestBody!);
+        var messages = sent.RootElement.GetProperty("messages");
+        var assistantCall = messages[1].GetProperty("tool_calls")[0];
+        Assert.Equal("call-1", assistantCall.GetProperty("id").GetString());
+        Assert.Equal("open_application", assistantCall.GetProperty("function").GetProperty("name").GetString());
+        Assert.Equal("{\"application\":\"notepad\"}", assistantCall.GetProperty("function").GetProperty("arguments").GetString());
+        Assert.Equal("tool", messages[2].GetProperty("role").GetString());
+        Assert.Equal("call-1", messages[2].GetProperty("tool_call_id").GetString());
+        Assert.Equal("open_application", messages[2].GetProperty("name").GetString());
+    }
+
+    [Fact]
+    public async Task Client_rejects_orphan_tool_result_before_provider_request()
+    {
+        var sendCount = 0;
+        using var httpClient = new HttpClient(new StubHandler(_ =>
+        {
+            sendCount++;
+            return EventResponse("data: [DONE]\n\n");
+        }));
+        var client = new NebiusTokenFactoryClient(httpClient, TestOptions());
+
+        await Assert.ThrowsAsync<ArgumentException>(() => client.CompleteAsync(new AgentRequest(
+            [new ChatMessage("tool", "orphan result")])));
+        Assert.Equal(0, sendCount);
+    }
+
     private static NebiusOptions TestOptions() => new()
     {
         ApiKey = "test-key",

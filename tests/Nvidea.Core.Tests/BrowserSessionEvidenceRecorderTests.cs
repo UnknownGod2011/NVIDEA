@@ -50,6 +50,6 @@ public sealed class BrowserSessionEvidenceRecorderTests
 
         var snapshot = ledger.Snapshot();
         Assert.True(snapshot.Contains(SessionEvidenceKind.ConsequentialApprovalGateExercised));
-        Assert.Single(snapshot.Entries.Where(x => x.Kind == SessionEvidenceKind.ConsequentialApprovalGateExercised));
+        Assert.Single(snapshot.Entries, x => x.Kind == SessionEvidenceKind.ConsequentialApprovalGateExercised);
     }
 }

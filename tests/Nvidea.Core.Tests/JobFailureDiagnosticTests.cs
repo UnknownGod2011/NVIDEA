@@ -15,7 +15,7 @@ public sealed class JobFailureDiagnosticTests
         Assert.StartsWith(JobFailureDiagnostic.Prefix, formatted);
         Assert.Contains("alpha beta", formatted);
         Assert.True(formatted.Length <= JobFailureDiagnostic.Prefix.Length + JobFailureDiagnostic.MaxDetailLength);
-        Assert.False(formatted.Any(char.IsControl));
+        Assert.DoesNotContain(formatted, char.IsControl);
     }
 
     [Fact]
@@ -59,10 +59,10 @@ public sealed class JobFailureDiagnosticTests
         Assert.NotNull(failed.LastError);
         Assert.StartsWith(JobFailureDiagnostic.Prefix, failed.LastError!);
         Assert.Contains(marker, failed.LastError!);
-        Assert.False(failed.LastError!.Any(char.IsControl));
+        Assert.DoesNotContain(failed.LastError!, char.IsControl);
         Assert.Null(NebiusFailureRemediationPolicy.ClassifyPersistedFailureEvidence(failed.LastError));
 
-        var failureAudit = Assert.Single(audit.Events.Where(x => x.EventType == "job.failed"));
+        var failureAudit = Assert.Single(audit.Events, x => x.EventType == "job.failed");
         Assert.DoesNotContain(marker, failureAudit.Summary);
         Assert.DoesNotContain("Quota", failureAudit.Summary);
         Assert.Contains("not copied into audit", failureAudit.Summary);

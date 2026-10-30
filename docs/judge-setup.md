@@ -19,7 +19,7 @@ Use `Ctrl+Shift+Space` to bring keyboard-wtf forward. Text is always reviewable 
 
 ## Optional local capabilities
 
-- Voice input is Windows-local through the selected installed speech recognizer. It requires a microphone, a Windows desktop speech recognizer, and explicit per-capture consent. It never sends audio to Nebius. Jarvis replies use Nemotron text streaming and local SAPI speech, so speech can begin before the full response has finished generating; this remains turn-taking rather than full-duplex audio.
+- Voice input is Windows-local through the selected installed speech recognizer. It requires a microphone, a Windows desktop speech recognizer, and explicit per-capture consent. It never sends audio to Nebius. Local Dictation sends nothing to a cloud model; Smart Dictation sends the transcript with a fixed cleanup instruction and no context; Jarvis sends conversation text and may include captured app/window context, selected text, enabled clipboard context, and relevant saved memories when that setting is on. Jarvis replies use Nemotron text streaming and local SAPI speech, so speech can begin before the full response has finished generating; this remains turn-taking rather than full-duplex audio.
 - Local memory embeddings are optional and use Ollama only at the loopback `/api/embed` endpoint. Install Ollama, pull an embedding model, then set `NVIDEA_LOCAL_EMBEDDINGS=true`. This changes memory retrieval only; it does not replace NVIDIA/Nebius reasoning.
 
 ## Remote Serverless research
@@ -31,7 +31,7 @@ The worker signing private key is never configured on Windows. Store it in a ver
 ## Build a release artifact
 
 ```powershell
-.\scripts\publish-windows.ps1 -OutputDirectory .\artifacts\NVIDEA-win-x64
+.\scripts\publish-windows.ps1 -OutputDirectory .\artifacts\keyboard-wtf-win-x64
 ```
 
-The script creates a self-contained Windows build. For a GitHub Release, upload that generated output only after testing it on a clean Windows machine; source-build and release-binary validation are distinct evidence tiers.
+The script creates a self-contained folder with a branded `keyboard-wtf.exe`, a setup/privacy README, and the project license, plus an adjacent ZIP suitable for a GitHub Release asset. Use a new or empty output directory. Upload the ZIP only after testing it on a clean Windows machine; source-build and release-binary validation are distinct evidence tiers.

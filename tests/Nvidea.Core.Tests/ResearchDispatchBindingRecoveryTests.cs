@@ -163,7 +163,7 @@ public sealed class ResearchDispatchBindingRecoveryTests
             Assert.Equal(RemoteResearchProvenanceState.Dispatched, failed!.RemoteResearch!.State);
             Assert.Equal(0, serverless.CancelCalls);
             var pending = Assert.IsType<PendingResearchDispatchBinding>(failed.PendingResearchDispatchBinding);
-            Assert.Equal(job.RemoteResearch.OpaqueWorkItemId, pending.OpaqueWorkItemId);
+            Assert.Equal(job.RemoteResearch!.OpaqueWorkItemId, pending.OpaqueWorkItemId);
             Assert.Equal("remote-recovery-42", pending.RemoteJobId);
             Assert.Equal(EnvelopeSha256, pending.EnvelopeSha256);
             Assert.Equal(job.RemoteResearch.WorkItemExpiresAt, pending.ExpiresAt);
@@ -346,7 +346,7 @@ public sealed class ResearchDispatchBindingRecoveryTests
 
         public Task AppendAsync(AuditEvent auditEvent, CancellationToken cancellationToken = default)
         {
-            if (!Events.Any(existing => existing.Id == auditEvent.Id))
+            if (!Events.Any(existing => existing.EventId == auditEvent.EventId))
                 Events.Add(auditEvent);
             return Task.CompletedTask;
         }

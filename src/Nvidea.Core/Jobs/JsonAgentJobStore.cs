@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Nvidea.Core.Capabilities;
 using Nvidea.Core.Security;
 
@@ -14,10 +15,39 @@ namespace Nvidea.Core.Jobs;
 public sealed class JsonAgentJobStore : IAgentJobStore
 {
     private const string ProtectionPurpose = "agent-jobs-v1";
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
+    private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
     private readonly string _path;
     private readonly ILocalStateProtector? _protector;
     private readonly SemaphoreSlim _gate = new(1, 1);
+
+    private static JsonSerializerOptions CreateJsonOptions()
+    {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true };
+        options.Converters.Add(new DataPermissionSetJsonConverter());
+        return options;
+    }
+
+    private sealed class DataPermissionSetJsonConverter : JsonConverter<IReadOnlySet<DataPermission>>
+    {
+        public override IReadOnlySet<DataPermission> Read(
+            ref Utf8JsonReader reader,
+            Type typeToConvert,
+            JsonSerializerOptions options)
+        {
+            var values = JsonSerializer.Deserialize<DataPermission[]>(ref reader, options)
+                ?? throw new JsonException("Required permissions cannot be null.");
+            return new HashSet<DataPermission>(values);
+        }
+
+        public override void Write(
+            Utf8JsonWriter writer,
+            IReadOnlySet<DataPermission> value,
+            JsonSerializerOptions options)
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            JsonSerializer.Serialize(writer, value.ToArray(), options);
+        }
+    }
 
     internal JsonAgentJobStore(string path, ILocalStateProtector? protector = null)
     {

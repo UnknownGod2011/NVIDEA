@@ -57,7 +57,7 @@ public sealed class DurableProtectedPayloadCleanupIntentTests
 
         var persisted = await store.GetAsync(baseline.JobId);
         Assert.Equal(staged.PendingProtectedPayloadCleanup, persisted?.PendingProtectedPayloadCleanup);
-        Assert.Null(persisted?.LastError);
+        Assert.Equal(baseline.LastError, persisted?.LastError);
     }
 
     [Fact]

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Nvidea.Core.Browser;
+using Nvidea.Core.Capabilities;
 using Nvidea.Core.Desktop;
 using Nvidea.Core.Security;
 

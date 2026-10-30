@@ -135,7 +135,8 @@ public sealed class BrowserGoalImmediateEvidenceTrustTests
             "value":null,
             "destination":null,
             "expected_state":"Loaded",
-            "rationale":"Advance the user goal"
+            "rationale":"Advance the user goal",
+            "postconditions":[{"kind":"visible_text_contains","expected":"Loaded"}]
           }
         }
         """;

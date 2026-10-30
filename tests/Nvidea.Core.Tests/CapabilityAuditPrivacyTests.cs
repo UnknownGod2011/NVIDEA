@@ -37,7 +37,7 @@ public sealed class CapabilityAuditPrivacyTests
                 new Dictionary<string, object?>())));
 
         Assert.Contains(secret, exception.Message, StringComparison.Ordinal);
-        var failed = Assert.Single(audit.Events.Where(x => x.EventType == "tool.execution_failed"));
+        var failed = Assert.Single(audit.Events, x => x.EventType == "tool.execution_failed");
         Assert.Equal(
             "Tool execution failed after authorization; backend diagnostic text was withheld from audit.",
             failed.Summary);
@@ -93,7 +93,7 @@ public sealed class CapabilityAuditPrivacyTests
         Assert.DoesNotContain(uploadPath, result.ApprovalScope, StringComparison.Ordinal);
         Assert.DoesNotContain("query-secret", result.ApprovalScope, StringComparison.Ordinal);
 
-        var waiting = Assert.Single(audit.Events.Where(x => x.EventType == "tool.awaiting_approval"));
+        var waiting = Assert.Single(audit.Events, x => x.EventType == "tool.awaiting_approval");
         Assert.Equal(result.ApprovalScope, waiting.ApprovalScope);
         Assert.DoesNotContain(typedSecret, waiting.ApprovalScope, StringComparison.Ordinal);
         Assert.DoesNotContain(uploadPath, waiting.ApprovalScope, StringComparison.Ordinal);

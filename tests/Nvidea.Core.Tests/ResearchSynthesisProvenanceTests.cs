@@ -21,6 +21,7 @@ public sealed class ResearchSynthesisProvenanceTests
         Assert.Equal("tavily-1", result.VerifiedCitations[0].SourceId);
         Assert.Equal(["invented-99"], result.UnknownSourceIds);
         Assert.Contains("provider warning", result.Warnings);
+        Assert.Contains(result.Warnings, warning => warning.Contains("unknown source ids", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(result.Warnings, warning => warning.Contains("excluded from verified Tavily provenance", StringComparison.Ordinal));
     }
 

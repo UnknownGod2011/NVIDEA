@@ -74,8 +74,10 @@ public partial class MainWindow
         }
 
         _voiceFocusTarget = WindowsFocusTarget.Capture();
-        _pendingContext = WindowsContextCapture.Capture(ClipboardCheck.IsChecked == true);
-        UpdateContextLabel(_pendingContext);
+        _pendingContext = mode == VoiceAssistantMode.Jarvis
+            ? WindowsContextCapture.Capture(ClipboardCheck.IsChecked == true)
+            : null;
+        UpdateContextLabel(_pendingContext ?? new DesktopContext());
         if (_voiceModeBox is not null)
             _voiceModeBox.SelectedIndex = mode switch { VoiceAssistantMode.SmartDictation => 1, VoiceAssistantMode.Jarvis => 2, _ => 0 };
         Show();
@@ -83,7 +85,18 @@ public partial class MainWindow
         _ = Dispatcher.InvokeAsync(async () => await StartVoiceCaptureAsync(mode));
     }
 
-    private async void VoiceButton_Click(object sender, RoutedEventArgs e) => await StartVoiceCaptureAsync();
+    private async void VoiceButton_Click(object sender, RoutedEventArgs e)
+    {
+        // An in-window click has no trustworthy external insertion target. Discard any context
+        // left by an earlier global shortcut instead of accidentally reusing it.
+        _voiceFocusTarget = null;
+        var mode = SelectedVoiceMode();
+        _pendingContext = mode == VoiceAssistantMode.Jarvis
+            ? WindowsContextCapture.Capture(ClipboardCheck.IsChecked == true)
+            : null;
+        UpdateContextLabel(_pendingContext ?? new DesktopContext());
+        await StartVoiceCaptureAsync(mode);
+    }
 
     private async Task StartVoiceCaptureAsync(VoiceAssistantMode? requestedMode = null)
     {
@@ -95,13 +108,20 @@ public partial class MainWindow
             return;
         }
         var mode = requestedMode ?? SelectedVoiceMode();
-        var processingNotice = mode == VoiceAssistantMode.LocalDictation
-            ? "Your microphone audio is processed locally and is never sent to a cloud speech provider."
-            : "Your microphone audio is processed locally. The resulting transcript text may be sent to NVIDIA Nemotron through Nebius for this request.";
+        var clipboardEnabled = ClipboardCheck.IsChecked == true;
+        var processingNotice = mode switch
+        {
+            VoiceAssistantMode.LocalDictation => "Your microphone audio and transcript stay on this PC. Nothing from this dictation is sent to a cloud model.",
+            VoiceAssistantMode.SmartDictation => "Your microphone audio is processed locally. The recognized transcript and a fixed cleanup instruction are sent to NVIDIA Nemotron through Nebius; captured app context, selected text, clipboard, and saved memories are excluded.",
+            _ => "Your microphone audio is processed locally. Jarvis sends recognized turns and prior conversation text to NVIDIA Nemotron through Nebius. Captured app/window context and selected text may also be included; relevant saved memories may be included if enabled in Settings."
+                + (clipboardEnabled ? " Clipboard context is enabled and may be sent with Jarvis turns." : " Clipboard context is off and will not be sent.")
+        };
         if (MessageBox.Show(this,
                 $"{processingNotice}\n\nLocal Dictation inserts exact words. Smart Dictation polishes transcript text. Jarvis keeps a spoken conversation active and requires approval before local actions.\n\nContinue with {ModeTitle(mode)}?",
                 "Start voice assistant?", MessageBoxButton.YesNo, MessageBoxImage.Information) != MessageBoxResult.Yes)
         {
+            _pendingContext = null;
+            _voiceFocusTarget = null;
             StatusText.Text = "Voice — microphone not started";
             return;
         }
@@ -129,6 +149,8 @@ public partial class MainWindow
         {
             _jarvisSessionActive = false;
             _voiceCts?.Dispose(); _voiceCts = null;
+            _pendingContext = null;
+            _voiceFocusTarget = null;
             SetVoiceRunning(false);
             await RefreshResearchAsync();
         }
@@ -156,10 +178,13 @@ public partial class MainWindow
         }
 
         StatusText.Text = "Smart Dictation — polishing transcript with NVIDIA Nemotron";
-        var context = _pendingContext ?? WindowsContextCapture.Capture(false);
         var request = new DesktopInvocationRequest(
             "Rewrite the following dictated text. Preserve every fact, name, number, URL, instruction and intended meaning. Improve grammar, punctuation and formatting only. Return only the polished text.\n\nDICTATION:\n" + text,
-            context, DesktopInvocationMode.Chat, false);
+            new DesktopContext(),
+            DesktopInvocationMode.Chat,
+            AllowClipboardContext: false,
+            IncludeDesktopContext: false,
+            IncludePersonalMemoryContext: false);
         var response = await _root.Session.InvokeAsync(request, cancellationToken);
         var polished = response.Answer.Trim();
         if (string.IsNullOrWhiteSpace(polished)) throw new InvalidOperationException("Nemotron returned no Smart Dictation text.");
@@ -191,7 +216,7 @@ public partial class MainWindow
             var text = transcript.PreparePrompt();
             PromptBox.Text = text;
             StatusText.Text = "Jarvis — connecting to NVIDIA Nemotron";
-            var context = _pendingContext ?? WindowsContextCapture.Capture(false);
+            var context = _pendingContext ?? WindowsContextCapture.Capture(ClipboardCheck.IsChecked == true);
             await RunJarvisTurnAsync(text, context, cancellationToken);
             // Keep the invocation context and insertion target pinned for this session.
             // The app owns foreground focus after activation; recapturing here would replace

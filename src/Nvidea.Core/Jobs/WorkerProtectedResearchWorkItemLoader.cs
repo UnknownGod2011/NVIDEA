@@ -20,15 +20,18 @@ public sealed class WorkerProtectedResearchWorkItemLoader
     private readonly IProtectedResearchWorkItemTransport _transport;
     private readonly TimeSpan _pollInterval;
     private readonly TimeSpan _maxWait;
+    private readonly TimeProvider _timeProvider;
 
     public WorkerProtectedResearchWorkItemLoader(
         IProtectedResearchWorkItemTransport transport,
         TimeSpan? pollInterval = null,
-        TimeSpan? maxWait = null)
+        TimeSpan? maxWait = null,
+        TimeProvider? timeProvider = null)
     {
         _transport = transport ?? throw new ArgumentNullException(nameof(transport));
         _pollInterval = pollInterval ?? TimeSpan.FromSeconds(1);
         _maxWait = maxWait ?? TimeSpan.FromSeconds(30);
+        _timeProvider = timeProvider ?? TimeProvider.System;
 
         if (_pollInterval < TimeSpan.FromMilliseconds(100) || _pollInterval > TimeSpan.FromSeconds(30))
         {
@@ -49,15 +52,14 @@ public sealed class WorkerProtectedResearchWorkItemLoader
         string opaqueWorkItemId,
         CancellationToken cancellationToken = default)
     {
-        var startedAt = DateTimeOffset.UtcNow;
-        var deadline = startedAt.Add(_maxWait);
+        var startedAt = _timeProvider.GetTimestamp();
         var retryDelay = _pollInterval;
 
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (DateTimeOffset.UtcNow >= deadline)
+            if (_timeProvider.GetElapsedTime(startedAt) >= _maxWait)
                 throw CreateTimeout();
 
             ProtectedResearchWorkItemEnvelope? envelope;
@@ -73,18 +75,18 @@ public sealed class WorkerProtectedResearchWorkItemLoader
                 // or propagates a newly written object. Cancellation wins over retry, and the same
                 // absolute bootstrap deadline applies to every attempt.
                 cancellationToken.ThrowIfCancellationRequested();
-                if (DateTimeOffset.UtcNow >= deadline)
+                if (_timeProvider.GetElapsedTime(startedAt) >= _maxWait)
                     throw CreateTimeout();
 
                 retryDelay = await DelayBeforeRetryAsync(
                     retryDelay,
-                    deadline,
+                    startedAt,
                     cancellationToken).ConfigureAwait(false);
                 continue;
             }
 
-            var observedAt = DateTimeOffset.UtcNow;
-            if (observedAt >= deadline)
+            var observedAt = _timeProvider.GetUtcNow();
+            if (_timeProvider.GetElapsedTime(startedAt) >= _maxWait)
                 throw CreateTimeout();
 
             if (envelope is not null)
@@ -98,7 +100,7 @@ public sealed class WorkerProtectedResearchWorkItemLoader
             // the bounded bootstrap window; it is never an unbounded availability assumption.
             retryDelay = await DelayBeforeRetryAsync(
                 retryDelay,
-                deadline,
+                startedAt,
                 cancellationToken).ConfigureAwait(false);
         }
     }
@@ -129,18 +131,18 @@ public sealed class WorkerProtectedResearchWorkItemLoader
             throw new TimeoutException("Protected remote research work item expired before worker bootstrap completed.");
     }
 
-    private static async Task<TimeSpan> DelayBeforeRetryAsync(
+    private async Task<TimeSpan> DelayBeforeRetryAsync(
         TimeSpan retryDelay,
-        DateTimeOffset deadline,
+        long startedAt,
         CancellationToken cancellationToken)
     {
-        var now = DateTimeOffset.UtcNow;
-        if (now >= deadline)
+        var elapsed = _timeProvider.GetElapsedTime(startedAt);
+        if (elapsed >= _maxWait)
             return retryDelay;
 
-        var remaining = deadline - now;
+        var remaining = _maxWait - elapsed;
         var delay = remaining < retryDelay ? remaining : retryDelay;
-        await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+        await Task.Delay(delay, _timeProvider, cancellationToken).ConfigureAwait(false);
         return NextBackoff(retryDelay);
     }
 

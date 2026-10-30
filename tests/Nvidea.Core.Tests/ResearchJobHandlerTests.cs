@@ -22,7 +22,7 @@ public sealed class ResearchJobHandlerTests
         var planned = await handler.ExecuteStepAsync(job);
         Assert.False(planned.Completed);
         Assert.Equal(ResearchJobHandler.PlannedStep, planned.CheckpointStep);
-        Assert.Equal(1, inference.Requests.Count);
+        Assert.Single(inference.Requests);
         Assert.Equal(0, provider.SearchCalls);
 
         job = job with { Checkpoint = new AgentJobCheckpoint(planned.CheckpointStep!, planned.CheckpointPayload, DateTimeOffset.UtcNow) };
@@ -70,7 +70,7 @@ public sealed class ResearchJobHandlerTests
 
         Assert.True(completed.Completed);
         Assert.Equal(ResearchJobHandler.CompletedStep, completed.CheckpointStep);
-        Assert.Equal(1, resumedInference.Requests.Count);
+        Assert.Single(resumedInference.Requests);
         Assert.Equal(0, throwingProvider.SearchCalls);
     }
 

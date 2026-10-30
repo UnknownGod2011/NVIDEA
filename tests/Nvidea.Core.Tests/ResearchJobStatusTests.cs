@@ -11,7 +11,10 @@ public sealed class ResearchJobStatusTests
     {
         var record = CreateRecord(
             AgentJobState.Pending,
-            new AgentJobCheckpoint(ResearchJobHandler.EvidenceStep, "{\"secret\":\"source text\"}", DateTimeOffset.UtcNow));
+            new AgentJobCheckpoint(ResearchJobHandler.EvidenceStep, "{\"secret\":\"source text\"}", DateTimeOffset.UtcNow)) with
+        {
+            ExecutionLocation = JobExecutionLocation.Local
+        };
 
         var status = ResearchJobStatus.FromRecord(record);
 

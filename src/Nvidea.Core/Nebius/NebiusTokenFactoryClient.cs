@@ -13,7 +13,12 @@ public enum WorkloadKind
     Deep
 }
 
-public sealed record ChatMessage(string Role, string Content);
+public sealed record ChatMessage(
+    string Role,
+    string Content,
+    IReadOnlyList<ToolCall>? ToolCalls = null,
+    string? ToolCallId = null,
+    string? Name = null);
 
 public sealed record ToolDefinition(
     string Name,
@@ -370,11 +375,55 @@ public sealed class NebiusTokenFactoryClient : IAgentInferenceClient, IAgentStre
         var messages = new JsonArray();
         foreach (var message in request.Messages)
         {
-            messages.Add(new JsonObject
+            if (string.IsNullOrWhiteSpace(message.Role))
+                throw new ArgumentException("Chat message role is required.", nameof(request));
+
+            var serializedMessage = new JsonObject
             {
                 ["role"] = message.Role,
                 ["content"] = message.Content
-            });
+            };
+
+            if (message.ToolCalls is { Count: > 0 })
+            {
+                if (!string.Equals(message.Role, "assistant", StringComparison.Ordinal))
+                    throw new ArgumentException("Only assistant messages may contain tool calls.", nameof(request));
+                if (message.ToolCalls.Count > MaximumStreamingToolCalls)
+                    throw new ArgumentException("Chat message contains too many tool calls.", nameof(request));
+
+                var calls = new JsonArray();
+                foreach (var call in message.ToolCalls)
+                {
+                    if (string.IsNullOrWhiteSpace(call.Id) || string.IsNullOrWhiteSpace(call.Name))
+                        throw new ArgumentException("Assistant tool calls require an id and name.", nameof(request));
+                    calls.Add(new JsonObject
+                    {
+                        ["id"] = call.Id,
+                        ["type"] = "function",
+                        ["function"] = new JsonObject
+                        {
+                            ["name"] = call.Name,
+                            ["arguments"] = call.ArgumentsJson
+                        }
+                    });
+                }
+                serializedMessage["tool_calls"] = calls;
+            }
+
+            if (string.Equals(message.Role, "tool", StringComparison.Ordinal))
+            {
+                if (string.IsNullOrWhiteSpace(message.ToolCallId))
+                    throw new ArgumentException("Tool result messages require the id of the assistant tool call.", nameof(request));
+                serializedMessage["tool_call_id"] = message.ToolCallId;
+                if (!string.IsNullOrWhiteSpace(message.Name))
+                    serializedMessage["name"] = message.Name;
+            }
+            else if (!string.IsNullOrWhiteSpace(message.ToolCallId) || !string.IsNullOrWhiteSpace(message.Name))
+            {
+                throw new ArgumentException("Only tool result messages may contain a tool call id or tool name.", nameof(request));
+            }
+
+            messages.Add(serializedMessage);
         }
 
         var payload = new JsonObject

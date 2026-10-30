@@ -74,7 +74,23 @@ public sealed class DurableProtectedPayloadCleanupContentionTests
 
             var durable = await store.GetAsync(initial.JobId);
             Assert.NotNull(durable);
-            Assert.Equal(cleared, durable);
+            Assert.Equal(cleared.JobId, durable!.JobId);
+            Assert.Equal(cleared.Definition.JobType, durable.Definition.JobType);
+            Assert.Equal(cleared.Definition.RequiredPermissions.OrderBy(value => value), durable.Definition.RequiredPermissions.OrderBy(value => value));
+            Assert.Equal(cleared.State, durable.State);
+            Assert.Equal(cleared.ExecutionLocation, durable.ExecutionLocation);
+            Assert.Equal(cleared.Attempt, durable.Attempt);
+            Assert.Equal(cleared.Checkpoint, durable.Checkpoint);
+            Assert.Equal(cleared.ApprovalScope, durable.ApprovalScope);
+            Assert.Equal(cleared.LastError, durable.LastError);
+            Assert.Equal(cleared.CreatedAt, durable.CreatedAt);
+            Assert.Equal(cleared.UpdatedAt, durable.UpdatedAt);
+            Assert.Equal(cleared.RemoteResearch, durable.RemoteResearch);
+            Assert.Equal(cleared.PendingAuditEvent?.EventId, durable.PendingAuditEvent?.EventId);
+            Assert.Equal(cleared.PendingExternalAction, durable.PendingExternalAction);
+            Assert.Equal(cleared.PendingProtectedPayloadCleanup, durable.PendingProtectedPayloadCleanup);
+            Assert.Equal(cleared.RemoteWorkItemEnvelopeSha256, durable.RemoteWorkItemEnvelopeSha256);
+            Assert.Equal(cleared.PendingResearchDispatchBinding, durable.PendingResearchDispatchBinding);
         }
         finally
         {

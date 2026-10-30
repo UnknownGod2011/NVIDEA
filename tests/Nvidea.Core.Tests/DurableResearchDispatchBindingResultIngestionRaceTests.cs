@@ -65,7 +65,7 @@ public sealed class DurableResearchDispatchBindingResultIngestionRaceTests
             Assert.Equal(1, observer.Calls);
             Assert.Equal(1, results.DeleteCalls);
             Assert.DoesNotContain(results.Items.Keys, key => key == OpaqueId);
-            Assert.Single(audit.Events.Where(e => e.EventType == "research.remote_result_applied"));
+            Assert.Single(audit.Events, e => e.EventType == "research.remote_result_applied");
         }
         finally
         {

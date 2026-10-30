@@ -31,7 +31,7 @@ The configurable Local Dictation shortcut captures the foreground target before 
 
 ### Smart Dictation
 
-The same local recognition path produces the transcript. Only that text is sent to the existing Nebius Token Factory/Nemotron client with a meaning-preservation instruction. The result is shown for review and requires a visible insertion approval. Raw microphone audio is never sent to Nebius.
+The same local recognition path produces the transcript. The transcript and a fixed meaning-preservation instruction are sent to the existing Nebius Token Factory/Nemotron client, without app context, selection, clipboard, or memory. The result is shown for review and requires a visible insertion approval. Raw microphone audio is never sent to Nebius.
 
 ### Jarvis
 

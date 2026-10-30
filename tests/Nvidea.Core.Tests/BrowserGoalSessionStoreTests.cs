@@ -27,7 +27,9 @@ public sealed class BrowserGoalSessionStoreTests
             await store.SaveAsync(session);
 
             var json = await File.ReadAllTextAsync(path);
-            Assert.Contains("capability:browser.agent:submit:exact", json, StringComparison.Ordinal);
+            // Windows protects the entire serialized file with CurrentUser DPAPI, so descriptive
+            // fields should not appear as plaintext. They are checked after trusted rehydration.
+            Assert.DoesNotContain("capability:browser.agent:submit:exact", json, StringComparison.Ordinal);
             Assert.DoesNotContain("private-user-value", json, StringComparison.Ordinal);
             Assert.DoesNotContain("approvalGrant", json, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("grantId", json, StringComparison.OrdinalIgnoreCase);

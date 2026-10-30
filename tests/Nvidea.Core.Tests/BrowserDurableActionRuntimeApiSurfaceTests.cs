@@ -1,4 +1,5 @@
 using System.Reflection;
+using Nvidea.Core.Browser;
 using Nvidea.Core.Desktop;
 
 namespace Nvidea.Core.Tests;

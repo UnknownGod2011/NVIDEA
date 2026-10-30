@@ -139,6 +139,8 @@ public sealed class NebiusResearchLiveConfigurationCredentialOrderingTests
                 ["NVIDEA_LIVE_SECRET_NEBIUS_API_KEY_ID"] = "mbsec-nebius-api-key",
                 ["NVIDEA_LIVE_SECRET_TAVILY_API_KEY_ID"] = "mbsec-tavily-api-key",
                 ["NVIDEA_LIVE_SECRET_WORKER_PRIVATE_KEY_ID"] = "mbsec-worker-private-key",
+                ["NVIDEA_LIVE_SECRET_WORKER_RESULT_SIGNING_PRIVATE_KEY_ID"] = "mbsec-worker-result-signing",
+                ["NVIDEA_LIVE_SECRET_WORKER_RESULT_SIGNING_PRIVATE_KEY_VERSION_ID"] = "mbsecver-worker-result-signing-v1",
                 [ServerlessTokenVariable] = "must-not-be-read",
                 [AccessKeyVariable] = "must-not-be-read",
                 [SecretKeyVariable] = "must-not-be-read"
@@ -199,6 +201,8 @@ public sealed class NebiusResearchLiveConfigurationCredentialOrderingTests
             ["NVIDEA_LIVE_SECRET_NEBIUS_API_KEY_ID"] = "mbsec-nebius-api-key",
             ["NVIDEA_LIVE_SECRET_TAVILY_API_KEY_ID"] = "mbsec-tavily-api-key",
             ["NVIDEA_LIVE_SECRET_WORKER_PRIVATE_KEY_ID"] = "mbsec-worker-private-key",
+            ["NVIDEA_LIVE_SECRET_WORKER_RESULT_SIGNING_PRIVATE_KEY_ID"] = "mbsec-worker-result-signing",
+            ["NVIDEA_LIVE_SECRET_WORKER_RESULT_SIGNING_PRIVATE_KEY_VERSION_ID"] = "mbsecver-worker-result-signing-v1",
             [ServerlessTokenVariable] = "must-not-be-read",
             [AccessKeyVariable] = "must-not-be-read",
             [SecretKeyVariable] = "must-not-be-read"

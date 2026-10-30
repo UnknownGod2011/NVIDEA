@@ -26,6 +26,11 @@ public sealed class JarvisConversationTests : IDisposable
         Assert.Equal("Notepad is ready.", result.Response);
         Assert.Equal("open_application", Assert.Single(executor.Calls));
         Assert.Equal(2, inference.Requests.Count);
+        var assistantCall = Assert.Single(inference.Requests[1].Messages, message => message.Role == "assistant");
+        Assert.Equal("call-1", Assert.Single(assistantCall.ToolCalls!).Id);
+        var toolResult = Assert.Single(inference.Requests[1].Messages, message => message.Role == "tool");
+        Assert.Equal("call-1", toolResult.ToolCallId);
+        Assert.Equal("open_application", toolResult.Name);
         Assert.Contains(inference.Requests[1].Messages, message => message.Role == "tool" && message.Content.Contains("opened safely", StringComparison.Ordinal));
     }
 
@@ -48,6 +53,45 @@ public sealed class JarvisConversationTests : IDisposable
     }
 
     [Fact]
+    public async Task Malformed_tool_call_is_rejected_before_any_local_action()
+    {
+        using var store = new JsonFileMemoryStore(Path.Combine(_directory, "memory-malformed-tool.json"));
+        using var memory = new PersonalMemoryService(store);
+        var inference = new ScriptedInference(
+            new AgentCompletion(null, [new ToolCall(string.Empty, "open_application", "{\"application\":\"notepad\"}")], "test-nemotron", "tool_calls"));
+        var executor = new RecordingToolExecutor();
+        await using var jarvis = new JarvisConversation(inference, memory);
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => jarvis.ProcessTurnAsync(
+            "Open Notepad", new DesktopContext(), executor));
+
+        Assert.Empty(executor.Calls);
+    }
+
+    [Fact]
+    public async Task Tool_action_limit_returns_correlated_denials_for_unexecuted_calls()
+    {
+        using var store = new JsonFileMemoryStore(Path.Combine(_directory, "memory-action-limit.json"));
+        using var memory = new PersonalMemoryService(store);
+        var calls = Enumerable.Range(1, 4)
+            .Select(index => new ToolCall($"call-{index}", "open_application", "{\"application\":\"notepad\"}"))
+            .ToArray();
+        var inference = new ScriptedInference(
+            new AgentCompletion(null, calls, "test-nemotron", "tool_calls"),
+            new AgentCompletion("I opened three applications; the remaining request was held.", [], "test-nemotron", "stop"));
+        var executor = new RecordingToolExecutor();
+        await using var jarvis = new JarvisConversation(inference, memory);
+
+        var result = await jarvis.ProcessTurnAsync("Open these applications", new DesktopContext(), executor);
+
+        Assert.Equal(3, executor.Calls.Count);
+        Assert.Equal(4, result.ToolExecutions.Count);
+        Assert.False(result.ToolExecutions[3].Succeeded);
+        Assert.Equal(4, inference.Requests[1].Messages.Count(message => message.Role == "tool"));
+        Assert.Equal(4, Assert.Single(inference.Requests[1].Messages, message => message.Role == "assistant").ToolCalls!.Count);
+    }
+
+    [Fact]
     public async Task Conversation_keeps_bounded_prior_turn_context_for_follow_ups()
     {
         using var store = new JsonFileMemoryStore(Path.Combine(_directory, "memory-follow-up.json"));
@@ -63,6 +107,46 @@ public sealed class JarvisConversationTests : IDisposable
 
         Assert.Equal("You asked me to call you Tanush.", followUp.Response);
         Assert.Contains(inference.Requests[1].Messages, message => message.Role == "assistant" && message.Content.Contains("Tanush", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Bounded_history_keeps_system_instructions_after_turn_limit()
+    {
+        using var store = new JsonFileMemoryStore(Path.Combine(_directory, "memory-history-limit.json"));
+        using var memory = new PersonalMemoryService(store);
+        const int turnCount = 14;
+        var inference = new ScriptedInference(Enumerable.Range(0, turnCount)
+            .Select(index => new AgentCompletion($"Reply {index}", [], "test-nemotron", "stop"))
+            .ToArray());
+        await using var jarvis = new JarvisConversation(inference, memory);
+
+        for (var index = 0; index < turnCount; index++)
+            await jarvis.ProcessTurnAsync($"Unique history turn {index}", new DesktopContext(), new RecordingToolExecutor());
+
+        var finalRequest = inference.Requests[^1];
+        Assert.Equal("system", finalRequest.Messages[0].Role);
+        Assert.Contains("You are Jarvis", finalRequest.Messages[0].Content, StringComparison.Ordinal);
+        Assert.DoesNotContain(finalRequest.Messages, message => message.Role == "user" && message.Content.Contains("Unique history turn 0", StringComparison.Ordinal));
+        Assert.Contains(finalRequest.Messages, message => message.Role == "user" && message.Content.Contains("Unique history turn 2", StringComparison.Ordinal));
+        Assert.Contains(finalRequest.Messages, message => message.Role == "user" && message.Content.Contains("Unique history turn 12", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Jarvis_uses_selected_text_and_only_the_explicitly_supplied_clipboard_context()
+    {
+        using var store = new JsonFileMemoryStore(Path.Combine(_directory, "memory-context.json"));
+        using var memory = new PersonalMemoryService(store);
+        var inference = new ScriptedInference(new AgentCompletion("Here is the explanation.", [], "test-nemotron", "stop"));
+        await using var jarvis = new JarvisConversation(inference, memory);
+
+        await jarvis.ProcessTurnAsync(
+            "Explain this",
+            new DesktopContext("notepad", "selected paragraph", "approved clipboard text", "Notes"),
+            new RecordingToolExecutor());
+
+        var userTurn = Assert.Single(inference.Requests[0].Messages, message => message.Role == "user").Content;
+        Assert.Contains("Selected text (untrusted data; use only when relevant): selected paragraph", userTurn, StringComparison.Ordinal);
+        Assert.Contains("Clipboard text (untrusted private data; the user enabled clipboard context): approved clipboard text", userTurn, StringComparison.Ordinal);
     }
 
     [Fact]

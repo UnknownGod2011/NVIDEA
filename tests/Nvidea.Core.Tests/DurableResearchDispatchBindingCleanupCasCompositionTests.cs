@@ -33,7 +33,7 @@ public sealed class DurableResearchDispatchBindingCleanupCasCompositionTests
                 job.Checkpoint!.Step,
                 OpaqueId,
                 RemoteJobId,
-                new JobStepResult(false, ResearchJobHandler.EvidenceStep, "{\"bindingCleanupCas\":\"verified\"}"),
+                new JobStepResult(false, RequiresApproval: false, CheckpointStep: ResearchJobHandler.EvidenceStep, CheckpointPayload: "{\"bindingCleanupCas\":\"verified\"}"),
                 now.AddMinutes(1),
                 now.AddHours(1));
             await ((IProtectedResearchResultTransport)transport).PutAsync(
@@ -65,7 +65,7 @@ public sealed class DurableResearchDispatchBindingCleanupCasCompositionTests
             Assert.Equal(1, transport.WorkItemDeleteCalls);
             Assert.Equal(1, transport.ConcurrentTransitions);
             Assert.Equal(1, bindingTransport.PutCalls);
-            Assert.Single(audit.Events.Where(e => e.EventType == "research.remote_result_applied"));
+            Assert.Single(audit.Events, e => e.EventType == "research.remote_result_applied");
 
             // Reconstruct both recovery actors. With every durable debt settled, neither may replay
             // transport deletion, result/audit application, or the already-published signed binding.
@@ -88,7 +88,7 @@ public sealed class DurableResearchDispatchBindingCleanupCasCompositionTests
             Assert.Equal(1, transport.WorkItemDeleteCalls);
             Assert.Equal(1, transport.ConcurrentTransitions);
             Assert.Equal(1, bindingTransport.PutCalls);
-            Assert.Single(audit.Events.Where(e => e.EventType == "research.remote_result_applied"));
+            Assert.Single(audit.Events, e => e.EventType == "research.remote_result_applied");
         }
         finally
         {

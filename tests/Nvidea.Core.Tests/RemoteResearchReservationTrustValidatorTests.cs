@@ -100,7 +100,7 @@ public sealed class RemoteResearchReservationTrustValidatorTests
             checkpoint.SavedAt,
             now,
             RemoteResearchProvenanceState.DispatchReserved,
-            now.AddHours(1));
+            WorkItemExpiresAt: now.AddHours(1));
         return new AgentJobRecord(
             Guid.NewGuid(),
             new AgentJobDefinition(

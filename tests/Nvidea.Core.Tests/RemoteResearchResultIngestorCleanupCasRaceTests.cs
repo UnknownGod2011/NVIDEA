@@ -33,7 +33,7 @@ public sealed class RemoteResearchResultIngestorCleanupCasRaceTests
                 job.Checkpoint!.Step,
                 OpaqueId,
                 RemoteJobId,
-                new JobStepResult(false, ResearchJobHandler.EvidenceStep, "{\"cleanupCas\":\"verified\"}"),
+                new JobStepResult(false, RequiresApproval: false, CheckpointStep: ResearchJobHandler.EvidenceStep, CheckpointPayload: "{\"cleanupCas\":\"verified\"}"),
                 now.AddMinutes(1),
                 now.AddHours(1));
             await ((IProtectedResearchResultTransport)transport).PutAsync(
@@ -52,7 +52,7 @@ public sealed class RemoteResearchResultIngestorCleanupCasRaceTests
             Assert.Equal(1, transport.ResultDeleteCalls);
             Assert.Equal(1, transport.WorkItemDeleteCalls);
             Assert.Equal(1, transport.ConcurrentTransitions);
-            Assert.Single(audit.Events.Where(e => e.EventType == "research.remote_result_applied"));
+            Assert.Single(audit.Events, e => e.EventType == "research.remote_result_applied");
 
             // A later recovery pass has no durable cleanup debt, so it must not replay transport
             // deletion, result application, or audit publication after the bounded CAS retry converged.
@@ -61,7 +61,7 @@ public sealed class RemoteResearchResultIngestorCleanupCasRaceTests
             Assert.Null(recovered.PendingProtectedPayloadCleanup);
             Assert.Equal(1, transport.ResultDeleteCalls);
             Assert.Equal(1, transport.WorkItemDeleteCalls);
-            Assert.Single(audit.Events.Where(e => e.EventType == "research.remote_result_applied"));
+            Assert.Single(audit.Events, e => e.EventType == "research.remote_result_applied");
         }
         finally
         {

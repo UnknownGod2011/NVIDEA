@@ -266,7 +266,7 @@ public sealed class NebiusResearchClientRuntimeReservationAmbiguityTests
         public Task AppendAsync(AuditEvent auditEvent, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (!_events.Any(existing => existing.Id == auditEvent.Id))
+            if (!_events.Any(existing => existing.EventId == auditEvent.EventId))
                 _events.Add(auditEvent);
             return Task.CompletedTask;
         }

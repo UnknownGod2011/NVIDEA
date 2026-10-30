@@ -141,7 +141,9 @@ public sealed class BrowserAmbiguousRecoveryTests
             Assert.Equal(BrowserAmbiguousRecoveryStatus.NeedsHumanResolution, result.Status);
             Assert.Equal(BrowserGoalStatus.Failed, recovered.Status);
             Assert.Equal(childId, recovered.PendingJobId);
-            Assert.Equal(pendingAction, recovered.PendingAction);
+            // Pending action values are deliberately stripped before durable storage; preserve
+            // the child job and human-resolution detail without rehydrating an executable action.
+            Assert.Null(recovered.PendingAction);
             Assert.Contains("human resolution", recovered.Detail!, StringComparison.OrdinalIgnoreCase);
             Assert.False(evidence.Snapshot().Contains(SessionEvidenceKind.BrowserPostStateVerified));
             Assert.Equal(1, host.ReconcileCount);

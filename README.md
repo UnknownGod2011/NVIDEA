@@ -24,9 +24,9 @@ The normal judge path is a local source build; no website download is required.
    dotnet run --project .\src\Nvidea.Windows\Nvidea.Windows.csproj -c Release
    ```
 
-On first launch, open **Settings → Models & keys** and enter a Nebius Token Factory key. A Tavily key is optional and enables web research. Keys are protected for the current Windows user with DPAPI; model choices and keys apply after restarting the app. Environment variables `NEBIUS_API_KEY`, `TAVILY_API_KEY`, and `NVIDEA_MODEL_FAST/STANDARD/DEEP` remain supported and take precedence over saved values. Without a saved or environment Nebius key, the app stays in local-only mode and Local Dictation remains available. A complete guide—including optional local memory and the opt-in Serverless path—is in [`docs/judge-setup.md`](docs/judge-setup.md).
+On first launch, open **Settings → Models & keys** and enter a Nebius Token Factory key. Get one at [tokenfactory.nebius.com](https://tokenfactory.nebius.com/): sign in, choose the project to bill, open **API keys**, and select **Get API key**. Copy it when shown; Nebius does not display it again. Paste it directly into keyboard-wtf Settings and never into chat or source files. A Tavily key is optional and enables web research. Keys are protected for the current Windows user with DPAPI; model choices and keys apply after restarting the app. Environment variables `NEBIUS_API_KEY`, `TAVILY_API_KEY`, and `NVIDEA_MODEL_FAST/STANDARD/DEEP` remain supported and take precedence over saved values. Without a saved or environment Nebius key, the app stays in local-only mode and Local Dictation remains available. A complete guide—including optional local memory and the opt-in Serverless path—is in [`docs/judge-setup.md`](docs/judge-setup.md).
 
-For voice, grant microphone permission and install a Windows desktop speech recognizer. **Settings → Shortcuts** keeps configurable global shortcuts for the app, Local Dictation, Smart Dictation, Jarvis, Emergency Stop, and Settings. Defaults are `Ctrl+Shift+Space` (open app), `Ctrl+Alt+D` (Local Dictation), `Ctrl+Alt+K` (Smart Dictation), `Ctrl+Alt+Q` (Jarvis), `Ctrl+Alt+X` (Emergency Stop), and `Ctrl+Alt+,` (Settings). **Settings → Voice & Assistant** configures recognizer language, listening duration, pause detection, Jarvis name and style, local speech voice/rate, spoken replies, and whether Jarvis retrieves personal memory. On first run, compatible shortcuts are imported from `%LOCALAPPDATA%\keyboard.wtf\settings.json` if it exists and no keyboard-wtf shortcut file has been saved. Only shortcut values are copied; the old file is not changed, and legacy provider credentials are not copied. Local Dictation works without a cloud key; Smart Dictation and Jarvis require a Nebius key from Settings or the environment. Speech is transcribed locally; only transcript text is sent to Nemotron for Smart Dictation and Jarvis.
+For voice, grant microphone permission and install a Windows desktop speech recognizer. **Settings → Shortcuts** keeps configurable global shortcuts for the app, Local Dictation, Smart Dictation, Jarvis, Emergency Stop, and Settings. Defaults are `Ctrl+Shift+Space` (open app), `Ctrl+Alt+D` (Local Dictation), `Ctrl+Alt+K` (Smart Dictation), `Ctrl+Alt+Q` (Jarvis), `Ctrl+Alt+X` (Emergency Stop), and `Ctrl+Alt+,` (Settings). **Settings → Voice & Assistant** configures recognizer language, listening duration, pause detection, Jarvis name and style, local speech voice/rate, spoken replies, and whether Jarvis retrieves personal memory. On first run, compatible shortcuts are imported from `%LOCALAPPDATA%\keyboard.wtf\settings.json` if it exists and no keyboard-wtf shortcut file has been saved. Only shortcut values are copied; the old file is not changed, and legacy provider credentials are not copied. Local Dictation works without a cloud key; Smart Dictation and Jarvis require a Nebius key from Settings or the environment. Speech is transcribed locally and audio stays on the PC. Smart Dictation sends the transcript with a fixed cleanup instruction to Nemotron. Jarvis sends conversation text and may also send captured app/window/selection context, relevant saved memories when enabled, and clipboard text only when Allow clipboard context is checked.
 
 ## What is implemented
 
@@ -61,7 +61,7 @@ All three remain overrideable through environment variables so a provider catalo
 Voice modes are deliberately distinct:
 
 - **Local Dictation** transcribes locally and inserts the exact final transcript only after restoring the foreground window captured before invocation; a changed target fails closed. When started from the main window without an external target, it leaves the transcript in the prompt for review.
-- **Smart Dictation** sends transcript text—not raw microphone audio—to NVIDIA Nemotron on Nebius, requests grammar/formatting cleanup while preserving meaning, then requires approval before safe insertion. When started from the main window without an external target, the result stays in the prompt for review.
+- **Smart Dictation** sends the recognized transcript and a fixed cleanup instruction—not raw microphone audio, selected text, app context, clipboard, or saved memories—to NVIDIA Nemotron on Nebius, requests grammar/formatting cleanup while preserving meaning, then requires approval before safe insertion. When started from the main window without an external target, the result stays in the prompt for review.
 - **Jarvis** keeps a bounded multi-turn conversation, can retrieve relevant personal memory (or run with retrieval disabled in Settings), uses the same NVIDIA Nemotron client, starts local Windows SAPI speech as response text streams, and accepts only schema-validated typed tools. The initial supported local tools are approved application launch, approved HTTPS website launch, and approved insertion into the captured application. It never accepts model-generated shell commands.
 
 The baseline speech path depends on an installed Windows recognizer/SAPI voice. Jarvis is turn-taking rather than full-duplex: local speech recognition produces a transcript, Nebius Token Factory streams Nemotron response text, and Windows SAPI begins speaking sentence-sized chunks while generation continues. NVIDIA Nemotron VoiceChat full-duplex inference is not bundled or claimed as a feature; its hosted endpoint is currently early-access gated, and NVIDIA's documented local runtime requires a separate model and suitable GPU.
@@ -259,10 +259,15 @@ Prerequisite: **.NET 8 SDK**. Windows/WPF validation requires Windows.
 dotnet build .\src\Nvidea.Core\Nvidea.Core.csproj
 dotnet build .\src\Nvidea.Windows\Nvidea.Windows.csproj
 dotnet build .\src\Nvidea.Worker\Nvidea.Worker.csproj
+dotnet test .\tests\Nvidea.Core.Tests\Nvidea.Core.Tests.csproj
 dotnet test .\tests\Nvidea.WorkerAuth.Tests\Nvidea.WorkerAuth.Tests.csproj
+dotnet test .\tests\Nvidea.Windows.Tests\Nvidea.Windows.Tests.csproj
+dotnet test .\tests\Nvidea.DemoPackageValidator.Tests\Nvidea.DemoPackageValidator.Tests.csproj
+dotnet test .\tests\Nvidea.JudgingEvidenceVerifier.Tests\Nvidea.JudgingEvidenceVerifier.Tests.csproj
+dotnet test .\tests\Nvidea.NebiusModelCatalogCheck.Tests\Nvidea.NebiusModelCatalogCheck.Tests.csproj
 ```
 
-The focused worker-authentication suite is the validated security regression path for this branch. The broader historical `Nvidea.Core.Tests` and `Nvidea.DemoPackageValidator.Tests` projects are retained but presently have unrelated old-source/API-drift compile failures; their failure is documented in [`progress.md`](progress.md) and is not required to launch the app or evaluate the signed-worker path.
+The repository has no `.sln` file, so build and test projects individually. The Core, WorkerAuth, Windows/WPF, and demo-package validator suites all have provider-free tests; see [`progress.md`](progress.md) for the latest executed results and environment-specific caveats. These checks do not claim live Nebius inference, microphone capture, or speaker playback.
 
 Credential-free evaluators can then be run locally:
 
@@ -297,11 +302,11 @@ Maintainers can create a portable Windows build without changing source or needi
 .\scripts\publish-windows.ps1 -OutputDirectory .\artifacts\keyboard-wtf-win-x64
 ```
 
-Upload the resulting directory as a GitHub Release asset after performing the documented Windows validation. This repository does not claim a binary is a signed public release merely because it was built locally.
+The script requires a new or empty output directory and creates both the portable folder and an adjacent `keyboard-wtf-win-x64.zip` release asset. The bundle includes `keyboard-wtf.exe`, setup/privacy instructions, and the project license. Upload the ZIP to a GitHub Release only after testing it on a clean Windows machine. This repository does not claim a binary is a signed public release merely because it was built locally.
 
 ## Current verification gaps
 
-The Windows Core, Worker, WPF/XAML, focused signed-worker contract suite, and recording-receipt verifier have Release build evidence recorded in [`progress.md`](progress.md). The broad legacy Core and DemoPackageValidator test projects still contain pre-existing unrelated source/API-drift failures, which are documented rather than hidden. Live Nebius Object Storage/Serverless infrastructure and production provider behavior require credential-backed validation before being represented as live evidence.
+Latest provider-free validation recorded in [`progress.md`](progress.md): Core 1,260 passed with 8 skipped; WorkerAuth 19/19; Windows/WPF 15/15; DemoPackageValidator 26/26; JudgingEvidenceVerifier 7/7; and NebiusModelCatalogCheck 19/19. The Windows test run also compiles the WPF project. Credential-free demo and adversarial evaluators both pass. These checks do not establish live Nebius inference, deployed-worker verification, microphone capture, or speaker playback. Live provider behavior requires credential-backed and device-level validation before being represented as verified.
 
 Other ongoing work includes memory compaction/summarization quality, broader reusable skills, browser UX polish, packaging/onboarding, local embedding quality calibration, and final judge-facing demo execution.
 

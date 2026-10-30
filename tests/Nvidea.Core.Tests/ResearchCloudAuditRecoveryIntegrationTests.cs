@@ -80,7 +80,9 @@ public sealed class ResearchCloudAuditRecoveryIntegrationTests
                 UpdatedAt: now.AddMinutes(1))
             {
                 RemoteResearch = provenance,
-                PendingAuditEvent = pendingAudit
+                PendingAuditEvent = pendingAudit,
+                PendingProtectedPayloadCleanup = new PendingProtectedPayloadCleanup(
+                    Guid.NewGuid(), opaqueId, now.AddMinutes(1))
             };
             await store.SaveAsync(stranded);
 
@@ -105,12 +107,12 @@ public sealed class ResearchCloudAuditRecoveryIntegrationTests
             Assert.NotNull(durable);
             Assert.Null(durable!.PendingAuditEvent);
             Assert.Equal(RemoteResearchProvenanceState.ResultApplied, durable.RemoteResearch!.State);
-            Assert.Single(audit.Events.Where(e => e.EventId == pendingAudit.EventId));
+            Assert.Single(audit.Events, e => e.EventId == pendingAudit.EventId);
             Assert.Equal(eventType, audit.Events.Single(e => e.EventId == pendingAudit.EventId).EventType);
 
             var recoveredAgain = await ingestor.RecoverPendingAuditAsync(jobId);
             Assert.Null(recoveredAgain.PendingAuditEvent);
-            Assert.Single(audit.Events.Where(e => e.EventId == pendingAudit.EventId));
+            Assert.Single(audit.Events, e => e.EventId == pendingAudit.EventId);
             Assert.Equal(1, results.DeleteCalls);
         }
         finally

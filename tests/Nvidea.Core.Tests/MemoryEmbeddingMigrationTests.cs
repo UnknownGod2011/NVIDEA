@@ -66,9 +66,9 @@ public sealed class MemoryEmbeddingMigrationTests
         {
             Records =
             [
-                CreateMemory("one", MemorySensitivity.Personal),
-                CreateMemory("two", MemorySensitivity.Personal),
-                CreateMemory("three", MemorySensitivity.Personal),
+                CreateMemory("01-one", MemorySensitivity.Personal),
+                CreateMemory("02-two", MemorySensitivity.Personal),
+                CreateMemory("03-three", MemorySensitivity.Personal),
             ],
         };
         var provider = new MigrationProvider(maxBatchSize: 2);
@@ -118,9 +118,9 @@ public sealed class MemoryEmbeddingMigrationTests
         {
             Records =
             [
-                CreateMemory("one", MemorySensitivity.Personal),
-                CreateMemory("two", MemorySensitivity.Personal),
-                CreateMemory("three", MemorySensitivity.Personal),
+                CreateMemory("01-one", MemorySensitivity.Personal),
+                CreateMemory("02-two", MemorySensitivity.Personal),
+                CreateMemory("03-three", MemorySensitivity.Personal),
             ],
         };
         var provider = new MigrationProvider(
@@ -135,11 +135,11 @@ public sealed class MemoryEmbeddingMigrationTests
 
         Assert.Equal(1, store.WriteCountAfterInitialization);
         Assert.Equal(2, store.Records.Count(memory => memory.Embedding is not null));
-        Assert.Null(store.Records.Single(memory => memory.Id == "three").Embedding);
+        Assert.Null(store.Records.Single(memory => memory.Id == "03-three").Embedding);
 
         var resumePlan = await service.PreviewEmbeddingMigrationAsync();
         var remaining = Assert.Single(resumePlan.Candidates);
-        Assert.Equal("three", remaining.Id);
+        Assert.Equal("03-three", remaining.Id);
     }
 
     [Fact]
@@ -150,9 +150,9 @@ public sealed class MemoryEmbeddingMigrationTests
         {
             Records =
             [
-                CreateMemory("one", MemorySensitivity.Personal),
-                CreateMemory("two", MemorySensitivity.Personal),
-                CreateMemory("three", MemorySensitivity.Personal),
+                CreateMemory("01-one", MemorySensitivity.Personal),
+                CreateMemory("02-two", MemorySensitivity.Personal),
+                CreateMemory("03-three", MemorySensitivity.Personal),
             ],
         };
         var provider = new MigrationProvider(
@@ -172,7 +172,7 @@ public sealed class MemoryEmbeddingMigrationTests
 
         Assert.Equal(1, store.WriteCountAfterInitialization);
         Assert.Equal(2, store.Records.Count(memory => memory.Embedding is not null));
-        Assert.Null(store.Records.Single(memory => memory.Id == "three").Embedding);
+        Assert.Null(store.Records.Single(memory => memory.Id == "03-three").Embedding);
     }
 
     [Fact]

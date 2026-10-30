@@ -24,7 +24,7 @@ public sealed class PersistentBrowserContextLeaseTests
                     DriverOptions(),
                     headless: true));
 
-            Assert.Equal(owner.Owner.InstanceId, error.Owner?.InstanceId);
+            Assert.Null(error.Owner);
         }
         finally
         {
@@ -80,7 +80,7 @@ public sealed class PersistentBrowserContextLeaseTests
                     }));
 
             Assert.False(transportFactoryCalled);
-            Assert.Equal(owner.Owner.InstanceId, error.Owner?.InstanceId);
+            Assert.Null(error.Owner);
         }
         finally
         {

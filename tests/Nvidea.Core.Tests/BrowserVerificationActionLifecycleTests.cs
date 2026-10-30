@@ -37,9 +37,9 @@ public sealed class BrowserVerificationActionLifecycleTests : IDisposable
     {
         Directory.CreateDirectory(_root);
         var receiptPath = Path.Combine(_root, "receipt.protected");
-        Directory.CreateDirectory(receiptPath);
         var runtime = BrowserVerificationRuntime.Create(receiptPath, new ReversibleTestProtector());
         var lifecycle = new BrowserVerificationActionLifecycle(runtime.Publication);
+        using var blockedFile = new FileStream(receiptPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
         var createCalled = false;
 
         await Assert.ThrowsAnyAsync<Exception>(() => lifecycle.AdmitAsync(_ =>
@@ -81,9 +81,9 @@ public sealed class BrowserVerificationActionLifecycleTests : IDisposable
     {
         Directory.CreateDirectory(_root);
         var receiptPath = Path.Combine(_root, "receipt.protected");
-        Directory.CreateDirectory(receiptPath);
         var runtime = BrowserVerificationRuntime.Create(receiptPath, new ReversibleTestProtector());
         var lifecycle = new BrowserVerificationActionLifecycle(runtime.Publication);
+        using var blockedFile = new FileStream(receiptPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
         var executionCalled = false;
 
         await Assert.ThrowsAnyAsync<Exception>(() => lifecycle.AdvanceAsync(_ =>

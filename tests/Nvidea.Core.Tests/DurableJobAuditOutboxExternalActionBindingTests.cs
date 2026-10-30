@@ -68,7 +68,19 @@ public sealed class DurableJobAuditOutboxExternalActionBindingTests
             Assert.Empty(audit.Events);
             var persisted = await store.GetAsync(job.JobId);
             Assert.NotNull(persisted);
-            Assert.Equal(corrupt.PendingAuditEvent, persisted!.PendingAuditEvent);
+            var expectedAudit = corrupt.PendingAuditEvent!;
+            var actualAudit = persisted!.PendingAuditEvent!;
+            Assert.Equal(expectedAudit.EventId, actualAudit.EventId);
+            Assert.Equal(expectedAudit.OccurredAt, actualAudit.OccurredAt);
+            Assert.Equal(expectedAudit.CapabilityId, actualAudit.CapabilityId);
+            Assert.Equal(expectedAudit.ActionId, actualAudit.ActionId);
+            Assert.Equal(expectedAudit.EventType, actualAudit.EventType);
+            Assert.Equal(expectedAudit.Risk, actualAudit.Risk);
+            Assert.Equal(expectedAudit.Allowed, actualAudit.Allowed);
+            Assert.Equal(expectedAudit.Approved, actualAudit.Approved);
+            Assert.Equal(expectedAudit.ApprovalScope, actualAudit.ApprovalScope);
+            Assert.Equal(expectedAudit.Summary, actualAudit.Summary);
+            Assert.Equal(expectedAudit.Metadata!.OrderBy(pair => pair.Key), actualAudit.Metadata!.OrderBy(pair => pair.Key));
             Assert.Equal(corrupt.PendingExternalAction, persisted.PendingExternalAction);
         }
         finally

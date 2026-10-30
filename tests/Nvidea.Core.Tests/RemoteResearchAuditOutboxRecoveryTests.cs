@@ -77,11 +77,11 @@ public sealed class RemoteResearchAuditOutboxRecoveryTests
             Assert.Null(recovered.PendingAuditEvent);
             Assert.Equal(RemoteResearchProvenanceState.ResultApplied, recovered.RemoteResearch!.State);
             Assert.False(results.Contains(opaqueId));
-            Assert.Single(audit.Events.Where(e => e.EventType == "research.remote_result_applied"));
+            Assert.Single(audit.Events, e => e.EventType == "research.remote_result_applied");
 
             var recoveredAgain = await restarted.RecoverPendingAuditAsync(original.JobId);
             Assert.Null(recoveredAgain.PendingAuditEvent);
-            Assert.Single(audit.Events.Where(e => e.EventType == "research.remote_result_applied"));
+            Assert.Single(audit.Events, e => e.EventType == "research.remote_result_applied");
         }
         finally
         {

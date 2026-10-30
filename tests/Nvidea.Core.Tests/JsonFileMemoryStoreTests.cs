@@ -192,15 +192,17 @@ public sealed class JsonFileMemoryStoreTests : IDisposable
 
     private static MemoryRecord CreateRecord(string content) => new()
     {
-        Id = Guid.NewGuid(),
+        Id = Guid.NewGuid().ToString("N"),
         Layer = MemoryLayer.Episodic,
+        Key = "json-store-test",
         Content = content,
-        Source = "json-store-test",
+        Provenance = new MemoryProvenance("json-store-test"),
         Confidence = 1,
         Importance = 0.5,
-        Sensitivity = MemorySensitivity.Normal,
-        CreatedAtUtc = DateTimeOffset.UtcNow,
-        UpdatedAtUtc = DateTimeOffset.UtcNow,
+        Sensitivity = MemorySensitivity.Personal,
+        CreatedAt = DateTimeOffset.UtcNow,
+        UpdatedAt = DateTimeOffset.UtcNow,
+        LastAccessedAt = DateTimeOffset.UtcNow,
     };
 
     public void Dispose()

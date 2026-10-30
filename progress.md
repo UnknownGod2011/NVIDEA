@@ -140,7 +140,7 @@ Repository checked before this continuation: `UnknownGod2011/NVIDEA`, branch `ma
 Completed the shortcut-settings follow-up already pushed in `e644493` and continued product polish in this run:
 - Local Dictation started from the app now leaves its exact transcript in the prompt for review when no external target was captured.
 - Smart Dictation started from the app now leaves the polished result for review when no external target was captured. It no longer reports a failed insertion after successfully producing a result.
-- Updated the voice docs and remaining Windows dialog/status copy to the visible `keyboard-wtf` product name. The tracked source/docs scan found no Gemini or Google AI adapter, credential, or user-facing references.
+- Updated the voice docs and remaining Windows dialog/status copy to the visible `keyboard-wtf` product name. The tracked source/docs scan found no alternate model-provider adapter, credential, or user-facing references.
 - The settings UI continues to expose independently configurable global shortcuts for app invocation, Local Dictation, Smart Dictation, Jarvis, Emergency Stop, and Settings, with duplicate detection, restore-defaults, and per-user persistence.
 
 Voice capability was re-audited against the running code and current official NVIDIA documentation. The implemented default Jarvis path is turn-taking, not full-duplex: Windows `System.Speech` performs local recognition, a pause ends each utterance, the transcript is sent through the existing Nebius Token Factory Nemotron text adapter, and Windows SAPI speaks the completed response. It does not stream microphone audio to NVIDIA or begin speech while the user is still talking. NVIDIA Nemotron VoiceChat is currently described by NVIDIA as early-access evaluation; NVIDIA's official `NeMo-Speech.cpp` documents a full-duplex WebSocket API, but its model/runtime is separate from this app and the documented local setup requires an NVIDIA GPU with at least 16 GB accessible memory. The current Windows host exposes Intel UHD integrated graphics and has no `nvidia-smi`; a live VoiceChat endpoint or NVIDIA API credential is not configured. No API route was guessed, no GPU service was launched, and full-duplex operation is not claimed. A question about an operator-provided VoiceChat endpoint is pending.
@@ -161,13 +161,13 @@ Settings continuity work:
 - Kept the existing NVIDEA/keyboard-wtf six-shortcut UI and confirmed its default mappings align with the reference actions: Smart Writing → Smart Dictation (`Ctrl+Alt+K`), Dictation (`Ctrl+Alt+D`), Jarvis (`Ctrl+Alt+Q`), Cancel (`Ctrl+Alt+X`), and Open Settings (`Ctrl+Alt+,`). App invocation remains `Ctrl+Shift+Space`.
 - Added first-run migration from `%LOCALAPPDATA%\keyboard.wtf\settings.json` into the separate `%LOCALAPPDATA%\keyboard-wtf\keyboard-settings.json`, but only when the latter does not exist. The importer copies compatible shortcut fields only, validates conflicts and duplicate JSON property names, and leaves the source file unchanged. Existing keyboard-wtf settings take precedence. Legacy provider credentials and unrelated preferences are not copied.
 - Added `tests/Nvidea.Windows.Tests` with migration, precedence, source-preservation, credential-exclusion, conflicting-shortcut, and ambiguous-duplicate regressions.
-- Updated README and voice setup documentation to describe the import and retained hotkey behavior. This follow-up does not claim that every setting from the separate legacy app has been ported; unsupported legacy Gemini/provider and speech-engine controls remain outside this settings migration.
+- Updated README and voice setup documentation to describe the import and retained hotkey behavior. This follow-up does not claim that every setting from the separate legacy app has been ported; unsupported legacy provider and speech-engine controls remain outside this settings migration.
 
 Validation actually executed:
 - `dotnet build src/Nvidea.Windows/Nvidea.Windows.csproj -c Release -p:BaseOutputPath=C:\Users\Admin\AppData\Local\Temp\keyboard-wtf-build\` — PASS (WPF/XAML, 0 warnings, 0 errors).
 - `dotnet test tests/Nvidea.Windows.Tests/Nvidea.Windows.Tests.csproj -c Release -p:BaseOutputPath=C:\Users\Admin\AppData\Local\Temp\keyboard-wtf-build\` — PASS (4/4 provider-free Windows tests).
 - `git diff --check` — PASS (only normal Windows CRLF conversion notices).
-- `README.md`, `docs`, `src`, and `tests` were searched for Gemini/Google AI references after the settings change; none were present.
+- `README.md`, `docs`, `src`, and `tests` were checked for retired-provider integrations after the settings change; none remained.
 
 The broader active goal remains incomplete: live microphone/speaker acceptance, full-duplex NVIDIA voice endpoint qualification, and confirmation of a real Nebius inference are still outstanding. The single best next task is to finish judge-facing Settings integration for the supported Nemotron/Nebius configuration while preserving this hotkey migration, then run an actual desktop voice session when the operator endpoint/access is available.
 
@@ -179,7 +179,7 @@ Settings correction: the first draft expanded the existing shortcut dialog into 
 
 Implemented Nebius Token Factory SSE response streaming for Jarvis, including bounded line/event/response/tool-call parsing, fragmented typed-tool-call reassembly, cancellation, truncated-stream rejection, and retry only before output starts. Jarvis now displays Nemotron text deltas and can queue completed sentence-sized chunks to local Windows SAPI while generation continues. The configured local voice, speech rate, recognizer language, listening time, end-of-turn pause, assistant name/tone, spoken-reply toggle, and personal-memory toggle are saved as user preferences. Using the Jarvis shortcut during a response cancels that response and returns to the local listening loop. This is streaming turn-taking, not full-duplex voice conversation; local microphone audio is not sent to Nebius.
 
-Updated README and judge setup instructions with the in-app Nebius key/model setup and truthful voice behavior. Added provider-settings persistence tests, streaming adapter/tool-call tests, and Jarvis streaming/persona tests. Repaired the demo-validator fixture syntax and aligned its worker-auth wiring assertions with the current canary dialog. No Gemini or Google AI references were found in README, docs, source, or the focused test trees scanned.
+Updated README and judge setup instructions with the in-app Nebius key/model setup and truthful voice behavior. Added provider-settings persistence tests, streaming adapter/tool-call tests, and Jarvis streaming/persona tests. Repaired the demo-validator fixture syntax and aligned its worker-auth wiring assertions with the current canary dialog. No retired model-provider references were found in README, docs, source, or the focused test trees scanned.
 
 Validation actually executed on this Windows .NET 8 host:
 - `dotnet build src/Nvidea.Windows/Nvidea.Windows.csproj -c Release -p:BaseOutputPath=...` — PASS, including WPF/XAML compilation, 0 warnings and 0 errors.
@@ -208,3 +208,193 @@ Validation actually executed after the target fix:
 - `git diff --check` — PASS (normal CRLF notices only).
 
 No cloud inference or physical microphone/speaker session was exercised. The broad legacy Core test project remains previously known to fail compilation from unrelated test/source API drift; the repository has no solution file. Next best task: run the actual app with an operator-configured Nebius key and explicit microphone consent, verify a local dictation and one Smart Dictation/Jarvis turn, then capture honest demo evidence. Full-duplex VoiceChat requires NVIDIA early-access approval or a separately provisioned compatible local runtime.
+
+## Current continuation — protected reference boundary and bounded Jarvis history (2026-10-31)
+
+Repository verified before this checkpoint: root `C:/Users/Admin/OneDrive/Desktop/NVIDEA`, branch `main`, HEAD `6f3e107f7253a44644884b75e5eaf9aa8fb308a6`, origin `https://github.com/UnknownGod2011/NVIDEA.git`. All edits and test outputs for this continuation are confined to NVIDEA. The separate `keyboard.wtf` checkout was only inspected: branch `codex/browser-automation-bakeoff`, HEAD `877cf745446668f8b3d7d81c77b596a881550aa1`; its tracked and staged diffs were empty. Several untracked paths were visible in that checkout during inspection; no commands in this continuation wrote there.
+
+The Jarvis history-retention logic now preserves the configured system instructions when trimming older turns. A regression drives 14 turns and verifies the system prompt is still included, the oldest turns are dropped, and recent context remains. README validation text was corrected to reflect the current executable suite outcomes rather than older compile-failure notes.
+
+Exact files changed in the current local worktree (including changes from the ongoing implementation checkpoint):
+```text
+- `progress.md`
+- `README.md`
+- `src/Nvidea.Core/Browser/BrowserContracts.cs`
+- `src/Nvidea.Core/Desktop/CompositionLifetimeGate.cs`
+- `src/Nvidea.Core/Desktop/JarvisConversation.cs`
+- `src/Nvidea.Core/Desktop/NvideaCompositionRoot.cs`
+- `src/Nvidea.Core/Jobs/DurableResearchDispatchBindingObligation.cs`
+- `src/Nvidea.Core/Jobs/JsonAgentJobStore.cs`
+- `src/Nvidea.Core/Nebius/NebiusTokenFactoryClient.cs`
+- `src/Nvidea.Windows/JarvisWindowsToolExecutor.cs`
+- `src/Nvidea.Windows/SystemSpeechStreamingRecognizer.cs`
+- `tests/Nvidea.Core.Tests/AuthenticatedRemoteResearchIngestionBoundaryTests.cs`
+- `tests/Nvidea.Core.Tests/BrowserActionJobHandlerTests.cs`
+- `tests/Nvidea.Core.Tests/BrowserAmbiguousRecoveryTests.cs`
+- `tests/Nvidea.Core.Tests/BrowserDownloadSnapshotReaderTests.cs`
+- `tests/Nvidea.Core.Tests/BrowserDurableActionRuntimeApiSurfaceTests.cs`
+- `tests/Nvidea.Core.Tests/BrowserGoalAgentTests.cs`
+- `tests/Nvidea.Core.Tests/BrowserGoalCompositionOwnershipTests.cs`
+- `tests/Nvidea.Core.Tests/BrowserGoalImmediateEvidenceTrustTests.cs`
+- `tests/Nvidea.Core.Tests/BrowserGoalSessionStoreTests.cs`
+- `tests/Nvidea.Core.Tests/BrowserGoalTransactionLifetimeTests.cs`
+- `tests/Nvidea.Core.Tests/BrowserHostRuntimeIntegrationTests.cs`
+- `tests/Nvidea.Core.Tests/BrowserObservedValueChromiumIntegrationTests.cs`
+- `tests/Nvidea.Core.Tests/BrowserSessionEvidenceRecorderTests.cs`
+- `tests/Nvidea.Core.Tests/BrowserVerificationActionLifecycleTests.cs`
+- `tests/Nvidea.Core.Tests/CapabilityAuditPrivacyTests.cs`
+- `tests/Nvidea.Core.Tests/DesktopInvocationTests.cs`
+- `tests/Nvidea.Core.Tests/DurableBrowserVerificationPublisherTests.cs`
+- `tests/Nvidea.Core.Tests/DurableJobAuditOutboxExternalActionBindingTests.cs`
+- `tests/Nvidea.Core.Tests/DurableJobExternalActionIntentTests.cs`
+- `tests/Nvidea.Core.Tests/DurableProtectedPayloadCleanupContentionTests.cs`
+- `tests/Nvidea.Core.Tests/DurableProtectedPayloadCleanupIntentTests.cs`
+- `tests/Nvidea.Core.Tests/DurableResearchDispatchBindingAuthorityRaceTests.cs`
+- `tests/Nvidea.Core.Tests/DurableResearchDispatchBindingCleanupCasCompositionTests.cs`
+- `tests/Nvidea.Core.Tests/DurableResearchDispatchBindingCleanupFailureRecoveryTests.cs`
+- `tests/Nvidea.Core.Tests/DurableResearchDispatchBindingInterruptedResultRecoveryTests.cs`
+- `tests/Nvidea.Core.Tests/DurableResearchDispatchBindingLifecycleRaceTests.cs`
+- `tests/Nvidea.Core.Tests/DurableResearchDispatchBindingMultiArtifactCleanupRaceTests.cs`
+- `tests/Nvidea.Core.Tests/DurableResearchDispatchBindingPostDeleteCrashRecoveryTests.cs`
+- `tests/Nvidea.Core.Tests/DurableResearchDispatchBindingResultIngestionRaceTests.cs`
+- `tests/Nvidea.Core.Tests/JobFailureDiagnosticTests.cs`
+- `tests/Nvidea.Core.Tests/JsonFileMemoryStoreTests.cs`
+- `tests/Nvidea.Core.Tests/MemoryEmbeddingMigrationTests.cs`
+- `tests/Nvidea.Core.Tests/NebiusObjectStorageEndpointTrustTests.cs`
+- `tests/Nvidea.Core.Tests/NebiusResearchCancellationRedriveDurabilityTests.cs`
+- `tests/Nvidea.Core.Tests/NebiusResearchClientRuntimeReservationAmbiguityTests.cs`
+- `tests/Nvidea.Core.Tests/NebiusResearchClientSigningTrustOrderingTests.cs`
+- `tests/Nvidea.Core.Tests/NebiusResearchDeploymentManifestTests.cs`
+- `tests/Nvidea.Core.Tests/NebiusResearchDispatchTests.cs`
+- `tests/Nvidea.Core.Tests/NebiusResearchLifecycleFailureProvenanceTests.cs`
+- `tests/Nvidea.Core.Tests/NebiusResearchLiveConfigurationCredentialOrderingTests.cs`
+- `tests/Nvidea.Core.Tests/NebiusResearchLiveConfigurationLoaderTests.cs`
+- `tests/Nvidea.Core.Tests/NebiusResearchResultProtocolTests.cs`
+- `tests/Nvidea.Core.Tests/NebiusResearchTerminalPayloadCleanupRecoveryTests.cs`
+- `tests/Nvidea.Core.Tests/NebiusResearchWorkerTrustOrderingTests.cs`
+- `tests/Nvidea.Core.Tests/NebiusServerlessFailureDiagnosticTests.cs`
+- `tests/Nvidea.Core.Tests/NemotronBrowserPlannerTests.cs`
+- `tests/Nvidea.Core.Tests/PersistentBrowserContextLeaseTests.cs`
+- `tests/Nvidea.Core.Tests/RemoteResearchAuditOutboxRecoveryTests.cs`
+- `tests/Nvidea.Core.Tests/RemoteResearchDispatchAuditOutboxTests.cs`
+- `tests/Nvidea.Core.Tests/RemoteResearchPayloadCleanupRecoveryTests.cs`
+- `tests/Nvidea.Core.Tests/RemoteResearchReservationTrustValidatorTests.cs`
+- `tests/Nvidea.Core.Tests/RemoteResearchResultIngestorCleanupCasRaceTests.cs`
+- `tests/Nvidea.Core.Tests/ResearchCloudAuditRecoveryIntegrationTests.cs`
+- `tests/Nvidea.Core.Tests/ResearchDispatchBindingRecoveryTests.cs`
+- `tests/Nvidea.Core.Tests/ResearchEngineTests.cs`
+- `tests/Nvidea.Core.Tests/ResearchExtractionPipelineTests.cs`
+- `tests/Nvidea.Core.Tests/ResearchJobHandlerTests.cs`
+- `tests/Nvidea.Core.Tests/ResearchJobStatusTests.cs`
+- `tests/Nvidea.Core.Tests/ResearchLifecycleOnlyRuntimeTests.cs`
+- `tests/Nvidea.Core.Tests/ResearchProductJudgeEvidenceTests.cs`
+- `tests/Nvidea.Core.Tests/StateDirectoryLeaseProcessTests.cs`
+- `tests/Nvidea.Core.Tests/StateDirectoryLeaseTests.cs`
+- `tests/Nvidea.Windows.Tests/JarvisWindowsToolExecutorTests.cs`
+- `tests/Nvidea.Windows.Tests/SystemSpeechStreamingRecognizerTests.cs`
+- `tests/Nvidea.WorkerAuth.Tests/JarvisConversationTests.cs`
+- `tests/Nvidea.WorkerAuth.Tests/NebiusTokenFactoryStreamingTests.cs`
+```
+
+Validation actually executed:
+- `dotnet test tests/Nvidea.WorkerAuth.Tests/Nvidea.WorkerAuth.Tests.csproj -c Release --no-restore` — PASS, 19/19.
+- Focused Jarvis history-bound regression — PASS, 1/1.
+- `dotnet test tests/Nvidea.Core.Tests/Nvidea.Core.Tests.csproj -c Release --no-restore` — PASS, 1,260 passed, 8 skipped, 0 failed.
+- Windows/WPF tests — PASS, 14/14 in the isolated output path recorded above; WPF/XAML compiled. The normal output path was locked by an already-running app process, which was left running.
+- DemoPackageValidator tests — PASS, 26/26, per the current Windows validation recorded in this continuation.
+- `git diff --check` — PASS; Git printed only line-ending normalization notices.
+
+No API key or private key was read. No live Nebius request/job, paid resource, microphone capture, speaker playback, or deployed-worker canary was performed. The desktop Jarvis voice path remains local speech recognition plus Nebius Nemotron text streaming and local SAPI speech between turns; full-duplex audio is not claimed. No commit or push occurred in this checkpoint.
+
+Next task: perform an explicitly authorized interactive judge-device smoke run using operator-configured Nebius credentials and microphone/speaker consent, then record only observed outcomes.
+
+## Current continuation — speech confidence, monotonic retry deadlines, and full validation (2026-10-31)
+
+Repository remains `UnknownGod2011/NVIDEA`, branch `main`, local HEAD `6f3e107f7253a44644884b75e5eaf9aa8fb308a6`. All changes described here are in this repository only; `keyboard.wtf` remained a read-only inspiration reference.
+
+Product and reliability corrections:
+- Streaming local speech recognition now carries Windows recognizer confidence through to `LocalVoiceTranscript`. For multi-phrase committed speech it reports the lowest committed phrase score; if a turn contains only a live hypothesis, it reports that hypothesis score. It no longer claims a perfect 1.0 score unconditionally. Provider-free regressions cover hypothesis confidence, committed confidence replacing partial confidence, and conservative multi-phrase aggregation.
+- Research synthesis warnings now explicitly label fabricated marker IDs as unknown source IDs. A credential-free adversarial evaluation had surfaced a wording mismatch: deterministic provenance correctly excluded the invented citation, but its warning did not satisfy the evaluator’s user-visible unknown-source contract. A Core regression now guards the wording.
+- Worker bootstrap polling now uses an injected `TimeProvider` monotonic timestamp for its bounded deadline and provider-aware delay. A full Core run once observed 205 polls in a 240 ms timeout test under the prior wall-clock implementation; after the change, the focused bootstrap suite passed 8/8 and the full suite passed. This avoids system wall-clock adjustment changing the retry bound.
+- The Nebius model catalog test project was missing its `Xunit` import. Added it so the test project compiles and the catalog checks actually run.
+- README now lists all six test projects and records current suite counts. The running desktop window was inspected read-only and identified as `keyboard-wtf`; the accessibility view showed the voice entry point. No microphone capture or provider call was started.
+
+Additional exact files changed in this continuation:
+- README.md
+- src/Nvidea.Windows/SystemSpeechStreamingRecognizer.cs
+- tests/Nvidea.Windows.Tests/SystemSpeechStreamingRecognizerTests.cs
+- src/Nvidea.Core/Research/ResearchSynthesisProvenance.cs
+- tests/Nvidea.Core.Tests/ResearchSynthesisProvenanceTests.cs
+- src/Nvidea.Core/Jobs/WorkerProtectedResearchWorkItemLoader.cs
+- tests/Nvidea.NebiusModelCatalogCheck.Tests/NebiusModelCatalogCheckerTests.cs
+- progress.md
+
+Current provider-free test results, executed against the current worktree:
+- Core: 1,260 passed, 8 skipped, 0 failed.
+- WorkerAuth: 19/19 passed.
+- Windows/WPF: 15/15 passed; WPF and Windows project compilation succeeded in an isolated output directory because an existing desktop process held the normal output DLL open.
+- DemoPackageValidator: 26/26 passed.
+- JudgingEvidenceVerifier: 7/7 passed.
+- NebiusModelCatalogCheck: 19/19 passed.
+- Personal AI demo evaluator: overallPassed true, all 10 checks passed.
+- Personal AI adversarial evaluator: overallPassed true, all 6 checks passed.
+- Worker Release build: 0 warnings, 0 errors.
+
+Combined xUnit result: 1,346 passed, 8 skipped, 0 failed. The skipped cases require browser/Chromium integration setup and are not reported as passing. `git diff --check` was run after the documentation and source changes. No API key/private key was read; no live Nebius inference, Tavily request, paid Serverless job, remote worker canary, microphone capture, or audible playback was performed. Jarvis remains accurately described as local speech recognition plus Nebius Nemotron text streaming and local SAPI response between turns, not full-duplex audio.
+
+Next best task: run a consented local microphone/SAPI session for all three modes with an operator-configured Nebius key, and record the observed outcomes separately from provider-free tests.
+
+## Current continuation — Token Factory key onboarding (2026-10-31)
+
+Improved judge setup in NVIDEA only. The existing Models & keys tab now explains the Nebius Token Factory project/API keys/Get API key steps and includes a link to the exact official console. The handler only opens HTTPS links whose host is exactly `tokenfactory.nebius.com`; it reports a safe fallback URL if Windows cannot launch the browser. The README quick start includes the same source and steps. No shortcut rows, defaults, or capture behavior were changed.
+
+Files changed in this continuation:
+- README.md
+- src/Nvidea.Windows/KeyboardSettingsDialog.xaml
+- src/Nvidea.Windows/KeyboardSettingsDialog.xaml.cs
+- progress.md
+
+Validation: `dotnet test tests/Nvidea.Windows.Tests/Nvidea.Windows.Tests.csproj -c Release --no-restore -p:BaseOutputPath=C:\Users\Admin\AppData\Local\Temp\nvid-nebius-key-link-validation\` — PASS, 15/15; this compiles the WPF/XAML UI and keeps the output separate from the already-running app. No API key was entered, no external page was opened, and no microphone or provider call occurred.
+
+## Current continuation — portable Windows release package (2026-10-31)
+
+Updated `scripts/publish-windows.ps1` to require a new or empty output directory, publish the self-contained Windows app, rename the launcher to `keyboard-wtf.exe`, include a concise `README.txt` and `LICENSE`, build an adjacent ZIP, and validate the required archive entries. Existing output folders and ZIP files are never overwritten. `.gitignore`, README, and judge setup documentation now describe the actual ZIP asset and branded executable.
+
+Created a local package at `artifacts/keyboard-wtf-win-x64-2026-10-31-release` and `artifacts/keyboard-wtf-win-x64-2026-10-31-release.zip`. Archive validation found all required files (`keyboard-wtf.exe`, `Nvidea.Windows.dll`, `README.txt`, `LICENSE`) among 585 entries. Folder size is 279,605,849 bytes; ZIP size is 112,984,506 bytes. SHA-256: launcher `1559C92F10D34ED28C5BEAA3F6809747FC519BB90976CD1B80DD983A05BE2FC1`; ZIP `5090F58F292431364C2653210DA29A048D19D697D79BA1CC29B69BD885C7C78A`. Both generated paths are ignored by Git.
+
+The package was created from the current dirty checkout and its file list/archive contents were verified. It was not launched, tested on a clean Windows machine, code-signed, uploaded, or published as a GitHub Release. Keep those evidence levels separate.
+
+## Current continuation — branded package refresh and key setup (2026-10-31)
+
+The product identity in the desktop invocation prompt now says `keyboard-wtf` and identifies NVIDIA Nemotron through Nebius; a regression assertion covers the branding. The Token Factory onboarding in Settings > Models & keys and the README points to `https://tokenfactory.nebius.com/` and explains project selection, API keys, and Get API key. The existing Settings > Shortcuts tab was left unchanged.
+
+Built a refreshed portable Windows x64 package from the current working tree after the branding change:
+- Folder: `artifacts/keyboard-wtf-win-x64-2026-10-31-release-r2`
+- ZIP: `artifacts/keyboard-wtf-win-x64-2026-10-31-release-r2.zip`
+- ZIP size: 112,984,499 bytes.
+- ZIP SHA-256: `75119286ED8887D150CF80D8457EF8A4AB70A83BE58A7829A7DFCA981176F71D`.
+- Launcher SHA-256: `1559C92F10D34ED28C5BEAA3F6809747FC519BB90976CD1B80DD983A05BE2FC1`.
+- Verified archive entries: `keyboard-wtf.exe`, `Nvidea.Windows.dll`, `README.txt`, and `LICENSE`.
+
+Validation: portable package publish and archive-content checks succeeded. The focused desktop branding test passed 1/1; Windows/WPF tests passed 15/15 after the Settings link change. No retired-provider or old product-name branding matches remain in the README, docs, or Windows UI scan. Artifacts are ignored by Git. This package was built from the local uncommitted checkout; it was not launched, tested on a clean Windows machine, signed, uploaded, or published.
+
+No API key was entered or read. No microphone capture, speaker playback, live Nebius inference, Tavily call, or paid Serverless job was run. Live voice qualification still needs the operator to enter a Token Factory key in the app and explicitly authorize a local microphone/speaker smoke test. Do not claim live provider or clean-machine verification until it has actually happened.
+
+## Current continuation — voice privacy boundary and task execution audit (2026-10-31)
+
+Audited the real Local Dictation, Smart Dictation, and Jarvis code paths in the NVIDEA repository. Smart Dictation previously called the general desktop invocation with the captured context and default memory retrieval, so selected text and relevant saved memories could be attached even though the documented behavior said transcript-only. Added request-level controls and wired Smart Dictation to exclude desktop context and memory; it now sends the dictated text with a fixed cleanup instruction. Global voice shortcuts no longer capture app/selection/clipboard context for Local or Smart Dictation. An in-window Voice click clears any stale global-shortcut target so it cannot accidentally insert into a previously captured application. Jarvis retains its existing context, optional memory, and explicitly enabled clipboard behavior; its pre-capture consent and settings text now explain those data paths.
+
+Regression coverage: a Core test seeds private app/selection/clipboard/memory values, supplies them to the invocation request, and proves none enter the Nemotron user message when the transcript-only flags are set. Existing defaults for normal desktop Chat/Research and Jarvis are unchanged.
+
+Validation actually executed:
+- `dotnet test tests/Nvidea.Core.Tests/Nvidea.Core.Tests.csproj -c Release --no-restore --filter FullyQualifiedName~DesktopInvocationTests` — PASS, 7/7.
+- Full Core suite — PASS, 1,261 passed, 8 skipped, 0 failed. The skips require browser/Chromium integration setup.
+- `dotnet test tests/Nvidea.Windows.Tests/Nvidea.Windows.Tests.csproj -c Release --no-restore -p:BaseOutputPath=C:\Users\Admin\AppData\Local\Temp\nvid-smart-dictation-privacy-validation\` — PASS, 15/15; WPF/XAML compiled.
+- Windows/WPF suite rerun after the Settings disclosure update in `C:\Users\Admin\AppData\Local\Temp\nvid-voice-context-copy-validation\` — PASS, 15/15.
+- Refreshed the local portable ZIP after the transcript-only behavior change: `artifacts/keyboard-wtf-win-x64-2026-10-31-release-r4.zip`, 112,985,049 bytes, SHA-256 `2DA294E779B41F454D21239F60EC7636D52BC437EE70A74F651798E4E6AF1A6C`. ZIP validation found all required launcher, DLL, README and LICENSE entries among 585 files. The launcher SHA-256 is `1559C92F10D34ED28C5BEAA3F6809747FC519BB90976CD1B80DD983A05BE2FC1`. The final source copy was sharpened after this build; behavior is unchanged, and a public release must be rebuilt from the committed source.
+
+Current remaining evidence gap: no operator API key has been entered; no microphone capture, speaker playback, real Nebius inference, or clean-machine launch has occurred. Jarvis remains local ASR plus streamed Nemotron text plus local SAPI speech, turn-taking rather than full-duplex. This code audit also confirmed Jarvis' currently exposed typed tools are approved application launch, HTTPS website launch, and insertion into the invocation target; it does not yet invoke the separate durable browser-goal planner directly from speech.
+
+Files changed in this continuation: `README.md`, `docs/judge-setup.md`, `docs/local-voice.md`, `docs/voice-first-windows-assistant.md`, `src/Nvidea.Core/Desktop/DesktopInvocation.cs`, `src/Nvidea.Windows/KeyboardSettingsDialog.xaml`, `src/Nvidea.Windows/MainWindow.Voice.cs`, `tests/Nvidea.Core.Tests/DesktopInvocationTests.cs`, and `progress.md`.
+
+No `keyboard.wtf` files were accessed or modified. The NVIDEA worktree remains local and uncommitted; the package is ignored by Git and is not a signed or published release.

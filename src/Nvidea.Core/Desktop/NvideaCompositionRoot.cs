@@ -32,7 +32,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
     private BrowserHostRuntime? _browser;
     private BrowserProductRuntime? _browserProduct;
 
-    private NvideaCompositionRoot(HttpClient nebiusHttp, HttpClient? tavilyHttp, HttpClient? researchServerlessHttp, NebiusObjectStorageClient? researchObjectStorage, IAgentInferenceClient inference, JsonFileMemoryStore memoryStore, PersonalMemoryService memory, LocalOllamaMemoryEmbeddingProvider? memoryEmbeddingProvider, DesktopInvocationService desktop, DesktopSessionController session, ResearchProductRuntime? research, RemoteWorkerSigningCanary? workerSigningCanary, string stateDirectory, Func<CancellationToken, Task<ICrashConsistentBrowserGoalHost>>? browserGoalHostFactory = null, KeyboardWtfProviderSettings? appSettings = null)
+    private NvideaCompositionRoot(HttpClient nebiusHttp, HttpClient? tavilyHttp, HttpClient? researchServerlessHttp, NebiusObjectStorageClient? researchObjectStorage, IAgentInferenceClient inference, JsonFileMemoryStore memoryStore, PersonalMemoryService memory, LocalOllamaMemoryEmbeddingProvider? memoryEmbeddingProvider, DesktopInvocationService desktop, DesktopSessionController session, ResearchProductRuntime? research, RemoteWorkerSigningCanary? workerSigningCanary, string stateDirectory, KeyboardWtfProviderSettings? appSettings = null, Func<CancellationToken, Task<ICrashConsistentBrowserGoalHost>>? browserGoalHostFactory = null)
     {
         _nebiusHttp = nebiusHttp;
         _tavilyHttp = tavilyHttp;
@@ -220,7 +220,7 @@ public sealed class NvideaCompositionRoot : IAsyncDisposable
         await memory.InitializeAsync(cancellationToken).ConfigureAwait(false);
         var desktop = new DesktopInvocationService(inference, memory);
         var session = new DesktopSessionController(desktop);
-        var root = new NvideaCompositionRoot(nebiusHttp, null, null, null, inference, memoryStore, memory, null, desktop, session, null, null, dataDirectory, browserGoalHostFactory);
+        var root = new NvideaCompositionRoot(nebiusHttp, null, null, null, inference, memoryStore, memory, null, desktop, session, null, null, dataDirectory, browserGoalHostFactory: browserGoalHostFactory);
         startupLease.ReleaseAll();
         return root;
     }

@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Navigation;
 using Nvidea.Core.Nebius;
 
 namespace Nvidea.Windows;
@@ -62,6 +64,30 @@ public partial class KeyboardSettingsDialog : Window
         {
             ReplaceUnreadableSettingsCheckBox.Visibility = Visibility.Collapsed;
         }
+    }
+
+    private void NebiusTokenFactoryKeyLink_RequestNavigate(object sender, RequestNavigateEventArgs e)
+    {
+        var uri = e.Uri;
+        if (uri is null
+            || !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(uri.Host, "tokenfactory.nebius.com", StringComparison.OrdinalIgnoreCase))
+        {
+            ProviderSettingsStatusText.Text = "The Token Factory link was rejected because its address was not trusted.";
+            e.Handled = true;
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            ProviderSettingsStatusText.Text = "Windows could not open the Token Factory page. Open https://tokenfactory.nebius.com/ in your browser.";
+        }
+
+        e.Handled = true;
     }
 
     private void InitializeVoiceSettings(KeyboardWtfProviderSettingsSummary summary)

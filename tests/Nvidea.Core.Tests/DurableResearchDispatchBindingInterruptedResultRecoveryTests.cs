@@ -30,7 +30,7 @@ public sealed class DurableResearchDispatchBindingInterruptedResultRecoveryTests
                 job.Checkpoint!.Step,
                 OpaqueId,
                 RemoteJobId,
-                new JobStepResult(false, ResearchJobHandler.EvidenceStep, "{\"restart\":\"verified\"}"),
+                new JobStepResult(false, RequiresApproval: false, CheckpointStep: ResearchJobHandler.EvidenceStep, CheckpointPayload: "{\"restart\":\"verified\"}"),
                 now.AddMinutes(1),
                 now.AddHours(1));
             await results.PutAsync(ResearchResultProtector.Protect(remote, clientRsa.ExportSubjectPublicKeyInfoPem()));
@@ -52,7 +52,7 @@ public sealed class DurableResearchDispatchBindingInterruptedResultRecoveryTests
             Assert.NotNull(interrupted.PendingProtectedPayloadCleanup);
             Assert.Equal(1, bindingTransport.PutCalls);
             Assert.Equal(0, results.DeleteCalls);
-            Assert.Empty(audit.Events.Where(e => e.EventType == "research.remote_result_applied"));
+            Assert.DoesNotContain(audit.Events, e => e.EventType == "research.remote_result_applied");
 
             // Simulate process restart: construct fresh recovery actors over the same protected store
             // and transports. Audit recovery owns audit+payload cleanup; binding recovery owns only
@@ -66,7 +66,7 @@ public sealed class DurableResearchDispatchBindingInterruptedResultRecoveryTests
             Assert.NotNull(afterAuditRecovery.PendingResearchDispatchBinding);
             Assert.Equal(1, results.DeleteCalls);
             Assert.DoesNotContain(results.Items.Keys, key => key == OpaqueId);
-            Assert.Single(audit.Events.Where(e => e.EventType == "research.remote_result_applied"));
+            Assert.Single(audit.Events, e => e.EventType == "research.remote_result_applied");
 
             var restartedPublisher = new ResearchDispatchBindingPublisher(
                 bindingTransport, clientRsa.ExportPkcs8PrivateKeyPem());
@@ -80,7 +80,7 @@ public sealed class DurableResearchDispatchBindingInterruptedResultRecoveryTests
             Assert.Equal(ResearchJobHandler.EvidenceStep, converged.Checkpoint!.Step);
             Assert.Equal(1, bindingTransport.PutCalls); // idempotent replay, never a second external publication
             Assert.Equal(1, results.DeleteCalls);
-            Assert.Single(audit.Events.Where(e => e.EventType == "research.remote_result_applied"));
+            Assert.Single(audit.Events, e => e.EventType == "research.remote_result_applied");
         }
         finally
         {

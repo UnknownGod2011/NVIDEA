@@ -43,7 +43,7 @@ public sealed class BrowserObservedValueChromiumIntegrationTests
             AssertSensitive(observation, policy, "Payment security", "text", "cc-csc");
             AssertSensitive(observation, policy, "Payment expiry", "text", "cc-exp");
 
-            var benign = Assert.Single(observation.Elements.Where(e => e.Name == "Contact field"));
+            var benign = Assert.Single(observation.Elements, e => e.Name == "Contact field");
             Assert.Equal("synthetic@example.test", benign.Value);
             Assert.Equal("email", benign.InputType);
             Assert.Equal("email", benign.AutoComplete);
@@ -57,7 +57,7 @@ public sealed class BrowserObservedValueChromiumIntegrationTests
 
             // SPA-style forms can repurpose an existing control without navigation. Re-observation must
             // classify the current DOM semantics, not reuse a previously benign observation/value.
-            await session.Page.GetByLabel("Dynamic field").EvaluateAsync("""
+            await session.Context.Pages.Single().GetByLabel("Dynamic field").EvaluateAsync("""
                 el => {
                     el.setAttribute('autocomplete', 'one-time-code');
                     el.value = '654321';
@@ -85,7 +85,7 @@ public sealed class BrowserObservedValueChromiumIntegrationTests
         string expectedInputType,
         string expectedAutoComplete)
     {
-        var element = Assert.Single(observation.Elements.Where(e => e.Name == name));
+        var element = Assert.Single(observation.Elements, e => e.Name == name);
         Assert.Null(element.Value);
         Assert.Equal(expectedInputType, element.InputType);
         Assert.Equal(expectedAutoComplete, element.AutoComplete);

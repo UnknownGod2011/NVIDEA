@@ -30,7 +30,7 @@ public sealed class NebiusResearchCancellationRedriveDurabilityTests
             var durableAction = Assert.IsType<PendingExternalAction>(afterAmbiguousDelivery.PendingExternalAction);
             Assert.Equal(DurableExternalActionKind.NebiusCancelRemoteResearch, durableAction.Kind);
             Assert.Equal("job-123", durableAction.TargetId);
-            Assert.Single(fixture.Audit.Events.Where(e => e.EventType == "research.remote_cancel_redriven"));
+            Assert.Single(fixture.Audit.Events, e => e.EventType == "research.remote_cancel_redriven");
             Assert.Equal(2, fixture.Client.CancelCalls);
 
             var redrivenAgain = await fixture.Reconciler.ReconcileCancellationAsync(fixture.JobId);
@@ -38,7 +38,7 @@ public sealed class NebiusResearchCancellationRedriveDurabilityTests
 
             Assert.Equal(durableAction.ActionId, reusedAction.ActionId);
             Assert.Equal(durableAction.AuditEventId, reusedAction.AuditEventId);
-            Assert.Single(fixture.Audit.Events.Where(e => e.EventType == "research.remote_cancel_redriven"));
+            Assert.Single(fixture.Audit.Events, e => e.EventType == "research.remote_cancel_redriven");
             Assert.Equal(3, fixture.Client.CancelCalls);
 
             fixture.Client.GetResponse = CancellingResponse(fixture.ExpectedName);
@@ -88,7 +88,7 @@ public sealed class NebiusResearchCancellationRedriveDurabilityTests
             Assert.Equal(pendingAction.AuditEventId, recoveredAction.AuditEventId);
             Assert.Null(recovered.PendingAuditEvent);
             Assert.Equal(cancelCallsBeforeRedrive + 1, fixture.Client.CancelCalls);
-            Assert.Single(fixture.Audit.Events.Where(e => e.EventType == "research.remote_cancel_redriven"));
+            Assert.Single(fixture.Audit.Events, e => e.EventType == "research.remote_cancel_redriven");
         }
         finally
         {

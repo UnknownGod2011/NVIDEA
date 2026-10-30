@@ -197,7 +197,7 @@ public sealed class NebiusServerlessFailureDiagnosticTests
                     HttpStatusCode.OK,
                     $$$"""
                     {
-                      "metadata": { "id": "job-123", "name": "{{harness.ExpectedName}}" },
+                      "metadata": { "id": "job-123", "name": "{{{harness.ExpectedName}}}" },
                       "status": {
                         "state": "FAILED",
                         "stateDetails": {
@@ -234,7 +234,7 @@ public sealed class NebiusServerlessFailureDiagnosticTests
     }
 
     [Fact]
-    public async Task ReconcileDispatchedAsync_SurfacesBoundedFailureDiagnosticAsExplicitlyUntrustedEvidence()
+    public async Task ReconcileDispatchedAsync_SurfacesOnlyCanonicalProviderCodeAndKeepsMessageOutOfEvidence()
     {
         var harness = await CreateDispatchedHarnessAsync();
         try
@@ -245,7 +245,7 @@ public sealed class NebiusServerlessFailureDiagnosticTests
                     HttpStatusCode.OK,
                     $$$"""
                     {
-                      "metadata": { "id": "job-123", "name": "{{harness.ExpectedName}}" },
+                      "metadata": { "id": "job-123", "name": "{{{harness.ExpectedName}}}" },
                       "status": {
                         "state": "FAILED",
                         "stateDetails": {
@@ -268,13 +268,12 @@ public sealed class NebiusServerlessFailureDiagnosticTests
 
             Assert.Equal(AgentJobState.Failed, failed.State);
             Assert.Equal(RemoteResearchProvenanceState.RemoteFailed, failed.RemoteResearch!.State);
-            Assert.Contains("Provider diagnostic (untrusted)", failed.LastError!);
-            Assert.Contains("code=NotEnoughResources", failed.LastError!);
-            Assert.Contains("message=Requested resources are temporarily unavailable.", failed.LastError!);
+            Assert.Contains("Provider failure code: NotEnoughResources", failed.LastError!);
+            Assert.DoesNotContain("Requested resources are temporarily unavailable", failed.LastError!, StringComparison.Ordinal);
 
             var auditEvent = Assert.Single(harness.Audit.Events, e => e.EventType == "research.remote_failed");
-            Assert.Contains("Provider diagnostic (untrusted)", auditEvent.Summary);
-            Assert.Contains("code=NotEnoughResources", auditEvent.Summary);
+            Assert.Contains("Provider failure code: NotEnoughResources", auditEvent.Summary);
+            Assert.DoesNotContain("Requested resources are temporarily unavailable", auditEvent.Summary, StringComparison.Ordinal);
         }
         finally
         {
@@ -340,7 +339,7 @@ public sealed class NebiusServerlessFailureDiagnosticTests
                     HttpStatusCode.OK,
                     $$$"""
                     {
-                      "metadata": { "id": "job-123", "name": "{{harness.ExpectedName}}" },
+                      "metadata": { "id": "job-123", "name": "{{{harness.ExpectedName}}}" },
                       "status": {
                         "state": "SUCCESS",
                         "stateDetails": {

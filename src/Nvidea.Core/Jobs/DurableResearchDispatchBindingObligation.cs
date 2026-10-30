@@ -56,10 +56,23 @@ public sealed class DurableResearchDispatchBindingObligation
 
         var current = await _store.GetAsync(jobId, cancellationToken).ConfigureAwait(false)
             ?? throw new KeyNotFoundException($"Research job '{jobId}' was not found.");
-        ValidatePublishable(current);
 
         if (current.PendingResearchDispatchBinding is null)
         {
+            // A completed lifecycle with no outstanding intent is already settled. Do not
+            // reconstruct publication authority from terminal state; simply make recovery
+            // idempotent and leave the record untouched.
+            if (current.ExecutionLocation == JobExecutionLocation.Local
+                && current.State is AgentJobState.Pending or AgentJobState.Completed or AgentJobState.Cancelled or AgentJobState.Failed
+                && IsValidPostPublicationState(current))
+                return current;
+
+            // Creating a new publication intent is authorized only for the exact active,
+            // audit-settled Nebius stage. A persisted intent is a different case: publication
+            // may already have succeeded before a crash while the remote result advanced the
+            // lifecycle. Recovery validates the immutable intent against the resulting trusted
+            // lifecycle state before asking the publisher to verify/replay it idempotently.
+            ValidatePublishable(current);
             var provenance = current.RemoteResearch!;
             var commitment = ResearchWorkItemEnvelopeCommitment.ValidateCanonicalSha256(current.RemoteWorkItemEnvelopeSha256!, nameof(current.RemoteWorkItemEnvelopeSha256));
             var expiresAt = provenance.WorkItemExpiresAt ?? provenance.DispatchedAt + ResearchWorkItemProtector.MaxLifetime;
@@ -71,7 +84,7 @@ public sealed class DurableResearchDispatchBindingObligation
         }
 
         var pending = current.PendingResearchDispatchBinding!;
-        ValidateObligation(current, pending, requireAuditSettled: true);
+        ValidateObligation(current, pending, requireAuditSettled: false);
         await _publisher.PublishEnvelopeBoundAsync(pending.OpaqueWorkItemId, pending.RemoteJobId, pending.EnvelopeSha256, pending.ExpiresAt, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         if (_completionObserver is not null)
@@ -105,6 +118,21 @@ public sealed class DurableResearchDispatchBindingObligation
         ValidateObligationShape(job, requireAuditSettled: true);
     }
 
+    private static bool IsValidPostPublicationState(AgentJobRecord job)
+    {
+        try
+        {
+            ValidateObligationShape(job, requireAuditSettled: false);
+            if (job.PendingAuditEvent is not null || job.PendingProtectedPayloadCleanup is not null)
+                return false;
+            return true;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
     private static void ValidateObligation(AgentJobRecord job, PendingResearchDispatchBinding pending, bool requireAuditSettled)
     {
         ValidateObligationShape(job, requireAuditSettled);
@@ -131,10 +159,14 @@ public sealed class DurableResearchDispatchBindingObligation
             if (job.State != AgentJobState.Running
                 || job.ExecutionLocation != JobExecutionLocation.NebiusServerless
                 || provenance.State is not (RemoteResearchProvenanceState.Dispatched or RemoteResearchProvenanceState.CancelRequested)
-                || job.PendingAuditEvent is not null)
+                || job.PendingAuditEvent is not null
+                || job.PendingProtectedPayloadCleanup is not null)
                 throw new InvalidOperationException("Only an active audit-settled Nebius stage can publish its dispatch binding.");
             return;
         }
+
+        if (job.PendingAuditEvent is not null || job.PendingProtectedPayloadCleanup is not null)
+            throw new InvalidOperationException("Dispatch-binding completion must wait until required audit and protected-payload cleanup obligations are settled.");
 
         var validPostPublicationState = (job.State, job.ExecutionLocation, provenance.State) switch
         {

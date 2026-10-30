@@ -117,7 +117,7 @@ public sealed class NebiusResearchDeploymentManifestTests
             {
                 ["NEBIUS_API_KEY"] = new(SecretId: "mbsec-nebius-sensitive"),
                 ["TAVILY_API_KEY"] = new(SecretId: "mbsec-tavily", VersionId: "mbsecver-tavily-sensitive"),
-                ["NVIDEA_WORKER_PRIVATE_KEY_PEM"] = new(VersionId: "mbsecver-worker-sensitive")
+                ["NVIDEA_WORKER_PRIVATE_KEY_PEM"] = new(SecretId: "mbsec-worker-sensitive", VersionId: "mbsecver-worker-sensitive")
             },
             Volumes: new[]
             {

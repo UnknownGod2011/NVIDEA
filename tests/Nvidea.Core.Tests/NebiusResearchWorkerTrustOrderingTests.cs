@@ -100,6 +100,8 @@ public sealed class NebiusResearchWorkerTrustOrderingTests
             ["NVIDEA_LIVE_SECRET_NEBIUS_API_KEY_ID"] = "mbsec-nebius-api-key",
             ["NVIDEA_LIVE_SECRET_TAVILY_API_KEY_ID"] = "mbsec-tavily-api-key",
             ["NVIDEA_LIVE_SECRET_WORKER_PRIVATE_KEY_ID"] = "mbsec-worker-private-key",
+            ["NVIDEA_LIVE_SECRET_WORKER_RESULT_SIGNING_PRIVATE_KEY_ID"] = "mbsec-worker-result-signing",
+            ["NVIDEA_LIVE_SECRET_WORKER_RESULT_SIGNING_PRIVATE_KEY_VERSION_ID"] = "mbsecver-worker-result-signing-v1",
             ["NVIDEA_LIVE_WORKER_PUBLIC_KEY_PEM_FILE"] = workerPublicPath,
             ["NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE"] = "must-not-be-read",
             ["NVIDEA_LIVE_SERVERLESS_ACCESS_TOKEN"] = "must-not-be-read",

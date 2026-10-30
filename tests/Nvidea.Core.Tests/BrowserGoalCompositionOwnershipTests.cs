@@ -16,8 +16,8 @@ public sealed class BrowserGoalCompositionOwnershipTests
 
         var constructors = rootType.GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic);
         var constructor = Assert.Single(constructors);
-        var seam = Assert.Single(constructor.GetParameters().Where(parameter =>
-            parameter.ParameterType == typeof(Func<CancellationToken, Task<ICrashConsistentBrowserGoalHost>>)));
+        var seam = Assert.Single(constructor.GetParameters(), parameter =>
+            parameter.ParameterType == typeof(Func<CancellationToken, Task<ICrashConsistentBrowserGoalHost>>));
 
         Assert.True(seam.HasDefaultValue);
         Assert.Null(seam.DefaultValue);

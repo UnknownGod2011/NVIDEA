@@ -51,7 +51,7 @@ public sealed class ResearchExtractionPipelineTests
 
         Assert.Equal(0, provider.ExtractCalls);
         Assert.Empty(report.Evidence.Sources);
-        Assert.Equal(1, inference.Requests.Count);
+        Assert.Single(inference.Requests);
     }
 
     private sealed class ExtractingProvider(ResearchBatch searched, ResearchBatch enriched) : IResearchProvider, IResearchExtractionProvider

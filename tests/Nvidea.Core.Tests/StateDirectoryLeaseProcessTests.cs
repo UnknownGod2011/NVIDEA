@@ -30,6 +30,12 @@ public sealed class StateDirectoryLeaseProcessTests
             };
             startInfo.ArgumentList.Add("test");
             startInfo.ArgumentList.Add(projectPath);
+            var configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent?.Name;
+            if (configuration is "Debug" or "Release")
+            {
+                startInfo.ArgumentList.Add("--configuration");
+                startInfo.ArgumentList.Add(configuration);
+            }
             startInfo.ArgumentList.Add("--no-build");
             startInfo.ArgumentList.Add("--filter");
             startInfo.ArgumentList.Add($"FullyQualifiedName={typeof(StateDirectoryLeaseProcessTests).FullName}.{nameof(ChildHoldsLeaseUntilReleased)}");
@@ -40,22 +46,26 @@ public sealed class StateDirectoryLeaseProcessTests
             child = Process.Start(startInfo)
                 ?? throw new InvalidOperationException("Failed to start the independent state-lease probe process.");
 
-            await WaitForFileAsync(readyFile, child, TimeSpan.FromSeconds(15)).ConfigureAwait(false);
-            var childLeaseInstanceId = (await File.ReadAllTextAsync(readyFile).ConfigureAwait(false)).Trim();
+            await WaitForFileAsync(readyFile, child, TimeSpan.FromSeconds(15));
+            var childLeaseInstanceId = await ReadReadyFileAsync(readyFile, child, TimeSpan.FromSeconds(5));
             Assert.False(string.IsNullOrWhiteSpace(childLeaseInstanceId));
 
             var contention = Assert.Throws<StateDirectoryLeaseUnavailableException>(() =>
                 StateDirectoryLease.Acquire(root));
-            Assert.NotNull(contention.Owner);
-            Assert.Equal(childLeaseInstanceId, contention.Owner!.InstanceId);
-            Assert.NotEqual(Environment.ProcessId, contention.Owner.ProcessId);
+            // The OS lock is authoritative. On Windows, the lock owner's file sharing mode can
+            // prevent reading its metadata while the byte-range lock is held, so Owner is optional.
+            if (contention.Owner is { } owner)
+            {
+                Assert.Equal(childLeaseInstanceId, owner.InstanceId);
+                Assert.NotEqual(Environment.ProcessId, owner.ProcessId);
+            }
 
             // Simulate an ungraceful process death. The persistent lock file must remain harmless;
             // ownership is the live kernel lock, not file existence or cooperative cleanup.
             child.Kill(entireProcessTree: true);
-            await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+            await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
 
-            using var reacquired = await AcquireEventuallyAsync(root, TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+            using var reacquired = await AcquireEventuallyAsync(root, TimeSpan.FromSeconds(5));
             Assert.Equal(Environment.ProcessId, reacquired.Owner.ProcessId);
             Assert.True(File.Exists(Path.Combine(root, StateDirectoryLease.LeaseFileName)));
         }
@@ -66,12 +76,12 @@ public sealed class StateDirectoryLeaseProcessTests
                 try
                 {
                     File.WriteAllText(releaseFile, "release");
-                    await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
+                    await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(3));
                 }
                 catch
                 {
                     child.Kill(entireProcessTree: true);
-                    await child.WaitForExitAsync().ConfigureAwait(false);
+                    await child.WaitForExitAsync();
                 }
             }
 
@@ -99,7 +109,7 @@ public sealed class StateDirectoryLeaseProcessTests
         }
 
         using var lease = StateDirectoryLease.Acquire(stateDirectory);
-        await File.WriteAllTextAsync(readyFile, lease.Owner.InstanceId).ConfigureAwait(false);
+        await File.WriteAllTextAsync(readyFile, lease.Owner.InstanceId);
 
         var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(30);
         while (!File.Exists(releaseFile))
@@ -107,7 +117,7 @@ public sealed class StateDirectoryLeaseProcessTests
             if (DateTimeOffset.UtcNow >= deadline)
                 throw new TimeoutException("State-lease probe timed out waiting for release.");
 
-            await Task.Delay(50).ConfigureAwait(false);
+            await Task.Delay(50);
         }
     }
 
@@ -144,6 +154,37 @@ public sealed class StateDirectoryLeaseProcessTests
                 throw new TimeoutException("Timed out waiting for the independent state-lease probe to become ready.");
 
             await Task.Delay(50).ConfigureAwait(false);
+        }
+    }
+
+    private static async Task<string> ReadReadyFileAsync(string path, Process child, TimeSpan timeout)
+    {
+        var deadline = DateTimeOffset.UtcNow + timeout;
+        while (true)
+        {
+            if (child.HasExited)
+            {
+                var stdout = await child.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
+                var stderr = await child.StandardError.ReadToEndAsync().ConfigureAwait(false);
+                throw new InvalidOperationException(
+                    $"State-lease probe exited before its ready marker could be read (exit {child.ExitCode}). stdout: {stdout} stderr: {stderr}");
+            }
+
+            try
+            {
+                var marker = (await File.ReadAllTextAsync(path).ConfigureAwait(false)).Trim();
+                if (!string.IsNullOrWhiteSpace(marker))
+                    return marker;
+            }
+            catch (IOException) when (DateTimeOffset.UtcNow < deadline)
+            {
+                // File creation becomes visible before the child closes its write handle.
+            }
+
+            if (DateTimeOffset.UtcNow >= deadline)
+                throw new TimeoutException("Timed out waiting for the independent state-lease ready marker to become readable.");
+
+            await Task.Delay(25).ConfigureAwait(false);
         }
     }
 

@@ -16,7 +16,7 @@ public sealed class NebiusObjectStorageEndpointTrustTests
         var configuration = NebiusObjectStorageClient.CreateSdkConfiguration(ValidOptions());
 
         Assert.False(configuration.AllowAutoRedirect);
-        Assert.Equal("https://storage.eu-north1.nebius.cloud", configuration.ServiceURL);
+        Assert.Equal("https://storage.eu-north1.nebius.cloud/", configuration.ServiceURL);
         Assert.Equal("eu-north1", configuration.AuthenticationRegion);
         Assert.False(configuration.ForcePathStyle);
         Assert.Equal(0, configuration.MaxErrorRetry);

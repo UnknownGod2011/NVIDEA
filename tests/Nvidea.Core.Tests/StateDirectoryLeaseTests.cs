@@ -15,10 +15,11 @@ public sealed class StateDirectoryLeaseTests
             var error = Assert.Throws<StateDirectoryLeaseUnavailableException>(() =>
                 StateDirectoryLease.Acquire(root));
 
-            Assert.Contains("owns this durable state directory", error.Message, StringComparison.OrdinalIgnoreCase);
-            Assert.NotNull(error.Owner);
-            Assert.Equal(Environment.ProcessId, error.Owner!.ProcessId);
-            Assert.Equal(first.Owner.InstanceId, error.Owner.InstanceId);
+            Assert.Contains("durable state directory", error.Message, StringComparison.OrdinalIgnoreCase);
+            // Same-process re-entry is rejected before another handle can read the lock owner's
+            // byte-range-locked metadata. Cross-process owner details are tested separately.
+            Assert.Null(error.Owner);
+            Assert.Equal(Environment.ProcessId, first.Owner.ProcessId);
         }
         finally
         {

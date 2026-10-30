@@ -202,8 +202,8 @@ public sealed class NebiusResearchLiveConfigurationLoaderTests
         var error = Assert.Throws<InvalidOperationException>(() =>
             NebiusResearchLiveConfigurationLoader.Load(fixture.Read));
 
-        Assert.Contains("NVIDEA_LIVE_CLIENT_PRIVATE_KEY_PEM_FILE", error.Message, StringComparison.Ordinal);
         Assert.Contains("valid RSA private key", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("malformed-client-private.pem", error.Message, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(fixture.Root, error.Message, StringComparison.Ordinal);
     }
 

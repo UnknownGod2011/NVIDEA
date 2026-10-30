@@ -70,7 +70,7 @@ public sealed class ResearchLifecycleOnlyRuntimeTests
                 product.RunNextLocalStepAsync(record.JobId));
             var cancelError = await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 product.CancelAsync(record.JobId));
-            var createError = Assert.Throws<InvalidOperationException>(() => product.CreateAsync("question"));
+            var createError = await Assert.ThrowsAsync<InvalidOperationException>(() => product.CreateAsync("question"));
 
             Assert.Contains("TAVILY_API_KEY", runError.Message, StringComparison.Ordinal);
             Assert.Contains("TAVILY_API_KEY", cancelError.Message, StringComparison.Ordinal);

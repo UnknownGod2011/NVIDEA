@@ -13,7 +13,7 @@ public sealed class DurableResearchDispatchBindingAuthorityRaceTests
     {
         yield return new object[] { "opaque-id", (Func<AgentJobRecord, AgentJobRecord>)(job => job with { RemoteResearch = job.RemoteResearch! with { OpaqueWorkItemId = "substituted-opaque-id-after-publication" } }) };
         yield return new object[] { "envelope-digest", (Func<AgentJobRecord, AgentJobRecord>)(job => job with { RemoteWorkItemEnvelopeSha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }) };
-        yield return new object[] { "expiry", (Func<AgentJobRecord, AgentJobRecord>)(job => job with { RemoteResearch = job.RemoteResearch! with { ExpiresAt = job.RemoteResearch.ExpiresAt.AddMinutes(5) } }) };
+        yield return new object[] { "expiry", (Func<AgentJobRecord, AgentJobRecord>)(job => job with { RemoteResearch = job.RemoteResearch! with { WorkItemExpiresAt = job.RemoteResearch!.WorkItemExpiresAt!.Value.AddMinutes(5) } }) };
     }
 
     [Theory]
@@ -47,7 +47,7 @@ public sealed class DurableResearchDispatchBindingAuthorityRaceTests
             Assert.Equal("remote-authority-race-42", persisted.PendingResearchDispatchBinding!.RemoteJobId);
             Assert.Equal("mY7FhPlAdtPz9xL4b8gU1cKqN3sW6vRt", persisted.PendingResearchDispatchBinding.OpaqueWorkItemId);
             Assert.Equal(EnvelopeSha256, persisted.PendingResearchDispatchBinding.EnvelopeSha256);
-            Assert.Equal(job.RemoteResearch!.ExpiresAt, persisted.PendingResearchDispatchBinding.ExpiresAt);
+            Assert.Equal(job.RemoteResearch!.WorkItemExpiresAt, persisted.PendingResearchDispatchBinding.ExpiresAt);
             Assert.Equal(1, transport.PutCalls);
             Assert.Equal(1, observer.Calls);
         }
@@ -138,7 +138,7 @@ public sealed class DurableResearchDispatchBindingAuthorityRaceTests
         private readonly List<AuditEvent> _events = new();
         public Task AppendAsync(AuditEvent auditEvent, CancellationToken cancellationToken = default)
         {
-            if (!_events.Any(existing => existing.Id == auditEvent.Id)) _events.Add(auditEvent);
+            if (!_events.Any(existing => existing.EventId == auditEvent.EventId)) _events.Add(auditEvent);
             return Task.CompletedTask;
         }
         public Task<IReadOnlyList<AuditEvent>> ReadAllAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<AuditEvent>>(_events.ToArray());

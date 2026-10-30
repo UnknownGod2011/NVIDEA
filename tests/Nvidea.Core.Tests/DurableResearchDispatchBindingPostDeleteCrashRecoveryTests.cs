@@ -30,7 +30,7 @@ public sealed class DurableResearchDispatchBindingPostDeleteCrashRecoveryTests
                 job.Checkpoint!.Step,
                 OpaqueId,
                 RemoteJobId,
-                new JobStepResult(false, ResearchJobHandler.EvidenceStep, "{\"postDeleteRestart\":\"verified\"}"),
+                new JobStepResult(false, RequiresApproval: false, CheckpointStep: ResearchJobHandler.EvidenceStep, CheckpointPayload: "{\"postDeleteRestart\":\"verified\"}"),
                 now.AddMinutes(1),
                 now.AddHours(1));
             await results.PutAsync(ResearchResultProtector.Protect(remote, clientRsa.ExportSubjectPublicKeyInfoPem()));
@@ -55,7 +55,7 @@ public sealed class DurableResearchDispatchBindingPostDeleteCrashRecoveryTests
             Assert.Equal(1, bindingTransport.PutCalls);
             Assert.Equal(1, results.DeleteAttempts);
             Assert.False(results.Items.ContainsKey(OpaqueId));
-            Assert.Single(audit.Events.Where(e => e.EventType == "research.remote_result_applied"));
+            Assert.Single(audit.Events, e => e.EventType == "research.remote_result_applied");
 
             // Restart repeats deletion against an already-absent object. The transport's idempotent
             // delete contract makes that harmless, allowing only the cleanup marker to clear.
@@ -68,7 +68,7 @@ public sealed class DurableResearchDispatchBindingPostDeleteCrashRecoveryTests
             Assert.NotNull(afterCleanupRecovery.PendingResearchDispatchBinding);
             Assert.Equal(2, results.DeleteAttempts);
             Assert.False(results.Items.ContainsKey(OpaqueId));
-            Assert.Single(audit.Events.Where(e => e.EventType == "research.remote_result_applied"));
+            Assert.Single(audit.Events, e => e.EventType == "research.remote_result_applied");
             Assert.Equal(ResearchJobHandler.EvidenceStep, afterCleanupRecovery.Checkpoint!.Step);
 
             // The independent binding obligation converges by observing the exact existing signed
@@ -85,7 +85,7 @@ public sealed class DurableResearchDispatchBindingPostDeleteCrashRecoveryTests
             Assert.Equal(ResearchJobHandler.EvidenceStep, converged.Checkpoint!.Step);
             Assert.Equal(1, bindingTransport.PutCalls);
             Assert.Equal(2, results.DeleteAttempts);
-            Assert.Single(audit.Events.Where(e => e.EventType == "research.remote_result_applied"));
+            Assert.Single(audit.Events, e => e.EventType == "research.remote_result_applied");
         }
         finally
         {

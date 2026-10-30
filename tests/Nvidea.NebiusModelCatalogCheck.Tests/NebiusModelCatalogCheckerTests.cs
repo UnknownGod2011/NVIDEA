@@ -1,5 +1,6 @@
 using System.Text;
 using Nvidea.NebiusModelCatalogCheck;
+using Xunit;
 
 namespace Nvidea.NebiusModelCatalogCheck.Tests;
 

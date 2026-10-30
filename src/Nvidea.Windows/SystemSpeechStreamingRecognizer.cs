@@ -6,7 +6,7 @@ namespace Nvidea.Windows;
 
 /// <summary>
 /// Local continuous Windows speech recognition with partial hypotheses and bounded pause detection.
-/// It uses no network service and is the default speech path when no optional Speech NIM endpoint is configured.
+/// It uses no network service; recognized transcript text is handed to the selected voice mode separately.
 /// </summary>
 internal sealed class SystemSpeechStreamingRecognizer
 {
@@ -29,35 +29,19 @@ internal sealed class SystemSpeechStreamingRecognizer
         using var engine = new SpeechRecognitionEngine(_recognizer);
         engine.LoadGrammar(new DictationGrammar());
         engine.SetInputToDefaultAudioDevice();
-        var recognized = new List<string>();
-        var gate = new object();
-        var lastHypothesis = string.Empty;
-        var lastSpeech = DateTimeOffset.UtcNow;
-        var heardSpeech = false;
+        var turn = new LocalSpeechTurnAccumulator();
 
         engine.SpeechHypothesized += (_, args) =>
         {
             if (string.IsNullOrWhiteSpace(args.Result.Text)) return;
-            lock (gate)
-            {
-                heardSpeech = true;
-                lastSpeech = DateTimeOffset.UtcNow;
-                lastHypothesis = args.Result.Text.Trim();
-                partialTranscript?.Report(JoinTranscript(recognized, args.Result.Text));
-            }
+            turn.SetHypothesis(args.Result.Text, args.Result.Confidence, DateTimeOffset.UtcNow);
+            partialTranscript?.Report(turn.GetTranscript());
         };
         engine.SpeechRecognized += (_, args) =>
         {
             if (string.IsNullOrWhiteSpace(args.Result.Text)) return;
-            lock (gate)
-            {
-                heardSpeech = true;
-                lastSpeech = DateTimeOffset.UtcNow;
-                if (recognized.Count == 0 || !string.Equals(recognized[^1], args.Result.Text, StringComparison.OrdinalIgnoreCase))
-                    recognized.Add(args.Result.Text.Trim());
-                lastHypothesis = string.Empty;
-                partialTranscript?.Report(JoinTranscript(recognized, null));
-            }
+            turn.Commit(args.Result.Text, args.Result.Confidence, DateTimeOffset.UtcNow);
+            partialTranscript?.Report(turn.GetTranscript());
         };
 
         using var maximumCts = new CancellationTokenSource(maximumDuration);
@@ -68,33 +52,22 @@ internal sealed class SystemSpeechStreamingRecognizer
             while (true)
             {
                 await Task.Delay(100, linkedCts.Token).ConfigureAwait(false);
-                lock (gate)
-                {
-                    if (heardSpeech && DateTimeOffset.UtcNow - lastSpeech >= endOfTurnSilence && recognized.Count > 0)
-                        break;
-                }
+                if (turn.ShouldFinish(DateTimeOffset.UtcNow, endOfTurnSilence))
+                    break;
             }
         }
         catch (OperationCanceledException) when (maximumCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
-            lock (gate)
-            {
-                if (recognized.Count == 0)
-                    throw new TimeoutException("No speech was recognized before the local listening timeout.");
-            }
+            if (!turn.HasTranscript)
+                throw new TimeoutException("No speech was recognized before the local listening timeout.");
         }
         finally
         {
             try { engine.RecognizeAsyncCancel(); } catch (InvalidOperationException) { }
         }
 
-        string text;
-        lock (gate) text = JoinTranscript(recognized, lastHypothesis);
-        return new LocalVoiceTranscript(text, 1f, _recognizer.Culture.Name);
+        return new LocalVoiceTranscript(turn.GetTranscript(), turn.Confidence, _recognizer.Culture.Name);
     }
-
-    private static string JoinTranscript(IEnumerable<string> committed, string? partial) =>
-        string.Join(" ", committed.Append(partial ?? string.Empty).Where(static item => !string.IsNullOrWhiteSpace(item))).Trim();
 
     public static IReadOnlyList<string> GetInstalledLanguages() =>
         SpeechRecognitionEngine.InstalledRecognizers()
@@ -116,5 +89,83 @@ internal sealed class SystemSpeechStreamingRecognizer
         return installed.FirstOrDefault(info => string.Equals(info.Culture.Name, current.Name, StringComparison.OrdinalIgnoreCase))
             ?? installed.FirstOrDefault(info => string.Equals(info.Culture.TwoLetterISOLanguageName, current.TwoLetterISOLanguageName, StringComparison.OrdinalIgnoreCase))
             ?? installed[0];
+    }
+}
+
+internal sealed class LocalSpeechTurnAccumulator
+{
+    private readonly object _gate = new();
+    private readonly List<string> _committed = [];
+    private string _hypothesis = string.Empty;
+    private float _hypothesisConfidence;
+    private float _minimumCommittedConfidence = 1f;
+    private bool _hasCommittedConfidence;
+    private DateTimeOffset _lastSpeechAt;
+    private bool _heardSpeech;
+
+    public float Confidence
+    {
+        get
+        {
+            lock (_gate)
+                return _hasCommittedConfidence ? _minimumCommittedConfidence : _hypothesisConfidence;
+        }
+    }
+
+    public bool HasTranscript
+    {
+        get
+        {
+            lock (_gate)
+                return _committed.Count > 0 || !string.IsNullOrWhiteSpace(_hypothesis);
+        }
+    }
+
+    public void SetHypothesis(string text, float confidence, DateTimeOffset observedAt)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return;
+        lock (_gate)
+        {
+            _heardSpeech = true;
+            _lastSpeechAt = observedAt;
+            _hypothesis = text.Trim();
+            _hypothesisConfidence = confidence;
+        }
+    }
+
+    public void Commit(string text, float confidence, DateTimeOffset observedAt)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return;
+        var normalized = text.Trim();
+        lock (_gate)
+        {
+            _heardSpeech = true;
+            _lastSpeechAt = observedAt;
+            if (_committed.Count == 0
+                || !string.Equals(_committed[^1], normalized, StringComparison.OrdinalIgnoreCase))
+                _committed.Add(normalized);
+            _minimumCommittedConfidence = _hasCommittedConfidence
+                ? Math.Min(_minimumCommittedConfidence, confidence)
+                : confidence;
+            _hasCommittedConfidence = true;
+            _hypothesis = string.Empty;
+        }
+    }
+
+    public bool ShouldFinish(DateTimeOffset now, TimeSpan endOfTurnSilence)
+    {
+        lock (_gate)
+        {
+            var hasText = _committed.Count > 0 || !string.IsNullOrWhiteSpace(_hypothesis);
+            return _heardSpeech && hasText && now - _lastSpeechAt >= endOfTurnSilence;
+        }
+    }
+
+    public string GetTranscript()
+    {
+        lock (_gate)
+            return string.Join(" ", _committed.Append(_hypothesis)
+                .Where(static item => !string.IsNullOrWhiteSpace(item)))
+                .Trim();
     }
 }

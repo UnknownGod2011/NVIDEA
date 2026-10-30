@@ -225,7 +225,7 @@ public sealed class AuthenticatedRemoteResearchIngestionBoundaryTests
             provenance.InputCheckpointStep,
             provenance.OpaqueWorkItemId,
             provenance.RemoteJobId!,
-            new JobStepResult(false, ResearchJobHandler.EvidenceStep, "{\"evidence\":\"verified\"}"),
+            new JobStepResult(false, RequiresApproval: false, CheckpointStep: ResearchJobHandler.EvidenceStep, CheckpointPayload: "{\"evidence\":\"verified\"}"),
             now.AddMinutes(1),
             now.AddHours(1));
         return ResearchResultProtector.Protect(result, client.ExportSubjectPublicKeyInfoPem());

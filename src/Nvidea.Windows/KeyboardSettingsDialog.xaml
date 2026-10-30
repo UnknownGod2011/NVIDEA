@@ -21,6 +21,12 @@
                         <TextBlock Text="NVIDIA Nemotron on Nebius Token Factory" FontSize="17" FontWeight="SemiBold"/>
                         <TextBlock Text="Add a Nebius Token Factory key for Smart Dictation, Jarvis, and reasoning. Add a Tavily key only if you want web research."
                                    TextWrapping="Wrap" Opacity="0.72" Margin="0,4,0,12"/>
+                        <TextBlock TextWrapping="Wrap" Opacity="0.82" Margin="0,0,0,10">
+                            <Run Text="Need a key? Sign in, choose a project, then open API keys and select Get API key: "/>
+                            <Hyperlink NavigateUri="https://tokenfactory.nebius.com/"
+                                       RequestNavigate="NebiusTokenFactoryKeyLink_RequestNavigate">Open Nebius Token Factory</Hyperlink>
+                            <Run Text=". Copy it when shown; it is not displayed again."/>
+                        </TextBlock>
 
                         <TextBlock Text="Nebius Token Factory API key" FontWeight="SemiBold" Margin="0,5,0,4"/>
                         <PasswordBox x:Name="NebiusApiKeyBox" Padding="7,5"/>
@@ -145,7 +151,7 @@
                             <ComboBoxItem Content="Fastest" Tag="5"/>
                         </ComboBox>
                         <CheckBox x:Name="UsePersonalMemoryCheckBox" Content="Use relevant personal memory in Jarvis conversations" Margin="0,12,0,3"/>
-                        <TextBlock Text="Speech capture and voice output use Windows components. Jarvis conversation text is sent to NVIDIA Nemotron through Nebius; microphone audio is not."
+                        <TextBlock Text="Speech capture and voice output use Windows components. Jarvis sends conversation text and may include captured context, enabled clipboard content, and relevant saved memories; microphone audio stays local."
                                    TextWrapping="Wrap" Opacity="0.62" Margin="0,10,0,0"/>
                         <TextBlock x:Name="VoiceSettingsStatusText" TextWrapping="Wrap" Margin="0,8,0,0"/>
                     </StackPanel>

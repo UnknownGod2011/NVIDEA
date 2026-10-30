@@ -43,7 +43,7 @@ public sealed class DurableResearchDispatchBindingMultiArtifactCleanupRaceTests
                 job.Checkpoint!.Step,
                 OpaqueId,
                 RemoteJobId,
-                new JobStepResult(false, ResearchJobHandler.EvidenceStep, "{\"multiCleanup\":\"verified\"}"),
+                new JobStepResult(false, RequiresApproval: false, CheckpointStep: ResearchJobHandler.EvidenceStep, CheckpointPayload: "{\"multiCleanup\":\"verified\"}"),
                 now.AddMinutes(1),
                 now.AddHours(1));
             await ((IProtectedResearchResultTransport)transport).PutAsync(
@@ -68,7 +68,7 @@ public sealed class DurableResearchDispatchBindingMultiArtifactCleanupRaceTests
             Assert.Equal(1, transport.ResultDeleteCalls);
             Assert.Equal(1, transport.WorkItemDeleteCalls);
             Assert.Equal(1, bindingTransport.PutCalls);
-            Assert.Single(audit.Events.Where(e => e.EventType == "research.remote_result_applied"));
+            Assert.Single(audit.Events, e => e.EventType == "research.remote_result_applied");
 
             // Recovery deliberately retries both deletions. In the ambiguous case the work item was
             // already removed before the first call lost its acknowledgement; delete must therefore
@@ -85,7 +85,7 @@ public sealed class DurableResearchDispatchBindingMultiArtifactCleanupRaceTests
             Assert.Equal(2, transport.ResultDeleteCalls);
             Assert.Equal(2, transport.WorkItemDeleteCalls);
             Assert.Equal(ResearchJobHandler.EvidenceStep, recovered.Checkpoint!.Step);
-            Assert.Single(audit.Events.Where(e => e.EventType == "research.remote_result_applied"));
+            Assert.Single(audit.Events, e => e.EventType == "research.remote_result_applied");
 
             var restartedCoordinator = new DurableResearchDispatchBindingObligation(
                 store,
@@ -100,7 +100,7 @@ public sealed class DurableResearchDispatchBindingMultiArtifactCleanupRaceTests
             Assert.Equal(1, bindingTransport.PutCalls);
             Assert.Equal(2, transport.ResultDeleteCalls);
             Assert.Equal(2, transport.WorkItemDeleteCalls);
-            Assert.Single(audit.Events.Where(e => e.EventType == "research.remote_result_applied"));
+            Assert.Single(audit.Events, e => e.EventType == "research.remote_result_applied");
         }
         finally
         {

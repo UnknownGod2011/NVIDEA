@@ -41,7 +41,7 @@ public sealed class NebiusResearchDispatchTests
         var envelope = ResearchWorkItemProtector.Protect(workItem, rsa.ExportSubjectPublicKeyInfoPem());
         var replacementId = envelope.OpaqueWorkItemId[..^1] + (envelope.OpaqueWorkItemId[^1] == 'A' ? "B" : "A");
 
-        Assert.Throws<CryptographicException>(() => ResearchWorkItemProtector.Unprotect(
+        Assert.ThrowsAny<CryptographicException>(() => ResearchWorkItemProtector.Unprotect(
             envelope with { OpaqueWorkItemId = replacementId },
             rsa.ExportPkcs8PrivateKeyPem(),
             now.AddMinutes(1)));

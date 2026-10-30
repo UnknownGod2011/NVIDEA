@@ -177,7 +177,8 @@ public sealed class BrowserGoalAgentTests
             "value":null,
             "destination":null,
             "expected_state":"{{{expected}}}",
-            "rationale":"Advance the user goal"
+            "rationale":"Advance the user goal",
+            "postconditions":[{"kind":"visible_text_contains","expected":"{{{expected}}}"}]
           }
         }
         """;

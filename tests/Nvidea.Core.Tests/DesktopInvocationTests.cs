@@ -17,7 +17,9 @@ public sealed class DesktopInvocationTests : IDisposable
         var service = new DesktopInvocationService(inference, memory);
         var result = await service.InvokeAsync(new DesktopInvocationRequest("Summarize what I am looking at", new DesktopContext("Editor", "selected safe text", "private clipboard secret", "notes.txt")));
         Assert.Equal("ok", result.Answer);
-        var prompt = Assert.Single(inference.Requests).Messages.Last().Content;
+        var messages = Assert.Single(inference.Requests).Messages;
+        Assert.Contains("You are keyboard-wtf", messages[0].Content, StringComparison.Ordinal);
+        var prompt = messages.Last().Content;
         Assert.Contains("selected safe text", prompt, StringComparison.Ordinal);
         Assert.Contains("intentionally withheld", prompt, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("private clipboard secret", prompt, StringComparison.Ordinal);
@@ -59,6 +61,36 @@ public sealed class DesktopInvocationTests : IDisposable
     }
 
     [Fact]
+    public async Task Request_can_send_only_user_input_without_desktop_or_memory_context()
+    {
+        var inference = new RecordingInferenceClient();
+        using var memoryStore = new JsonFileMemoryStore(Path.Combine(_tempDirectory, "excluded-memory.json"));
+        using var memory = new PersonalMemoryService(memoryStore);
+        await memory.RememberAsync(new MemoryWriteRequest
+        {
+            Layer = MemoryLayer.Project, Key = "private project", Content = "Never include this memory in a dictation rewrite.", Tags = ["private"],
+            Sensitivity = MemorySensitivity.Personal, Retention = MemoryRetention.ThirtyDays, Provenance = new MemoryProvenance("user")
+        });
+        var service = new DesktopInvocationService(inference, memory, sessionEvidence: new SessionEvidenceLedger());
+
+        await service.InvokeAsync(new DesktopInvocationRequest(
+            "Polish this dictated sentence.",
+            new DesktopContext("PrivateEditor", "selected private text", "clipboard secret", "secret-window-title"),
+            AllowClipboardContext: true,
+            IncludeDesktopContext: false,
+            IncludePersonalMemoryContext: false));
+
+        var prompt = Assert.Single(inference.Requests).Messages.Last().Content;
+        Assert.Contains("Polish this dictated sentence.", prompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("PrivateEditor", prompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("selected private text", prompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("clipboard secret", prompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("secret-window-title", prompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("Never include this memory", prompt, StringComparison.Ordinal);
+        Assert.False(service.SessionEvidenceSnapshot().Contains(SessionEvidenceKind.MemoryInfluencedInvocation));
+    }
+
+    [Fact]
     public async Task Reset_session_evidence_clears_only_injected_projection_and_genuine_success_can_reestablish_proof()
     {
         var observedAt = new Queue<DateTimeOffset>(new[]
@@ -96,7 +128,7 @@ public sealed class DesktopInvocationTests : IDisposable
     {
         using var memoryStore = new JsonFileMemoryStore(Path.Combine(_tempDirectory, "failed-memory.json"));
         using var memory = new PersonalMemoryService(memoryStore);
-        var service = new DesktopInvocationService(new FailingInferenceClient(), memory);
+        var service = new DesktopInvocationService(new FailingInferenceClient(), memory, sessionEvidence: new SessionEvidenceLedger());
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.InvokeAsync(new DesktopInvocationRequest("hello", new DesktopContext())));
         Assert.Empty(service.SessionEvidenceSnapshot().Entries);
     }
@@ -107,7 +139,7 @@ public sealed class DesktopInvocationTests : IDisposable
         var inference = new RecordingInferenceClient();
         using var memoryStore = new JsonFileMemoryStore(Path.Combine(_tempDirectory, "memory.json"));
         using var memory = new PersonalMemoryService(memoryStore);
-        var service = new DesktopInvocationService(inference, memory);
+        var service = new DesktopInvocationService(inference, memory, sessionEvidence: new SessionEvidenceLedger());
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => service.InvokeAsync(new DesktopInvocationRequest("research current Nemotron models", new DesktopContext())));
         Assert.Contains("Tavily", error.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Empty(inference.Requests);

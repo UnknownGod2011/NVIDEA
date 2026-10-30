@@ -8,13 +8,27 @@ namespace Nvidea.Core.Desktop;
 internal sealed class CompositionLifetimeGate : IAsyncDisposable
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly object _stateLock = new();
+    private TaskCompletionSource? _disposalCompleted;
     private bool _disposing;
     private bool _disposed;
 
     public async ValueTask<Lease> AcquireAsync(CancellationToken cancellationToken = default)
     {
+        lock (_stateLock)
+        {
+            if (_disposing || _disposed)
+                throw new ObjectDisposedException(nameof(CompositionLifetimeGate));
+        }
+
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        if (_disposing || _disposed)
+        bool reject;
+        lock (_stateLock)
+        {
+            reject = _disposing || _disposed;
+        }
+
+        if (reject)
         {
             _gate.Release();
             throw new ObjectDisposedException(nameof(CompositionLifetimeGate));
@@ -25,14 +39,31 @@ internal sealed class CompositionLifetimeGate : IAsyncDisposable
 
     public async ValueTask<Lease?> BeginDisposeAsync()
     {
-        await _gate.WaitAsync().ConfigureAwait(false);
-        if (_disposing || _disposed)
+        Task? existingDisposal;
+        lock (_stateLock)
         {
-            _gate.Release();
+            if (_disposed)
+                return null;
+
+            if (_disposing)
+            {
+                existingDisposal = _disposalCompleted?.Task;
+            }
+            else
+            {
+                _disposing = true;
+                _disposalCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                existingDisposal = null;
+            }
+        }
+
+        if (existingDisposal is not null)
+        {
+            await existingDisposal.ConfigureAwait(false);
             return null;
         }
 
-        _disposing = true;
+        await _gate.WaitAsync().ConfigureAwait(false);
         return new Lease(this, completesDisposal: true);
     }
 
@@ -45,9 +76,19 @@ internal sealed class CompositionLifetimeGate : IAsyncDisposable
 
     private void Release(bool completesDisposal)
     {
+        TaskCompletionSource? disposalCompleted = null;
         if (completesDisposal)
-            _disposed = true;
+        {
+            lock (_stateLock)
+            {
+                _disposed = true;
+                disposalCompleted = _disposalCompleted;
+            }
+        }
+
         _gate.Release();
+        if (completesDisposal)
+            disposalCompleted?.TrySetResult();
     }
 
     internal sealed class Lease : IAsyncDisposable, IDisposable

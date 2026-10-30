@@ -26,7 +26,7 @@ public sealed class DurableBrowserVerificationPublisherTests
 
             Assert.True(presentation.Verified);
             Assert.Equal(1, presentation.ActionCount);
-            Assert.Equal(1, presentation.ApprovedConsequentialActionCount);
+            Assert.Equal(1, presentation.ApprovalCount);
         }
         finally { directory.Delete(recursive: true); }
     }

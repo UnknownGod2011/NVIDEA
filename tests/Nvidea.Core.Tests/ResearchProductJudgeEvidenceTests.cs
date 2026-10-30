@@ -21,7 +21,7 @@ public sealed class ResearchProductJudgeEvidenceTests
 
             var evidence = await runtime.ReadCompletedJudgeEvidenceAsync(record.JobId);
 
-            Assert.True(evidence.IsVerifiedForJudging);
+            Assert.True(evidence.Verified);
             Assert.Equal("verified", evidence.Provenance);
             Assert.Equal(1, evidence.EvidenceSourceCount);
             Assert.Equal(1, evidence.VerifiedCitationCount);

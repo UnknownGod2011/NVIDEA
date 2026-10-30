@@ -43,7 +43,7 @@ public sealed class DurableResearchDispatchBindingLifecycleRaceTests
             Assert.Equal(1, serverless.CancelCalls);
             Assert.Equal("remote-lifecycle-42", serverless.LastCancelledId);
             Assert.Equal(1, observer.Calls);
-            Assert.Single((await audit.ReadAllAsync()).Where(e => e.EventType == "research.remote_cancel_requested"));
+            Assert.Single((await audit.ReadAllAsync()), e => e.EventType == "research.remote_cancel_requested");
         }
         finally
         {

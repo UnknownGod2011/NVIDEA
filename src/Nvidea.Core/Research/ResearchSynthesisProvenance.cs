@@ -18,7 +18,7 @@ public static class ResearchSynthesisProvenance
         if (integrity.UnknownSourceIds.Count > 0)
         {
             warnings.Add(
-                $"Synthesis referenced unverified source ids: {string.Join(", ", integrity.UnknownSourceIds)}. " +
+                $"Synthesis referenced unknown source ids: {string.Join(", ", integrity.UnknownSourceIds)}. " +
                 "Those markers were excluded from verified Tavily provenance.");
         }
 

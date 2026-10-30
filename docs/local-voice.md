@@ -13,7 +13,7 @@ Local Dictation and Smart Dictation are one-shot. keyboard-wtf never auto-runs t
 
 ## Privacy boundary
 
-The hackathon desktop uses the Windows desktop speech-recognition stack (`System.Speech` / SAPI) with an installed local recognizer. Captured audio is not intentionally routed to Nebius, Tavily, Token Factory, or another cloud speech API.
+The hackathon desktop uses the Windows desktop speech-recognition stack (`System.Speech` / SAPI) with an installed local recognizer. Captured audio is not intentionally routed to Nebius, Tavily, Token Factory, or another cloud speech API. Local Dictation sends nothing to a cloud model. Smart Dictation sends the recognized transcript with a fixed cleanup instruction; it excludes captured app/window context, selected text, clipboard contents, and saved memories. Jarvis sends conversation text and may also send captured app/window context, selected text, relevant saved memories when enabled, and clipboard content only when **Allow clipboard context** is enabled.
 
 Before each capture keyboard-wtf discloses that the default microphone will be used and asks for explicit confirmation. Declining does not open the microphone.
 

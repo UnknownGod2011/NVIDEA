@@ -64,7 +64,7 @@ public sealed class NebiusResearchTerminalPayloadCleanupRecoveryTests
             Assert.Equal(opaqueId, stranded.PendingProtectedPayloadCleanup!.OpaqueWorkItemId);
             Assert.Equal(1, client.GetCalls);
             Assert.Equal(1, transport.DeleteCalls);
-            Assert.Single(audit.Events.Where(e => e.EventType == "research.remote_failed"));
+            Assert.Single(audit.Events, e => e.EventType == "research.remote_failed");
 
             client.ThrowOnGet = true;
             var recovered = await reconciler.ReconcileDispatchedAsync(original.JobId, now.AddMinutes(2));
@@ -75,13 +75,13 @@ public sealed class NebiusResearchTerminalPayloadCleanupRecoveryTests
             Assert.Null(recovered.PendingProtectedPayloadCleanup);
             Assert.Equal(1, client.GetCalls);
             Assert.Equal(2, transport.DeleteCalls);
-            Assert.Single(audit.Events.Where(e => e.EventType == "research.remote_failed"));
+            Assert.Single(audit.Events, e => e.EventType == "research.remote_failed");
 
             var repeated = await reconciler.ReconcileDispatchedAsync(original.JobId, now.AddMinutes(3));
             Assert.Equal(AgentJobState.Failed, repeated.State);
             Assert.Equal(1, client.GetCalls);
             Assert.Equal(2, transport.DeleteCalls);
-            Assert.Single(audit.Events.Where(e => e.EventType == "research.remote_failed"));
+            Assert.Single(audit.Events, e => e.EventType == "research.remote_failed");
         }
         finally
         {

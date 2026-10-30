@@ -245,7 +245,11 @@ public sealed class BrowserHostRuntimeIntegrationTests
             if (_responses.Count == 0)
                 throw new InvalidOperationException("No inference response remains for the integration test.");
 
-            return Task.FromResult(new AgentCompletion(_responses.Dequeue(), "test-nemotron", null));
+            return Task.FromResult(new AgentCompletion(
+                _responses.Dequeue(),
+                Array.Empty<ToolCall>(),
+                "test-nemotron",
+                "stop"));
         }
     }
 

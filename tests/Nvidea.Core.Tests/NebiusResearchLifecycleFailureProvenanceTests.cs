@@ -68,7 +68,7 @@ public sealed class NebiusResearchLifecycleFailureProvenanceTests
             Assert.Equal($"Nebius remote research stage failed. Provider failure code: {providerCode}.", returned.LastError);
             Assert.DoesNotContain(providerMessage, returned.LastError, StringComparison.Ordinal);
 
-            var failureAudit = Assert.Single(audit.Events.Where(e => e.EventType == "research.remote_failed"));
+            var failureAudit = Assert.Single(audit.Events, e => e.EventType == "research.remote_failed");
             Assert.Equal(
                 $"Nebius reported a terminal failure for the remote research stage. Provider failure code: {providerCode}.",
                 failureAudit.Summary);

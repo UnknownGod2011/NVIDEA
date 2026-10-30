@@ -30,7 +30,7 @@ public sealed class DurableResearchDispatchBindingCleanupFailureRecoveryTests
                 job.Checkpoint!.Step,
                 OpaqueId,
                 RemoteJobId,
-                new JobStepResult(false, ResearchJobHandler.EvidenceStep, "{\"cleanupRestart\":\"verified\"}"),
+                new JobStepResult(false, RequiresApproval: false, CheckpointStep: ResearchJobHandler.EvidenceStep, CheckpointPayload: "{\"cleanupRestart\":\"verified\"}"),
                 now.AddMinutes(1),
                 now.AddHours(1));
             await results.PutAsync(ResearchResultProtector.Protect(remote, clientRsa.ExportSubjectPublicKeyInfoPem()));
@@ -55,7 +55,7 @@ public sealed class DurableResearchDispatchBindingCleanupFailureRecoveryTests
             Assert.Equal(1, bindingTransport.PutCalls);
             Assert.Equal(1, results.DeleteAttempts);
             Assert.Contains(results.Items.Keys, key => key == OpaqueId);
-            Assert.Single(audit.Events.Where(e => e.EventType == "research.remote_result_applied"));
+            Assert.Single(audit.Events, e => e.EventType == "research.remote_result_applied");
 
             // Simulate restart. Cleanup recovery must not replay result ingestion or audit append.
             var restartedIngestor = new RemoteResearchResultIngestor(
@@ -67,7 +67,7 @@ public sealed class DurableResearchDispatchBindingCleanupFailureRecoveryTests
             Assert.NotNull(afterCleanupRecovery.PendingResearchDispatchBinding);
             Assert.Equal(2, results.DeleteAttempts);
             Assert.DoesNotContain(results.Items.Keys, key => key == OpaqueId);
-            Assert.Single(audit.Events.Where(e => e.EventType == "research.remote_result_applied"));
+            Assert.Single(audit.Events, e => e.EventType == "research.remote_result_applied");
             Assert.Equal(ResearchJobHandler.EvidenceStep, afterCleanupRecovery.Checkpoint!.Step);
 
             // Binding recovery owns only its already-published V2 obligation. Idempotent replay
@@ -84,7 +84,7 @@ public sealed class DurableResearchDispatchBindingCleanupFailureRecoveryTests
             Assert.Equal(ResearchJobHandler.EvidenceStep, converged.Checkpoint!.Step);
             Assert.Equal(1, bindingTransport.PutCalls);
             Assert.Equal(2, results.DeleteAttempts);
-            Assert.Single(audit.Events.Where(e => e.EventType == "research.remote_result_applied"));
+            Assert.Single(audit.Events, e => e.EventType == "research.remote_result_applied");
         }
         finally
         {

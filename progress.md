@@ -79,6 +79,8 @@ Interactive Windows smoke: launched the freshly compiled `Nvidea.Windows.exe` wi
 
 Branding follow-up: changed visible WPF titles, headings, confirmation and quarantine-dialog product copy to `keyboard-wtf`, retaining `Nvidea.*` assemblies, repository identity, local data root and configuration variable names for compatibility. Rebuilt the WPF host and launched it again; its actual title, heading, prompt tooltip and Local Dictation / Smart Dictation / Jarvis controls rendered as expected.
 
+Voice reliability follow-up: fixed the continuous Windows recognizer so it retains the final bounded live hypothesis if `SpeechRecognitionEngine` has not committed it before the pause boundary. WPF Release build and focused provider-free regression suite both passed after the correction.
+
 Not yet claimed: no physical microphone/speaker smoke was run; no live Nebius inference was made because no credential was loaded; Riva/Speech NIM ASR/TTS is not implemented or configured; Vosk/Whisper local-model fallback and the floating orb visual layer remain future work. The current default local speech path requires an installed Windows desktop speech recognizer and SAPI voice. The next highest-value task is a physical Windows voice smoke with a Nebius key, then a Vosk local-model fallback and an operator-configured Riva/Speech NIM adapter if lower-latency cloud speech is desired.
 
 ## Judge onboarding and NVIDIA-only provider audit (2026-10-30)

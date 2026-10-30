@@ -31,6 +31,7 @@ internal sealed class SystemSpeechStreamingRecognizer
         engine.SetInputToDefaultAudioDevice();
         var recognized = new List<string>();
         var gate = new object();
+        var lastHypothesis = string.Empty;
         var lastSpeech = DateTimeOffset.UtcNow;
         var heardSpeech = false;
 
@@ -41,6 +42,7 @@ internal sealed class SystemSpeechStreamingRecognizer
             {
                 heardSpeech = true;
                 lastSpeech = DateTimeOffset.UtcNow;
+                lastHypothesis = args.Result.Text.Trim();
                 partialTranscript?.Report(JoinTranscript(recognized, args.Result.Text));
             }
         };
@@ -53,6 +55,7 @@ internal sealed class SystemSpeechStreamingRecognizer
                 lastSpeech = DateTimeOffset.UtcNow;
                 if (recognized.Count == 0 || !string.Equals(recognized[^1], args.Result.Text, StringComparison.OrdinalIgnoreCase))
                     recognized.Add(args.Result.Text.Trim());
+                lastHypothesis = string.Empty;
                 partialTranscript?.Report(JoinTranscript(recognized, null));
             }
         };
@@ -86,7 +89,7 @@ internal sealed class SystemSpeechStreamingRecognizer
         }
 
         string text;
-        lock (gate) text = JoinTranscript(recognized, null);
+        lock (gate) text = JoinTranscript(recognized, lastHypothesis);
         return new LocalVoiceTranscript(text, 1f, _recognizer.Culture.Name);
     }
 
